@@ -554,6 +554,10 @@ int main(int argc, char** argv) {
     }
     const char* corePath = argv[1];
     const char* romPath  = argv[2];
+    const char* headless_value = getenv("SNESREF_HEADLESS");
+    const bool headless = headless_value && headless_value[0] &&
+                          headless_value[0] != '0';
+    g_headless = headless;
     { const char* input = getenv("SNESREF_INPUT_FILE");
       if (input && input[0] && !load_input_file(input)) return 6; }
 
@@ -619,10 +623,6 @@ int main(int argc, char** argv) {
       if (qf && qf[0]) quit_frames = atol(qf); }
     const char* fast_value = getenv("SNESREF_FAST");
     bool fast = fast_value && fast_value[0] && fast_value[0] != '0';
-    const char* headless_value = getenv("SNESREF_HEADLESS");
-    bool headless = headless_value && headless_value[0] &&
-                    headless_value[0] != '0';
-    g_headless = headless;
 
     SDL_SetMainReady();
     Uint32 sdl_flags = headless
