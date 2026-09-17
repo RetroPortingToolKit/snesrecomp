@@ -16,12 +16,12 @@
 #include "joypad.h"
 #include "sdd1.h"
 #include "variables.h"
-#include "../common_rtl.h"
-#include "../debug_server.h"
-#include "../audio_trace.h"
-#include "../cpu_trace.h"
+#include "../cpu/common_rtl.h"
+#include "../debug/debug_server.h"
+#include "../debug/audio_trace.h"
+#include "../debug/cpu_trace.h"
 #include "sdd1.h"
-#include "../ppu_dma_trace.h"
+#include "../debug/ppu_dma_trace.h"
 
 int snes_frame_counter;
 static const double apuCyclesPerMaster = (32040 * 32) / (1364 * 262 * 60.0);

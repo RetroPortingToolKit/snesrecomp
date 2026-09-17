@@ -90,12 +90,12 @@ endif()
 set(RUNSNES ${SNESRECOMP_ROOT}/runner/src)
 add_executable(smw_cosim_ref
     ref_driver.c
-    ${RUNSNES}/cosim.c
-    ${RUNSNES}/cosim_state.c
-    ${RUNSNES}/audio_trace.c
-    ${RUNSNES}/crc32.c
-    ${RUNSNES}/sha256.c
-    ${RUNSNES}/util.c
+    ${RUNSNES}/debug/cosim.c
+    ${RUNSNES}/debug/cosim_state.c
+    ${RUNSNES}/debug/audio_trace.c
+    ${RUNSNES}/util/crc32.c
+    ${RUNSNES}/util/sha256.c
+    ${RUNSNES}/util/util.c
     ${RUNSNES}/snes/apu.c
     ${RUNSNES}/snes/cart.c
     ${RUNSNES}/snes/cx4.c
@@ -115,7 +115,8 @@ add_executable(smw_cosim_ref
     ${RUNSNES}/snes/interp816.c
     ${RUNSNES}/snes/color_lut.c
 )
-target_include_directories(smw_cosim_ref PRIVATE ${RUNSNES} ${RUNSNES}/snes ${SMW_ROOT} ${SMW_ROOT}/src)
+target_include_directories(smw_cosim_ref PRIVATE ${RUNSNES} ${RUNSNES}/cpu
+    ${RUNSNES}/debug ${RUNSNES}/desktop ${RUNSNES}/mods ${RUNSNES}/state ${RUNSNES}/util ${RUNSNES}/snes ${SMW_ROOT} ${SMW_ROOT}/src)
 target_compile_definitions(smw_cosim_ref PRIVATE SNES_COSIM SNES_COSIM_REF SNESRECOMP_TRACE=0 SDL_MAIN_HANDLED)
 if(NOT MSVC)
     target_compile_options(smw_cosim_ref PRIVATE -w -Wno-implicit-function-declaration)

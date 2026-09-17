@@ -3,7 +3,7 @@
 vs the bsnes oracle, for SNES Axis-5 (PPU/video) verification.
 
 Capture sides (both emit raw 256x224 BGRX = XRGB8888 byte order):
-  recomp : debug-server `dump_frame_raw <N> <abs_path>` (runner/src/debug_server.c),
+  recomp : debug-server `dump_frame_raw <N> <abs_path>` (runner/src/debug/debug_server.c),
            a NON-PAUSING present-time capture. Run the game in AUTHENTIC mode
            (config.ini Widescreen=0, NoSpriteLimits=0) or the 256-wide crop grabs
            the 16:9 left-extension and won't match.

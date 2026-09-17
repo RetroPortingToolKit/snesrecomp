@@ -12,7 +12,7 @@ if(SNESRECOMP_ENABLE_LUA)
     file(GLOB _snes_lua_sources "${snes_lua_SOURCE_DIR}/src/*.c")
     list(FILTER _snes_lua_sources EXCLUDE REGEX "/(lua|luac)\\.c$")
     add_library(snesrecomp_lua STATIC ${_snes_lua_sources}
-        ${CMAKE_CURRENT_LIST_DIR}/src/lua_bridge.c)
+        ${CMAKE_CURRENT_LIST_DIR}/src/debug/lua_bridge.c)
     target_include_directories(snesrecomp_lua PRIVATE "${snes_lua_SOURCE_DIR}/src")
     target_compile_definitions(snesrecomp_lua PUBLIC SNESRECOMP_ENABLE_LUA=1)
     if(WIN32)

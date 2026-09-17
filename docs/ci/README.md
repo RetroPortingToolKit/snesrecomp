@@ -22,7 +22,7 @@ cmake -S . -B build-ci -DCMAKE_BUILD_TYPE=Release -DSNESRECOMP_SETUP_HOST=ON
 ```
 
 `snesrecomp_target_generated_code(<target> src/gen)` (runner.cmake) sees an
-empty `src/gen/` plus that option and links `runner/src/setup_host_dispatch.c`
+empty `src/gen/` plus that option and links `runner/src/cpu/setup_host_dispatch.c`
 — empty dispatch tables — instead of failing configure. `SnesInit()` in that
 build refuses to boot a guest at all and says why. Nothing in the binary can
 run guest code with an invented result; its only reachable path is the

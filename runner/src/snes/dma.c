@@ -11,7 +11,7 @@
 #include "snes.h"
 #include "ppu.h"
 #include "sdd1.h"
-#include "../debug_server.h"
+#include "../debug/debug_server.h"
 
 extern Ppu *g_ppu;
 static DmaVramNotifyHook g_vram_notify_hook;

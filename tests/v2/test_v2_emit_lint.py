@@ -88,7 +88,7 @@ CPU_FIELD_RE = re.compile(r'\bcpu->(\w+)')
 
 
 def _cpu_state_h() -> pathlib.Path:
-    """Locate runner/src/cpu_state.h. snesrecomp is a self-contained
+    """Locate runner/src/cpu/cpu_state.h. snesrecomp is a self-contained
     subrepo, so this path is reachable from any of __file__'s ancestors
     that contains a `runner/` dir."""
     candidates: list[pathlib.Path] = []
@@ -101,7 +101,7 @@ def _cpu_state_h() -> pathlib.Path:
         if c in seen:
             continue
         seen.add(c)
-        cand = c / 'runner' / 'src' / 'cpu_state.h'
+        cand = c / 'runner' / 'src' / 'cpu' / 'cpu_state.h'
         if cand.exists():
             return cand
     return pathlib.Path('/nonexistent')

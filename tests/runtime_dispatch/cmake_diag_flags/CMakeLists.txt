@@ -10,13 +10,13 @@ include("${SNESRECOMP_ROOT}/runner/runner.cmake")
 
 add_executable(cmake_diagnostic_gates
     "${SNESRECOMP_ROOT}/tests/runtime_dispatch/diagnostic_gates_test.c"
-    "${SNESRECOMP_ROOT}/runner/src/common_cpu_infra.c")
+    "${SNESRECOMP_ROOT}/runner/src/cpu/common_cpu_infra.c")
 target_include_directories(cmake_diagnostic_gates PRIVATE
     ${SNESRECOMP_RUNNER_INCLUDE_DIRS})
 target_compile_options(cmake_diagnostic_gates PRIVATE
     -Wall -Wextra -Werror -ffunction-sections -fdata-sections)
 get_source_file_property(_diag_gate_defs
-    "${SNESRECOMP_ROOT}/runner/src/common_cpu_infra.c"
+    "${SNESRECOMP_ROOT}/runner/src/cpu/common_cpu_infra.c"
     COMPILE_DEFINITIONS)
 if(_diag_gate_defs)
     set_source_files_properties(

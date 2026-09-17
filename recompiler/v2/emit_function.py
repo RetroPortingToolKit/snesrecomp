@@ -1326,7 +1326,7 @@ def emit_function(rom: bytes, bank: int, start: int,
         # unresolvable goto — disambiguating sibling variants that
         # happen to share source PCs. The trap returns NORMAL after
         # capture (Release path) or aborts (Oracle/debug); see
-        # runner/src/cpu_trace.c.
+        # runner/src/debug/cpu_trace.c.
         # Braced compound statement (mirrors _tail_call_stmt): `prefix` may
         # be a conditional, and the explicit RecompStackPop replaces the
         # per-line scanner's auto-injection (the line no longer starts with

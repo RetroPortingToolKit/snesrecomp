@@ -711,10 +711,10 @@ tier sites with valid targets.
   `psxrecomp\docs\overlay-recompilation-design.md`, `overlay-plan.md`;
   `runtime\src\{overlay_loader,overlay_sljit,dirty_ram_interp,code_provider,
   autocompile,overlay_capture}.c`.
-- **snesrecomp bridge anchors:** `runner/src/cpu_state.h` (`CpuState`,
+- **snesrecomp bridge anchors:** `runner/src/cpu/cpu_state.h` (`CpuState`,
   `RecompReturn`, `cpu_dispatch_pc`, `cpu_push_*_frame`, `host_return_valid`),
-  `runner/src/cpu_state.c` (`cpu_read8/16`, `cpu_write8/16`, `cpu_dispatch_pc`).
-- **Trap sites:** `runner/src/cpu_trace.c` (`cpu_trace_dispatch_oob`),
+  `runner/src/cpu/cpu_state.c` (`cpu_read8/16`, `cpu_write8/16`, `cpu_dispatch_pc`).
+- **Trap sites:** `runner/src/debug/cpu_trace.c` (`cpu_trace_dispatch_oob`),
   `src/gen/unresolved_stubs_v2.c`, game `src/gen_stubs.c` (WRAM-code HLE).
 - **Recompiler feedback:** `tools/v2_regen.py` (`_autopromote_targets`,
   `_STUB_MARKERS` lint), `recompiler/v2/cfg_loader.py` (directive grammar),

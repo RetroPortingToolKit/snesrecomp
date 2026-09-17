@@ -165,35 +165,35 @@ function(snesrecomp_target_sdl target)
 endfunction()
 
 set(SNESRECOMP_RUNNER_SOURCES
-    ${SNESRECOMP_RUNNER_ROOT}/src/common_cpu_infra.c
-    ${SNESRECOMP_RUNNER_ROOT}/src/common_rtl.c
-    ${SNESRECOMP_RUNNER_ROOT}/src/widescreen.c
-    ${SNESRECOMP_RUNNER_ROOT}/src/recomp_hw.c
-    ${SNESRECOMP_RUNNER_ROOT}/src/framedump.c
-    ${SNESRECOMP_RUNNER_ROOT}/src/host_paths.c
-    ${SNESRECOMP_RUNNER_ROOT}/src/launcher.c
-    ${SNESRECOMP_RUNNER_ROOT}/src/launcher_cache.c
-    ${SNESRECOMP_RUNNER_ROOT}/src/launcher_picker.c
-    ${SNESRECOMP_RUNNER_ROOT}/src/rom_image_verify.c
-    ${SNESRECOMP_RUNNER_ROOT}/src/crc32.c
-    ${SNESRECOMP_RUNNER_ROOT}/src/sha256.c
-    ${SNESRECOMP_RUNNER_ROOT}/src/keybinds.c
-    ${SNESRECOMP_RUNNER_ROOT}/src/snes_overlay_draw.c
-    ${SNESRECOMP_RUNNER_ROOT}/src/snes_runahead.c
-    ${SNESRECOMP_RUNNER_ROOT}/src/snes_savestate_menu.c
-    ${SNESRECOMP_RUNNER_ROOT}/src/snes_osd.c
-    ${SNESRECOMP_RUNNER_ROOT}/src/snes_rewind.c
-    ${SNESRECOMP_RUNNER_ROOT}/src/cpu_state.c
-    ${SNESRECOMP_RUNNER_ROOT}/src/cpu_trace.c
-    ${SNESRECOMP_RUNNER_ROOT}/src/audio_trace.c
-    ${SNESRECOMP_RUNNER_ROOT}/src/ppu_dma_trace.c
-    ${SNESRECOMP_RUNNER_ROOT}/src/host_report.c
-    ${SNESRECOMP_RUNNER_ROOT}/src/execution_mode.c
-    ${SNESRECOMP_RUNNER_ROOT}/src/mod_audio.c
-    ${SNESRECOMP_RUNNER_ROOT}/src/host_mesh.c
-    ${SNESRECOMP_RUNNER_ROOT}/src/host_mesh_builder.c
-    ${SNESRECOMP_RUNNER_ROOT}/src/guarded_patch.c
-    ${SNESRECOMP_RUNNER_ROOT}/src/util.c
+    ${SNESRECOMP_RUNNER_ROOT}/src/cpu/common_cpu_infra.c
+    ${SNESRECOMP_RUNNER_ROOT}/src/cpu/common_rtl.c
+    ${SNESRECOMP_RUNNER_ROOT}/src/desktop/widescreen.c
+    ${SNESRECOMP_RUNNER_ROOT}/src/cpu/recomp_hw.c
+    ${SNESRECOMP_RUNNER_ROOT}/src/debug/framedump.c
+    ${SNESRECOMP_RUNNER_ROOT}/src/desktop/host_paths.c
+    ${SNESRECOMP_RUNNER_ROOT}/src/desktop/launcher.c
+    ${SNESRECOMP_RUNNER_ROOT}/src/desktop/launcher_cache.c
+    ${SNESRECOMP_RUNNER_ROOT}/src/desktop/launcher_picker.c
+    ${SNESRECOMP_RUNNER_ROOT}/src/util/rom_image_verify.c
+    ${SNESRECOMP_RUNNER_ROOT}/src/util/crc32.c
+    ${SNESRECOMP_RUNNER_ROOT}/src/util/sha256.c
+    ${SNESRECOMP_RUNNER_ROOT}/src/desktop/keybinds.c
+    ${SNESRECOMP_RUNNER_ROOT}/src/desktop/snes_overlay_draw.c
+    ${SNESRECOMP_RUNNER_ROOT}/src/state/snes_runahead.c
+    ${SNESRECOMP_RUNNER_ROOT}/src/desktop/snes_savestate_menu.c
+    ${SNESRECOMP_RUNNER_ROOT}/src/desktop/snes_osd.c
+    ${SNESRECOMP_RUNNER_ROOT}/src/state/snes_rewind.c
+    ${SNESRECOMP_RUNNER_ROOT}/src/cpu/cpu_state.c
+    ${SNESRECOMP_RUNNER_ROOT}/src/debug/cpu_trace.c
+    ${SNESRECOMP_RUNNER_ROOT}/src/debug/audio_trace.c
+    ${SNESRECOMP_RUNNER_ROOT}/src/debug/ppu_dma_trace.c
+    ${SNESRECOMP_RUNNER_ROOT}/src/debug/host_report.c
+    ${SNESRECOMP_RUNNER_ROOT}/src/cpu/execution_mode.c
+    ${SNESRECOMP_RUNNER_ROOT}/src/mods/mod_audio.c
+    ${SNESRECOMP_RUNNER_ROOT}/src/mods/host_mesh.c
+    ${SNESRECOMP_RUNNER_ROOT}/src/mods/host_mesh_builder.c
+    ${SNESRECOMP_RUNNER_ROOT}/src/mods/guarded_patch.c
+    ${SNESRECOMP_RUNNER_ROOT}/src/util/util.c
     # SNES hardware model
     ${SNESRECOMP_RUNNER_ROOT}/src/snes/apu.c
     ${SNESRECOMP_RUNNER_ROOT}/src/snes/cart.c
@@ -294,7 +294,7 @@ if(SNESRECOMP_ENABLE_TRACE)
     # this: -DSNESRECOMP_ENABLE_TRACE=ON did not build, it only failed.
     add_compile_definitions(SNESRECOMP_TRACE=1)
     list(APPEND SNESRECOMP_RUNNER_SOURCES
-        ${SNESRECOMP_RUNNER_ROOT}/src/debug_server.c
+        ${SNESRECOMP_RUNNER_ROOT}/src/debug/debug_server.c
         ${SNESRECOMP_RUNNER_ROOT}/src/desktop/post_mortem.c
         # debug_server.c's on-demand dump calls recomp_post_mortem_dump(), and
         # this is the only translation unit that defines it. It is not in the
@@ -318,8 +318,8 @@ option(SNESRECOMP_ENABLE_MODS
     OFF)
 if(SNESRECOMP_ENABLE_MODS)
     list(APPEND SNESRECOMP_RUNNER_SOURCES
-        ${SNESRECOMP_RUNNER_ROOT}/src/mod_runtime.cpp
-        ${SNESRECOMP_RUNNER_ROOT}/src/snes_text_xlate.cpp
+        ${SNESRECOMP_RUNNER_ROOT}/src/mods/mod_runtime.cpp
+        ${SNESRECOMP_RUNNER_ROOT}/src/mods/snes_text_xlate.cpp
     )
     set(CMAKE_CXX_STANDARD 17)
     set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -352,8 +352,8 @@ endif()
 option(SNES_COSIM "Build the differential co-simulation engine (DEV ONLY)" OFF)
 if(SNES_COSIM)
     list(APPEND SNESRECOMP_RUNNER_SOURCES
-        ${SNESRECOMP_RUNNER_ROOT}/src/cosim.c
-        ${SNESRECOMP_RUNNER_ROOT}/src/cosim_state.c
+        ${SNESRECOMP_RUNNER_ROOT}/src/debug/cosim.c
+        ${SNESRECOMP_RUNNER_ROOT}/src/debug/cosim_state.c
     )
     add_compile_definitions(SNES_COSIM)
     if(WIN32)
@@ -378,8 +378,8 @@ else()
     message(STATUS "SNES frame fingerprints: disabled (production)")
 endif()
 set_property(SOURCE
-    ${SNESRECOMP_RUNNER_ROOT}/src/common_rtl.c
-    ${SNESRECOMP_RUNNER_ROOT}/src/debug_server.c
+    ${SNESRECOMP_RUNNER_ROOT}/src/cpu/common_rtl.c
+    ${SNESRECOMP_RUNNER_ROOT}/src/debug/debug_server.c
     APPEND PROPERTY COMPILE_DEFINITIONS
     SNESRECOMP_FRAME_FINGERPRINTS=${_SNESRECOMP_FRAME_FINGERPRINTS})
 unset(_SNESRECOMP_FRAME_FINGERPRINTS)
@@ -398,7 +398,7 @@ else()
     message(STATUS "SNES PPU/DMA history: disabled (production)")
 endif()
 set_property(SOURCE
-    ${SNESRECOMP_RUNNER_ROOT}/src/ppu_dma_trace.c
+    ${SNESRECOMP_RUNNER_ROOT}/src/debug/ppu_dma_trace.c
     APPEND PROPERTY COMPILE_DEFINITIONS
     SNESRECOMP_PPU_DMA_HISTORY=${_SNESRECOMP_PPU_DMA_HISTORY})
 unset(_SNESRECOMP_PPU_DMA_HISTORY)
@@ -417,7 +417,7 @@ else()
     message(STATUS "SNES dispatch history: disabled (production)")
 endif()
 set_property(SOURCE
-    ${SNESRECOMP_RUNNER_ROOT}/src/cpu_state.c
+    ${SNESRECOMP_RUNNER_ROOT}/src/cpu/cpu_state.c
     APPEND PROPERTY COMPILE_DEFINITIONS
     SNESRECOMP_DISPATCH_HISTORY=${_SNESRECOMP_DISPATCH_HISTORY})
 unset(_SNESRECOMP_DISPATCH_HISTORY)
@@ -488,13 +488,13 @@ message(STATUS
     "cpu_hw=${_SNESRECOMP_CPU_HW_DIAGNOSTICS}; "
     "spc=${_SNESRECOMP_SPC_DIAGNOSTICS}")
 set_property(SOURCE
-    ${SNESRECOMP_RUNNER_ROOT}/src/common_cpu_infra.c
+    ${SNESRECOMP_RUNNER_ROOT}/src/cpu/common_cpu_infra.c
     APPEND PROPERTY COMPILE_DEFINITIONS
     SNESRECOMP_FUNC_SNAPSHOT=${_SNESRECOMP_FUNC_SNAPSHOT}
     SNESRECOMP_STACK_BALANCE_DIAGNOSTICS=${_SNESRECOMP_STACK_BALANCE_DIAGNOSTICS}
     SNESRECOMP_BOOT_WATCHDOG_DIAGNOSTICS=${_SNESRECOMP_BOOT_WATCHDOG_DIAGNOSTICS})
 set_property(SOURCE
-    ${SNESRECOMP_RUNNER_ROOT}/src/cpu_state.c
+    ${SNESRECOMP_RUNNER_ROOT}/src/cpu/cpu_state.c
     APPEND PROPERTY COMPILE_DEFINITIONS
     SNESRECOMP_CPU_HW_DIAGNOSTICS=${_SNESRECOMP_CPU_HW_DIAGNOSTICS})
 set_property(SOURCE
@@ -549,14 +549,28 @@ endif()
 message(STATUS
     "SNES audio trace history: ${_SNESRECOMP_AUDIO_HISTORY}")
 set_property(SOURCE
-    ${SNESRECOMP_RUNNER_ROOT}/src/audio_trace.c
+    ${SNESRECOMP_RUNNER_ROOT}/src/debug/audio_trace.c
     APPEND PROPERTY COMPILE_DEFINITIONS
     SNESRECOMP_AUDIO_TRACE_HISTORY=${_SNESRECOMP_AUDIO_HISTORY_VALUE})
 unset(_SNESRECOMP_AUDIO_HISTORY)
 unset(_SNESRECOMP_AUDIO_HISTORY_VALUE)
 
+# runner/src is organised into layer folders (cpu/, debug/, desktop/, mods/,
+# netplay/, lobby/, state/, util/, snes/). The layering is for readers; the
+# sources still include their siblings by bare filename ("common_rtl.h"), so
+# every layer folder stays on the search path. Adding a folder here is what
+# makes a new layer usable; a game picks all of them up through this one
+# variable rather than naming runner/src subdirectories itself.
 set(SNESRECOMP_RUNNER_INCLUDE_DIRS
     ${SNESRECOMP_RUNNER_ROOT}/src
+    ${SNESRECOMP_RUNNER_ROOT}/src/cpu
+    ${SNESRECOMP_RUNNER_ROOT}/src/debug
+    ${SNESRECOMP_RUNNER_ROOT}/src/desktop
+    ${SNESRECOMP_RUNNER_ROOT}/src/lobby
+    ${SNESRECOMP_RUNNER_ROOT}/src/mods
+    ${SNESRECOMP_RUNNER_ROOT}/src/netplay
+    ${SNESRECOMP_RUNNER_ROOT}/src/state
+    ${SNESRECOMP_RUNNER_ROOT}/src/util
     ${SNESRECOMP_RUNNER_ROOT}/src/snes
 )
 
@@ -893,7 +907,7 @@ function(snesrecomp_target_generated_code target gen_dir)
     endif()
 
     target_sources(${target} PRIVATE
-        ${SNESRECOMP_RUNNER_ROOT}/src/setup_host_dispatch.c)
+        ${SNESRECOMP_RUNNER_ROOT}/src/cpu/setup_host_dispatch.c)
     target_compile_definitions(${target} PRIVATE SNESRECOMP_SETUP_HOST=1)
     message(STATUS
         "${target}: SETUP HOST -- no recompiled code; the launcher's Generate & "

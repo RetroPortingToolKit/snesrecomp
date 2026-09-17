@@ -11,9 +11,9 @@ extern unsigned char g_snesrecomp_last_hdmaen;
 #include <stddef.h>
 
 #include "snes.h"
-#include "../debug_server.h"
+#include "../debug/debug_server.h"
 #if SNESRECOMP_ENABLE_MODS
-#include "../snes_text_xlate.h"
+#include "../mods/snes_text_xlate.h"
 #endif
 #include "snes_regs.h"
 #include "ws_shadow.h"

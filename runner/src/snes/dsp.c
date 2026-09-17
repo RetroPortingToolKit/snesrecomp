@@ -9,7 +9,7 @@
 #include "dsp.h"
 #include "dsp_shadow.h"
 #include "apu.h"
-#include "../audio_trace.h"
+#include "../debug/audio_trace.h"
 
 static const int rateValues[32] = {
   0, 2048, 1536, 1280, 1024, 768, 640, 512,

@@ -13,7 +13,7 @@ splits cleanly into:
                    cpu_trace_* stubs). Required by v2.codegen output.
 
 The CpuState struct in V2_PROLOGUE inlines the layout from
-runner/src/cpu_state.h. They MUST stay structurally compatible; the
+runner/src/cpu/cpu_state.h. They MUST stay structurally compatible; the
 v2 codegen emits direct field accesses (`cpu->A`, `cpu->_flag_Z`, etc.)
 so any field rename in the real struct breaks the harness at build
 time, which is the desired failure mode.
@@ -76,7 +76,7 @@ static const uint8_t* RomPtr_7F(uint32_t a) { return &g_ram[0x10000 + a]; }
 # v2 emitter helpers. Required by v2.codegen output.
 #
 # The CpuState struct here MUST mirror the field set of the real struct
-# in runner/src/cpu_state.h. The compiler enforces this at fuzz build
+# in runner/src/cpu/cpu_state.h. The compiler enforces this at fuzz build
 # time: v2.codegen emits direct field accesses (`cpu->A` etc.), and any
 # field rename or removal in the real struct breaks the harness build,
 # which is exactly the warning we want.

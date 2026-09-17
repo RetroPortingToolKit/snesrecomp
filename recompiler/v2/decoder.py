@@ -649,7 +649,7 @@ class SuppressedIndirectCall:
 
     Each suppressed site is recorded here for the build report. Any
     reach of `site_pc24` at runtime is caught by the always-armed
-    phantom-PC trap (runner/src/cpu_trace.c).
+    phantom-PC trap (runner/src/debug/cpu_trace.c).
     """
     site_pc24: int
     table_base: int

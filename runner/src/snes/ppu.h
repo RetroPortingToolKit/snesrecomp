@@ -1,7 +1,7 @@
 #ifndef PPU_H
 #define PPU_H
 
-#include "../types.h"
+#include "../util/types.h"
 
 #include <stdio.h>
 #include <stdlib.h>

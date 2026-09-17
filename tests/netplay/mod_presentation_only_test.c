@@ -3,8 +3,8 @@
  * simulates, may be invisible to the set two netplay peers compare -- but ONLY
  * where the match's authority has granted it.
  *
- *   cc tests/netplay/mod_presentation_only_test.c runner/src/mod_runtime.cpp \
- *      runner/src/crc32.c runner/src/sha256.c -Irunner/src -o /tmp/t && /tmp/t
+ *   cc tests/netplay/mod_presentation_only_test.c runner/src/mods/mod_runtime.cpp \
+ *      runner/src/util/crc32.c runner/src/util/sha256.c -Irunner/src -o /tmp/t && /tmp/t
  *
  * Writes its own catalog and its own selection file, so it needs neither a
  * ROM nor recomp-ui: everything it drives goes through the runtime's own

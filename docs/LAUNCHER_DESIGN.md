@@ -47,10 +47,10 @@ related hooks) — see `docs/RECOMP_NET.md` → "Layering policy".
 
 ## What stayed in snesrecomp
 
-- `runner/src/launcher.c` / `launcher.h` — shared ROM resolution policy
-- `runner/src/launcher_cache.c` — executable-relative `rom.cfg` persistence
-- `runner/src/launcher_picker.c` — native platform file selection
-- `runner/src/rom_image_verify.c` — copier-header stripping and CRC/SHA checks
+- `runner/src/desktop/launcher.c` / `launcher.h` — shared ROM resolution policy
+- `runner/src/desktop/launcher_cache.c` — executable-relative `rom.cfg` persistence
+- `runner/src/desktop/launcher_picker.c` — native platform file selection
+- `runner/src/util/rom_image_verify.c` — copier-header stripping and CRC/SHA checks
   (console-agnostic helpers used when the GUI is skipped with `--no-launcher`)
 - Lobby / netplay backends — `snes_lobby_client.*`, `snes_netplay.*`,
   `snes_host_session.*`, `snes_host_lobby.*`, `snes_host_app.*` (MotK+LAN

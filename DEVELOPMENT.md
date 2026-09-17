@@ -74,7 +74,7 @@ be statically enumerated**, so the enumerated `ptrcall targets:…` form does no
 apply.
 
 ### Existing runtime machinery (already present — reuse it)
-`runner/src/cpu_state.c`:
+`runner/src/cpu/cpu_state.c`:
 - **`cpu_dispatch_pc_from(cpu, pc24, entry_s_for_miss_restore, source_pc24)`** —
   true runtime indirect call: binary-search `g_dispatch_table`, call the correct
   `(m,x)` variant, LoROM bank-mirror fallback, controlled `S`-restore + `NORMAL`

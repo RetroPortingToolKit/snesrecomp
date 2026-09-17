@@ -22,14 +22,14 @@ MARKER = ".snesrecomp_object_variant_stage"
 CONFIG_FILES = ("config.ini", "config.local.ini", "rom.cfg", "keybinds.ini")
 PAYLOAD_DIRS = ("assets", "mods", "saves")
 DEFAULT_VARIANTS = {
-    "base_cpu_state": ("runner/src/cpu_state.c.obj",),
+    "base_cpu_state": ("runner/src/cpu/cpu_state.c.obj",),
     "base_ppu": ("runner/src/snes/ppu.c.obj",),
-    "orig_common_cpu_infra": ("runner/src/common_cpu_infra.c.obj",),
-    "orig_common_rtl": ("runner/src/common_rtl.c.obj",),
+    "orig_common_cpu_infra": ("runner/src/cpu/common_cpu_infra.c.obj",),
+    "orig_common_rtl": ("runner/src/cpu/common_rtl.c.obj",),
     "orig_cpu_core_triple": (
-        "runner/src/common_cpu_infra.c.obj",
-        "runner/src/cpu_state.c.obj",
-        "runner/src/common_rtl.c.obj",
+        "runner/src/cpu/common_cpu_infra.c.obj",
+        "runner/src/cpu/cpu_state.c.obj",
+        "runner/src/cpu/common_rtl.c.obj",
     ),
 }
 WINDOWS_REPARSE_POINT = 0x400
@@ -49,7 +49,7 @@ def parse_args() -> argparse.Namespace:
                    metavar="KEY=PATH",
                    help=("Use PATH for normalized object KEY instead of the "
                          "baseline build object, for example "
-                         "runner/src/cpu_state.c.obj=F:/.../cpu.obj."))
+                         "runner/src/cpu/cpu_state.c.obj=F:/.../cpu.obj."))
     p.add_argument("--execute", action="store_true",
                    help="Actually invoke the generated relink commands.")
     return p.parse_args()

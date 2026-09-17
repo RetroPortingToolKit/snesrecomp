@@ -144,7 +144,7 @@ The co-sim and the interp are DIAGNOSTICS, not production infrastructure.
 ## Build shape
 
 - `runner/src/cosim_state.{c,h}` — the shared full-state hash (this task).
-- `runner/src/cosim.c` — park/step engine + minimal TCP server; poll hooked into the
+- `runner/src/debug/cosim.c` — park/step engine + minimal TCP server; poll hooked into the
   runtime memory-access helpers (`cpu_read/write` in `cpu_state.c`) reading
   `g_cpu.master_cycles` — no regen needed for v1.
 - `snes-cosim` game target (heavy diagnostics OFF, headless, single-thread) gated on a

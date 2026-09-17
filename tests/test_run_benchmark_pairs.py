@@ -335,8 +335,8 @@ def test_object_variant_prepare_dry_run_manifest():
         (current / "CMakeCache.txt").write_text(
             "CMAKE_CXX_COMPILER:STRING=C:/tool/g++.exe\n", encoding="utf-8")
         (current / "build.ninja").write_text(
-            "build Game.exe: RULE CMakeFiles/Game.dir/runner/src/common_cpu_infra.c.obj "
-            "CMakeFiles/Game.dir/runner/src/common_rtl.c.obj\n"
+            "build Game.exe: RULE CMakeFiles/Game.dir/runner/src/cpu/common_cpu_infra.c.obj "
+            "CMakeFiles/Game.dir/runner/src/cpu/common_rtl.c.obj\n"
             "  FLAGS = -O3 -DNDEBUG\n"
             "  LINK_LIBRARIES = -lm C:/libs/libSDL3.dll.a\n",
             encoding="utf-8")
@@ -363,5 +363,5 @@ def test_object_variant_prepare_dry_run_manifest():
         assert (variant_dir / "objects.rsp").exists()
         assert (variant_dir / "libs.rsp").exists()
         assert (variant_dir / "relink.ps1").exists()
-        assert "runner/src/common_cpu_infra.c.obj" in manifest["substitutions"]
+        assert "runner/src/cpu/common_cpu_infra.c.obj" in manifest["substitutions"]
         assert (variant_dir / "config.ini").exists()

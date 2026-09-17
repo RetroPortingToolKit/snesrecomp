@@ -22,9 +22,9 @@ from pathlib import Path
 
 AUDIO_OBJECT_KEY = (
     "CMakeFiles/{target}.dir/F_/Projects/snesrecomp/snesrecomp/"
-    "runner/src/audio_trace.c.obj"
+    "runner/src/debug/audio_trace.c.obj"
 )
-AUDIO_SOURCE = Path("F:/Projects/snesrecomp/snesrecomp/runner/src/audio_trace.c")
+AUDIO_SOURCE = Path("F:/Projects/snesrecomp/snesrecomp/runner/src/debug/audio_trace.c")
 HISTORY_VALUES = {
     "counters": "0",
     "small": "1",

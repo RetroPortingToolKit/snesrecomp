@@ -7,6 +7,23 @@ OUT="${OUT:-$ROOT/build/c-tests}"
 CC="${CC:-gcc}"
 mkdir -p "$OUT"
 
+# runner/src is organised into layer folders; its sources still include each
+# other by bare filename, so every layer stays on the search path. Same list
+# as SNESRECOMP_RUNNER_INCLUDE_DIRS in runner/runner.cmake -- keep them
+# together, or a test builds against a header set the game build does not have.
+RUNNER_INC=(
+    -I "$ROOT/runner/src"
+    -I "$ROOT/runner/src/cpu"
+    -I "$ROOT/runner/src/debug"
+    -I "$ROOT/runner/src/desktop"
+    -I "$ROOT/runner/src/lobby"
+    -I "$ROOT/runner/src/mods"
+    -I "$ROOT/runner/src/netplay"
+    -I "$ROOT/runner/src/state"
+    -I "$ROOT/runner/src/util"
+    -I "$ROOT/runner/src/snes"
+)
+
 LAUNCHER_LIBS=""
 GC_SECTIONS_LINKER="-Wl,--gc-sections"
 FIBER_PLATFORM_FLAGS=""
@@ -17,15 +34,15 @@ esac
 
 echo "=== launcher ==="
 "$CC" -std=c11 -Wall -Wextra -Werror -O1 \
-    -D_POSIX_C_SOURCE=200809L -I "$ROOT/runner/src" \
+    -D_POSIX_C_SOURCE=200809L "${RUNNER_INC[@]}" \
     "$ROOT/tests/launcher/launcher_test.c" \
-    "$ROOT/runner/src/launcher.c" \
-    "$ROOT/runner/src/launcher_cache.c" \
-    "$ROOT/runner/src/launcher_picker.c" \
-    "$ROOT/runner/src/rom_image_verify.c" \
-    "$ROOT/runner/src/host_paths.c" \
-    "$ROOT/runner/src/crc32.c" \
-    "$ROOT/runner/src/sha256.c" \
+    "$ROOT/runner/src/desktop/launcher.c" \
+    "$ROOT/runner/src/desktop/launcher_cache.c" \
+    "$ROOT/runner/src/desktop/launcher_picker.c" \
+    "$ROOT/runner/src/util/rom_image_verify.c" \
+    "$ROOT/runner/src/desktop/host_paths.c" \
+    "$ROOT/runner/src/util/crc32.c" \
+    "$ROOT/runner/src/util/sha256.c" \
     $LAUNCHER_LIBS \
     -o "$OUT/launcher_test"
 "$OUT/launcher_test"
@@ -33,7 +50,7 @@ echo "=== launcher ==="
 echo "=== PPU sprite limits ==="
 "$CC" -std=c11 -Wall -Wextra -O1 \
     -DSNESRECOMP_REVERSE_DEBUG=0 \
-    -I "$ROOT/runner/src" -I "$ROOT/runner/src/snes" \
+    "${RUNNER_INC[@]}" -I "$ROOT/runner/src/snes" \
     "$ROOT/tests/ppu/ppu_sprite_limit_test.c" \
     "$ROOT/runner/src/snes/ppu.c" \
     "$ROOT/runner/src/snes/ppu_legacy.c" \
@@ -41,11 +58,11 @@ echo "=== PPU sprite limits ==="
 "$OUT/ppu_sprite_limit_test"
 
 echo "=== PPU widescreen world-mirror band ==="
-"$CC" -std=c11 -Wall -Wextra -O1     -DSNESRECOMP_REVERSE_DEBUG=0     -I "$ROOT/runner/src" -I "$ROOT/runner/src/snes"     "$ROOT/tests/ppu/ppu_world_mirror_test.c"     "$ROOT/runner/src/snes/ppu.c"     "$ROOT/runner/src/snes/ppu_legacy.c"     -o "$OUT/ppu_world_mirror_test"
+"$CC" -std=c11 -Wall -Wextra -O1     -DSNESRECOMP_REVERSE_DEBUG=0     "${RUNNER_INC[@]}" -I "$ROOT/runner/src/snes"     "$ROOT/tests/ppu/ppu_world_mirror_test.c"     "$ROOT/runner/src/snes/ppu.c"     "$ROOT/runner/src/snes/ppu_legacy.c"     -o "$OUT/ppu_world_mirror_test"
 "$OUT/ppu_world_mirror_test"
 
 echo "=== PPU widescreen elastic anchor band ==="
-"$CC" -std=c11 -Wall -Wextra -O1     -DSNESRECOMP_REVERSE_DEBUG=0     -I "$ROOT/runner/src" -I "$ROOT/runner/src/snes"     "$ROOT/tests/ppu/ppu_elastic_band_test.c"     "$ROOT/runner/src/snes/ppu.c"     "$ROOT/runner/src/snes/ppu_legacy.c"     -o "$OUT/ppu_elastic_band_test"
+"$CC" -std=c11 -Wall -Wextra -O1     -DSNESRECOMP_REVERSE_DEBUG=0     "${RUNNER_INC[@]}" -I "$ROOT/runner/src/snes"     "$ROOT/tests/ppu/ppu_elastic_band_test.c"     "$ROOT/runner/src/snes/ppu.c"     "$ROOT/runner/src/snes/ppu_legacy.c"     -o "$OUT/ppu_elastic_band_test"
 "$OUT/ppu_elastic_band_test"
 
 echo "=== DMA / HDMA ==="
@@ -58,7 +75,7 @@ echo "=== DMA / HDMA ==="
 # lost. Worth reporting there.
 "$CC" -std=c11 -Wall -Wextra -Werror -Wno-error=type-limits -O1 \
     -DSNESRECOMP_REVERSE_DEBUG=0 \
-    -I "$ROOT/runner/src" -I "$ROOT/runner/src/snes" \
+    "${RUNNER_INC[@]}" -I "$ROOT/runner/src/snes" \
     "$ROOT/tests/dma/hdma_test.c" \
     "$ROOT/runner/src/snes/dma.c" \
     "$ROOT/runner/src/snes/sdd1.c" \
@@ -70,7 +87,7 @@ echo "=== DMA / HDMA ==="
     -Wno-error=unused-const-variable -Wno-error=type-limits \
     -DSNESRECOMP_REVERSE_DEBUG=0 \
     -ffunction-sections -fdata-sections \
-    -I "$ROOT/tests/dma" -I "$ROOT/runner/src" -I "$ROOT/runner/src/snes" \
+    -I "$ROOT/tests/dma" "${RUNNER_INC[@]}" -I "$ROOT/runner/src/snes" \
     "$ROOT/tests/dma/hdma_timing_test.c" \
     "$ROOT/runner/src/snes/dma.c" \
     "$ROOT/runner/src/snes/snes.c" \
@@ -82,7 +99,7 @@ echo "=== fiber snapshot (rewindable execution position) ==="
 # Darwin exposes the POSIX context API but marks it deprecated.
 "$CC" $FIBER_PLATFORM_FLAGS -std=c11 -Wall -Wextra -Werror -O1 \
     -D_POSIX_C_SOURCE=200809L \
-    -I "$ROOT/runner/src" -I "$ROOT/runner/src/desktop" \
+    "${RUNNER_INC[@]}" -I "$ROOT/runner/src/desktop" \
     "$ROOT/tests/host/fiber_snapshot_test.c" \
     "$ROOT/runner/src/desktop/fiber_compat.c" \
     -o "$OUT/fiber_snapshot_test"
@@ -106,7 +123,7 @@ echo "=== interpreter and bridge ==="
 
 "$CC" -std=c11 -Wall -Wextra -Wno-unused-parameter -O1 \
     -D_POSIX_C_SOURCE=200809L -DSNESRECOMP_TIER2_TEST=1 \
-    -I "$ROOT/runner/src" -I "$ROOT/runner/src/snes" \
+    "${RUNNER_INC[@]}" -I "$ROOT/runner/src/snes" \
     "$ROOT/tests/interp816/bridge_test.c" \
     "$ROOT/runner/src/snes/interp816.c" \
     "$ROOT/runner/src/snes/tier2_capture.c" \
@@ -117,14 +134,14 @@ echo "=== interpreter and bridge ==="
 
 echo "=== DSP-1 bus/core shell ==="
 "$CC" -std=c11 -Wall -Wextra -Werror -O1 \
-    -I "$ROOT/runner/src" -I "$ROOT/runner/src/snes" \
+    "${RUNNER_INC[@]}" -I "$ROOT/runner/src/snes" \
     "$ROOT/tests/dsp1/dsp1_header_test.c" \
     "$ROOT/runner/src/snes/snes_other.c" \
     -o "$OUT/dsp1_header_test"
 "$OUT/dsp1_header_test"
 
 "$CC" -std=c11 -Wall -Wextra -Werror -O1 \
-    -I "$ROOT/runner/src" -I "$ROOT/runner/src/snes" \
+    "${RUNNER_INC[@]}" -I "$ROOT/runner/src/snes" \
     "$ROOT/tests/dsp1/dsp1_test.c" \
     "$ROOT/runner/src/snes/dsp1.c" \
     "$ROOT/runner/src/snes/dsp1_hle.c" \
@@ -132,7 +149,7 @@ echo "=== DSP-1 bus/core shell ==="
 "$OUT/dsp1_test"
 
 "$CC" -std=c11 -Wall -Wextra -Werror -O1 \
-    -I "$ROOT/runner/src" -I "$ROOT/runner/src/snes" \
+    "${RUNNER_INC[@]}" -I "$ROOT/runner/src/snes" \
     "$ROOT/tests/dsp1/dsp1_hle_test.c" \
     "$ROOT/runner/src/snes/dsp1_hle.c" \
     -lm \
@@ -140,7 +157,7 @@ echo "=== DSP-1 bus/core shell ==="
 "$OUT/dsp1_hle_test"
 
 "$CC" -std=c11 -Wall -Wextra -Werror -O1 \
-    -I "$ROOT/runner/src" -I "$ROOT/runner/src/snes" \
+    "${RUNNER_INC[@]}" -I "$ROOT/runner/src/snes" \
     "$ROOT/tests/dsp1/dsp1_hle_host_test.c" \
     "$ROOT/runner/src/snes/dsp1.c" \
     "$ROOT/runner/src/snes/dsp1_hle.c" \
@@ -149,7 +166,7 @@ echo "=== DSP-1 bus/core shell ==="
 (cd "$OUT" && env -u SNESRECOMP_DSP1_ROM ./dsp1_hle_host_test)
 
 "$CC" -std=c11 -Wall -Wextra -Werror -O1 \
-    -I "$ROOT/runner/src" -I "$ROOT/runner/src/snes" \
+    "${RUNNER_INC[@]}" -I "$ROOT/runner/src/snes" \
     "$ROOT/tests/dsp1/dsp1_firmware_test.c" \
     "$ROOT/runner/src/snes/dsp1.c" \
     "$ROOT/runner/src/snes/dsp1_hle.c" \
@@ -159,14 +176,14 @@ echo "=== DSP-1 bus/core shell ==="
 
 echo "=== SA-1 CPU, mapping and peripherals ==="
 "$CC" -std=c11 -Wall -Wextra -Werror -O1 \
-    -I "$ROOT/runner/src" -I "$ROOT/runner/src/snes" \
+    "${RUNNER_INC[@]}" -I "$ROOT/runner/src/snes" \
     "$ROOT/tests/sa1/sa1_header_test.c" \
     "$ROOT/runner/src/snes/snes_other.c" \
     -o "$OUT/sa1_header_test"
 "$OUT/sa1_header_test"
 
 "$CC" -std=c11 -Wall -Wextra -Werror -O1 \
-    -I "$ROOT/runner/src" -I "$ROOT/runner/src/snes" \
+    "${RUNNER_INC[@]}" -I "$ROOT/runner/src/snes" \
     "$ROOT/tests/sa1/sa1_test.c" \
     "$ROOT/runner/src/snes/sa1.c" \
     "$ROOT/runner/src/snes/interp816.c" \
@@ -175,7 +192,7 @@ echo "=== SA-1 CPU, mapping and peripherals ==="
 
 echo "=== manual joypad serial protocol ==="
 "$CC" -std=c11 -Wall -Wextra -Werror -O1 \
-    -I "$ROOT/runner/src" -I "$ROOT/runner/src/snes" \
+    "${RUNNER_INC[@]}" -I "$ROOT/runner/src/snes" \
     "$ROOT/tests/joypad/manual_joypad_test.c" \
     "$ROOT/runner/src/snes/joypad.c" \
     -o "$OUT/manual_joypad_test"
@@ -183,7 +200,7 @@ echo "=== manual joypad serial protocol ==="
 
 echo "=== automatic joypad register byte order ==="
 "$CC" -std=c11 -Wall -Wextra -Werror -O1 \
-    -I "$ROOT/runner/src" -I "$ROOT/runner/src/snes" \
+    "${RUNNER_INC[@]}" -I "$ROOT/runner/src/snes" \
     "$ROOT/tests/joypad/auto_joypad_test.c" \
     "$ROOT/runner/src/snes/joypad.c" \
     -o "$OUT/auto_joypad_test"
@@ -191,7 +208,7 @@ echo "=== automatic joypad register byte order ==="
 
 echo "=== Super Multitap protocol ==="
 "$CC" -std=c11 -Wall -Wextra -Werror -O1 \
-    -I "$ROOT/runner/src" -I "$ROOT/runner/src/snes" \
+    "${RUNNER_INC[@]}" -I "$ROOT/runner/src/snes" \
     "$ROOT/tests/joypad/multitap_test.c" \
     "$ROOT/runner/src/snes/joypad.c" \
     -o "$OUT/multitap_test"
@@ -199,9 +216,9 @@ echo "=== Super Multitap protocol ==="
 
 echo "=== runtime dispatch ==="
 "$CC" -std=c11 -Wall -Wextra -ffunction-sections -fdata-sections \
-    -I "$ROOT/runner/src" -I "$ROOT/runner/src/snes" \
+    "${RUNNER_INC[@]}" -I "$ROOT/runner/src/snes" \
     "$ROOT/tests/runtime_dispatch/known_lle_entry_test.c" \
-    "$ROOT/runner/src/cpu_state.c" \
+    "$ROOT/runner/src/cpu/cpu_state.c" \
     "$ROOT/runner/src/snes/cart.c" \
     "$ROOT/runner/src/snes/sdd1.c" \
     "$ROOT/runner/src/snes/cx4.c" \
@@ -215,22 +232,22 @@ echo "=== runtime dispatch ==="
 echo "=== production diagnostic gates ==="
 "$CC" -std=c11 -Wall -Wextra -Werror \
     -ffunction-sections -fdata-sections \
-    -I "$ROOT/runner/src" -I "$ROOT/runner/src/snes" \
+    "${RUNNER_INC[@]}" -I "$ROOT/runner/src/snes" \
     "$ROOT/tests/runtime_dispatch/diagnostic_gates_test.c" \
-    "$ROOT/runner/src/common_cpu_infra.c" \
+    "$ROOT/runner/src/cpu/common_cpu_infra.c" \
     $GC_SECTIONS_LINKER -o "$OUT/diagnostic_gates_test"
 "$OUT/diagnostic_gates_test"
 
 echo "=== rollback state digest ==="
 "$CC" -std=c11 -Wall -Wextra -Werror -O1 \
-    -I "$ROOT/runner/src" -I "$ROOT/runner/src/snes" \
+    "${RUNNER_INC[@]}" -I "$ROOT/runner/src/snes" \
     "$ROOT/tests/netplay/rb_state_digest_test.c" \
     "$ROOT/runner/src/netplay/snes_state_digest.c" \
     "$ROOT/runner/src/snes/joypad.c" \
     "$ROOT/runner/src/snes/apu.c" \
     "$ROOT/runner/src/snes/spc.c" \
     "$ROOT/runner/src/snes/dsp.c" \
-    "$ROOT/runner/src/crc32.c" \
+    "$ROOT/runner/src/util/crc32.c" \
     -o "$OUT/rb_state_digest_test"
 "$OUT/rb_state_digest_test"
 
@@ -238,7 +255,7 @@ echo "=== APU guest-time pacing ==="
 "$CC" -std=c11 -Wall -Wextra -Werror \
     -Wno-error=unknown-pragmas -Wno-error=comment \
     -ffunction-sections -fdata-sections \
-    -I "$ROOT/runner/src" -I "$ROOT/runner/src/snes" \
+    "${RUNNER_INC[@]}" -I "$ROOT/runner/src/snes" \
     "$ROOT/tests/runtime_dispatch/apu_port_guest_time_test.c" \
     "$ROOT/runner/src/snes/apu.c" \
     "$ROOT/runner/src/snes/spc.c" \
@@ -248,17 +265,17 @@ echo "=== APU guest-time pacing ==="
 
 echo "=== benchmark helper ==="
 "$CC" -std=c11 -Wall -Wextra -Werror -O1 \
-    -I "$ROOT/runner/src" \
+    "${RUNNER_INC[@]}" \
     "$ROOT/tests/benchmark/benchmark_helper_test.c" \
-    "$ROOT/runner/src/benchmark.c" \
+    "$ROOT/runner/src/debug/benchmark.c" \
     -o "$OUT/benchmark_helper_test_phaseoff"
 "$OUT/benchmark_helper_test_phaseoff"
 
 "$CC" -std=c11 -Wall -Wextra -Werror -O1 \
     -DSNESRECOMP_BENCHMARK_PHASES=1 \
-    -I "$ROOT/runner/src" \
+    "${RUNNER_INC[@]}" \
     "$ROOT/tests/benchmark/benchmark_helper_test.c" \
-    "$ROOT/runner/src/benchmark.c" \
+    "$ROOT/runner/src/debug/benchmark.c" \
     -o "$OUT/benchmark_helper_test_phaseon"
 "$OUT/benchmark_helper_test_phaseon"
 
@@ -267,9 +284,9 @@ for mode in 0 1 2 3; do
     "$CC" -std=c11 -Wall -Wextra -Werror -O1 \
         -D_POSIX_C_SOURCE=200809L \
         -DSNESRECOMP_AUDIO_TRACE_HISTORY="$mode" \
-        -I "$ROOT/runner/src" \
+        "${RUNNER_INC[@]}" \
         "$ROOT/tests/audio/audio_trace_history_test.c" \
-        "$ROOT/runner/src/audio_trace.c" \
+        "$ROOT/runner/src/debug/audio_trace.c" \
         -o "$OUT/audio_trace_history_test_$mode"
     (cd "$OUT" && "./audio_trace_history_test_$mode")
 done
@@ -282,9 +299,9 @@ for mode in 0 1 2 3; do
         -DSNESRECOMP_AUDIO_TRACE_TEST_WALL_MS=1 \
         -DSNESRECOMP_AUDIO_TRACE_TEST_FOPEN=1 \
         -DSNESRECOMP_AUDIO_TRACE_TEST_GETENV=1 \
-        -I "$ROOT/runner/src" \
+        "${RUNNER_INC[@]}" \
         "$ROOT/tests/audio/audio_trace_clock_gate_test.c" \
-        "$ROOT/runner/src/audio_trace.c" \
+        "$ROOT/runner/src/debug/audio_trace.c" \
         -o "$OUT/audio_trace_clock_gate_test_$mode"
     (cd "$OUT" && env -u SNESRECOMP_AUDIO_STATS \
         "./audio_trace_clock_gate_test_$mode" off)
@@ -312,7 +329,7 @@ echo "=== lobby mod plan (match_caps.mods wire shape) ==="
 # the same guard define and include roots the runner build uses.
 "$CC" -std=c11 -Wall -Wextra -O1 \
     -D_POSIX_C_SOURCE=200809L -DSNES_HAS_LOBBY_CLIENT=1 \
-    -I "$ROOT/runner/src" -I "$ROOT/runner/src/lobby" \
+    "${RUNNER_INC[@]}" -I "$ROOT/runner/src/lobby" \
     -I "$ROOT/runner/src/lobby/ws" -I "$ROOT/lib/recomp-net/include" \
     "$ROOT/tests/netplay/lobby_mod_plan_test.c" \
     "$ROOT/lib/recomp-net/src/chat/rnet_chat_filter.c" \
@@ -334,9 +351,9 @@ elif pkg-config --exists sdl2 2>/dev/null; then
 fi
 if [ -n "$KB_SDL_LIBS" ]; then
     "$CC" -std=c11 -Wall -Wextra -O1 $KB_SDL_DEF $KB_SDL_CFLAGS \
-        -I "$ROOT/runner/src" \
+        "${RUNNER_INC[@]}" \
         "$ROOT/tests/joypad/keybinds_runner_layout_test.c" \
-        "$ROOT/runner/src/keybinds.c" \
+        "$ROOT/runner/src/desktop/keybinds.c" \
         $KB_SDL_LIBS -o "$OUT/keybinds_runner_layout_test"
     ( cd "$OUT" && ./keybinds_runner_layout_test )
 else
@@ -350,11 +367,11 @@ echo "=== mod runtime: presentation_only is not compared by netplay ==="
 # $OUT by the test itself, so this stays ROM-free and leaves nothing in the
 # source tree.
 "${CXX:-g++}" -std=c++17 -Wall -Wextra -O1 \
-    -I "$ROOT/runner/src" \
+    "${RUNNER_INC[@]}" \
     -x c++ "$ROOT/tests/netplay/mod_presentation_only_test.c" \
-    "$ROOT/runner/src/mod_runtime.cpp" \
-    "$ROOT/runner/src/crc32.c" \
-    "$ROOT/runner/src/sha256.c" \
+    "$ROOT/runner/src/mods/mod_runtime.cpp" \
+    "$ROOT/runner/src/util/crc32.c" \
+    "$ROOT/runner/src/util/sha256.c" \
     -o "$OUT/mod_presentation_only_test"
 rm -rf "$OUT/mod_presentation_only_fixture"
 "$OUT/mod_presentation_only_test" "$OUT/mod_presentation_only_fixture"
@@ -378,10 +395,10 @@ fi
 if [ -n "$OSD_SDL_LIBS" ]; then
     # shellcheck disable=SC2086
     "$CC" -std=c11 -Wall -Wextra -O1 \
-        -I "$ROOT/runner/src" -I "$ROOT/runner/src/desktop" \
+        "${RUNNER_INC[@]}" -I "$ROOT/runner/src/desktop" \
         $OSD_SDL_CFLAGS $OSD_SDL_BACKEND \
         "$ROOT/tests/osd/osd_test.c" \
-        "$ROOT/runner/src/snes_osd.c" \
+        "$ROOT/runner/src/desktop/snes_osd.c" \
         $OSD_SDL_LIBS -o "$OUT/osd_test"
     "$OUT/osd_test"
 else
@@ -402,16 +419,16 @@ echo "=== rewind ring (ordering, clamping, what commit discards) ==="
 # The snapshot API is stubbed, so this tests the ring rather than re-testing
 # the save format the save-state menu already exercises.
 "$CC" -std=gnu11 -Wall -Wextra -O1 -D_GNU_SOURCE \
-    -I "$ROOT/runner/src" \
+    "${RUNNER_INC[@]}" \
     "$ROOT/tests/rewind/rewind_test.c" \
-    "$ROOT/runner/src/snes_rewind.c" \
-    "$ROOT/runner/src/snes_overlay_draw.c" \
+    "$ROOT/runner/src/state/snes_rewind.c" \
+    "$ROOT/runner/src/desktop/snes_overlay_draw.c" \
     -o "$OUT/rewind_test"
 "$OUT/rewind_test"
 
 echo "=== Super FX state and presentation isolation ==="
 "$CC" -std=c11 -Wall -Wextra -Werror -O1 \
-    -I "$ROOT/runner/src" \
+    "${RUNNER_INC[@]}" \
     "$ROOT/tests/superfx/enhancement_opt_in_test.c" \
     "$ROOT/runner/src/snes/superfx.c" \
     -o "$OUT/superfx_state_test"

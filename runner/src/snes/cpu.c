@@ -14,8 +14,8 @@
 #include <stddef.h>
 #include "cpu.h"
 #include "snes.h"
-#include "../types.h"
-#include "../common_rtl.h"
+#include "../util/types.h"
+#include "../cpu/common_rtl.h"
 #include "variables.h"
 
 Cpu* cpu_init(void) {

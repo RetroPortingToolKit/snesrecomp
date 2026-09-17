@@ -150,7 +150,7 @@ The synthetic test ROMs validate the *authority model*. This step validates
 the **recomp's actually-emitted `cpu->cycles`** against bsnes over **real game
 code** (Zelda: ALttP). Two new pieces:
 
-1. **Recomp side (`runner/src/debug_server.c`, dev-only).** An always-on
+1. **Recomp side (`runner/src/debug/debug_server.c`, dev-only).** An always-on
    per-block cycle ring records `(pc24, cpu->cycles)` at every block leader
    (`debug_server_on_trace_block`, *before* the block's `cpu->cycles += const`
    charge — same fetch-boundary semantics as the bsnes `CPU::main` latch).

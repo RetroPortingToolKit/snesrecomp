@@ -6,7 +6,7 @@
 #include <stdlib.h>
 
 #include "dsp.h"
-#include "../audio_trace.h"
+#include "../debug/audio_trace.h"
 
 DspShadow* dsp_shadow_create(void) {
   const char* e = getenv("SNESRECOMP_AUDIO_SHADOW");

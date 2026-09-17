@@ -472,10 +472,11 @@ void snes_savestate_menu_poll_nav(uint32_t inputs, uint32_t ticks_ms)
     pressed = inputs & ~prev;
     s_prev_inputs = inputs;
 
-    /* Select+R closes as well as opens, so the gesture is its own toggle and
-     * a player who opened it by accident undoes it the same way. */
-    if ((pressed & SSM_OPEN_GESTURE) &&
-        (inputs & SSM_OPEN_GESTURE) == SSM_OPEN_GESTURE) {
+    /* The open gesture closes as well as opens, so it is its own toggle and
+     * a player who opened it by accident undoes it the same way. With the pad
+     * gesture disabled (mask 0) `pressed & 0` is 0, so this never fires. */
+    if ((pressed & s_open_gesture) &&
+        (inputs & s_open_gesture) == s_open_gesture) {
         snes_savestate_menu_close();
         return;
     }

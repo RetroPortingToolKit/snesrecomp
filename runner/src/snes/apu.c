@@ -11,7 +11,7 @@
 #include "snes.h"
 #include "spc.h"
 #include "dsp.h"
-#include "../audio_trace.h"
+#include "../debug/audio_trace.h"
 
 #ifndef SNESRECOMP_TRACE
 #define SNESRECOMP_TRACE 0

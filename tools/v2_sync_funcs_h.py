@@ -99,7 +99,7 @@ def emit_funcs_h(items: list) -> str:
     lines.append('void RunOneFrameOfGame_Internal(void);')
     lines.append('')
     lines.append('/* Watchdog hook called at every block label. Implemented in')
-    lines.append(' * snesrecomp/runner/src/common_cpu_infra.c.')
+    lines.append(' * snesrecomp/runner/src/cpu/common_cpu_infra.c.')
     lines.append(' */')
     lines.append('void WatchdogCheck(void);')
     lines.append('')

@@ -8,7 +8,7 @@
 #include <stdlib.h>
 #include <string.h>
 
-#include "../host_paths.h"
+#include "../desktop/host_paths.h"
 
 #define IDENT_SECTION "[Netplay]"
 #define IDENT_KEY     "PlayerName"

@@ -10,7 +10,7 @@ endif()
 include("${SNESRECOMP_ROOT}/runner/runner.cmake")
 
 get_source_file_property(_audio_trace_defs
-    "${SNESRECOMP_ROOT}/runner/src/audio_trace.c"
+    "${SNESRECOMP_ROOT}/runner/src/debug/audio_trace.c"
     COMPILE_DEFINITIONS)
 if(NOT _audio_trace_defs)
     message(FATAL_ERROR "audio_trace.c has no COMPILE_DEFINITIONS")

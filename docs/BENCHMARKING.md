@@ -43,7 +43,7 @@ stream at normal presentation pace.
 Headless title hosts may also keep older positional forms for local smoke
 tests, but new benchmark-capable hosts should accept the shared form above.
 If a title checkout is still pinned to an older vendored framework without
-`runner/src/benchmark.c` and `runner/src/benchmark.h`, it should compile
+`runner/src/debug/benchmark.c` and `runner/src/debug/benchmark.h`, it should compile
 without the helper and simply omit the `SNESRECOMP_BENCHMARK` line until the
 framework pin is updated or `SNESRECOMP_ROOT` is pointed at a newer checkout.
 
@@ -167,7 +167,7 @@ produced
 SHA-256 `1A8FB06A30893F3C5D873B57B00BB8D31EA0B35357069949D2BAEF9F07230597`.
 Compile-command audit found zero generated objects with benchmark macros;
 current compiled `src/main.c` with `SNESRECOMP_HAS_BENCHMARK_HELPER=1` and
-`runner/src/benchmark.c` with `SNESRECOMP_BENCHMARK_PHASES=0`, while the
+`runner/src/debug/benchmark.c` with `SNESRECOMP_BENCHMARK_PHASES=0`, while the
 baseline compiled `src/main.c` with `SNESRECOMP_HAS_BENCHMARK_HELPER=0`.
 
 SMW native paced correctness with BMP/WRAM/APURAM tracing used frames
@@ -914,7 +914,7 @@ for build in map(pathlib.Path, sys.argv[1:]):
                    "SNESRECOMP_BENCHMARK" in e["command"])]
     consumer = [e for e in db
                 if e["file"].replace("\\", "/").endswith(("/src/main.c", "/src/headless_main.c"))]
-    bench = [e for e in db if e["file"].replace("\\", "/").endswith("/runner/src/benchmark.c")]
+    bench = [e for e in db if e["file"].replace("\\", "/").endswith("/runner/src/debug/benchmark.c")]
     if bad_gen:
         raise SystemExit(f"{build}: generated benchmark defs: {bad_gen[:3]}")
     if bench and not all("SNESRECOMP_BENCHMARK_PHASES=" in e["command"] for e in bench):
@@ -1100,8 +1100,8 @@ These commands do not launch title binaries and can be run outside the quiet
 timing window:
 
 ```powershell
-git diff --check -- runner/src/audio_trace.c runner/src/audio_trace.h `
-  runner/src/common_rtl.c runner/src/snes/interp_bridge.c `
+git diff --check -- runner/src/debug/audio_trace.c runner/src/debug/audio_trace.h `
+  runner/src/cpu/common_rtl.c runner/src/snes/interp_bridge.c `
   tests/audio/audio_trace_history_test.c `
   tests/runtime_dispatch/apu_port_diag_getenv_test.c `
   tests/runtime_dispatch/run_diagnostic_gates_test.ps1 `
@@ -1122,7 +1122,7 @@ tests/runtime_dispatch/run_diagnostic_gates_test.ps1
 
 # Audio trace history modes, using the MinGW compiler configured for the title
 # builds. Compile and run SNESRECOMP_AUDIO_TRACE_HISTORY=0,1,2,3 against:
-# tests/audio/audio_trace_history_test.c runner/src/audio_trace.c
+# tests/audio/audio_trace_history_test.c runner/src/debug/audio_trace.c
 
 & py -3 tools/run_benchmark_pairs.py --frames 3000 --pairs 5 ...
 & py -3 tools/run_benchmark_pairs.py --frames 6000 --pairs 5 ...

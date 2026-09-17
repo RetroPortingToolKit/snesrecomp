@@ -16,9 +16,9 @@ is selected and the game contains an MSU-1 driver.
 | Piece | Location |
 |---|---|
 | Register, PCM, resampling, and data-channel core | `runner/src/snes/msu1.{c,h}` |
-| `$2000-$2007` register dispatch | `runner/src/common_rtl.c` |
-| PCM mix after S-DSP rendering | `runner/src/common_rtl.c` |
-| Environment initialization | `runner/src/common_cpu_infra.c` |
+| `$2000-$2007` register dispatch | `runner/src/cpu/common_rtl.c` |
+| PCM mix after S-DSP rendering | `runner/src/cpu/common_rtl.c` |
+| Environment initialization | `runner/src/cpu/common_cpu_infra.c` |
 | Shared CMake source list | `runner/runner.cmake` |
 
 `is_hw_reg()` already routes `$2000-$5FFF` through the hardware-register path,

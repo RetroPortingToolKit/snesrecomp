@@ -16,11 +16,11 @@ the notice to travel with binary distributions, not just source.
 - Upstream: https://github.com/snesrev/zelda3 and https://github.com/snesrev/smw
 - License: **MIT** (both repositories; verified against upstream 2026-09-09)
 - Local scope: the C SNES hardware core under `runner/src/snes/` as vendored by
-  snesrev, plus runtime utilities (`runner/src/util.h` still carries zelda3's
+  snesrev, plus runtime utilities (`runner/src/util/util.h` still carries zelda3's
   `ZELDA3_UTIL_H_` include guard), ROM verification, the SHA-256 helper
-  (`runner/src/sha256.c`), the asymmetric extra-side-space widescreen PPU model
-  (`runner/src/snes/ppu.c`, `runner/src/widescreen.h`), function-boundary
-  conventions, and the default input layout (`runner/src/keybinds.c`).
+  (`runner/src/util/sha256.c`), the asymmetric extra-side-space widescreen PPU model
+  (`runner/src/snes/ppu.c`, `runner/src/desktop/widescreen.h`), function-boundary
+  conventions, and the default input layout (`runner/src/desktop/keybinds.c`).
 
 Individual algorithms inside that core are credited inline to snes9x; the
 upstream 65816 CPU core is separately attributed under

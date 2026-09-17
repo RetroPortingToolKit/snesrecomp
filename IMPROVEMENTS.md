@@ -46,7 +46,7 @@ The Option-2 "PEI-trampoline returns" work (commit `bf8a34b`) already landed
 the entire runtime dispatch surface — so Option-1 is now a **codegen-only**
 change:
 
-- `runner/src/cpu_state.c:289-343`: `g_dispatch_table` (sorted by pc24),
+- `runner/src/cpu/cpu_state.c:289-343`: `g_dispatch_table` (sorted by pc24),
   `_cpu_dispatch_lookup` (binary search + variant pick by runtime m/x +
   LoROM bank-mirror fallback), `cpu_dispatch_pc_from(cpu, pc24,
   entry_s_for_miss_restore, source_pc24)` (miss → return NORMAL → host C
@@ -324,12 +324,12 @@ scheduler's state corrupts quickly.
   rewrite of `_emit_return`.
 - `recompiler/v2/emit_function.py`: `_entry_s` prologue line, HLE
   wrapper frame-pop.
-- `runner/src/cpu_state.h`: `DispatchEntry` typedef,
+- `runner/src/cpu/cpu_state.h`: `DispatchEntry` typedef,
   `cpu_dispatch_pc` declaration, `g_dispatch_table` extern, the
   full rewrite of the "Non-local return signaling" comment.
-- `runner/src/cpu_state.c`: `cpu_dispatch_pc` body +
+- `runner/src/cpu/cpu_state.c`: `cpu_dispatch_pc` body +
   `_cpu_dispatch_lookup` helper.
-- `runner/src/cpu_trace.h`: `BD_EXIT_KIND_TRAMPOLINE` enum value.
+- `runner/src/debug/cpu_trace.h`: `BD_EXIT_KIND_TRAMPOLINE` enum value.
 - `tools/v2_regen.py`: the per-game `<prefix>_dispatch_v2.c` emit
   block (forward decls + sorted dispatch table + sentinel for
   empty-cfg case).
@@ -481,7 +481,7 @@ stronger because it skips the decode entirely).
 
 ## Audio occupancy servo: add an integral term
 
-`rtl_render_native` (`runner/src/common_rtl.c`) steers the DSP output ring
+`rtl_render_native` (`runner/src/cpu/common_rtl.c`) steers the DSP output ring
 toward `RTL_AUDIO_TARGET_NATIVES` (2136 natives, ~67 ms) by trimming how fast
 the consumer drains it. The correction is purely proportional:
 

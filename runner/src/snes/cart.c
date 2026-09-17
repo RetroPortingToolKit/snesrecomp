@@ -3,7 +3,7 @@
 #include <string.h>
 #include <stdint.h>
 #include <stdbool.h>
-#include "../types.h"
+#include "../util/types.h"
 #include "cart.h"
 #include "snes.h"
 #include "superfx.h"
@@ -359,7 +359,7 @@ case CART_CX4:
   }
 }
 
-#include "../cpu_trace.h"
+#include "../debug/cpu_trace.h"
 
 static uint8_t cart_readLorom(Cart* cart, uint8_t bank, uint16_t adr) {
   if(((bank >= 0x70 && bank < 0x7e) || bank >= 0xf0) && adr < 0x8000 && cart->ramSize > 0) {

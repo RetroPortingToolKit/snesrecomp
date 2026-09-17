@@ -135,7 +135,7 @@ flow (branches/JSR/RTI — structurally hard in a single-op harness).
 > **Real-ROM close-out (2026-06-28).** The recomp's *actually-emitted*
 > `cpu->cycles` is now verified against bsnes on **real game code** (Zelda
 > attract), not just synthetic streams. Added a dev-only always-on per-block
-> cycle ring + two-anchor latch in `runner/src/debug_server.c` (`cyc_ring` /
+> cycle ring + two-anchor latch in `runner/src/debug/debug_server.c` (`cyc_ring` /
 > `cyc_anchor` / `cyc_region`), `tools/cyc_watch/ring_pick.py` (picks
 > data-independent regions), and a **TIGHT** anchor latch on both sides (start
 > updates on every hit → last start before end wins; end freezes after — isolates
@@ -632,7 +632,7 @@ guessing again. Two decisive results:
 WAV header for the 32040-rate PCM ring. So every `audio_ab_diff` run resampled the
 recomp 32000→32040 against the 32040 oracle — a systematic ~1250 ppm stretch +
 onset misalignment that **inflated the apparent off-cue**. Fixed the header to
-32040 (`runner/src/audio_trace.c`; dev-only dump path, no player-audio change).
+32040 (`runner/src/debug/audio_trace.c`; dev-only dump path, no player-audio change).
 
 A/B effect (SMW attract vs bsnes), recomp WAV labeled correctly:
 

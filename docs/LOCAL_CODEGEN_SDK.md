@@ -112,7 +112,7 @@ that cannot inherit a fix to it.
 
 A release zip is a **setup pack**: the host built with
 `-DSNESRECOMP_SETUP_HOST=ON` (no `src/gen`, empty dispatch tables from
-`runner/src/setup_host_dispatch.c`, `SnesInit()` refuses to boot), plus the
+`runner/src/cpu/setup_host_dispatch.c`, `SnesInit()` refuses to boot), plus the
 recompiler and source tree. The wizard above is the only path forward in that
 binary. `docs/ci/README.md` covers how CI builds and packages one.
 

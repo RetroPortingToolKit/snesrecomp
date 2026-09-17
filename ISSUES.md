@@ -97,7 +97,7 @@ silence, new song) and a surviving fade can zero global output, taking SFX
 down with it; "never comes back" = within a level no further command is
 sent, so the documented self-heal-at-next-transition never fires.
 
-**Fix:** per-port minimum dwell in `RtlApuWrite` (`runner/src/common_rtl.c`)
+**Fix:** per-port minimum dwell in `RtlApuWrite` (`runner/src/cpu/common_rtl.c`)
 + `APU_PORT_MIN_DWELL`/larger queue in `runner/src/snes/apu.h`. A DISTINCT
 value's scheduled target is floored so the previous distinct value on that
 port holds the bus ≥128 produced-samples (~2 engine poll periods) before
@@ -139,7 +139,7 @@ Zelda 4378, MMX 4379) — every command's fate (SEEN / LOST, with apply
 spacing) is in the ring.
 
 **Proposed hardening (when picked up):** in `RtlApuWrite`
-(`runner/src/common_rtl.c`), when the latency ceiling is clamping (turbo
+(`runner/src/cpu/common_rtl.c`), when the latency ceiling is clamping (turbo
 pressure), enforce a minimum ~2-engine-tick spacing (~128 samples) between
 DISTINCT values applied to the same port and drop middle values of a burst
 instead of compressing all spacing to zero — the engine then reliably sees
