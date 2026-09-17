@@ -58,6 +58,12 @@ uint32_t snes_savestate_menu_filter_guest_input(uint32_t inputs);
 /* Edge-detect the Select + R open gesture on the runner's input word
  * (bit 2 = Select, bit 11 = R). Returns 1 on the frame it opens. Safe to
  * call every frame; does nothing while already open. */
+/* The SNES buttons that open the menu, as the guest input word's own bits.
+ * Defaults to Select+R, the pair this module used before the gesture was
+ * configurable; 0 disables the pad route entirely. Buttons the SNES pad has no
+ * bit for (L3/R3) are the host's business: it gates what it feeds poll_open. */
+void snes_savestate_menu_set_open_gesture(uint32_t mask);
+
 int  snes_savestate_menu_poll_open(uint32_t inputs);
 
 /* Gamepad navigation while open: Up/Down pick a slot (with key repeat),

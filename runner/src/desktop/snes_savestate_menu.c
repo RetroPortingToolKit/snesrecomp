@@ -75,7 +75,18 @@
 #define SSM_BTN_X      (1u << 9)
 #define SSM_BTN_R      (1u << 11)
 
-#define SSM_OPEN_GESTURE (SSM_BTN_SELECT | SSM_BTN_R)
+#define SSM_OPEN_GESTURE_DEFAULT (SSM_BTN_SELECT | SSM_BTN_R)
+
+/* Which SNES buttons open the menu. A variable rather than a constant so the
+ * host can point it at config.ini [Controller] SaveStateMenuGesture; it starts
+ * on the pair this module always used, so a host that never calls the setter
+ * behaves exactly as before. 0 = no pad gesture (keyboard only). */
+static uint32_t s_open_gesture = SSM_OPEN_GESTURE_DEFAULT;
+
+void snes_savestate_menu_set_open_gesture(uint32_t mask)
+{
+    s_open_gesture = mask;
+}
 
 
 static int s_open;
@@ -432,11 +443,13 @@ int snes_savestate_menu_poll_open(uint32_t inputs)
     s_prev_inputs = inputs;
     if (s_open)
         return 0;
-    /* Edge on the pair, not on either button: holding Select through a menu
-     * and then tapping R is a real gesture, and so is the reverse. */
-    if ((inputs & SSM_OPEN_GESTURE) != SSM_OPEN_GESTURE)
+    if (!s_open_gesture)
+        return 0;                       /* pad gesture disabled */
+    /* Edge on the whole gesture, not on any one button: holding Select through
+     * a menu and then tapping R is a real gesture, and so is the reverse. */
+    if ((inputs & s_open_gesture) != s_open_gesture)
         return 0;
-    if ((prev & SSM_OPEN_GESTURE) == SSM_OPEN_GESTURE)
+    if ((prev & s_open_gesture) == s_open_gesture)
         return 0;
     s_open = 1;
     s_status[0] = '\0';

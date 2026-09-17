@@ -1331,7 +1331,16 @@ static void PumpOverlayEvents(bool *running, void (*key_down)(int key, int repea
 static uint16 g_rewind_gesture_pad;      /* SNES_PAD_* bits, all required */
 static uint32 g_rewind_gesture_raw;      /* kGamepadBtn_* bits, all required */
 static bool g_rewind_gesture_ok;
-static void RewindGestureConfigure(void) {
+
+/* Shared by every configurable gesture, so the token vocabulary is defined
+ * once: a second copy would be a second place for "back" to stop meaning
+ * Select. Returns false when the spec says "none".
+ *
+ * `fallback_pad`/`fallback_raw` are what an unusable spec falls back to, which
+ * is the caller's own default rather than a constant here. */
+static bool GestureParse(const char *spec_in, const char *def_spec, const char *label,
+                         const char *key, uint16 fallback_pad, uint32 fallback_raw,
+                         uint16 *out_pad, uint32 *out_raw) {
   static const struct { const char *name; uint16 bit; } kNames[] = {
     { "b", SNES_PAD_B }, { "y", SNES_PAD_Y }, { "select", SNES_PAD_SELECT },
     { "back", SNES_PAD_SELECT }, { "start", SNES_PAD_START },
@@ -1339,17 +1348,16 @@ static void RewindGestureConfigure(void) {
     { "right", SNES_PAD_RIGHT }, { "a", SNES_PAD_A }, { "x", SNES_PAD_X },
     { "l", SNES_PAD_L }, { "r", SNES_PAD_R },
   };
-  char spec[sizeof(g_config.rewind_gesture)];
+  char spec[64];
   int bad = 0, held = 0;
-  g_rewind_gesture_pad = 0;
-  g_rewind_gesture_raw = 0;
-  g_rewind_gesture_ok = false;
-  snprintf(spec, sizeof(spec), "%s", g_config.rewind_gesture[0] ? g_config.rewind_gesture : "Select+R3");
+  *out_pad = 0;
+  *out_raw = 0;
+  snprintf(spec, sizeof(spec), "%s", (spec_in && spec_in[0]) ? spec_in : def_spec);
   for (char *c = spec; *c; c++)
     if (*c >= 'A' && *c <= 'Z') *c = (char)(*c - 'A' + 'a');
   if (!strcmp(spec, "none")) {
-    fprintf(stderr, "[rewind] pad gesture disabled ([Controller] RewindGesture = none)\n");
-    return;
+    fprintf(stderr, "[%s] pad gesture disabled ([Controller] %s = none)\n", label, key);
+    return false;
   }
   for (const char *p = spec; *p; ) {
     char tok[24];
@@ -1360,27 +1368,75 @@ static void RewindGestureConfigure(void) {
     tok[n] = '\0';
     while (*p && *p != '+') ++p;
     if (!tok[0]) continue;
-    if (!strcmp(tok, "r3")) { g_rewind_gesture_raw |= 1u << kGamepadBtn_R3; held++; continue; }
-    if (!strcmp(tok, "l3")) { g_rewind_gesture_raw |= 1u << kGamepadBtn_L3; held++; continue; }
+    if (!strcmp(tok, "r3")) { *out_raw |= 1u << kGamepadBtn_R3; held++; continue; }
+    if (!strcmp(tok, "l3")) { *out_raw |= 1u << kGamepadBtn_L3; held++; continue; }
     int hit = 0;
     for (size_t i = 0; i < sizeof(kNames) / sizeof(kNames[0]); ++i) {
       if (strcmp(tok, kNames[i].name)) continue;
-      g_rewind_gesture_pad |= kNames[i].bit;
+      *out_pad |= kNames[i].bit;
       held++;
       hit = 1;
       break;
     }
     if (!hit) {
-      fprintf(stderr, "[rewind] unknown button \"%s\" in [Controller] RewindGesture\n", tok);
+      fprintf(stderr, "[%s] unknown button \"%s\" in [Controller] %s\n", label, tok, key);
       bad = 1;
     }
   }
+  /* A gesture of fewer than two buttons is refused: one ordinary button
+   * pressed in the middle of a fight is not a gesture, which is how a
+   * per-game host once opened rewind on a boost dash. */
   if (bad || held < 2) {
-    fprintf(stderr, "[rewind] \"%s\" is not a usable gesture; using Select+R3\n", spec);
-    g_rewind_gesture_pad = SNES_PAD_SELECT;
-    g_rewind_gesture_raw = 1u << kGamepadBtn_R3;
+    fprintf(stderr, "[%s] \"%s\" is not a usable gesture; using %s\n", label, spec, def_spec);
+    *out_pad = fallback_pad;
+    *out_raw = fallback_raw;
   }
-  g_rewind_gesture_ok = true;
+  return true;
+}
+
+static void RewindGestureConfigure(void) {
+  g_rewind_gesture_ok =
+      GestureParse(g_config.rewind_gesture, "Select+R3", "rewind", "RewindGesture",
+                   SNES_PAD_SELECT, 1u << kGamepadBtn_R3,
+                   &g_rewind_gesture_pad, &g_rewind_gesture_raw);
+}
+
+/* The save-state menu's gesture. The SNES-bit half goes to the menu module,
+ * which owns the edge detection; the raw half (L3/R3, which the SNES pad has
+ * no bit for) stays here because only the host sees those buttons. */
+static uint16 g_ssm_gesture_pad;
+static uint32 g_ssm_gesture_raw;
+static bool g_ssm_gesture_ok;
+static void SaveStateMenuGestureConfigure(void) {
+  g_ssm_gesture_ok =
+      GestureParse(g_config.savestate_menu_gesture, "Select+R", "savestate",
+                   "SaveStateMenuGesture", SNES_PAD_SELECT | SNES_PAD_R, 0,
+                   &g_ssm_gesture_pad, &g_ssm_gesture_raw);
+  snes_savestate_menu_set_open_gesture(g_ssm_gesture_ok ? g_ssm_gesture_pad : 0u);
+}
+
+/* True while every raw (non-SNES) button of the save-state gesture is held.
+ * With none configured this is vacuously true, so the SNES-bit half alone
+ * decides — which is exactly the old behaviour. */
+static bool SaveStateMenuRawHeld(void) {
+  if (!g_ssm_gesture_raw) return true;
+  return (g_gamepad[0].modifiers & g_ssm_gesture_raw) == g_ssm_gesture_raw;
+}
+
+/* A gesture made only of L3/R3 has no SNES bits at all, so the menu module --
+ * which edge-detects on the guest input word -- can never see it. Detect that
+ * one here and let the host force the menu open, rather than accepting a
+ * config the runner would silently ignore. Edge-triggered, like rewind's. */
+static bool SaveStateMenuRawOnlyPressed(void) {
+  static bool was_held;
+  if (!g_ssm_gesture_ok || g_ssm_gesture_pad || !g_ssm_gesture_raw) {
+    was_held = false;
+    return false;
+  }
+  const bool held = SaveStateMenuRawHeld();
+  const bool pressed = held && !was_held;
+  was_held = held;
+  return pressed;
 }
 /* Edge-triggered: true on the frame the whole gesture becomes held. */
 static bool RewindGesturePressed(void) {
@@ -2285,6 +2341,7 @@ int snesrecomp_desktop_main(const SnesDesktopHostGame *game, int argc, char **ar
       g_config.fullscreen, g_config.enable_audio, g_config.audio_freq,
       g_config.audio_samples);
   RewindGestureConfigure();
+  SaveStateMenuGestureConfigure();
 
 #if SNESRECOMP_ENABLE_MODS
   /* Before the launcher, which needs the provider to show the Mods page.
@@ -3217,11 +3274,22 @@ error_reading:;
     g_rewind_hotkey = 0;
     /* Exactly ONE poll_open per frame: it latches the previous word to edge
      * detect on, so a second call in the same frame eats the edge. */
-    (void)snes_savestate_menu_poll_open(human);
-    if (g_savestate_menu_hotkey) {
+    (void)snes_savestate_menu_poll_open(SaveStateMenuRawHeld() ? human
+                                                                : (human & ~(uint32)g_ssm_gesture_pad));
+    if (g_savestate_menu_hotkey || SaveStateMenuRawOnlyPressed()) {
       g_savestate_menu_hotkey = 0;
-      if (!snes_savestate_menu_is_open())
-        (void)snes_savestate_menu_poll_open(SNES_PAD_SELECT | SNES_PAD_R);
+      if (!snes_savestate_menu_is_open()) {
+        /* Force-open by synthesising the gesture word. With the pad route
+         * disabled there is no word that would pass, so hand the module the
+         * default pair for this one call. */
+        const uint32 word = g_ssm_gesture_ok && g_ssm_gesture_pad
+                                ? (uint32)g_ssm_gesture_pad
+                                : (uint32)(SNES_PAD_SELECT | SNES_PAD_R);
+        snes_savestate_menu_set_open_gesture(word);
+        (void)snes_savestate_menu_poll_open(word);
+        snes_savestate_menu_set_open_gesture(
+            g_ssm_gesture_ok ? (uint32)g_ssm_gesture_pad : 0u);
+      }
     }
     if (snes_savestate_menu_is_open()) {
       RunSavestateMenuLoop(&running);

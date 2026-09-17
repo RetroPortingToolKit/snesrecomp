@@ -411,6 +411,10 @@ static bool HandleIniConfig(int section, const char *key, char *value) {
     if (StringEqualsNoCase(key, "RewindGesture")) {
       snprintf(g_config.rewind_gesture, sizeof(g_config.rewind_gesture), "%s", value);
       return true;
+    } else if (StringEqualsNoCase(key, "SaveStateMenuGesture")) {
+      snprintf(g_config.savestate_menu_gesture, sizeof(g_config.savestate_menu_gesture),
+               "%s", value);
+      return true;
     } else if (StringEqualsNoCase(key, "SourceP1")) {
       g_config.player_src[0] = (int)strtol(value, (char**)NULL, 10);
       return true;

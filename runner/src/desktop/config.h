@@ -93,6 +93,13 @@ typedef struct Config {
    * L3/R3 come from the gamepad itself. */
   char rewind_gesture[64];
 
+  /* The save-state menu's controller gesture, config.ini [Controller]
+   * SaveStateMenuGesture: same spelling as RewindGesture above ("Select+R"
+   * is the default when empty, "none" disables). It was a compile-time
+   * constant in snes_savestate_menu.c until a player had no way to move it
+   * off a pair their game already used. */
+  char savestate_menu_gesture[64];
+
   /* Presentation and emulation options the desktop host offers through the
    * launcher's Display page, persisted by WriteConfigFile:
    *   [Graphics] FrameBlend  average each presented frame with the previous
