@@ -225,6 +225,11 @@ def scan_file(path: pathlib.Path, repo: pathlib.Path, runner_src: pathlib.Path,
     # A file that already builds the full layer list -- the framework's own
     # RUNNER_INC arrays, or anything using the cmake variable -- has made the
     # choice this advises; its first list entry is not a finding.
+    #
+    # The exemption is about the advice only. Whether a RUNNER_INC copy still
+    # matches the list it copied is checked by
+    # tests/v2/test_runner_paths.py::test_runner_include_dirs_agree, because
+    # nothing here can see the other file.
     names_full_list = ("RUNNER_INC" in text
                        or "SNESRECOMP_RUNNER_INCLUDE_DIRS" in text)
     if path.suffix in {".cmake", ".txt", ".sh", ".bash"} and not names_full_list:
