@@ -18,7 +18,7 @@ typedef struct Apu Apu;
 // uint32 wraparound. 8192 samples ≈ 256 ms at 32 kHz — far larger than
 // any single-frame APU catch-up burst, while typical fill stays ~534
 // (one block), so playback latency is unchanged. See the sampleBuffer
-// comment in struct Dsp and the music-tick post-mortem in MMX ISSUES.md.
+// comment in struct Dsp and the music-tick post-mortem in MMX docs/ISSUES.md.
 #define DSP_SAMPLE_RING 8192
 
 typedef struct DspChannel {

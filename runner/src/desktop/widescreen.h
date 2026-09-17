@@ -27,7 +27,7 @@
 // below. See recomp-template/ENHANCEMENTS.md (Rule 1/2) for the discipline.
 //
 // Attribution: the extra-side-space PPU model is reimplemented from snesrev's
-// zelda3 (https://github.com/snesrev/zelda3, MIT); see IMPROVEMENTS.md.
+// zelda3 (https://github.com/snesrev/zelda3, MIT); see docs/IMPROVEMENTS.md.
 
 // True iff widescreen is active this run (i.e. g_ws_extra > 0). Read by the
 // game-logic override snippets the build-time injector adds to generated code.

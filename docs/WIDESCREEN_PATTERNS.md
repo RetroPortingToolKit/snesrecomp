@@ -31,8 +31,11 @@ emitted code and rewrites a value or flag in place:
 The *mechanism* is game-agnostic. Only the anchors are per-title. So the target
 shape is a shared, profile-driven hook layer in the runner — a `WsGameProfile`
 supplying gate, window bases, anchor slack, OAM limits, HUD slots and stage bias —
-with X1 migrated onto it to prove parity, exactly as parallax was generalized out
-of ActRaiser into `runner/src/parallax.c` + `ParallaxProfile`.
+with X1 migrated onto it to prove parity. An earlier draft cited a parallax
+layer generalized out of ActRaiser into `runner/src/parallax.c` +
+`ParallaxProfile` as the precedent to copy; neither exists in this repo,
+psxrecomp, or any checkout here, so treat the shape below as proposed rather
+than as a pattern already proven elsewhere.
 
 Until that extraction happens, a port must at least reproduce every invariant
 below by hand, and say in its own doc which ones it has verified.

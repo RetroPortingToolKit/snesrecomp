@@ -12,7 +12,7 @@ static uint64_t wall_ms(void) { return audio_trace_test_wall_ms(); }
 #endif
 
 #ifdef SNES_COSIM
-/* Co-sim determinism (SNES_COSIM.md, Gate 1): every audio-pacing consumer that
+/* Co-sim determinism (docs/SNES_COSIM.md, Gate 1): every audio-pacing consumer that
  * reads the wall clock (APU catch-up baseline, RtlApuWrite port-write scheduler)
  * would otherwise diverge run-to-run. Replace the host clock at its source with
  * a VIRTUAL clock derived purely from guest execution (the 21.47727 MHz master

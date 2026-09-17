@@ -3,7 +3,7 @@
 recompiler/snes_cycles.py -- Authoritative 65816 / SNES cycle cost model.
 
 This is the SINGLE SOURCE OF TRUTH for cycle accounting, consumed by both
-backends (Axis 2 of SNES_ACCURACY_BURNDOWN.md):
+backends (Axis 2 of docs/SNES_ACCURACY_BURNDOWN.md):
 
   * the v2 recompiler emitter (gen time): folds a block's instructions to a
     per-block integer constant of CPU cycles (near-free; stays fast);

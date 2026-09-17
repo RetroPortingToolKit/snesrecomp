@@ -1,9 +1,10 @@
 # SNES Differential Co-Simulation — design + gates
 
 Full-architectural-state, first-divergence decision procedure for the snesrecomp
-ecosystem. Method (agnostic) = `F:\Projects\recomp-template\DIFFERENTIAL-COSIMULATION.md`;
-SNES instantiation = `.../SNES/DIFFERENTIAL-COSIM-PROPOSAL.md`; proven PSX reference impl
-= `F:\Projects\psxrecomp\_wt-tomba2\psxrecomp\{COSIM_ORACLE.md,cosim.c,cosim_state.c,tools/cosim.py}`.
+ecosystem. Method (agnostic) = `recomp-ai-rules/DIFFERENTIAL-COSIMULATION.md`;
+SNES instantiation = `recomp-ai-rules/SNES/DIFFERENTIAL-COSIM-PROPOSAL.md`; proven PSX
+reference impl = psxrecomp's `COSIM_ORACLE.md` + `cosim.c` / `cosim_state.c` /
+`tools/cosim.py`. All three are sibling checkouts of this repo, not absolute paths.
 
 **Goal = fix audio, but start from the EARLIEST divergence in ANY subsystem.** The tool
 finds whatever splits first, wherever. The `SNES_ACCURACY_BURNDOWN.md` "off-cue not
@@ -143,7 +144,7 @@ The co-sim and the interp are DIAGNOSTICS, not production infrastructure.
 
 ## Build shape
 
-- `runner/src/cosim_state.{c,h}` — the shared full-state hash (this task).
+- `runner/src/debug/cosim_state.{c,h}` — the shared full-state hash (this task).
 - `runner/src/debug/cosim.c` — park/step engine + minimal TCP server; poll hooked into the
   runtime memory-access helpers (`cpu_read/write` in `cpu_state.c`) reading
   `g_cpu.master_cycles` — no regen needed for v1.

@@ -21,8 +21,9 @@ when ALL hold:
 
 Worst-case failure is "the user hears/sees the authentic hardware output," and
 it cannot mask a recompiler bug because the canon path it shadows is still the
-thing being diffed. (Same rule now in `recomp-template/PRINCIPLES.md`,
-"Verified-Enhancement HLE Is Allowed; Load-Bearing HLE Is Not".)
+thing being diffed. (Same rule now in `recomp-ai-rules/PRINCIPLES.md`, "LLE Is the Faithful
+Floor; HLE Is a Gated Optimization Layer, Not a Starting Point" -- renamed
+from "Verified-Enhancement HLE Is Allowed; Load-Bearing HLE Is Not".)
 
 ## What ports verbatim vs what is SNES-specific
 

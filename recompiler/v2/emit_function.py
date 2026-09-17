@@ -887,7 +887,7 @@ def emit_function(rom: bytes, bank: int, start: int,
         # balance); the trailing PLA PLA is the NLR skip. The old per-block
         # "no push/pull in setup" check rejected this pattern, causing the
         # recomp to emit literal pops that consumed caller-frame bytes.
-        # 2026-05-21 fix for Zelda camera axis-swap bug (see ISSUES.md).
+        # 2026-05-21 fix for Zelda camera axis-swap bug (see docs/ISSUES.md).
         setup_pushes = 0
         setup_pulls = 0
         for op in ops[:pla_start]:
@@ -1171,7 +1171,7 @@ def emit_function(rom: bytes, bank: int, start: int,
             'pla_at_start': True,
         }
 
-    # Option-1 cpu->S return-frame ABI (see IMPROVEMENTS.md): the PLA*N NLR
+    # Option-1 cpu->S return-frame ABI (see docs/IMPROVEMENTS.md): the PLA*N NLR
     # idiom is now handled by emitting the PLAs as NORMAL cpu->S pops and
     # letting RTS/RTL consume the exposed return frame (host_return_valid +
     # cpu_dispatch_pc). The detector is retained for DIAGNOSTICS ONLY and no
@@ -2079,7 +2079,7 @@ def emit_function(rom: bytes, bank: int, start: int,
             f'  /* entry_s_offset:{entry_s_offset} — caller left stack imbalanced */')
     else:
         src.append(f'  uint16 _entry_s = cpu->S;')
-    # Option-1 cpu->S return-frame ABI (see IMPROVEMENTS.md): capture whether
+    # Option-1 cpu->S return-frame ABI (see docs/IMPROVEMENTS.md): capture whether
     # a paired host-C caller exists at entry. RTS/RTL may host-return NORMAL
     # only when _hrv==1 AND the stack is balanced (cpu->S == _entry_s);
     # otherwise it dispatches on the popped PC. The caller sets

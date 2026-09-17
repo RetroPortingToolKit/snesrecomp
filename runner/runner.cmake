@@ -344,7 +344,7 @@ if(SNESRECOMP_ENABLE_TRACE AND WIN32)
     list(APPEND SNESRECOMP_RUNNER_LIBRARIES ws2_32 dbghelp)
 endif()
 
-# Differential co-simulation (SNES_COSIM.md): full-state first-divergence oracle.
+# Differential co-simulation (docs/SNES_COSIM.md): full-state first-divergence oracle.
 # DEV/DIAGNOSTICS ONLY — must NEVER be enabled in a shipping Production config.
 # Adds the frame-keyed park/step engine (cosim.c) + canonical state hash
 # (cosim_state.c) + a loopback TCP server; needs ws2_32 on Windows. Defines

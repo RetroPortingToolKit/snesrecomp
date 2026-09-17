@@ -1,11 +1,11 @@
 /*
  * cosim_state.h -- full guest-architectural-state canonical hash for the
- * SNES differential co-simulation (SNES_COSIM.md). ONE module compiled into
+ * SNES differential co-simulation (docs/SNES_COSIM.md). ONE module compiled into
  * BOTH the recomp `snes-cosim` build and the `snes-cosim-ref` (interp816)
  * build, so the two sides hash IDENTICALLY by construction.
  *
  * DEV/DIAGNOSTICS ONLY. Everything here is `#ifdef SNES_COSIM`; it is never
- * compiled into a shipping Production config (SNES_COSIM.md "Production
+ * compiled into a shipping Production config (docs/SNES_COSIM.md "Production
  * discipline"). Zero bytes in released exes.
  *
  * Build selection:

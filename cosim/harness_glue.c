@@ -1,6 +1,6 @@
 /*
  * harness_glue.c -- headless replacements for the SDL/main.c-provided glue the
- * runner references, for the co-simulation A-side (SNES_COSIM.md). Built only
+ * runner references, for the co-simulation A-side (docs/SNES_COSIM.md). Built only
  * with the harness (dev/diagnostics).
  */
 #include <stdio.h>

@@ -6783,7 +6783,7 @@ static void cmd_mx_claim_get_all(const char *args) {
  * cpu->m_flag or cpu->x_flag that occur between two cpu_trace_block
  * hooks WITHOUT a corresponding cpu_trace_px_record (i.e. without
  * going through an emitted SEP/REP/PHP/PLP/RTI/XCE). The DA49 entry
- * in ISSUES.md is the canonical example of the class this catches.
+ * in docs/ISSUES.md is the canonical example of the class this catches.
  *
  *   mx_async_check_arm                    — arm tripwire (clear trip)
  *   mx_async_check_get                    — return current trip snapshot

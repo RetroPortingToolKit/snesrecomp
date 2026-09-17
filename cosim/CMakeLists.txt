@@ -1,4 +1,4 @@
-# Headless SMW co-simulation A-side build (SNES_COSIM.md).
+# Headless SMW co-simulation A-side build (docs/SNES_COSIM.md).
 # DEV/DIAGNOSTICS ONLY. Builds smw_cosim: the SMW recomp runtime with NO SDL /
 # OpenGL / host audio (harness_smw.c replaces main.c), plus the cosim engine.
 #

@@ -81,6 +81,8 @@ statistics are separate and use the existing audio mutex.
 
 ## Final validation sequence
 
+### What must not be counted as a gain
+
 Do not use stale aggregate-regression artifacts for final validation. In the
 September 2026 optimization lane, `build-codex-perf-current-full` executables
 were known bad after address-log initialization was identified as the aggregate
@@ -95,6 +97,8 @@ the CPU write path. Also exclude the earlier stale-object cached-bridge relink
 (`smw_fixedfull_vs_cachedbridge_5pairs.json`) because it linked against the
 wrong object set. The accepted cached-bridge rerun is the `*_wlogrsp.json`
 matrix.
+
+### Accepted and provisional evidence roots
 
 Current accepted/provisional evidence roots:
 
@@ -116,6 +120,8 @@ Those accepted/provisional matrices were run in each title's default
 interpreter-driven scheduler/main-loop with generated AOT call-bounce when a
 `g_dispatch_table` body exists, plus interpreter fallback on misses. Do not
 describe these numbers as pure AOT-only or pure interpreter-only performance.
+
+### Audio-history memory policy: FULL, SMALL and COUNTERS
 
 The audio-history COUNTERS variant is a memory-budget candidate only. It
 removes the 16 MiB PCM ring, 8 MiB event ring, and 160 KiB snapshot ring from
@@ -150,6 +156,8 @@ a runtime environment knob. Runtime audio stats and other cached runtime env
 knobs are resolved once per process, not polled dynamically; in
 COUNTERS/RESERVED builds, `SNESRECOMP_AUDIO_STATS` is resolved on the first
 audio sample, so set it before launch when collecting stats.
+
+### SMW paced-audio native checkpoints
 
 SMW paced-audio native checkpoint (2026-09-05): coherent phase-off desktop
 builds used GCC 15.2.0 from `C:\msys64\mingw64\bin`, Ninja from the same root,
@@ -196,6 +204,8 @@ clear win, with MMX negative enough to fail the acceptance bar, and the helper
 extraction added code size. Keep only the composition regression fixture for
 future candidate-vs-HEAD output checks; do not run final widescreen/native PPU
 performance acceptance for that rejected candidate.
+
+### SMALL promotion artifacts and the correctness milestone
 
 Historical `20260905-dspgate` audio variant artifacts remain evidence for the
 earlier memory and noisy throughput study, but are not final correctness
@@ -262,6 +272,8 @@ without re-crediting the rejected PPU candidate. The PPU source in that final
 tree was the restored original policy body; render correctness gates cover
 hardware output separately.
 
+### The final integration window
+
 Final integration window, 2026-09-05:
 
 - Original94-vs-final retained throughput used phase-off Release builds from
@@ -308,6 +320,8 @@ Final integration window, 2026-09-05:
   one-underrun qualification failure. Track this separately in `beads-23p`.
   Artifact: `build/perf/final_headless_20260905/final_summary.json`, SHA-256
   `3A45E2CAED781F82C335DA4F1EC888ED9223AB68C00589FEF151D839C56B2B36`.
+
+### The staging and capture script
 
 The script below stages native and enabled-widescreen copies, writes the
 effective `config.local.ini` and `mods/state.toml` for each mode, runs paced

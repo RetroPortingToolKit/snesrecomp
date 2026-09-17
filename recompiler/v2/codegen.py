@@ -2112,7 +2112,7 @@ def _emit_return_frame_push(op: 'Call') -> List[str]:
 
     MUST be paired with the always-pop _emit_return; and every OTHER
     invoke path (_emit_dispatch, indirect/tail emitters) must agree on
-    push-vs-no-push or cpu->S leaks. See IMPROVEMENTS.md "Option-1".
+    push-vs-no-push or cpu->S leaks. See docs/IMPROVEMENTS.md "Option-1".
     """
     site = (op.source_pc24 & 0xFFFFFF) if op.source_pc24 is not None else None
     # A direct generated JSR/JSL call always has a paired host-C caller +
@@ -2455,7 +2455,7 @@ def _emit_return(op: Return) -> List[str]:
         # to it via the existing SKIP_N decrement contract, so the ancestor
         # host-returns NORMAL and its caller resumes correctly. (A one-level
         # NORMAL miss-unwind here instead resumes intermediate frames that
-        # hardware skipped — the fish-explosion OAM wipe; see ISSUES.md.)
+        # hardware skipped — the fish-explosion OAM wipe; see docs/ISSUES.md.)
         # Intentionally not gated by cpu_dispatch_has_entry(): a popped PC can
         # be both a valid continuation entry and a return-to-ancestor target.
         "  if (_ret_s != _entry_s) {",

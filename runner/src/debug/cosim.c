@@ -1,6 +1,6 @@
 /*
  * cosim.c -- differential co-simulation park/step engine + TCP server
- * (SNES_COSIM.md). Frame-keyed checkpoint lockstep: the guest PARKS at every
+ * (docs/SNES_COSIM.md). Frame-keyed checkpoint lockstep: the guest PARKS at every
  * checkpoint boundary (every SNES_COSIM_STRIDE frames) and advances only when
  * the coordinator grants budget via `step N`. Compiled into BOTH the recomp
  * `snes-cosim` build and the `snes-cosim-ref` build (shared with cosim_state.c).

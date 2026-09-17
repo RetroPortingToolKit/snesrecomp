@@ -150,9 +150,10 @@ A new tripwire follows the same shape across all of them:
 
 ## Querying tripwires
 
-A minimal Python TCP client lives at
-`SuperMarioWorldRecomp/_triage/probe_mx_claim.py` — adapt it for
-any tripwire by changing the command name. Pattern:
+A minimal Python TCP client was kept at
+`SuperMarioWorldRecomp/_triage/probe_mx_claim.py`. That file is no longer in
+that checkout, so write the three lines yourself rather than hunting for it --
+the protocol is one command per line, reply as JSON. Pattern:
 
 ```python
 python _triage/probe_mx_claim.py mx_async_check_get

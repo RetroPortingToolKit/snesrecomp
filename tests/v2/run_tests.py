@@ -77,6 +77,8 @@ TEST_MODULES = [
     'test_runner_paths',
     # Paths other repositories invoke by name; see tools/README.md.
     'test_published_tools',
+    # Every doc under docs/ must be reachable from its index.
+    'test_docs_index',
 ]
 
 

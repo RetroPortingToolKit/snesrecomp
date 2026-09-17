@@ -2,7 +2,7 @@
 
 Validation harnesses for the shared cycle cost model
 (`recompiler/snes_cycles.py` → `runner/src/snes/snes_cycles.h`). See
-`SNES_ACCURACY_BURNDOWN.md` Axis 2.
+`docs/SNES_ACCURACY_BURNDOWN.md` Axis 2.
 
 ## `cyc_equiv.c` — cycle-equivalence cross-check (step B, first validation)
 

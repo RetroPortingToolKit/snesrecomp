@@ -120,7 +120,7 @@ int g_recomp_stack_top = 0;
  * Used by cpu_resolve_ancestor_skip() to turn a return-to-ancestor RTS
  * (manual PLA/PLX/PLB rebalance to an ancestor's entry level, then RTS)
  * into a SKIP_N non-local return through the existing call-site
- * decrement contract. See ISSUES.md "shared-tail multi-level non-local
+ * decrement contract. See docs/ISSUES.md "shared-tail multi-level non-local
  * return" (the fish-explosion OAM wipe). */
 uint16_t g_cpu_entry_s[RECOMP_STACK_DEPTH];
 /* A forwarding HLE stub has a recomp-stack frame but no generated prologue,

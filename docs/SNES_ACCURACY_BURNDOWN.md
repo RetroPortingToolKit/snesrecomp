@@ -49,7 +49,7 @@ Three cross-cutting rules carried over from psxrecomp `PRINCIPLES.md`:
 |---|---|---|
 | **State / divergence** | `tools/snesref` + **bsnes Accuracy** libretro core | Core-agnostic SDL2 libretro frontend. **Was loading snes9x (approximate); now use `bsnes_libretro.dll`** — same byuu/higan lineage as ares, embeds blargg's cycle-exact S-DSP. Drop-in: `snesref.exe bsnes_libretro.dll rom.sfc`. |
 | **Audio** | bsnes Accuracy via snesref WAV dump | bsnes emits 48000 Hz (internal cycle-exact 32040 DSP, resampled up). See Axis 5. |
-| **Cycle timing** | **bsnes source hook — BUILT + verified (2026-06-27)** | `bsnes_total_guest_cycles()` exported from a patched libretro/bsnes (dev-only clone at `F:\Projects\_bsnes_src`; patch = `tools/cyc_watch/bsnes_cycle_hook.patch`). Monotonic master-clock counter at the `CPU::stepOnce` chokepoint. End-to-end probe confirms **357368 master cyc/frame** = exactly one NTSC frame (262×1364). The psx Beetle `beetle_total_guest_cycles` analog, realized. |
+| **Cycle timing** | **bsnes source hook — BUILT + verified (2026-06-27)** | `bsnes_total_guest_cycles()` exported from a patched libretro/bsnes (dev-only; rebuild from `tools/cyc_watch/bsnes_cycle_hook.patch`, which is the artifact -- the clone location is whatever you check it out to). Monotonic master-clock counter at the `CPU::stepOnce` chokepoint. End-to-end probe confirms **357368 master cyc/frame** = exactly one NTSC frame (262×1364). The psx Beetle `beetle_total_guest_cycles` analog, realized. |
 | **Higher fidelity** | **ares** (standalone) / **Mesen2** (debugger) | ares = gold standard but **no libretro core** (standalone integration only). Mesen2 = best introspection. Reserve for register/DB-level or deep cycle work. |
 
 > **zsnes is NOT a reference** — it is famously inaccurate. snes9x is
@@ -265,8 +265,8 @@ flow (branches/JSR/RTI — structurally hard in a single-op harness).
   plumbing is ready to attach to a real bus or the bsnes hook.
   **bsnes ground-truth hook DONE (2026-06-27):** owner sanctioned large
   dev-only infra (see [[validators-are-dev-only]]); built it. A patched
-  libretro/bsnes (dev-only clone `F:\Projects\_bsnes_src`, reproducible via
-  `tools/cyc_watch/bsnes_cycle_hook.patch` atop @591b7e1) exports
+  libretro/bsnes (dev-only; reproducible via
+  `tools/cyc_watch/bsnes_cycle_hook.patch` atop @591b7e1, into any clone path) exports
   `bsnes_total_guest_cycles()` — a monotonic master-clock counter at the
   `CPU::stepOnce` chokepoint. `tools/cyc_watch/bsnes_cycles_probe.c` verifies
   it end-to-end: 357368 master cyc/frame = exactly one NTSC frame. Required two
@@ -412,7 +412,8 @@ flow (branches/JSR/RTI — structurally hard in a single-op harness).
 Tooling (this worktree):
 - `tools/snesref/frontend.cpp` — bsnes oracle WAV dump (now with periodic header
   patching, so a force-killed headless capture still yields a valid WAV).
-- `tools/audio_ab_diff.py` — **drift-tolerant** A/B analyzer: resamples both to
+- `tools/audio_ab_diff.py` — **NOT IN THIS TREE** (never committed; the
+  capture recipe below cannot run as written). **drift-tolerant** A/B analyzer: resamples both to
   32040, trims silence, FFT cross-correlation alignment, per-window lag→drift,
   spectral-flux onset matching, log-spectral/centroid timbre, click/noise floor.
 
@@ -443,7 +444,9 @@ Results (steady title-music window):
 
 ### Deep tone measurement (2026-06-27) — off-CUE vs off-TONE separated
 
-- **Tooling:** `tools/audio_spectral_ab.py` — drift-tolerant TIMBRE differential
+- **Tooling:** `tools/audio_spectral_ab.py` — **NOT IN THIS TREE** (never
+  committed, so the numbers below are a record, not something you can re-run
+  today) — drift-tolerant TIMBRE differential
   (time-averaged third-octave spectrum, centroid/rolloff/flatness, log-spectral
   distance, spectrogram PNG). scipy + matplotlib.
 - **Result (SMW title vs bsnes):** off-tone IS measurable — LSD **3.7 dB**, recomp

@@ -139,8 +139,10 @@ Lua helpers for continuous emission and holding the normal fire buttons.
 The SMW spike supports stock single-player and rejects co-op builds. Use Lua's
 pause controls: a separate debugger breakpoint or the host pause key can still
 prevent frames from advancing. Lua state is not included in game saves or
-netplay. SMW validates the integration with `tools/lua/validate.py`, including
-real game navigation, spawning, projectile motion and cadence measurements.
+netplay. SMW validated the integration with a `tools/lua/validate.py` covering real
+game navigation, spawning, projectile motion and cadence measurements. That
+script is in neither this repo nor the current SuperMarioWorldRecomp checkout,
+so the coverage is recorded here but not reproducible from it.
 
 The ROM-free TCP regression harness is built with
 `cmake -S tests/lua -B build/lua-on -DSNESRECOMP_ENABLE_LUA=ON`, followed by

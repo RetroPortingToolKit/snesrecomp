@@ -623,7 +623,7 @@ void PpuSetExtraSpace(Ppu *ppu, uint16_t extra);
 void PpuSetExtraSpaceCentered(Ppu *ppu, uint16_t budget);
 
 // Asymmetric per-side widescreen margin (the snesrev/zelda3 model, see
-// attribution in IMPROVEMENTS.md). The centering budget (extraLeftRight) must
+// attribution in docs/IMPROVEMENTS.md). The centering budget (extraLeftRight) must
 // already be set via PpuSetExtraSpaceCentered/PpuSetExtraSpace; this fills the
 // per-frame extraLeftCur/extraRightCur/extraBottomCur within that budget,
 // clamped so the window/sprite/composite paths never read past the

@@ -85,6 +85,14 @@ windows will still prevent correct execution.
   </tr>
 </table>
 
+## Documentation
+
+Every document lives in [`docs/`](docs/README.md), indexed there by what you
+would be doing when you need it. Two worth knowing about before you change
+anything: [`docs/RUNNER_LAYOUT.md`](docs/RUNNER_LAYOUT.md) for where a file
+under `runner/src` belongs, and [`tools/README.md`](tools/README.md) for which
+scripts other repositories invoke by path and therefore cannot be moved.
+
 ## What it is
 
 SNESRecomp turns a ROM into a recompilation project:
@@ -498,7 +506,7 @@ python tools\snes_cosim.py `
 The coordinator injects separate `SNES_COSIM_PORT` values, advances both
 servers at deterministic checkpoints, and stops at the first full-state
 divergence. Run the A-vs-A, B-vs-B, fault-injection, and hash-audit gates in
-[`SNES_COSIM.md`](SNES_COSIM.md) before trusting an A-vs-B result.
+[`docs/SNES_COSIM.md`](docs/SNES_COSIM.md) before trusting an A-vs-B result.
 
 ## Status
 

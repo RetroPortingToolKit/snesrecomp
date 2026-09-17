@@ -2410,7 +2410,7 @@ void cpu_trace_arm_default_watches(void) {
     fprintf(stderr, "[cpu_trace] static M/X claim verifier armed\n");
     /* Auto-arm async m_flag/x_flag write tripwire — catches the class
      * of bug where something asynchronous (NMI/IRQ state restoration
-     * is the prime suspect, per ISSUES.md DA49 entry) flips
+     * is the prime suspect, per docs/ISSUES.md DA49 entry) flips
      * cpu->m_flag or cpu->x_flag without going through an emitted
      * SEP/REP/PHP/PLP/RTI/XCE block. */
     cpu_trace_arm_mx_async_check();

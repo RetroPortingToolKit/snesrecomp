@@ -12,7 +12,7 @@ where it says it is. runner.cmake carries the same check at configure time for
 whoever builds without running the suite.
 
 Prose is deliberately out of scope (see the tool's --include-docs): a doc may
-name a deleted file on purpose, and SNES_ACCURACY_BURNDOWN.md does.
+name a deleted file on purpose, and docs/SNES_ACCURACY_BURNDOWN.md does.
 
 The second gate here is the other half of the same bug. Three shell harnesses
 cannot use ${SNESRECOMP_RUNNER_INCLUDE_DIRS} -- they invoke the compiler

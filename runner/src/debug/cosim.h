@@ -1,5 +1,5 @@
 /*
- * cosim.h -- co-simulation engine hooks (SNES_COSIM.md). DEV/DIAGNOSTICS ONLY.
+ * cosim.h -- co-simulation engine hooks (docs/SNES_COSIM.md). DEV/DIAGNOSTICS ONLY.
  * All no-ops unless built with SNES_COSIM. Called from the recomp runtime
  * (RtlRunFrame) and from the snes-cosim-ref driver.
  */

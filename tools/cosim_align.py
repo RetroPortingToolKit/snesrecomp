@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 cosim_align.py -- find the post-boot frame offset between the recomp A-side and
-the interp816 ref (SNES_COSIM.md task 9). The two boot differently (recomp
+the interp816 ref (docs/SNES_COSIM.md task 9). The two boot differently (recomp
 HLE-boots the APU in one bursty run_frame; the ref runs the real IPL handshake
 over many hardware frames), so their frame counters are offset. This probe
 free-runs each independently, records per-frame subsystem hashes, and searches

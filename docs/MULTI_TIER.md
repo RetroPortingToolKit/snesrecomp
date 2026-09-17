@@ -635,8 +635,8 @@ had silently dropped.
 ### Methodology pivot — holistic tooling, not hand-hunting
 
 Chasing "who should set `$0012`" by hand is a blind gap. Per
-`recomp-template/.../PRINCIPLES.md` (rule 2 state-over-theory, rule 3 first
-divergence, rule 10 build-tools-not-guesswork): the systematic move is a
+`recomp-ai-rules/PRINCIPLES.md` ("Ground Truth", "Find the first
+divergence, not the final visible bug", "Tool Skepticism"): the systematic move is a
 **differential first-divergence finder** — run the recomp and the `snes-oracle`
 (per-frame WRAM trace) over the same input and report the *first frame + address*
 where WRAM diverges. That pinpoints where `$0012` (and any gap) first goes wrong

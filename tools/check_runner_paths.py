@@ -78,7 +78,7 @@ BUILD_SUFFIXES = {".c", ".cc", ".cpp", ".h", ".hh", ".hpp", ".cmake", ".txt",
                   ".cfg", ".bat", ".ps1", ".gradle", ".vcxproj", ".filters"}
 
 # Prose, swept only with --include-docs. Deliberately out of the gate: a doc
-# is allowed to name a file that does not exist -- SNES_ACCURACY_BURNDOWN.md
+# is allowed to name a file that does not exist -- docs/SNES_ACCURACY_BURNDOWN.md
 # names launcher_gui.c precisely to record that it exists on no checkout, and
 # rewriting that sentence would falsify the record rather than fix anything.
 DOC_SUFFIXES = {".md", ".glsl"}

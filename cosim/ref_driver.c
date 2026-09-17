@@ -1,5 +1,5 @@
 /*
- * ref_driver.c -- Track A B-side reference (SNES_COSIM.md): a headless,
+ * ref_driver.c -- Track A B-side reference (docs/SNES_COSIM.md): a headless,
  * deterministic SNES driven by the interp816 65816 interpreter over the
  * runner's OWN device sources (identical struct layouts => the cosim state
  * hash compares directly against the recomp A-side). Accurate H/V timing +

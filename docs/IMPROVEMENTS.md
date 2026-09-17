@@ -26,8 +26,8 @@ against the original ROM under the static-recompilation model rather than
 copying their C; credit and thanks to those authors.
 
 The PPU-level capability lives in the shared runner (`runner/src/snes/ppu.c`
-+ `runner/src/widescreen.{c,h}`); per-game policy lives in each game repo
-behind its own opt-in config (see recomp-template/ENHANCEMENTS.md).
++ `runner/src/desktop/widescreen.{c,h}`); per-game policy lives in each game repo
+behind its own opt-in config (see `recomp-ai-rules/ENHANCEMENTS.md`).
 
 ---
 

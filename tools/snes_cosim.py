@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 snes_cosim.py -- coordinator for the SNES differential co-simulation
-(SNES_COSIM.md). Drives two deterministic instances (A = code under test,
+(docs/SNES_COSIM.md). Drives two deterministic instances (A = code under test,
 B = reference) in frame-keyed checkpoint lockstep on the guest master clock,
 compares full-state chain hashes, and reports the FIRST divergence with a
 per-subsystem sub-hash diff + CPU/device field diff + a window of both rings.
@@ -13,7 +13,7 @@ Two ways to supply each side:
   --a-port N          attach to an already-launched A (default 4500)
   (likewise --b-cmd / --b-port, default 4501)
 
-Gate runs (see SNES_COSIM.md "Validation gates"):
+Gate runs (see docs/SNES_COSIM.md "Validation gates"):
   Gate 1  A-vs-A: point both at the SAME build (recomp).  MUST be 0 divergence.
   Gate 2  B-vs-B: both the ref build.                      MUST be 0 divergence.
   Gate 3  --inject ram:ADDR:VAL (or reg:NAME:VAL) --inject-at CP

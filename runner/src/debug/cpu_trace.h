@@ -996,7 +996,7 @@ int cpu_trace_mx_claim_check(CpuState *cpu, uint32_t pc24, const char *name);
  * didn't, an unexpected (async) writer mutated the flags between two
  * checkpoints. Latches one-shot.
  *
- * Catches the DA49 class of bug documented in ISSUES.md
+ * Catches the DA49 class of bug documented in docs/ISSUES.md
  * (Session 2026-05-16): something — likely NMI/IRQ state restoration —
  * sets cpu->x_flag = 1 mid-function without going through any emitted
  * SEP/REP/PLP/RTI.

@@ -1,6 +1,6 @@
 /*
  * harness_smw.c -- headless, deterministic SMW entry for the differential
- * co-simulation A-side (SNES_COSIM.md). Replaces the SDL/OpenGL main.c: NO
+ * co-simulation A-side (docs/SNES_COSIM.md). Replaces the SDL/OpenGL main.c: NO
  * window, NO host audio sink, NO worker threads — the Gate-1 determinism
  * requirement, satisfied by construction. Boots SMW to attract (no input) and
  * loops RtlRunFrame(0); the cosim engine (cosim_init/cosim_frame, hooked inside

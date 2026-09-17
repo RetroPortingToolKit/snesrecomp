@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Gate runner for the SMW co-simulation A-side (SNES_COSIM.md "Validation gates").
+# Gate runner for the SMW co-simulation A-side (docs/SNES_COSIM.md "Validation gates").
 # Run AFTER building build/smw_cosim.exe. ALL of these must pass before any
 # A-vs-B (recomp-vs-interp816) result is trustworthy — the whole point is that
 # the tool cannot be silently wrong.

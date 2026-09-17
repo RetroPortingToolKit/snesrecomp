@@ -105,7 +105,7 @@ typedef struct CpuState {
     uint8  DB;
     uint8  PB;
 
-    /* Option-1 cpu->S return-frame ABI (see IMPROVEMENTS.md). NON-ZERO
+    /* Option-1 cpu->S return-frame ABI (see docs/IMPROVEMENTS.md). NON-ZERO
      * when the current function was entered via a direct generated JSR/JSL
      * C call (a paired host-C caller exists and pushed a matching return
      * frame on cpu->S) — and the value IS the pushed frame size in bytes:
@@ -155,7 +155,7 @@ typedef struct CpuState {
      * / PB-relative addressing all resolve through the cpu_ helpers. */
     uint8 *ram;
 
-    /* Axis-2 cycle accounting (SNES_ACCURACY_BURNDOWN.md). Cumulative 65816
+    /* Axis-2 cycle accounting (docs/SNES_ACCURACY_BURNDOWN.md). Cumulative 65816
      * CPU (bus) cycles, charged by the v2 emitter as a per-block integer
      * constant (recompiler/snes_cycles.py is the authority; the interp816
      * reference + bsnes hook validate it). One add per block — near-free, the
