@@ -1,4 +1,4 @@
-/* Unit tests for runner/src/host_mesh.{c,h}.
+/* Unit tests for runner/src/mods/host_mesh.{c,h}.
  *
  * Builds small N64MESHB blobs in memory, checks the strict parser rejects
  * malformed input, and renders a two-limb textured model through a simple

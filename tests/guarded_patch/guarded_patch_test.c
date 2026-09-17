@@ -1,4 +1,4 @@
-/* Unit tests for runner/src/guarded_patch.{c,h}. */
+/* Unit tests for runner/src/mods/guarded_patch.{c,h}. */
 #include "guarded_patch.h"
 
 #include <stdio.h>

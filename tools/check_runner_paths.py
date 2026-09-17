@@ -21,6 +21,19 @@ names is not there, and it is repairable when exactly one file under runner/src
 carries that basename. Anything ambiguous is reported and left alone -- this
 tool never guesses which of two same-named files you meant.
 
+Three spellings of a path are understood, and a plain rewrite of the
+"runner/src/<file>.c" string alone would silently miss the last two -- as it
+did for desktop/widescreen.{c,h} and debug/cosim_state.{c,h} after the
+layer-folder move, found only by hand:
+
+    runner/src/<file>.c            one file, one extension
+    runner/src/<file>.{c,h}        a .c/.h pair (or more) named in one mention
+    runner/src/<file>.*            "this stem, whatever extension it has"
+
+A brace mention repairs only when every extension in it lands in the same
+folder; a stem that split across folders is reported, not guessed at.
+(<file> is deliberate here too -- see the anchor-pattern comment below.)
+
 Exit status: 0 when nothing is broken (or --fix repaired everything), 1 when
 broken references remain.
 """
@@ -43,15 +56,44 @@ import sys
 #
 # (Spelled with <file> on purpose: a literal example path here is a reference
 # like any other, and this tool audits itself.)
-#
-# The trailing guard stops `.c` from matching the first three characters of
-# `.cpp`: without it mod_runtime.cpp silently becomes mod_runtime.c + "pp".
-_TAIL = r"(?P<rel>[A-Za-z0-9_./-]+\.(?:c|cc|cpp|h|hh|hpp))(?![A-Za-z0-9_])"
-ANCHORS = [
-    re.compile(r"(?P<anchor>runner/src/)" + _TAIL),
-    re.compile(r"(?P<anchor>\$\{SNESRECOMP_RUNNER_ROOT\}/src/)" + _TAIL),
-    re.compile(r"(?P<anchor>\$\{RUNSNES\}/)" + _TAIL),
+_ANCHOR_PATTERNS = [
+    r"runner/src/",
+    r"\$\{SNESRECOMP_RUNNER_ROOT\}/src/",
+    r"\$\{RUNSNES\}/",
 ]
+
+# Extensions this tool tracks. Shared by all three tail forms below, so
+# widening it once widens brace and glob matching along with the plain one.
+_EXT_ALT = r"c|cc|cpp|h|hh|hpp"
+
+# runner/src/<file>.c -- one file, one extension. The trailing guard stops `.c`
+# from matching the first three characters of `.cpp`: without it
+# mod_runtime.cpp silently becomes mod_runtime.c + "pp".
+_TAIL = r"(?P<rel>[A-Za-z0-9_./-]+\.(?:" + _EXT_ALT + r"))(?![A-Za-z0-9_])"
+
+# runner/src/<file>.{c,h} -- a .c/.h pair (or more) named in one mention rather
+# than repeating the stem. THIRD_PARTY_ATTRIBUTION.md and the accuracy docs
+# use this throughout, and 9448e06's path sweep could not see it: matching
+# the literal "runner/src/<file>.c" string finds nothing in a line that
+# reads "runner/src/<file>.{c,h}". desktop/widescreen.{c,h} and debug/cosim_state.{c,h}
+# both went stale here, silently, for exactly that reason.
+_BRACE_TAIL = (r"(?P<stem>[A-Za-z0-9_./-]+)\.\{(?P<exts>(?:" + _EXT_ALT +
+               r")(?:,(?:" + _EXT_ALT + r"))+)\}")
+
+# runner/src/<file>.* -- "this stem, whatever its extension". Seen in "what was
+# removed" notes, where no extension resolves because nothing under that stem
+# exists any more; existence is checked against every extension above, and
+# it is broken only when none of them do.
+_GLOB_TAIL = r"(?P<stem>[A-Za-z0-9_./-]+)\.\*(?![A-Za-z0-9_.*])"
+
+ANCHORS = [re.compile(f"(?P<anchor>{a})" + _TAIL) for a in _ANCHOR_PATTERNS]
+BRACE_ANCHORS = [re.compile(f"(?P<anchor>{a})" + _BRACE_TAIL)
+                 for a in _ANCHOR_PATTERNS]
+GLOB_ANCHORS = [re.compile(f"(?P<anchor>{a})" + _GLOB_TAIL)
+                for a in _ANCHOR_PATTERNS]
+
+# Tuple form of _EXT_ALT, for the glob form's "does anything resolve" check.
+_KNOWN_EXTS = tuple(_EXT_ALT.split("|"))
 
 # A relative #include from inside runner/src, e.g. #include "../types.h".
 # Bare-filename includes are deliberately not checked: they resolve through
@@ -197,6 +239,82 @@ def scan_file(path: pathlib.Path, repo: pathlib.Path, runner_src: pathlib.Path,
             repaired.append(f"{rel_path}:{ln}: {rel} -> {fixed}")
             return anchor + fixed
         new_text = pattern.sub(sub, new_text)
+
+    for pattern in BRACE_ANCHORS:
+        def sub_brace(mo):
+            stem = mo.group("stem")
+            anchor = mo.group("anchor")
+            exts = mo.group("exts").split(",")
+            rels = [f"{stem}.{e}" for e in exts]
+            if all((runner_src / r).exists() for r in rels):
+                return mo.group(0)
+            ln = line_of(mo.start())
+            braced = "{" + mo.group("exts") + "}"
+            # Every extension resolves somewhere -- either it is already
+            # there, or repair() names where it moved to. The brace form can
+            # only be rewritten as one unit when all of them land in the same
+            # folder; if they do not (or one is simply gone), that is for a
+            # human to split or fix, not this tool to guess at.
+            dirs = set()
+            reasons = []
+            for r in rels:
+                if (runner_src / r).exists():
+                    dirs.add(os.path.dirname(r))
+                    continue
+                fixed = repair(r)
+                if fixed is None:
+                    reasons.append(f"{r} ({why_unrepairable(r)})")
+                else:
+                    dirs.add(os.path.dirname(fixed))
+            if reasons or len(dirs) != 1:
+                detail = "; ".join(reasons) if reasons else (
+                    "extensions resolve to different folders: "
+                    + ", ".join(sorted(dirs)))
+                broken.append(f"{rel_path}:{ln}: {anchor}{stem}.{braced} "
+                              f"-- {detail}")
+                return mo.group(0)
+            new_dir = dirs.pop()
+            new_stem = (f"{new_dir}/{os.path.basename(stem)}" if new_dir
+                       else os.path.basename(stem))
+            if not fix:
+                broken.append(f"{rel_path}:{ln}: {anchor}{stem}.{braced} -> "
+                              f"{new_stem}.{braced}")
+                return mo.group(0)
+            repaired.append(f"{rel_path}:{ln}: {stem}.{braced} -> "
+                            f"{new_stem}.{braced}")
+            return f"{anchor}{new_stem}.{braced}"
+        new_text = pattern.sub(sub_brace, new_text)
+
+    for pattern in GLOB_ANCHORS:
+        def sub_glob(mo):
+            stem = mo.group("stem")
+            anchor = mo.group("anchor")
+            if any((runner_src / f"{stem}.{e}").exists()
+                   for e in _KNOWN_EXTS):
+                return mo.group(0)
+            ln = line_of(mo.start())
+            basename_stem = os.path.basename(stem)
+            # Any unique basename under runner_src whose stem matches,
+            # whatever extension it carries -- that is what ".*" means.
+            dirs = {os.path.dirname(v) for k, v in unique.items()
+                    if os.path.splitext(k)[0] == basename_stem}
+            if not dirs:
+                broken.append(f"{rel_path}:{ln}: {anchor}{stem}.* "
+                              f"(no such file under runner/src)")
+                return mo.group(0)
+            if len(dirs) > 1:
+                broken.append(f"{rel_path}:{ln}: {anchor}{stem}.* "
+                              f"(ambiguous: {', '.join(sorted(dirs))})")
+                return mo.group(0)
+            new_dir = dirs.pop()
+            new_stem = f"{new_dir}/{basename_stem}" if new_dir else basename_stem
+            if not fix:
+                broken.append(f"{rel_path}:{ln}: {anchor}{stem}.* -> "
+                              f"{new_stem}.*")
+                return mo.group(0)
+            repaired.append(f"{rel_path}:{ln}: {stem}.* -> {new_stem}.*")
+            return f"{anchor}{new_stem}.*"
+        new_text = pattern.sub(sub_glob, new_text)
 
     if inside_runner_src:
         here = path.parent
