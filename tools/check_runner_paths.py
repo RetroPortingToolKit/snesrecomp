@@ -37,9 +37,12 @@ import sys
 # the anchor, which is what gets rewritten; the anchor itself is preserved
 # verbatim so ${VAR} spellings, quoting and $ROOT-relative forms survive.
 #
-#   runner/src/x.c                     -- prose, shell, a game CMakeLists
-#   ${SNESRECOMP_RUNNER_ROOT}/src/x.c  -- runner.cmake's own spelling
-#   ${RUNSNES}/x.c                     -- cosim/CMakeLists.txt's alias
+#   runner/src/<file>.c                     -- prose, shell, a game CMakeLists
+#   ${SNESRECOMP_RUNNER_ROOT}/src/<file>.c  -- runner.cmake's own spelling
+#   ${RUNSNES}/<file>.c                     -- cosim/CMakeLists.txt's alias
+#
+# (Spelled with <file> on purpose: a literal example path here is a reference
+# like any other, and this tool audits itself.)
 #
 # The trailing guard stops `.c` from matching the first three characters of
 # `.cpp`: without it mod_runtime.cpp silently becomes mod_runtime.c + "pp".
@@ -82,8 +85,19 @@ DOC_SUFFIXES = {".md", ".glsl"}
 TEXT_SUFFIXES = BUILD_SUFFIXES | DOC_SUFFIXES
 
 
-def find_runner_src(repo: pathlib.Path):
-    """Locate runner/src for `repo` -- its own, or its snesrecomp checkout's."""
+def find_runner_src(repo: pathlib.Path, explicit=None):
+    """Locate runner/src for `repo` -- its own, or its snesrecomp checkout's.
+
+    `explicit` wins when given: a game may build against a framework that is
+    not at <repo>/snesrecomp (SNESRECOMP_ROOT, a worktree, a tool driving this
+    from outside), and auditing a different framework than the one the build
+    actually uses is worse than not auditing.
+    """
+    if explicit is not None:
+        cand = pathlib.Path(explicit).expanduser().resolve()
+        if cand.name != "src":
+            cand = cand / "runner" / "src"
+        return cand if cand.is_dir() else None
     for cand in (repo / "runner" / "src", repo / "snesrecomp" / "runner" / "src"):
         if cand.is_dir():
             return cand
@@ -229,12 +243,14 @@ def scan_file(path: pathlib.Path, repo: pathlib.Path, runner_src: pathlib.Path,
 
 
 def check(repo: pathlib.Path, fix: bool = False, quiet: bool = False,
-          include_docs: bool = False):
+          include_docs: bool = False, runner_src=None):
     """Audit `repo`. Returns the findings left unrepaired."""
-    runner_src = find_runner_src(repo)
+    runner_src = find_runner_src(repo, runner_src)
     if runner_src is None:
         raise SystemExit(f"{repo}: no runner/src here or in snesrecomp/ -- "
-                         f"pass --repo <a snesrecomp checkout or a game repo>")
+                         f"pass --repo <a snesrecomp checkout or a game repo>, "
+                         f"or --runner-src <framework> to name the framework "
+                         f"this repo actually builds against")
     unique, ambiguous = basename_map(runner_src)
     suffixes = TEXT_SUFFIXES if include_docs else BUILD_SUFFIXES
 
@@ -273,6 +289,10 @@ def main() -> int:
         formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--repo", default=None,
                     help="repository to audit (default: this snesrecomp checkout)")
+    ap.add_argument("--runner-src", default=None,
+                    help="the snesrecomp checkout (or its runner/src) to audit "
+                         "against, when the repo does not build against its own "
+                         "snesrecomp/ -- e.g. under SNESRECOMP_ROOT")
     ap.add_argument("--fix", action="store_true",
                     help="rewrite repairable references in place")
     ap.add_argument("--include-docs", action="store_true",
@@ -284,7 +304,8 @@ def main() -> int:
     repo = (pathlib.Path(args.repo).resolve() if args.repo
             else pathlib.Path(__file__).resolve().parent.parent)
     broken = check(repo, fix=args.fix, quiet=args.quiet,
-                   include_docs=args.include_docs)
+                   include_docs=args.include_docs,
+                   runner_src=args.runner_src)
     if broken:
         if not args.quiet:
             print(f"\n{len(broken)} reference(s) still broken.", file=sys.stderr)
