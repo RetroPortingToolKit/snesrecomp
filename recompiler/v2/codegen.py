@@ -1503,6 +1503,10 @@ def _emit_indirect_dispatch(insn) -> List[str]:
     # register as-is to load one byte per parallel table.
     idx_field = 'X' if idx_reg == 'X' else 'Y'
     entry_size = 3 if kind == 'long' else 2
+    # Byte distance from the instruction's operand to entry 0 of the table.
+    # Normally 0; non-zero when the decoder proved (from the cfg data_region
+    # overlay) that the table begins after the operand byte.
+    index_bias = int(getattr(insn, 'dispatch_index_bias', 0) or 0)
     table_bases = tuple(getattr(insn, 'dispatch_table_bases', ()) or ())
     if getattr(insn, 'dispatch_local_goto', False):
         ptr = insn.operand & 0xFFFF
@@ -1746,6 +1750,21 @@ def _emit_indirect_dispatch(insn) -> List[str]:
         lines.append(
             f"  uint16 _idx = (uint16)(cpu->{idx_field} & 0xFFFF);"
             "  /* parallel byte tables: register already holds logical index */"
+        )
+    elif index_bias:
+        # The table does not start at the operand: entry 0 lives `index_bias`
+        # bytes further on, so the selector is biased by that much (Yoshi's
+        # Island names its own RTL byte as the operand and indexes with a
+        # state that steps 1, 3, 5, ...). Subtract before dividing. A
+        # selector below the bias wraps to a huge unsigned index, fails the
+        # `_idx >= _disp_n` guard below, and takes the live-pointer
+        # interpreter path — which is what the hardware would have done with
+        # whatever those bytes are.
+        lines.append(
+            f"  uint16 _idx = (uint16)(((uint16)(cpu->{idx_field} - {index_bias}) "
+            f"& 0xFFFF) / {entry_size});"
+            f"  /* entry_size={entry_size} ({kind}); table starts {index_bias} "
+            f"byte(s) past the operand, so {idx_field} is a biased byte offset */"
         )
     else:
         lines.append(
