@@ -328,8 +328,15 @@ def test_object_variant_prepare_dry_run_manifest():
         baseline = root / "baseline"
         out_root = root / "out"
         target = "Game.exe"
-        cur_obj_dir = current / "CMakeFiles" / "Game.dir" / "runner" / "src"
-        base_obj_dir = baseline / "CMakeFiles" / "Game.dir" / "runner" / "src"
+        # Must match the object paths build.ninja names below, including the
+        # layer folder. Built from components, which is why the runner/src
+        # reorganisation missed it: 9448e06 rewrote the literal
+        # "runner/src/..." strings in this file and could not see a path
+        # spelled as / "runner" / "src".
+        cur_obj_dir = (current / "CMakeFiles" / "Game.dir"
+                       / "runner" / "src" / "cpu")
+        base_obj_dir = (baseline / "CMakeFiles" / "Game.dir"
+                        / "runner" / "src" / "cpu")
         cur_obj_dir.mkdir(parents=True)
         base_obj_dir.mkdir(parents=True)
         (current / "CMakeCache.txt").write_text(

@@ -95,6 +95,15 @@ def main() -> int:
             try:
                 fn()
                 print(f"  PASS  {mod_name}.{attr}")
+            except SystemExit as e:
+                # A tool's CLI-style abort, raised inside a test. Several
+                # tools/ scripts signal errors with raise SystemExit(msg)
+                # instead of an exception. SystemExit derives from
+                # BaseException, so the clause below does not catch it and one
+                # such test kills this process mid-run -- reporting nothing and
+                # silently skipping every test after it. It is a failure.
+                failed += 1
+                print(f"  FAIL  {mod_name}.{attr}: SystemExit: {e}")
             except Exception:
                 failed += 1
                 print(f"  FAIL  {mod_name}.{attr}")

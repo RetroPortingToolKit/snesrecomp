@@ -65,6 +65,18 @@ def main() -> int:
                 print(f'  FAIL  {label}: {e}')
                 fail_log.append((label, str(e)))
                 failed += 1
+            except SystemExit as e:
+                # A tool's CLI-style abort, raised inside a test. Several
+                # tools/ scripts signal errors with raise SystemExit(msg)
+                # rather than an exception -- it reads fine from a shell and
+                # tests/test_run_benchmark_pairs.py asserts on it deliberately.
+                # SystemExit derives from BaseException, so `except Exception`
+                # below does not catch it and one such test used to kill this
+                # process mid-run, reporting nothing and silently skipping
+                # every test after it. It is a failure like any other.
+                print(f'  ERR   {label}: SystemExit: {e}')
+                fail_log.append((label, f'SystemExit: {e}'))
+                failed += 1
             except Exception:
                 print(f'  ERR   {label}')
                 tb = traceback.format_exc()
