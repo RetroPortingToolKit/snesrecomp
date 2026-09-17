@@ -2118,11 +2118,15 @@ static void cmd_frame(const char *args) {
 }
 
 // read_ram: space-separated hex, streamed to handle arbitrary lengths up to
-// full WRAM (128 KB). Format kept for back-compat with existing probe scripts
-// that parse r['hex'].split(). Prior implementation silently clamped to 1024
-// bytes against a fixed 4 KB hex buffer, which masked divergences in any
-// probe requesting a larger range (most notably _probe_bug8_full_wram_diff.py
-// asking for 0x2000 bytes and only comparing the first 0x400).
+// full WRAM (128 KB). Format kept for back-compat with the clients that parse
+// r['hex'].split(): tests/l3/harness.py and its capture/test pair, and
+// tools/sneslib/commands/compare.py. Prior implementation silently clamped to
+// 1024 bytes against a fixed 4 KB hex buffer, which masked divergences in any
+// client asking for a larger range -- found by a probe requesting 0x2000 bytes
+// and comparing only the first 0x400. That probe was
+// tests/l3/_probe_bug8_full_wram_diff.py, deleted in 2b350ea with the rest of
+// the L3 sweep; the clamp it exposed is why this streams, so the finding is
+// recorded here rather than left with the file.
 static void cmd_read_ram(const char *args) {
     unsigned int addr = 0, len = 16;
     sscanf(args, "%x %u", &addr, &len);
