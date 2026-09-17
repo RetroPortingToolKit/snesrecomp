@@ -27,6 +27,7 @@ TEST_MODULES = [
     'test_decoder_runtime_dispatch',
     'test_decoder_constant_z_fold',
     'test_decoder_dispatch_padding_gate',
+    'test_decoder_dispatch_table_alignment',
     'test_decoder_data_region',
     'test_decoder_callee_exit_mx',
     'test_decoder_ambiguous_call_modes',
