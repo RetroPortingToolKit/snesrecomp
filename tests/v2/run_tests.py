@@ -75,6 +75,8 @@ TEST_MODULES = [
     'test_cli_imports',
     # Build files must agree with the tree they describe; see the module.
     'test_runner_paths',
+    # Paths other repositories invoke by name; see tools/README.md.
+    'test_published_tools',
 ]
 
 
