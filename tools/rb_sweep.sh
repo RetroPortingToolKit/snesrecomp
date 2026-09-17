@@ -39,7 +39,16 @@ cells=0
 SNESRC=$(cd "$HERE/.." && pwd)
 echo "pre-flight"
 
-if cc -I "$SNESRC/runner/src" -I "$SNESRC/runner/src/snes" \
+# runner/src is organised into layer folders and its sources include each other
+# by bare filename, so every layer stays on the search path. Same list as
+# SNESRECOMP_RUNNER_INCLUDE_DIRS in runner/runner.cmake.
+RUNNER_INC=(-I "$SNESRC/runner/src" -I "$SNESRC/runner/src/cpu"
+            -I "$SNESRC/runner/src/debug" -I "$SNESRC/runner/src/desktop"
+            -I "$SNESRC/runner/src/lobby" -I "$SNESRC/runner/src/mods"
+            -I "$SNESRC/runner/src/netplay" -I "$SNESRC/runner/src/state"
+            -I "$SNESRC/runner/src/util" -I "$SNESRC/runner/src/snes")
+
+if cc "${RUNNER_INC[@]}" \
       "$SNESRC/tests/cpu/pc24_resumable_test.c" -o "$OUT/pc24_test" 2>"$OUT/pc24_build.log"; then
     if "$OUT/pc24_test" >"$OUT/pc24_test.log" 2>&1; then
         echo "  resume-PC predicate      PASS  ($(grep -c '^  ok' "$OUT/pc24_test.log") cases)"

@@ -73,6 +73,8 @@ TEST_MODULES = [
     'test_host_clock',
     # Shipped entry points must parse; see the module.
     'test_cli_imports',
+    # Build files must agree with the tree they describe; see the module.
+    'test_runner_paths',
 ]
 
 

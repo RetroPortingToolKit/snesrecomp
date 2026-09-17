@@ -301,11 +301,11 @@ if(SNESRECOMP_ENABLE_TRACE)
         # base source list, so a trace build does not link without it.
         ${SNESRECOMP_RUNNER_ROOT}/src/desktop/post_mortem.c
     )
-    if(EXISTS ${SNESRECOMP_RUNNER_ROOT}/src/emu_oracle_cmds.c)
-        list(APPEND SNESRECOMP_RUNNER_SOURCES
-            ${SNESRECOMP_RUNNER_ROOT}/src/emu_oracle_cmds.c
-        )
-    endif()
+    # (The in-process snes9x oracle used to be appended here, behind an
+    # EXISTS guard. b1195e2 removed emu_oracle_cmds.c in favour of the
+    # standalone snes-oracle tool, so the guard has been dead ever since --
+    # silently, which is what an EXISTS guard on a deliberately deleted file
+    # buys you. Deleted rather than left to be re-discovered.)
 endif()
 
 # Schema-driven mod packages and trusted static plugins. This is deliberately
@@ -573,6 +573,50 @@ set(SNESRECOMP_RUNNER_INCLUDE_DIRS
     ${SNESRECOMP_RUNNER_ROOT}/src/util
     ${SNESRECOMP_RUNNER_ROOT}/src/snes
 )
+
+# ── Guard: this file must agree with the tree it describes ──────────────────
+#
+# Moving a runner source between layer folders is a rename with no content
+# change, so nothing downstream objects until a game configures and CMake
+# reports "Cannot find source file" -- ONE file per target, so a list that is
+# thirty entries stale looks like three unrelated bugs, in the GAME's repo,
+# to whoever pulled the framework. That is how the layer-folder reorganisation
+# reached every port.
+#
+# So the list checks itself here, naming every stale entry at once and the
+# tool that repairs them. Cheap: a stat per source, at configure time only.
+set(_snesrecomp_missing_sources)
+foreach(_src IN LISTS SNESRECOMP_RUNNER_SOURCES)
+    if(NOT EXISTS "${_src}")
+        file(RELATIVE_PATH _rel "${SNESRECOMP_RUNNER_ROOT}" "${_src}")
+        list(APPEND _snesrecomp_missing_sources "    ${_rel}")
+    endif()
+endforeach()
+foreach(_dir IN LISTS SNESRECOMP_RUNNER_INCLUDE_DIRS)
+    if(NOT IS_DIRECTORY "${_dir}")
+        file(RELATIVE_PATH _rel "${SNESRECOMP_RUNNER_ROOT}" "${_dir}")
+        list(APPEND _snesrecomp_missing_sources "    ${_rel}/  (include dir)")
+    endif()
+endforeach()
+if(_snesrecomp_missing_sources)
+    list(LENGTH _snesrecomp_missing_sources _n)
+    string(REPLACE ";" "\n" _snesrecomp_missing_report
+        "${_snesrecomp_missing_sources}")
+    get_filename_component(_snesrecomp_repo "${SNESRECOMP_RUNNER_ROOT}" DIRECTORY)
+    message(FATAL_ERROR
+        "snesrecomp: runner.cmake names ${_n} path(s) that do not exist under "
+        "${SNESRECOMP_RUNNER_ROOT}:\n${_snesrecomp_missing_report}\n"
+        "runner/src is organised into layer folders (cpu/, debug/, desktop/, "
+        "lobby/, mods/, netplay/, snes/, state/, util/). A rename that did not "
+        "update this file produces exactly this. Repair every reference in the "
+        "framework with:\n"
+        "    python3 ${_snesrecomp_repo}/tools/check_runner_paths.py --fix\n"
+        "and audit a game repo that names runner sources itself with:\n"
+        "    python3 ${_snesrecomp_repo}/tools/check_runner_paths.py --repo <game>")
+endif()
+unset(_snesrecomp_missing_sources)
+unset(_snesrecomp_missing_report)
+unset(_snesrecomp_repo)
 
 # ── Directories the game loads relative to its executable ───────────────────
 #

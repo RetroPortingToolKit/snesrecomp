@@ -141,6 +141,40 @@ case-sensitive hosts too, so a Linux developer sees it at `cmake` time instead
 of in Windows CI. Call `snesrecomp_guard_header_shadowing(<target>)` directly
 for a target that does not go through the desktop host helper.
 
+### ...and never `runner/src` by hand
+
+`runner/src` is organised into layer folders — `cpu/`, `debug/`, `desktop/`,
+`lobby/`, `mods/`, `netplay/`, `snes/`, `state/`, `util/` — and the runner's
+sources include each other by bare filename, so a header is found only when
+its layer is on the search path. `${SNESRECOMP_RUNNER_INCLUDE_DIRS}` is the
+contract: it lists every layer, and it is the one place a new layer has to be
+added. A target that writes `${SNESRECOMP_ROOT}/runner/src` itself gets a
+directory that contains no headers at all.
+
+The same applies to naming a runner source directly. A game test that compiles,
+say, `snes_overlay_draw.c` must spell the layer (`runner/src/desktop/…`), and a
+file that moves between layers will break it. Two things catch that:
+
+- `runner.cmake` validates its own source list and include directories at
+  configure time, so a stale framework fails with one message naming every
+  stale path, instead of CMake's one-missing-file-per-target.
+- `tools/check_runner_paths.py` audits — and with `--fix` repairs — every
+  reference to a runner source in a repository, using the layout on disk as
+  ground truth:
+
+  ```sh
+  python3 snesrecomp/tools/check_runner_paths.py --repo .      # audit a game
+  python3 snesrecomp/tools/check_runner_paths.py --fix         # repair the framework
+  ```
+
+  It runs as `test_runner_paths` in `tests/v2/run_tests.py`, so the framework
+  cannot ship a layout its own build files disagree with. Run it against your
+  game after any framework bump that moved files.
+
+Both exist because the layer-folder reorganisation shipped as a pure rename
+with no build-file update, and every port that pulled it discovered the damage
+separately, as "Cannot find source file" in its own repo.
+
 ## 5. Regenerating
 
 ```sh
