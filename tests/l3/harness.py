@@ -14,6 +14,29 @@ resulting diff.
 
 Per-game pieces (fixture files, which function to test, expected result
 shape) live in each game's test file. harness.py itself is game-agnostic.
+
+Stepping the two sides equally does NOT put them in the same place
+--------------------------------------------------------------------
+The trap every lockstep test here hits, kept because it is not visible from
+either side on its own. snes9x emulates the SNES from cold boot through some
+number of internal frames inside retro_init / retro_load_game, before the
+first explicit emu_step. Recomp's I_RESET runs inside our first step. So the
+two reach a given game mode from different starting points in the SNES
+timeline, and stepping both n times from "first GM=$07 sighting" leaves
+snes9x already partway through the title-screen input sequence. Both sides
+are individually correct; the step count is simply not a shared clock.
+
+A sync point therefore has to be defined in terms of ROM state, not steps.
+test_attract_demo_golden.py does this with state-based checkpoints, which is
+the approach to copy. The earlier demo_sync.py did it by reading the demo's
+own phase tracker -- TitleInputIndex ($1DF4) and VariousPromptTimer ($1DF5),
+per SMWDisX bank_00:3346-3375 (GM07TitleScreen + WriteControllerInput) --
+and stepping the lagging side until both pairs matched. That module was
+deleted with the probe sweep; this paragraph is the part worth keeping.
+
+Only once both sides sit at the same ROM-defined phase does lockstep produce
+identical demo input, and only then is a subsequent divergence a real
+codegen or runtime bug rather than an artefact of where each side started.
 """
 import functools
 import json
