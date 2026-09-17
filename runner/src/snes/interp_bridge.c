@@ -429,6 +429,15 @@ int interp816_opcode_hook(uint32_t addr) { (void)addr; return 0; }
  * s_lle_sched_depth counts scheduler-mode (yield_pc != 0) frames on the host
  * stack; >0 is the "LLE context" the stubs test to pick unwind over fibers. */
 static int      s_lle_sched_depth   = 0;
+/* The yield contract (PC + handshake flag) of the innermost SCHEDULER frame on
+ * the host stack. A NESTED gap frame runs with yield_pc == 0 and so has no
+ * contract of its own, but it can still walk into the program's cooperative
+ * block point -- and there it must hand the block outward rather than spin on
+ * a flag only the scheduler frame can clear. Saved/restored per scheduler
+ * frame in interp_bridge_run_ex2. */
+static uint32_t s_sched_yield_pc         = 0;
+static uint16_t s_sched_yield_flag_addr  = 0;
+static uint8_t  s_sched_yield_flag_value = 0;
 static int      s_lle_unwind_active = 0;
 static uint32_t s_lle_unwind_pc24   = 0;
 static int      s_lle_unwind_owner_depth = 0;
@@ -1623,6 +1632,63 @@ static int _interp_run_core(CpuState *cpu, uint32_t entry_pc24,
                 return 1;
             }
         }
+        /* A NESTED frame (yield_pc == 0) standing on the active scheduler's
+         * yield PC. It has no yield contract of its own: the handshake flag is
+         * cleared by the NMI the host delivers between scheduler frames, and
+         * this frame is below the scheduler on the host stack, so the host
+         * cannot run until it returns. Interpreting the wait loop here spins to
+         * the step cap, and the cap is a BAIL -- interp_tier_dispatch_balanced
+         * then abandons the site with its handler's side effects skipped, which
+         * is silent state corruption rather than a stall.
+         *
+         * Measured (Super Metroid, Ceres entrance, frame 2619, deterministic
+         * from boot with no input): StartGameplay_Async $80:A07B and
+         * InitAndLoadGameData_Async $82:8000 each reach an unresolved dispatch
+         * that opens a nested frame ($80:A0A7 / $82:8063). Inside it a bounce
+         * into the WaitForNMI HLE arms the LLE yield unwind; this frame -- not
+         * the scheduler -- consumed it and resumed interpreting $80:8338, whose
+         * loop at $80:8343 it can never satisfy. 32k steps later: two abandons,
+         * then ppu_read's `assert(0)` on the state they left behind.
+         *
+         * Hand the block OUTWARD instead: arm the unwind at this PC for the
+         * next frame out and end this one. The tier helper re-emits the
+         * sentinel into its compiled caller, every emitted callsite propagates
+         * it, and the frame that owns the yield contract resumes interpreting
+         * here -- where the wait loop is the contract's own block point and is
+         * serviced normally. A frame between here and the scheduler that also
+         * cannot yield re-arms one level further out, so this walks outward to
+         * the scheduler from any depth. */
+        if (!yield_pc && s_lle_sched_depth > 0 && s_sched_yield_pc &&
+            s_interp_bridge_depth > 1 &&
+            (pc_before & 0x7FFFFF) == (s_sched_yield_pc & 0x7FFFFF)) {
+            const uint8_t _sched_flag =
+                bridge_bus_read(cpu, s_sched_yield_flag_addr);
+            const int _blocked =
+                _sched_flag == s_sched_yield_flag_value ||
+                (steps > 16 &&
+                 bridge_bus_read(cpu, pc_before) == 0xAD &&
+                 bridge_bus_read(cpu, pc_before + 1) ==
+                     (uint8_t)s_sched_yield_flag_addr &&
+                 bridge_bus_read(cpu, pc_before + 2) ==
+                     (uint8_t)(s_sched_yield_flag_addr >> 8) &&
+                 bridge_bus_read(cpu, pc_before + 3) == 0xD0 &&
+                 bridge_bus_read(cpu, pc_before + 4) == 0xFB);
+            if (_blocked) {
+                s_lle_unwind_active = 1;
+                s_lle_unwind_pc24 = pc_before & 0xFFFFFFu;
+                s_lle_unwind_owner_depth = s_interp_bridge_depth - 1;
+                s_lle_unwind_is_deadline = 0;
+                if (_ibrw)
+                    fprintf(stderr,
+                            "[ibr] nested yield hand-off -> $%06X sp=$%04X "
+                            "flag=$%02X owner_depth=%d\n",
+                            (unsigned)s_lle_unwind_pc24, (unsigned)in.sp,
+                            _sched_flag, s_interp_bridge_depth - 1);
+                sync_interp_to_cpu(&in, cpu);
+                bridge_apu_flush(cpu);
+                return 1;
+            }
+        }
         if (yield_pc && !auto_quiescent &&
             (pc_before & 0x7FFFFF) == (yield_pc & 0x7FFFFF)) {
             const uint8_t _yield_flag = bridge_bus_read(cpu, yield_flag_addr);
@@ -2114,9 +2180,13 @@ static int _interp_run_core(CpuState *cpu, uint32_t entry_pc24,
                             in.pc = (uint16)(s_lle_unwind_pc24 & 0xFFFF);
                             if (_ibrw)
                                 fprintf(stderr, "[ibr] yield-unwind -> $%06X "
-                                        "sp=$%04X\n",
+                                        "sp=$%04X yield_pc=$%06X sched=%d "
+                                        "depth=%d\n",
                                         (unsigned)s_lle_unwind_pc24,
-                                        (unsigned)in.sp);
+                                        (unsigned)in.sp,
+                                        (unsigned)yield_pc,
+                                        s_lle_sched_depth,
+                                        s_interp_bridge_depth);
                             continue;
                         }
                         /* Nested non-scheduler frame during an active yield
@@ -2355,6 +2425,14 @@ static int interp_bridge_run_ex2(CpuState *cpu, uint32_t entry_pc24,
 #endif
     g_interp_apu_driving = 1;
     if (yield_pc) s_lle_sched_depth++;
+    const uint32_t _saved_sched_yield_pc    = s_sched_yield_pc;
+    const uint16_t _saved_sched_flag_addr   = s_sched_yield_flag_addr;
+    const uint8_t  _saved_sched_flag_value  = s_sched_yield_flag_value;
+    if (yield_pc && yield_pc != 0xFFFFFFFEu) {
+        s_sched_yield_pc         = yield_pc;
+        s_sched_yield_flag_addr  = yield_flag_addr;
+        s_sched_yield_flag_value = yield_flag_value;
+    }
     const uint16_t _saved_owner_exit_s = s_interp_owner_exit_s;
     const int _saved_owner_exit_valid = s_interp_owner_exit_valid;
     const int _saved_owner_is_scheduler = s_interp_owner_is_scheduler;
@@ -2380,6 +2458,9 @@ static int interp_bridge_run_ex2(CpuState *cpu, uint32_t entry_pc24,
     s_interp_owner_exit_s = _saved_owner_exit_s;
     s_interp_owner_exit_valid = _saved_owner_exit_valid;
     s_interp_owner_is_scheduler = _saved_owner_is_scheduler;
+    s_sched_yield_pc         = _saved_sched_yield_pc;
+    s_sched_yield_flag_addr  = _saved_sched_flag_addr;
+    s_sched_yield_flag_value = _saved_sched_flag_value;
     if (yield_pc) {
         s_lle_sched_depth--;
         /* A pending yield unwind must have been consumed by this frame's

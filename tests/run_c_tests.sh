@@ -7,9 +7,12 @@ OUT="${OUT:-$ROOT/build/c-tests}"
 CC="${CC:-gcc}"
 mkdir -p "$OUT"
 
-LAUNCHER_LIBS=()
+LAUNCHER_LIBS=""
+GC_SECTIONS_LINKER="-Wl,--gc-sections"
+FIBER_PLATFORM_FLAGS=""
 case "$(uname -s)" in
-    MINGW*|MSYS*) LAUNCHER_LIBS=(-lcomdlg32) ;;
+    Darwin) GC_SECTIONS_LINKER="-Wl,-dead_strip"; FIBER_PLATFORM_FLAGS="-Wno-error=deprecated-declarations" ;;
+    MINGW*|MSYS*) LAUNCHER_LIBS="-lcomdlg32" ;;
 esac
 
 echo "=== launcher ==="
@@ -23,7 +26,7 @@ echo "=== launcher ==="
     "$ROOT/runner/src/host_paths.c" \
     "$ROOT/runner/src/crc32.c" \
     "$ROOT/runner/src/sha256.c" \
-    "${LAUNCHER_LIBS[@]}" \
+    $LAUNCHER_LIBS \
     -o "$OUT/launcher_test"
 "$OUT/launcher_test"
 
@@ -72,11 +75,12 @@ echo "=== DMA / HDMA ==="
     "$ROOT/runner/src/snes/dma.c" \
     "$ROOT/runner/src/snes/snes.c" \
     "$ROOT/runner/src/snes/sdd1.c" \
-    -Wl,--gc-sections -o "$OUT/hdma_timing_test"
+    $GC_SECTIONS_LINKER -o "$OUT/hdma_timing_test"
 "$OUT/hdma_timing_test"
 
 echo "=== fiber snapshot (rewindable execution position) ==="
-"$CC" -std=c11 -Wall -Wextra -Werror -O1 \
+# Darwin exposes the POSIX context API but marks it deprecated.
+"$CC" $FIBER_PLATFORM_FLAGS -std=c11 -Wall -Wextra -Werror -O1 \
     -D_POSIX_C_SOURCE=200809L \
     -I "$ROOT/runner/src" -I "$ROOT/runner/src/desktop" \
     "$ROOT/tests/host/fiber_snapshot_test.c" \
@@ -205,7 +209,7 @@ echo "=== runtime dispatch ==="
     "$ROOT/runner/src/snes/dsp1_hle.c" \
     "$ROOT/runner/src/snes/sa1.c" \
     "$ROOT/runner/src/snes/interp816.c" \
-    -Wl,--gc-sections -lm -o "$OUT/known_lle_entry_test"
+    $GC_SECTIONS_LINKER -lm -o "$OUT/known_lle_entry_test"
 "$OUT/known_lle_entry_test"
 
 echo "=== production diagnostic gates ==="
@@ -214,7 +218,7 @@ echo "=== production diagnostic gates ==="
     -I "$ROOT/runner/src" -I "$ROOT/runner/src/snes" \
     "$ROOT/tests/runtime_dispatch/diagnostic_gates_test.c" \
     "$ROOT/runner/src/common_cpu_infra.c" \
-    -Wl,--gc-sections -o "$OUT/diagnostic_gates_test"
+    $GC_SECTIONS_LINKER -o "$OUT/diagnostic_gates_test"
 "$OUT/diagnostic_gates_test"
 
 echo "=== rollback state digest ==="
@@ -239,7 +243,7 @@ echo "=== APU guest-time pacing ==="
     "$ROOT/runner/src/snes/apu.c" \
     "$ROOT/runner/src/snes/spc.c" \
     "$ROOT/runner/src/snes/dsp.c" \
-    -Wl,--gc-sections -o "$OUT/apu_port_guest_time_test"
+    $GC_SECTIONS_LINKER -o "$OUT/apu_port_guest_time_test"
 "$OUT/apu_port_guest_time_test"
 
 echo "=== benchmark helper ==="

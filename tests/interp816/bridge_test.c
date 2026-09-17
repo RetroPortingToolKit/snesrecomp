@@ -40,6 +40,7 @@ static int      g_aot_double_rewrite;
 static int      g_aot_crosses_interp_owner;
 static int      g_aot_skips_interp_owner;
 static int      g_aot_deadline_unwind;
+static int      g_aot_gap_walks_into_wait;
 static int      g_owner_target_result;
 static int      g_aot_tail_chain_probe;
 static int      g_aot_skips_root;
@@ -200,6 +201,14 @@ RecompReturn cpu_dispatch_pc_paired(CpuState *cpu, uint32 pc24,
         if (g_owner_target_result)
             return interp_bridge_lle_yield_unwind(cpu, 0x008003);
         return RECOMP_RETURN_NORMAL;
+    }
+    if (g_aot_gap_walks_into_wait && (pc24 & 0xFFFFFF) == FAKE_AOT) {
+        /* An unresolved dispatch inside the compiled body opens a NESTED gap
+         * frame (yield_pc == 0), and the interpreted routine it lands in walks
+         * into the program's cooperative wait primitive. */
+        g_aot_called++;
+        return interp_tier_dispatch_balanced(cpu, 0x008300, 0x008000,
+                                             cpu->S, frame_size);
     }
     if (g_aot_deadline_unwind && (pc24 & 0xFFFFFF) == FAKE_AOT) {
         g_aot_called++;
@@ -689,6 +698,51 @@ int main(void) {
             "resume=$%06X exp $008202 (yield loop)",
             (unsigned)interp_bridge_lle_resume_pc());
       g_aot_rewrites_return = 0; }
+
+    /* S8e: a NESTED gap frame (yield_pc == 0) that walks into the SCHEDULER's
+     * wait primitive must hand the block outward, not interpret it. Only the
+     * scheduler frame's contract can be satisfied here: the handshake flag is
+     * cleared by the host between scheduler frames, and the host cannot run
+     * while a frame below the scheduler is still on the stack. Interpreting
+     * the loop here spins to the step cap, and that cap is a BAIL --
+     * interp_tier_dispatch_balanced then abandons the site with its handler's
+     * side effects skipped, which is silent corruption rather than a stall.
+     *
+     * Super Metroid, Ceres entrance, frame 2619 (deterministic from boot, no
+     * input): StartGameplay_Async $80:A07B and InitAndLoadGameData_Async
+     * $82:8000 each reach an unresolved dispatch that opens a nested frame;
+     * inside it a bounce into the WaitForNMI HLE armed the LLE yield unwind,
+     * this frame consumed it, and it resumed interpreting $80:8338 -- whose
+     * loop at $80:8343 it could never satisfy. Two abandons, then ppu_read's
+     * assert(0) on the state they left behind. */
+    { memset(RAM, 0, MEMSZ); init_cpu(); g_aot_called = 0; g_abandon_called = 0;
+      g_aot_gap_walks_into_wait = 1;
+      uint8_t scheduler[] = {
+          0x22,0x00,0x81,0x00,                 /* $8000: JSL fake compiled root */
+          0xA9,0x5A,                           /* $8004: must not execute */
+          0xAD,0x20,0x00, 0xD0,0xFB            /* $8006: cooperative wait loop */
+      };
+      uint8_t gap_routine[] = {
+          0xEA,                                /* $8300: NOP */
+          0x4C,0x06,0x80                       /* $8301: JMP $8006 (the wait) */
+      };
+      load(0x8000, scheduler, sizeof scheduler);
+      load(0x8300, gap_routine, sizeof gap_routine);
+      RAM[0x20] = 0;
+      int rc = interp_bridge_run_loop(&g_c, 0x008000, 0x008006, 0x0020, 0);
+      printf("S8e nested gap frame hands the scheduler's wait outward\n");
+      CHECK(rc == 1, "rc=%d exp 1 (frame yields, not bail)", rc);
+      CHECK(g_aot_called == 1, "aot_called=%d exp 1", g_aot_called);
+      CHECK(g_abandon_called == 0,
+            "abandon_called=%d exp 0 (a wait is not an unresolved site)",
+            g_abandon_called);
+      CHECK((g_c.A & 0xFF) == 0x00,
+            "A.lo=%02X exp 00 (scheduler continuation not executed)",
+            g_c.A & 0xFF);
+      CHECK(interp_bridge_lle_resume_pc() == 0x008006,
+            "resume=$%06X exp $008006 (wait loop owns the block point)",
+            (unsigned)interp_bridge_lle_resume_pc());
+      g_aot_gap_walks_into_wait = 0; }
 
     /* S8b: an AOT root reached from the LLE scheduler can non-locally return
      * through its own compiled host frame while still landing normally in the
