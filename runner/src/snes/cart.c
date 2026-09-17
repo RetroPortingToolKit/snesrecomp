@@ -296,6 +296,17 @@ case CART_CX4:
       if ((bank == 0x70 || bank == 0x71 || bank == 0xf0 || bank == 0xf1))
         return superfx_cpu_read_ram(cart->superfx,
                                     ((uint32_t)(bank & 1) << 16) | adr, 0);
+      /* The second CPU-visible view of Game Pak RAM: banks $00-$3F/$80-$BF,
+       * $6000-$7FFF is an 8 KB mirror of the first 8 KB at $70:0000. Star Fox
+       * reaches its RAM only through the $70-$71 banks, so this window went
+       * unmapped and every read here answered 0 — which is not "open bus", it
+       * is a wrong value the guest cannot distinguish from real data. Yoshi's
+       * Island keeps its player state, joypad snapshot and OAM allocator here
+       * (its own disassembly spells the mapping `$6000 -> $7FFF = $700000 ->
+       * $701FFF`), so without this the game reads zeros for everything it
+       * owns. */
+      if (cart_is_superfx_ram_window(cart, bank, adr))
+        return superfx_cpu_read_ram(cart->superfx, adr & 0x1fff, 0);
       /* CPU-visible ROM uses the GSU LoROM/linear mappings and observes the
        * vector override while the coprocessor owns ROM. */
       if (adr >= 0x8000 || (bank & 0x7f) >= 0x40) {
@@ -351,6 +362,8 @@ case CART_CX4:
       else if (bank == 0x70 || bank == 0x71 || bank == 0xf0 || bank == 0xf1)
         superfx_cpu_write_ram(cart->superfx,
                               ((uint32_t)(bank & 1) << 16) | adr, val);
+      else if (cart_is_superfx_ram_window(cart, bank, adr))
+        superfx_cpu_write_ram(cart->superfx, adr & 0x1fff, val);
       break;
     case CART_SA1:
       cart_sync_coprocessors(cart, cart_master_clock(cart));

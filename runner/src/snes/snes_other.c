@@ -169,9 +169,22 @@ if (headers[used].coprocessor == 0xf && headers[used].exCoprocessor != 0x10) {
    * chipset ROM+COPRO with ramSize byte 0 and carry no battery at all — do not
    * hand them a phantom 1 KB SRAM mapped over banks $70-$7D. */
   int cart_ram_size;
-  if (headers[used].cartType == CART_SUPERFX)
-    cart_ram_size = headers[used].ramSize > 1024 ? headers[used].ramSize
-                                                 : 64 * 1024;
+  if (headers[used].cartType == CART_SUPERFX) {
+    /* A SuperFX board declares its Game Pak RAM in the EXTENDED header byte
+     * $FFBD, not in $FFD8 — $FFD8 reads 0 on every GSU cart, which is why the
+     * fallback below exists at all. Honour $FFBD when the header is version 3
+     * (maker byte $33): Yoshi's Island says 32 KB there, and handing it 64 KB
+     * silently removes the mirror that $70:8000+ has on hardware. Star Fox
+     * carries a version-1 header with no such byte and keeps the 64 KB
+     * fallback, which is what it was already getting. */
+    if (headers[used].headerVersion >= 3 &&
+        headers[used].exRamSize > 1024 &&
+        headers[used].exRamSize <= 256 * 1024)
+      cart_ram_size = (int)headers[used].exRamSize;
+    else
+      cart_ram_size = headers[used].ramSize > 1024 ? headers[used].ramSize
+                                                   : 64 * 1024;
+  }
   else if (headers[used].cartType == CART_CX4)
     cart_ram_size = 0;
   else if (headers[used].cartType == CART_DSP1 ||
