@@ -909,8 +909,17 @@ void RtlDrawPpuFrame(uint8 *pixel_buffer, size_t pitch, uint32 render_flags) {
   if (!pixel_buffer) return;
   if (g_game->draw_frame &&
       g_game->draw_frame(pixel_buffer, pitch, g_my_pixels, g_snes_width,
-                         g_snes_height, g_present_alpha))
+                         g_snes_height, g_present_alpha)) {
+    /* Publish what the title actually composed. The debug surface otherwise
+     * captures g_ppu->renderBuffer, which for a game-owned compositor is the
+     * authentic 256-column raster it composed FROM -- so a wide frame reads
+     * as correct in a capture while the player is looking at something the
+     * capture never saw. Trace builds only; a no-op stub otherwise. */
+    debug_server_note_composed_frame(pixel_buffer, (unsigned)pitch,
+                                     g_snes_width, g_snes_height);
     return;
+  }
+  debug_server_note_composed_frame(NULL, 0, 0, 0);
   RtlWidescreenPresent(pixel_buffer, pitch, g_my_pixels, g_snes_width, g_snes_height);
 }
 

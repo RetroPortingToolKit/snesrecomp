@@ -4827,24 +4827,59 @@ static void cmd_ppu_lines(const char *args) {
     send_line(buf);
 }
 
+/* The last frame a title-owned presenter composed. See the declaration in
+ * debug_server.h: without it every capture of an enhanced render path shows
+ * the authentic 256-column raster instead of what the player is looking at. */
+static uint8_t s_composed_pixels[kPpuBufWidth * 4 * 240];
+static int s_composed_width, s_composed_height;
+static int s_composed_valid;
+
+void debug_server_note_composed_frame(const void *argb, unsigned pitch,
+                                      int width, int height) {
+    if (!argb || width <= 0 || width > kPpuBufWidth || height <= 0 ||
+        height > 240 || pitch < (unsigned)width * 4) {
+        s_composed_valid = 0;
+        return;
+    }
+    for (int y = 0; y < height; y++)
+        memcpy(s_composed_pixels + (size_t)y * (size_t)width * 4,
+               (const uint8_t *)argb + (size_t)y * pitch, (size_t)width * 4);
+    s_composed_width = width;
+    s_composed_height = height;
+    s_composed_valid = 1;
+}
+
 static void cmd_screenshot(const char *args) {
     if (!g_ppu) { send_fmt("{\"error\":\"ppu not available\"}"); return; }
 
-    // Copy the most recently presented PPU buffer. Re-rendering here loses
+    // Copy the most recently presented buffer. Re-rendering here loses
     // presentation-only layers (including widescreen coprocessor pixels) and
     // can observe forced blank after the frame has already been drawn.
     static uint8_t scr_pixels[kPpuBufWidth * 4 * 240];
-    uint8_t *saved_render_buffer = g_ppu->renderBuffer;
-    uint32_t saved_render_pitch  = g_ppu->renderPitch;
-    int w = 256 + 2 * g_ppu->extraLeftRight;
-    if (!saved_render_buffer || saved_render_pitch < (uint32_t)w * 4) {
-        send_fmt("{\"error\":\"render buffer unavailable\"}");
-        return;
+    int w, h;
+    const char *source;
+    if (s_composed_valid) {
+        // A title-owned compositor is running: ITS surface is what the player
+        // sees, and the PPU's render buffer is only the input it composed from.
+        w = s_composed_width;
+        h = s_composed_height;
+        source = "composed";
+        memcpy(scr_pixels, s_composed_pixels, (size_t)w * (size_t)h * 4);
+    } else {
+        uint8_t *saved_render_buffer = g_ppu->renderBuffer;
+        uint32_t saved_render_pitch  = g_ppu->renderPitch;
+        w = 256 + 2 * g_ppu->extraLeftRight;
+        h = 224;
+        source = "ppu";
+        if (!saved_render_buffer || saved_render_pitch < (uint32_t)w * 4) {
+            send_fmt("{\"error\":\"render buffer unavailable\"}");
+            return;
+        }
+        for (int y = 0; y < h; y++)
+            memcpy(scr_pixels + (size_t)y * w * 4,
+                   saved_render_buffer + (size_t)y * saved_render_pitch,
+                   (size_t)w * 4);
     }
-    for (int y = 0; y < 224; y++)
-        memcpy(scr_pixels + (size_t)y * w * 4,
-               saved_render_buffer + (size_t)y * saved_render_pitch,
-               (size_t)w * 4);
 
     // Determine output path
     const char *path = args[0] ? args : "debug_screenshot.bmp";
@@ -4853,7 +4888,6 @@ static void cmd_screenshot(const char *args) {
     FILE *f = fopen(path, "wb");
     if (!f) { send_fmt("{\"error\":\"cannot open file\",\"path\":\"%s\"}", path); return; }
 
-    int h = 224;
     int row_bytes = w * 3;
     int pad = (4 - (row_bytes % 4)) % 4;
     int stride = row_bytes + pad;
@@ -4890,9 +4924,12 @@ static void cmd_screenshot(const char *args) {
     }
     fclose(f);
 
+    /* `source` is not decoration: a caller that asked for the enhanced frame
+     * and silently got the 256-column raster would draw the wrong conclusion
+     * from a correct-looking image. */
     send_fmt("{\"ok\":true,\"path\":\"%s\",\"width\":%d,\"height\":%d,"
-             "\"ws_extra\":%d,\"frame\":%d}",
-             path, w, h, (int)g_ppu->extraLeftRight, snes_frame_counter);
+             "\"ws_extra\":%d,\"source\":\"%s\",\"frame\":%d}",
+             path, w, h, (int)g_ppu->extraLeftRight, source, snes_frame_counter);
 }
 
 /* raster_journal — the per-line register waveform the renderer will replay.

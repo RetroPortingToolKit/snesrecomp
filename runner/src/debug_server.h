@@ -116,6 +116,18 @@ void debug_server_on_oam_render(void);
 // Capture the PPU/window registers after per-line HDMA has run and immediately
 // before scanline rendering. Queried through the TCP `ppu_lines` command.
 void debug_server_on_ppu_line(int line);
+
+// The frame a TITLE-OWNED presenter actually composed, published every time
+// the desktop host's draw_frame hook returns one. Without this the debug
+// surface is blind to any enhanced render path: `screenshot` copies
+// g_ppu->renderBuffer, which for a game-owned compositor is still the
+// authentic 256-column raster, so a wide frame looks correct in a capture
+// while the player sees something else. `screenshot` prefers this buffer
+// whenever it is fresher than the frame the PPU last drew, and says which
+// one it used. Pass NULL to stop publishing (the mod was turned off).
+// `argb` is host-endian 0x00RRGGBB, `pitch` in bytes.
+void debug_server_note_composed_frame(const void *argb, unsigned pitch,
+                                      int width, int height);
 // Capture the renderer's computed window spans after host widescreen policy
 // has been applied. `edges` contains nr+1 signed screen-space boundaries.
 void debug_server_on_ppu_window(int line, int layer, const int16_t *edges,
@@ -151,6 +163,10 @@ static inline void debug_server_on_oracle_vram_write(uint32_t byte_addr, uint8_t
 static inline void debug_server_on_oam_write(int is_high, uint16_t index, uint16_t value) { (void)is_high; (void)index; (void)value; }
 static inline void debug_server_on_oam_render(void) { }
 static inline void debug_server_on_ppu_line(int line) { (void)line; }
+static inline void debug_server_note_composed_frame(const void *argb, unsigned pitch,
+                                                    int width, int height) {
+    (void)argb; (void)pitch; (void)width; (void)height;
+}
 static inline void debug_server_on_ppu_window(int line, int layer,
                                                const int16_t *edges,
                                                unsigned nr, uint8_t bits) {
