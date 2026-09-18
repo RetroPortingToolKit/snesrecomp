@@ -45,6 +45,10 @@ typedef struct {
   uint16_t s_reg;      /* 65816 stack pointer at end-of-frame       */
   uint8_t  game_state; /* $7E:0998 (SM kGameState_*)                */
   uint8_t  game_mode;  /* $7E:0100 (SM GameMode)                    */
+  uint16_t nmi_count;  /* vblank interrupts delivered this frame    */
+  uint16_t irq_count;  /* raster interrupts delivered this frame    */
+  uint16_t irq_cpu;    /* ...of which, during the host's CPU half   */
+  uint16_t irq_raster; /* ...of which, during the host's raster walk*/
   uint16_t wram_probe[PPUDMA_WRAM_PROBE_MAX]; /* see ppudma_wram_probe */
 } PpuSnap;
 
@@ -76,6 +80,25 @@ static uint64_t s_dma_widx;
 static PpuSnap  s_ppu_ring[PPU_RING_LEN];
 static uint64_t s_ppu_widx;
 static uint16_t s_dma_this_frame;
+static uint16_t s_nmi_this_frame;
+static uint16_t s_irq_this_frame;
+static uint16_t s_irq_cpu_this_frame;
+static uint16_t s_irq_raster_this_frame;
+static int      s_frame_phase;   /* 0 = CPU half, 1 = raster walk */
+
+void ppudma_set_frame_phase(int in_raster_walk) {
+  s_frame_phase = in_raster_walk ? 1 : 0;
+}
+
+void ppudma_note_interrupt(int is_nmi) {
+  if (is_nmi) {
+    if (s_nmi_this_frame < 0xFFFF) s_nmi_this_frame++;
+    return;
+  }
+  if (s_irq_this_frame < 0xFFFF) s_irq_this_frame++;
+  if (s_frame_phase) { if (s_irq_raster_this_frame < 0xFFFF) s_irq_raster_this_frame++; }
+  else               { if (s_irq_cpu_this_frame    < 0xFFFF) s_irq_cpu_this_frame++; }
+}
 
 static int env_int(const char *name) {
   const char *v = getenv(name);
@@ -109,7 +132,8 @@ void ppudma_record_dma(int channel, int fromB, uint8_t aBank, uint16_t aAdr,
 
 void ppudma_frame_snapshot(int frame) {
   Ppu *p = g_ppu;
-  if (!p) { s_dma_this_frame = 0; return; }
+  if (!p) { s_dma_this_frame = 0;
+             s_nmi_this_frame = 0; s_irq_this_frame = 0; return; }
 
   PpuSnap *s = &s_ppu_ring[s_ppu_widx % PPU_RING_LEN];
   s->frame   = frame;
@@ -127,6 +151,10 @@ void ppudma_frame_snapshot(int frame) {
   s->vram_nz = vnz;
 
   s->dma_a2b = s_dma_this_frame;
+  s->nmi_count = s_nmi_this_frame;
+  s->irq_count = s_irq_this_frame;
+  s->irq_cpu = s_irq_cpu_this_frame;
+  s->irq_raster = s_irq_raster_this_frame;
   s->s_reg = g_cpu.S;
   s->game_state = g_ram[0x0998];   /* $7E:0998 */
   s->game_mode  = g_ram[0x0100];   /* $7E:0100 */
@@ -169,7 +197,43 @@ void ppudma_frame_snapshot(int frame) {
   }
 
   s_dma_this_frame = 0;
+  s_nmi_this_frame = 0;
+  s_irq_this_frame = 0;
+  s_irq_cpu_this_frame = 0;
+  s_irq_raster_this_frame = 0;
 }
+
+/* Live read-back of the per-frame ring for the debug server.
+ *
+ * The ring has always recorded this; until now the only way to see it was the
+ * post-mortem report, i.e. after the process died. That is the wrong shape for
+ * "which PPU register is oscillating while the game runs" -- a question that
+ * wants the last N frames of RECORDED history, on demand, from a live process.
+ * Returns 0 past the end of the retained window. */
+int ppudma_frame_at(uint64_t back, PpuFrameInfo *out) {
+  if (!out) return 0;
+  uint64_t have = s_ppu_widx < (uint64_t)PPU_RING_LEN
+                      ? s_ppu_widx : (uint64_t)PPU_RING_LEN;
+  if (back >= have) return 0;
+  const PpuSnap *s = &s_ppu_ring[(s_ppu_widx - 1 - back) % PPU_RING_LEN];
+  out->frame     = s->frame;
+  out->inidisp   = s->inidisp;
+  out->tm        = s->tm;
+  out->ts        = s->ts;
+  out->bgmode    = s->bgmode;
+  out->cgram_nz  = s->cgram_nz;
+  out->vram_nz   = s->vram_nz;
+  out->dma_a2b   = s->dma_a2b;
+  out->s_reg     = s->s_reg;
+  out->game_mode = s->game_mode;
+  out->nmi_count = s->nmi_count;
+  out->irq_count = s->irq_count;
+  out->irq_cpu = s->irq_cpu;
+  out->irq_raster = s->irq_raster;
+  return 1;
+}
+
+uint64_t ppudma_frame_count(void) { return s_ppu_widx; }
 
 void ppudma_dump_json(FILE *f) {
   /* Per-frame PPU snapshots (oldest-first within the retained window). */
@@ -246,10 +310,26 @@ void ppudma_frame_snapshot(int frame) {
   (void)frame;
 }
 
+void ppudma_note_interrupt(int is_nmi) {
+  (void)is_nmi;
+}
+
+void ppudma_set_frame_phase(int in_raster_walk) {
+  (void)in_raster_walk;
+}
+
 void ppudma_dump_json(FILE *f) {
   fprintf(f, "  \"ppu_frames\": {\"disabled\":true,\"snaps\":[]},\n");
   fprintf(f, "  \"wram_probes\": {\"disabled\":true},\n");
   fprintf(f, "  \"dma_events\": {\"disabled\":true,\"events\":[]},\n");
 }
+
+int ppudma_frame_at(uint64_t back, PpuFrameInfo *out) {
+  (void)back;
+  (void)out;
+  return 0;
+}
+
+uint64_t ppudma_frame_count(void) { return 0; }
 
 #endif

@@ -19,6 +19,7 @@
 #include "cosim.h"  /* cosim_insn — instruction-granular lockstep (no-op unless SNES_COSIM) */
 #include "common_cpu_infra.h"  /* cpu_take_tailcall_return_context — swallow a stale
                                 * tail-armed context on the LLE yield unwind */
+#include "ppu_dma_trace.h"      /* ppudma_note_interrupt — per-frame tally */
 
 /* Guest-time-anchored APU (Rockman X JP gate #3 / audio pacing): the interp
  * tier advances the SPC per interpreted opcode by guest master cycles, exactly
@@ -2537,6 +2538,10 @@ int interp_bridge_run_until_quiescent(CpuState *cpu, uint32_t entry_pc24) {
 }
 
 int interp_bridge_run_interrupt(CpuState *cpu, uint32_t entry_pc24) {
+    /* Always-on per-frame tally. This is the single choke point every host
+     * runs an architectural interrupt handler through, so counting here
+     * cannot miss a delivery the way a per-host hook would. */
+    ppudma_note_interrupt(g_snes && g_snes->inNmi);
     return interp_bridge_run_ex2(cpu, entry_pc24, cpu->S, NULL, NULL,
                                  0, 0, 0, 0, NULL, 0, 1);
 }
