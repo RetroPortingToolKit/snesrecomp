@@ -86,6 +86,18 @@ uint8_t  interp816_getFlags(Interp816 *cpu);
 void     interp816_setFlags(Interp816 *cpu, uint8_t val);
 void     interp816_saveload(Interp816 *cpu, SaveLoadInfo *sli);
 
+/* Whole-run interpreted-execution tallies (always-on, every configuration). */
+uint64_t interp816_insns_total(void);
+uint64_t interp816_cycles_total(void);
+
+/* Always-on interpreted-execution map, indexed by guest page (pc24 >> 8):
+ * which code the interpreter is actually running, so a static-coverage
+ * burndown can name its dominant class from measurement instead of from a
+ * guess. See the comment block at the definitions in interp816.c. */
+uint64_t interp816_page_cycles(unsigned page);
+uint64_t interp816_page_insns(unsigned page);
+unsigned interp816_page_count(void);
+
 /* Historical bridge callback retained for source compatibility. Current
  * bridge dispatch uses explicit JSR/JSL interception rather than BRK traps. */
 extern int interp816_opcode_hook(uint32_t addr);
