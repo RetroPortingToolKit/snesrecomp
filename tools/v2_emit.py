@@ -19,8 +19,12 @@ sys.path.insert(0, str(REPO / "tools"))
 
 from snes65816 import (  # noqa: E402
     clear_reloc_regions,
+    detect_rom_mapping,
+    is_rom_address,
     load_rom,
     register_reloc_region,
+    rom_offset,
+    set_rom_mapping,
 )
 from v2.link_closure import assert_closed  # noqa: E402
 from v2.program_analysis import VariantKey  # noqa: E402
@@ -139,6 +143,43 @@ def _verified_cached_stats(out_dir: pathlib.Path,
     return stats
 
 
+def resolve_ram_routine_rom_sources(rom: bytes, parsed) -> None:
+    """Fill in `data` for every `ram_routine ... rom:<pc24>:<len>` declaration.
+
+    A ROM-sourced ram_routine says "the boot path relocates these exact ROM
+    bytes into WRAM and runs them there" — the SNES idiom for an interrupt
+    handler that must stay reachable while the cartridge bus is busy. The
+    bytes are therefore not a capture of an observed run: they are a range of
+    the ROM the project already verifies by digest, which is why this resolves
+    from the image rather than from a runtime snapshot.
+
+    Hard-fails on a range the active mapping cannot address or that runs past
+    the end of the image: a silently truncated image would recompile a
+    handler's first half and guard the wrong length, which is exactly the
+    class of silent wrong answer the guard exists to prevent.
+    """
+    set_rom_mapping(detect_rom_mapping(rom))
+    for _bank, path, cfg in parsed:
+        for rr in getattr(cfg, "ram_routines", ()):  # noqa: B009
+            if rr.rom_pc24 is None:
+                continue
+            src_bank = (rr.rom_pc24 >> 16) & 0xFF
+            src_addr = rr.rom_pc24 & 0xFFFF
+            if not is_rom_address(src_bank, src_addr):
+                raise ValueError(
+                    f"{path}: ram_routine {rr.pc24:06X} rom source "
+                    f"${rr.rom_pc24:06X} is not a ROM address under the "
+                    f"detected mapping")
+            start = rom_offset(src_bank, src_addr)
+            end = start + rr.rom_len
+            if end > len(rom):
+                raise ValueError(
+                    f"{path}: ram_routine {rr.pc24:06X} rom source "
+                    f"${rr.rom_pc24:06X}+{rr.rom_len} runs past the end of "
+                    f"the {len(rom)}-byte ROM image")
+            rr.data = rom[start:end]
+
+
 def _install_ram_routines(rom: bytes, parsed):
     """Append each `ram_routine` blob to the ROM image and register a reloc
     region redirecting its WRAM entry to the appended bytes, so the standard
@@ -146,10 +187,22 @@ def _install_ram_routines(rom: bytes, parsed):
     native analyzer, which does the same against the ROM file). Returns
     (extended_rom, tuple_of_VariantKey_roots)."""
     clear_reloc_regions()
+    resolve_ram_routine_rom_sources(rom, parsed)
     buf = bytearray(rom)
     roots = []
-    for _bank, _path, cfg in parsed:
+    claimed = []
+    for _bank, path, cfg in parsed:
         for rr in getattr(cfg, "ram_routines", ()):  # noqa: B009
+            lo = rr.pc24
+            hi = rr.pc24 + len(rr.data)
+            for (other_lo, other_hi, other_path) in claimed:
+                if lo < other_hi and other_lo < hi:
+                    raise ValueError(
+                        f"{path}: ram_routine ${lo:06X}+{len(rr.data)} "
+                        f"overlaps the one declared at ${other_lo:06X} in "
+                        f"{other_path}; two images over the same WRAM bytes "
+                        f"cannot both be the recompiled truth")
+            claimed.append((lo, hi, path))
             base = len(buf)
             buf += rr.data
             buf += b"\x00" * 8   # guard pad (outside the reloc region)

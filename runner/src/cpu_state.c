@@ -922,7 +922,32 @@ void cpu_select_program(const DispatchEntry *dispatch, unsigned count,
 #define ACTIVE_GUARDS (s_program_dispatch ? s_program_guards : g_ram_routine_guards)
 #define ACTIVE_GUARD_COUNT (s_program_dispatch ? s_program_guard_count : g_ram_routine_guard_count)
 
-static const RamRoutineGuard *_ram_guard_find(uint32 pc24) {
+/* Canonical $7E form of a low-WRAM-mirror address, or pc24 unchanged.
+ *
+ * $00-$3F:$0000-$1FFF and $80-$BF:$0000-$1FFF are not copies of WRAM, they
+ * ARE WRAM: the same 8 KB the CPU also sees at $7E:$0000-$1FFF. A routine
+ * relocated there is therefore addressable under two program banks, and the
+ * recompiler emits it once, under $7E, because that is the bank that names
+ * the whole 64 KB. The mirror is the address hardware actually enters it
+ * with — Yoshi's Island's NMI and IRQ vectors are $0108 and $010C, which is
+ * where boot plants the two JMLs into the relocated handler image.
+ *
+ * Substituting one for the other is exact rather than approximate, which is
+ * worth stating because the sibling LoROM $00/$80 bank-mirror fallback below
+ * is not: a WRAM body's data accesses go through DB or a long address (bank
+ * is explicit either way), PHK pushes the LIVE cpu->PB rather than a baked
+ * constant, and its in-bank control flow lands on the same WRAM bytes under
+ * either bank. Callers keep cpu->PB at the bank execution really used; only
+ * the table lookup is canonicalized. */
+static uint32 _wram_mirror_pc24(uint32 pc24) {
+    uint8 bank = (uint8)((pc24 >> 16) & 0xFF);
+    uint16 addr = (uint16)(pc24 & 0xFFFF);
+    if (addr < 0x2000 && (bank <= 0x3F || (bank >= 0x80 && bank <= 0xBF)))
+        return 0x7E0000u | addr;
+    return pc24;
+}
+
+static const RamRoutineGuard *_ram_guard_find_exact(uint32 pc24) {
     unsigned lo = 0, hi = ACTIVE_GUARD_COUNT;
     while (lo < hi) {
         unsigned mid = lo + (hi - lo) / 2;
@@ -932,6 +957,13 @@ static const RamRoutineGuard *_ram_guard_find(uint32 pc24) {
         else          hi = mid;
     }
     return NULL;
+}
+
+static const RamRoutineGuard *_ram_guard_find(uint32 pc24) {
+    const RamRoutineGuard *g = _ram_guard_find_exact(pc24);
+    if (g != NULL) return g;
+    uint32 canon = _wram_mirror_pc24(pc24);
+    return canon != pc24 ? _ram_guard_find_exact(canon) : NULL;
 }
 
 /* Rate-limited: log the first sight of each distinct pc24 and then on
@@ -953,7 +985,13 @@ static uint64 _ram_guard_note(uint32 pc24) {
 static int _ram_guard_blocks(CpuState *cpu, uint32 pc24) {
     pc24 &= 0xFFFFFFu;
     uint8 bank = (uint8)((pc24 >> 16) & 0xFF);
-    if (bank != 0x7E && bank != 0x7F) return 0;   /* ROM target: never guarded */
+    uint16 addr = (uint16)(pc24 & 0xFFFF);
+    /* Every WRAM target is guarded, INCLUDING the low-bank mirror: the bytes
+     * at $00:$0108 are as mutable as the bytes at $7E:$0108, because they are
+     * the same bytes. Testing only for bank $7E/$7F would have let a body
+     * relocated to the mirror dispatch unguarded — the one hole the guard
+     * exists to close. */
+    if (cpu_wram_offset(bank, addr) < 0) return 0;  /* ROM: never guarded */
     const RamRoutineGuard *g = _ram_guard_find(pc24);
     if (g == NULL) {
         uint64 c = _ram_guard_note(pc24);
@@ -966,10 +1004,16 @@ static int _ram_guard_blocks(CpuState *cpu, uint32 pc24) {
         }
         return 1;
     }
+    /* Hash at the guard record's OWN address, not at the one the caller
+     * arrived with. They are the same memory, but a low-mirror window is only
+     * 8 KB wide: an image reached through $00:$1F00 would walk off the mirror
+     * into the $2000 MMIO block and hash register reads instead of WRAM. The
+     * canonical $7E form has the whole 64 KB behind it. */
+    uint8 gbank = (uint8)((g->pc24 >> 16) & 0xFF);
+    uint16 gaddr = (uint16)(g->pc24 & 0xFFFF);
     uint32 h = 2166136261u;
-    uint16 addr = (uint16)(pc24 & 0xFFFF);
     for (uint32 i = 0; i < g->len; i++) {
-        h ^= cpu_read8(cpu, bank, (uint16)(addr + i));
+        h ^= cpu_read8(cpu, gbank, (uint16)(gaddr + i));
         h *= 16777619u;
     }
     if (h != g->hash) {
@@ -987,7 +1031,7 @@ static int _ram_guard_blocks(CpuState *cpu, uint32 pc24) {
     return 0;
 }
 
-static const DispatchEntry *_cpu_dispatch_find(uint32 pc24) {
+static const DispatchEntry *_cpu_dispatch_find_exact(uint32 pc24) {
     unsigned lo = 0;
     unsigned hi = ACTIVE_DISPATCH_COUNT;
     while (lo < hi) {
@@ -998,6 +1042,17 @@ static const DispatchEntry *_cpu_dispatch_find(uint32 pc24) {
         else               hi = mid;
     }
     return NULL;
+}
+
+/* One choke point for dispatch-row resolution, so the WRAM low-bank mirror is
+ * handled identically everywhere a row is looked up (bounce, tail dispatch,
+ * has-entry probe, inline-arg query) instead of at whichever call site
+ * remembered. See _wram_mirror_pc24 for why the substitution is exact. */
+static const DispatchEntry *_cpu_dispatch_find(uint32 pc24) {
+    const DispatchEntry *row = _cpu_dispatch_find_exact(pc24);
+    if (row != NULL) return row;
+    uint32 canon = _wram_mirror_pc24(pc24);
+    return canon != pc24 ? _cpu_dispatch_find_exact(canon) : NULL;
 }
 
 static RecompReturn (*_cpu_dispatch_lookup(CpuState *cpu, uint32 pc24))(CpuState *) {

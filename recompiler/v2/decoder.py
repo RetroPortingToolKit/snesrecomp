@@ -41,7 +41,7 @@ if str(_RECOMPILER_DIR) not in sys.path:
     sys.path.insert(0, str(_RECOMPILER_DIR))
 
 from snes65816 import (  # noqa: E402
-    decode_insn, lorom_offset, Insn,
+    decode_insn, is_rom_address, lorom_offset, Insn,
     ABS, INDIR, INDIR_X, LONG, IMM,
 )
 
@@ -49,6 +49,29 @@ from snes65816 import (  # noqa: E402
 def addr24(bank: int, pc: int) -> int:
     """Pack bank + 16-bit PC into a 24-bit address (matches Insn.addr)."""
     return ((bank & 0xFF) << 16) | (pc & 0xFFFF)
+
+
+def _decodable(bank: int, pc16: int) -> bool:
+    """Can the decoder fetch instruction bytes for (bank, pc16)?
+
+    Every byte-fetch site used to spell this as `0x8000 <= pc <= 0xFFFF`, the
+    LoROM cartridge window written as a literal. That is wrong in two
+    directions the moment a project is not plain LoROM:
+
+      * HiROM maps ROM at $0000-$7FFF in banks $40-$7D, so the literal window
+        silently refused to decode half of a HiROM image.
+      * A reloc region — code the boot path relocates out of ROM into WRAM
+        and executes there — is addressed by its WRAM PC, and the WRAM
+        interrupt-vector page ($7E:0100) is below $8000. The gate skipped it
+        with no diagnostic, which reads downstream as `empty_decode` on a
+        root the project explicitly declared.
+
+    `is_rom_address` is the mapping-aware form of the same question and
+    already answers it for the reloc registry, LoROM, HiROM and S-DD1, so the
+    fetch sites defer to it. For a plain-LoROM project with no reloc regions
+    the two tests agree exactly.
+    """
+    return is_rom_address(bank, pc16)
 
 
 def _dispatch_target_is_padding(rom: bytes, bank: int, pc16: int,
@@ -536,7 +559,7 @@ def _autorecover_local_stride_runway(rom: bytes, bank: int, func_start: int,
         return None
 
     def read8(pc16: int) -> Optional[int]:
-        if not (0x8000 <= pc16 <= 0xFFFF):
+        if not _decodable(bank, pc16):
             return None
         try:
             off = lorom_offset(bank, pc16)
@@ -1399,7 +1422,7 @@ def _detect_inline_arg_bytes_stack_slot(rom: bytes, bank: int, addr: int,
     budget = 0
     while budget < 96:
         budget += 1
-        if not (0x8000 <= pc <= 0xFFFF):
+        if not _decodable(bank, pc):
             return None
         try:
             off = lorom_offset(bank, pc)
@@ -1766,7 +1789,7 @@ def detect_dp_return_inline_arg_bytes(rom: bytes, bank: int, addr: int):
     budget = 0
     while budget < 160:
         budget += 1
-        if not (0x8000 <= pc <= 0xFFFF):
+        if not _decodable(bank, pc):
             return None
         try:
             off = lorom_offset(bank, pc)
@@ -1861,7 +1884,7 @@ def classify_dispatch_helper(rom: bytes, bank: int, addr: int):
     safety = 0
     while safety < 256:
         safety += 1
-        if not (0x8000 <= pc <= 0xFFFF):
+        if not _decodable(bank, pc):
             return None
         try:
             offset = lorom_offset(bank, pc)
@@ -2280,7 +2303,7 @@ def _decode_function_uncached(rom: bytes, bank: int, start: int,
             if boundary not in graph.boundary_exits:
                 graph.boundary_exits.append(boundary)
             continue
-        if not (0x8000 <= pc <= 0xFFFF):
+        if not _decodable(bank, pc):
             # Out-of-bank reference; surface upstream by skipping here.
             continue
         if _addr_in_data_regions(data_regions, bank, pc):

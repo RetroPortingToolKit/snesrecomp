@@ -129,8 +129,19 @@ void interp_bridge_reset_dynamic_cache(void);
 int interp_bridge_lle_master_deadline_reached(const CpuState *cpu);
 
 /* Execute an architectural interrupt handler through its terminal RTI. The
- * caller has already materialized the hardware interrupt frame. */
+ * caller has already materialized the hardware interrupt frame.
+ *
+ * Runs the handler as compiled code when the vector's entry has a body for
+ * the live (m, x) and, for a WRAM-resident handler, its byte guard still
+ * matches; otherwise the interpreter floor runs it. SNESRECOMP_NATIVE_INTERRUPT=0
+ * forces the floor for A/B. Either way the call returns at the handler's
+ * terminal RTI, so hosts see one contract. */
 int interp_bridge_run_interrupt(CpuState *cpu, uint32_t entry_pc24);
+
+/* How many interrupt entries ran compiled vs fell to the interpreter.
+ * Always-on; `interp_stats` reports them as native_irq_runs / native_irq_miss
+ * so "is the handler actually compiled" is a measurement, not an assumption. */
+void interp_bridge_native_interrupt_stats(uint64_t *runs, uint64_t *misses);
 
 /* Save-state task resume: interpret a suspended cooperative task from its
  * recorded yield return address (an arbitrary mid-function guest PC; the

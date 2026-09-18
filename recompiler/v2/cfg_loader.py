@@ -64,17 +64,34 @@ class NameDecl:
 
 @dataclass
 class RamRoutine:
-    """A `ram_routine <pc24> <MmXn> <hexbytes>` line: a deterministic
-    runtime-generated routine resident in WRAM ($7E/$7F) whose captured bytes
-    are literally recompiled (LLE) as an AOT body. The blob is appended to the
+    """A `ram_routine <pc24> <MmXn> <blob>` line: a deterministic
+    runtime-generated routine resident in WRAM ($7E/$7F) whose bytes are
+    literally recompiled (LLE) as an AOT body. The blob is appended to the
     ROM image and reached via a synthetic reloc region so the standard decoder
     path decodes it unchanged; runtime dispatch is guarded by a live byte-match
-    (g_ram_routine_guards). Source of truth: tier2_coverage.json ram_routines[]
-    (deterministic, terminated entries only)."""
+    (g_ram_routine_guards).
+
+    <blob> is either
+
+      * `<hexbytes>` — a captured snapshot. Source of truth:
+        tier2_coverage.json ram_routines[] (deterministic, terminated entries
+        only).
+      * `rom:<rom_pc24>:<length>` — the bytes are a verbatim copy of a ROM
+        range the boot path relocates into WRAM (a DMA to $2180/WMDATA, an
+        MVN block move, or a copy loop). This is the common SNES idiom for
+        interrupt handlers that must stay reachable while the cartridge bus
+        is busy, and it is the honest declaration for it: the image is not a
+        capture of an observed run, it is a range of the ROM the project
+        already verifies by digest. `rom_pc24`/`rom_len` carry the request
+        until `resolve_ram_routine_rom_sources()` reads the ROM and fills
+        `data`; every consumer downstream sees a plain byte blob.
+    """
     pc24: int          # absolute 24-bit WRAM entry (bank $7E/$7F)
     entry_m: int       # entry M flag to emit + gate on
     entry_x: int       # entry X flag to emit + gate on
-    data: bytes        # captured snapshot (length = routine length)
+    data: bytes        # snapshot (length = routine length); b'' until resolved
+    rom_pc24: Optional[int] = None   # `rom:` source address, else None
+    rom_len: int = 0                 # `rom:` source length in bytes
 
 
 @dataclass
@@ -795,34 +812,66 @@ def load_bank_cfg(path: str) -> BankCfg:
                 cfg.data_regions.append((b, s, e))
                 continue
 
-            # ram_routine <pc24> <MmXn> <hexbytes>
+            # ram_routine <pc24> <MmXn> <hexbytes|rom:<rom_pc24>:<len>>
             if head == 'ram_routine':
                 if len(tokens) != 4:
                     raise ValueError(
-                        f"{path}: ram_routine needs <pc24> <MmXn> <hexbytes>, "
-                        f"got: {stripped!r}")
+                        f"{path}: ram_routine needs <pc24> <MmXn> "
+                        f"<hexbytes|rom:PC24:LEN>, got: {stripped!r}")
                 pc24 = _parse_hex(tokens[1]) & 0xFFFFFF
                 mx = _parse_mx(tokens[2])
                 if mx is None:
                     raise ValueError(
                         f"{path}: ram_routine bad variant {tokens[2]!r} "
                         f"(want M0X0..M1X1)")
-                hexbytes = tokens[3]
-                if len(hexbytes) % 2 != 0 or not _HEX_RE.match(hexbytes):
-                    raise ValueError(
-                        f"{path}: ram_routine bad hexbytes {tokens[2]!r}")
-                data = bytes.fromhex(hexbytes)
-                if not data:
-                    raise ValueError(
-                        f"{path}: ram_routine {pc24:06X} has empty byte blob")
+                blob = tokens[3]
+                rom_pc24 = None
+                rom_len = 0
+                data = b''
+                if blob.lower().startswith('rom:'):
+                    fields = blob.split(':')
+                    if len(fields) != 3:
+                        raise ValueError(
+                            f"{path}: ram_routine {pc24:06X} bad rom source "
+                            f"{blob!r} (want rom:<rom_pc24>:<length>)")
+                    try:
+                        rom_pc24 = _parse_hex(fields[1]) & 0xFFFFFF
+                        rom_len = _parse_hex(fields[2])
+                    except ValueError:
+                        raise ValueError(
+                            f"{path}: ram_routine {pc24:06X} bad rom source "
+                            f"{blob!r} (want rom:<rom_pc24>:<length>)")
+                    if rom_len <= 0:
+                        raise ValueError(
+                            f"{path}: ram_routine {pc24:06X} rom source "
+                            f"length must be positive, got {rom_len}")
+                    if ((rom_pc24 & 0xFFFF) + rom_len) > 0x10000:
+                        raise ValueError(
+                            f"{path}: ram_routine {pc24:06X} rom source "
+                            f"${rom_pc24:06X}+{rom_len} crosses a bank "
+                            f"boundary; declare one image per bank")
+                else:
+                    if len(blob) % 2 != 0 or not _HEX_RE.match(blob):
+                        raise ValueError(
+                            f"{path}: ram_routine bad hexbytes {blob!r}")
+                    data = bytes.fromhex(blob)
+                    if not data:
+                        raise ValueError(
+                            f"{path}: ram_routine {pc24:06X} has empty byte "
+                            f"blob")
                 bank = (pc24 >> 16) & 0xFF
                 if bank not in (0x7E, 0x7F):
                     raise ValueError(
                         f"{path}: ram_routine {pc24:06X} not in WRAM bank "
                         f"$7E/$7F")
+                if ((pc24 & 0xFFFF) + (rom_len or len(data))) > 0x10000:
+                    raise ValueError(
+                        f"{path}: ram_routine {pc24:06X} extends past the end "
+                        f"of WRAM bank ${bank:02X}")
                 cfg.ram_routines.append(
                     RamRoutine(pc24=pc24, entry_m=mx[0], entry_x=mx[1],
-                               data=data))
+                               data=data, rom_pc24=rom_pc24,
+                               rom_len=rom_len))
                 continue
 
             # Anything else: silently ignore (v1-only directive or

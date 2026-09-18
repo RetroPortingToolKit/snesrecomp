@@ -171,6 +171,34 @@ void ppudma_frame_snapshot(int frame) {
   s_dma_this_frame = 0;
 }
 
+/* Live read-back of the per-frame ring for the debug server.
+ *
+ * The ring has always recorded this; until now the only way to see it was the
+ * post-mortem report, i.e. after the process died. That is the wrong shape for
+ * "which PPU register is oscillating while the game runs" -- a question that
+ * wants the last N frames of RECORDED history, on demand, from a live process.
+ * Returns 0 past the end of the retained window. */
+int ppudma_frame_at(uint64_t back, PpuFrameInfo *out) {
+  if (!out) return 0;
+  uint64_t have = s_ppu_widx < (uint64_t)PPU_RING_LEN
+                      ? s_ppu_widx : (uint64_t)PPU_RING_LEN;
+  if (back >= have) return 0;
+  const PpuSnap *s = &s_ppu_ring[(s_ppu_widx - 1 - back) % PPU_RING_LEN];
+  out->frame     = s->frame;
+  out->inidisp   = s->inidisp;
+  out->tm        = s->tm;
+  out->ts        = s->ts;
+  out->bgmode    = s->bgmode;
+  out->cgram_nz  = s->cgram_nz;
+  out->vram_nz   = s->vram_nz;
+  out->dma_a2b   = s->dma_a2b;
+  out->s_reg     = s->s_reg;
+  out->game_mode = s->game_mode;
+  return 1;
+}
+
+uint64_t ppudma_frame_count(void) { return s_ppu_widx; }
+
 void ppudma_dump_json(FILE *f) {
   /* Per-frame PPU snapshots (oldest-first within the retained window). */
   uint64_t pw = s_ppu_widx;
@@ -251,5 +279,13 @@ void ppudma_dump_json(FILE *f) {
   fprintf(f, "  \"wram_probes\": {\"disabled\":true},\n");
   fprintf(f, "  \"dma_events\": {\"disabled\":true,\"events\":[]},\n");
 }
+
+int ppudma_frame_at(uint64_t back, PpuFrameInfo *out) {
+  (void)back;
+  (void)out;
+  return 0;
+}
+
+uint64_t ppudma_frame_count(void) { return 0; }
 
 #endif

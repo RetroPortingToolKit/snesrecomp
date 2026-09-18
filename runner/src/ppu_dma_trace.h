@@ -48,4 +48,27 @@ void ppudma_frame_snapshot(int frame);
  * braces) for the post-mortem report. */
 void ppudma_dump_json(FILE *f);
 
+/* One retained per-frame snapshot, `back` frames before the newest (0 = the
+ * most recent). Returns 0 past the end of the retained window.
+ *
+ * The ring always recorded this; reading it used to require the process to
+ * die first, which is the wrong shape for "which PPU register oscillates
+ * while the game runs". A per-frame flicker is a per-frame REGISTER history
+ * question, and answering it from a couple of screenshots is guesswork. */
+typedef struct {
+  int      frame;
+  uint8_t  inidisp;
+  uint8_t  tm;         /* $212C main-screen designation  */
+  uint8_t  ts;         /* $212D sub-screen designation   */
+  uint8_t  bgmode;     /* $2105                          */
+  uint16_t cgram_nz;
+  uint32_t vram_nz;
+  uint16_t dma_a2b;
+  uint16_t s_reg;
+  uint8_t  game_mode;
+} PpuFrameInfo;
+
+int      ppudma_frame_at(uint64_t back, PpuFrameInfo *out);
+uint64_t ppudma_frame_count(void);
+
 #endif /* SNESRECOMP_PPU_DMA_TRACE_H */

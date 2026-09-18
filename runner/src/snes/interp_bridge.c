@@ -2536,9 +2536,103 @@ int interp_bridge_run_until_quiescent(CpuState *cpu, uint32_t entry_pc24) {
                                  0xFFFFFFFEu, 0, 0, 0, NULL, 0, 0);
 }
 
+/* ── native interrupt entry ───────────────────────────────────────────────
+ *
+ * The bridge bounces into compiled code at a CALL (the interpreter has just
+ * pushed a return frame, so the paired-call ABI applies). An interrupt entry
+ * is not a call: the host pushes the hardware frame and hands the bridge the
+ * vector's PC. Until this existed, that meant a game whose per-frame work all
+ * hangs off NMI/IRQ ran its handler under the interpreter no matter how
+ * completely the handler was recompiled -- the compiled bodies were only ever
+ * reached from a JSR inside it, so the handler's own straight-line code, its
+ * loops and its tail transfers all stayed interpreted. Measured on Yoshi's
+ * Island, whose NMI and IRQ handlers are the frame.
+ *
+ * The contract is the DISPATCH ABI (host_return_valid = 0), which is exactly
+ * what an interrupt wants: there is no paired host-C caller to return
+ * through, and the handler's terminal RTI pops the frame the host pushed and
+ * returns RECOMP_RETURN_NORMAL -- the same boundary `stop_on_rti` gives the
+ * interpreter, so hosts need no change.
+ *
+ * Every way this can fail resolves to the faithful floor, loudly or exactly:
+ *   - no compiled body for the live (m, x)        -> interpreter
+ *   - a WRAM body whose guard bytes no longer match -> interpreter, and the
+ *     guard prints why (cpu_state.c)
+ *   - SNESRECOMP_NATIVE_INTERRUPT=0                -> interpreter, for A/B
+ * and a yield out of the compiled handler (frame deadline) is consumed here
+ * into the same s_lle_resume_pc24 the interpreter would have published, so
+ * the host resumes inside the handler on the next slice exactly as before. */
+static int native_interrupt_entry_enabled(void) {
+    static int s_on = -1;
+    if (s_on < 0) {
+        const char *e = getenv("SNESRECOMP_NATIVE_INTERRUPT");
+        s_on = (e && e[0] == '0') ? 0 : 1;
+    }
+    return s_on;
+}
+
+static uint64_t s_native_interrupt_runs;
+static uint64_t s_native_interrupt_misses;
+void interp_bridge_native_interrupt_stats(uint64_t *runs, uint64_t *misses) {
+    if (runs) *runs = s_native_interrupt_runs;
+    if (misses) *misses = s_native_interrupt_misses;
+}
+
 int interp_bridge_run_interrupt(CpuState *cpu, uint32_t entry_pc24) {
-    return interp_bridge_run_ex2(cpu, entry_pc24, cpu->S, NULL, NULL,
-                                 0, 0, 0, 0, NULL, 0, 1);
+    entry_pc24 &= 0xFFFFFFu;
+    /* Mark the whole handler -- compiled or interpreted -- as an interrupt
+     * context. interp_tier_dispatch_tail already keys off this to run a tail
+     * transfer out of a compiled handler with the RTI boundary intact
+     * (interp_tier_dispatch_interrupt); nothing used to SET it at the top, so
+     * the flag only ever became true one level down and a handler that
+     * tail-jumped straight out of its entry trampoline lost the boundary.
+     *
+     * Measured cost of that gap on Yoshi's Island, whose IRQ vector is a JML
+     * in WRAM into a handler the analyzer leaves on the floor: the compiled
+     * trampoline tail-dispatched to the interpreter WITHOUT stop_on_rti, the
+     * handler's RTI was treated as an ordinary return, and the 4-byte
+     * interrupt frame was never popped -- 8 bytes of guest stack per frame
+     * (two IRQs), a run-down stack, and a derail a few hundred frames later.
+     * tools/yi_stack_audit.py named it from the boundary ring: the IRQ entry
+     * settled on BOTH +4 and +0, while the NMI entry (whose handler is
+     * compiled end to end) settled on +4 every time. */
+    cpu_interrupt_context_enter();
+    if (native_interrupt_entry_enabled() &&
+        cpu_dispatch_has_entry(cpu, entry_pc24)) {
+        s_native_interrupt_runs++;
+        const uint32_t saved_resume = s_lle_resume_pc24;
+        const char *saved_func = g_last_recomp_func;
+        const char *scope = interp_scope_name(entry_pc24);
+        s_lle_resume_pc24 = 0;
+        g_last_recomp_func = scope;
+        RecompStackPush(scope);
+        cpu->host_return_valid = 0;
+        RecompReturn r = cpu_dispatch_pc(cpu, entry_pc24, cpu->S);
+        RecompStackPop();
+        g_last_recomp_func = saved_func;
+        cpu_interrupt_context_leave();
+        if (s_lle_unwind_active) {
+            /* The handler yielded (deadline) instead of reaching its RTI.
+             * No bounce site exists above us to consume the unwind, so
+             * publish the resume PC here and disarm -- leaving it armed would
+             * mis-fire on the next unrelated non-NORMAL return. */
+            s_lle_resume_pc24 = s_lle_unwind_pc24;
+            s_lle_unwind_active = 0;
+            s_lle_unwind_owner_depth = 0;
+            s_lle_unwind_is_deadline = 0;
+            s_lle_next_unwind_is_deadline = 0;
+            bridge_apu_flush(cpu);
+            return 1;
+        }
+        if (s_lle_resume_pc24 == 0) s_lle_resume_pc24 = saved_resume;
+        bridge_apu_flush(cpu);
+        return r == RECOMP_RETURN_NORMAL ? 0 : 1;
+    }
+    s_native_interrupt_misses++;
+    int r = interp_bridge_run_ex2(cpu, entry_pc24, cpu->S, NULL, NULL,
+                                  0, 0, 0, 0, NULL, 0, 1);
+    cpu_interrupt_context_leave();
+    return r;
 }
 
 /* ── tier-down entry (called from generated indirect-dispatch defaults) ───── */
