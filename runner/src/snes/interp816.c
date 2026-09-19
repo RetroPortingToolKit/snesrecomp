@@ -933,12 +933,38 @@ static void interp816_doOpcode(Interp816* cpu, uint8_t opcode) {
   switch(opcode) {
     case 0x00: { // brk imp
       if(cpu->brkHookEnabled) {
-        /* Historical main-CPU bridge marker. Current AOT bounces are selected
-         * before opcode execution, so the marker itself is an inert one-byte
-         * trap. Keep that ABI for the fallback tier without imposing a global
-         * callback symbol on independent coprocessor users. */
-        break;
-      } else {
+        /* `brkHookEnabled` dates from a bridge that bounced through PLANTED
+         * BRK markers, where executing one had to be inert. Nothing plants
+         * them any more -- interp_bridge.c states it outright: "The bounce is
+         * via explicit JSR/JSL interception below, not via planted BRKs" --
+         * so the only BRK the main CPU can now execute is one the guest
+         * really reached, which means it is off the rails.
+         *
+         * Swallowing it was actively harmful. Hardware vectors on the FIRST
+         * $00; this continued one byte at a time, so an off-rails run slid
+         * through blank memory, crossed back into real code and corrupted the
+         * stack before anything trapped. Super Metroid's Morph Ball freeze
+         * (DEVELOPMENT.md, 2026-09-19) executed 240 such bytes and only
+         * stopped on an unrelated COP ~9,000 steps later, by which point the
+         * instruction ring held nothing but the slide and the original bad
+         * jump was unrecoverable.
+         *
+         * So: report it once per run and then vector architecturally, which
+         * is both faithful and what stops an off-rails guest AT its fault.
+         * The flag is kept for callers that set it explicitly (SA-1 clears
+         * it) and no longer suppresses the vector. */
+        static int s_brk_reports;
+        if (s_brk_reports < 8) {
+          s_brk_reports++;
+          fprintf(stderr,
+                  "[brk] architectural BRK at $%02X:%04X (m=%d x=%d e=%d "
+                  "sp=$%04X) -- vectoring; a guest that reaches BRK is "
+                  "off the rails\n",
+                  cpu->k, (unsigned)(cpu->pc - 1), (int)cpu->mf, (int)cpu->xf,
+                  (int)cpu->e, (unsigned)cpu->sp);
+        }
+      }
+      {
         /* BRK is a two-byte instruction. The signature byte is fetched before
          * the return address is stacked. */
         interp816_readOpcode(cpu);
