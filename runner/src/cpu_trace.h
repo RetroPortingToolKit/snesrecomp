@@ -176,6 +176,22 @@ extern uint8_t       g_db_watch_set;       /* bitmask: bit N set => watch DB == 
 extern uint32_t      g_db_watch_bits[8];
 
 void cpu_trace_block(CpuState *cpu, uint32_t pc24);
+
+/* Write-site PC for WRAM-watch events.
+ *
+ * A watch event used to record only `cpu->PB << 16` — the bank — because the
+ * low 16 bits of the PC are not maintained at a write site: AOT blocks do not
+ * track a per-instruction PC and the interpreter keeps its own. That left
+ * every captured write reading "PC ~$xx:????", which names the neighbourhood
+ * of a corruption but never the instruction, so a clobber could be located to
+ * a function and no further.
+ *
+ * The interpreter publishes its current PC here per step while a watch is
+ * armed; an AOT block entry clears it so a stale interpreter PC is never
+ * attributed to generated code. Zero means "unknown", and the capture falls
+ * back to the bank-only form. */
+extern uint32_t g_cpu_trace_write_pc24;
+extern uint8_t  g_wram_watch_any;
 void cpu_trace_func_entry(CpuState *cpu, uint32_t pc24, const char *name);
 void cpu_trace_event(CpuState *cpu, uint32_t pc24, uint8_t event_type,
                      uint8_t extra0, uint16_t extra1);

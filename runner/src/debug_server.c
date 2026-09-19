@@ -4709,6 +4709,14 @@ typedef struct PpuLineDebugState {
     uint16_t wbgobjlog;
     uint8_t screen_enabled[2], screen_windowed[2];
     uint8_t cgwsel, cgadsub;
+    /* $2105 as the line begins, and what the renderer that actually drew the
+     * line did with it. Two fields rather than one because a game can toggle
+     * the BG mode mid-frame by HDMA, so "the mode at line start" and "the mode
+     * this line was drawn in" are separable questions -- and when the two
+     * renderers disagree about a frame, which of them read which value is the
+     * whole answer. `drawn_valid` stays 0 on a line no renderer reached. */
+    uint8_t bgmode;
+    uint8_t drawn_mode, drawn_renderer, drawn_valid;
 } PpuLineDebugState;
 
 static PpuLineDebugState s_ppu_lines[225];
@@ -4742,6 +4750,18 @@ void debug_server_on_ppu_line(int line) {
            sizeof(s->screen_windowed));
     s->cgwsel = p->cgwsel;
     s->cgadsub = p->cgadsub;
+    s->bgmode = p->bgmode;
+    s->drawn_valid = 0;
+}
+
+void debug_server_on_ppu_line_drawn(int line, int renderer, unsigned bgmode) {
+    if (line < 0 ||
+        line >= (int)(sizeof(s_ppu_lines) / sizeof(s_ppu_lines[0])))
+        return;
+    PpuLineDebugState *s = &s_ppu_lines[line];
+    s->drawn_mode = (uint8_t)bgmode;
+    s->drawn_renderer = (uint8_t)renderer;
+    s->drawn_valid = 1;
 }
 
 void debug_server_on_ppu_window(int line, int layer, const int16_t *edges,
@@ -4812,7 +4832,9 @@ static void cmd_ppu_lines(const char *args) {
             "\"windowsel\":\"0x%08x\",\"wbgobjlog\":\"0x%04x\","
             "\"enabled\":[\"0x%02x\",\"0x%02x\"],"
             "\"windowed\":[\"0x%02x\",\"0x%02x\"],"
-            "\"cgwsel\":\"0x%02x\",\"cgadsub\":\"0x%02x\"}",
+            "\"cgwsel\":\"0x%02x\",\"cgadsub\":\"0x%02x\","
+            "\"bgmode\":\"0x%02x\",\"mode\":%u,"
+            "\"drawn\":%s,\"drawn_mode\":%d,\"renderer\":\"%s\"}",
             emitted++ ? "," : "", line, s->frame,
             s->w1l, s->w1r, s->w2l, s->w2r,
             s->hscroll[0], s->hscroll[1], s->hscroll[2], s->hscroll[3],
@@ -4820,7 +4842,12 @@ static void cmd_ppu_lines(const char *args) {
             s->windowsel, s->wbgobjlog,
             s->screen_enabled[0], s->screen_enabled[1],
             s->screen_windowed[0], s->screen_windowed[1],
-            s->cgwsel, s->cgadsub);
+            s->cgwsel, s->cgadsub,
+            s->bgmode, (unsigned)(s->bgmode & 7),
+            s->drawn_valid ? "true" : "false",
+            s->drawn_valid ? (int)(s->drawn_mode & 7) : -1,
+            !s->drawn_valid ? "none"
+                            : (s->drawn_renderer ? "new" : "legacy"));
     }
     snprintf(buf + pos, sizeof(buf) - (size_t)pos,
              "],\"emitted\":%d}", emitted);

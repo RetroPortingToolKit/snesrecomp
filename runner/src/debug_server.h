@@ -116,6 +116,12 @@ void debug_server_on_oam_render(void);
 // Capture the PPU/window registers after per-line HDMA has run and immediately
 // before scanline rendering. Queried through the TCP `ppu_lines` command.
 void debug_server_on_ppu_line(int line);
+// Record which renderer drew a scanline and the BG mode it drew it in
+// (`renderer`: 0 legacy, 1 new). A game can change the BG mode mid-frame by
+// HDMA, so this is not redundant with the $2105 captured at line start --
+// the two answer different questions, and a disagreement between the two
+// renderers shows up as a difference here and nowhere else.
+void debug_server_on_ppu_line_drawn(int line, int renderer, unsigned bgmode);
 // Capture the renderer's computed window spans after host widescreen policy
 // has been applied. `edges` contains nr+1 signed screen-space boundaries.
 void debug_server_on_ppu_window(int line, int layer, const int16_t *edges,
@@ -151,6 +157,10 @@ static inline void debug_server_on_oracle_vram_write(uint32_t byte_addr, uint8_t
 static inline void debug_server_on_oam_write(int is_high, uint16_t index, uint16_t value) { (void)is_high; (void)index; (void)value; }
 static inline void debug_server_on_oam_render(void) { }
 static inline void debug_server_on_ppu_line(int line) { (void)line; }
+static inline void debug_server_on_ppu_line_drawn(int line, int renderer,
+                                                  unsigned bgmode) {
+    (void)line; (void)renderer; (void)bgmode;
+}
 static inline void debug_server_on_ppu_window(int line, int layer,
                                                const int16_t *edges,
                                                unsigned nr, uint8_t bits) {
