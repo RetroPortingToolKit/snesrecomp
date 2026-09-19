@@ -1690,12 +1690,36 @@ static int _interp_run_core(CpuState *cpu, uint32_t entry_pc24,
          * serviced normally. A frame between here and the scheduler that also
          * cannot yield re-arms one level further out, so this walks outward to
          * the scheduler from any depth. */
+        /* The same argument applies to a nested frame standing on a
+         * stable-value poll (`LDA v; loop: CMP v; BEQ loop`) that is NOT the
+         * scheduler's own yield PC. Forward progress there also requires an
+         * interrupt to change memory, and a nested frame cannot let one
+         * happen, so it is a block point for identical reasons -- but the
+         * hand-off used to key on the scheduler's PC alone and skipped it.
+         *
+         * Measured (Super Metroid, Morph Ball pickup): `$85:8136` waits a
+         * frame with `SEP #$20; LDA $05B8; CMP $05B8; BEQ -5` and is reached
+         * through a PLM dispatch, i.e. nested (`yield_pc == 0`, confirmed by
+         * the [pollshape] probe). It span to the step cap, the routine was
+         * abandoned mid-way, and its `SEP #$20` was never undone by the `PLP`
+         * at `$85:8141`. M=1 then leaked into the bank-$84 PLM loop, where
+         * `AND #$00FF` decodes as `AND #$FF` plus a stray `$00` -- a BRK at
+         * `$84:8911` into InvalidInterrupt_Crash. See DEVELOPMENT.md
+         * 2026-09-19. Handing the block outward lets the frame that owns the
+         * yield contract service the poll normally. */
+        const int _nested_poll_block =
+            !yield_pc && steps > 16 &&
+            bridge_bus_read(cpu, pc_before) == 0xCD &&
+            bridge_bus_read(cpu, pc_before + 3) == 0xF0 &&
+            bridge_bus_read(cpu, pc_before + 4) == 0xFB;
         if (!yield_pc && s_lle_sched_depth > 0 && s_sched_yield_pc &&
             s_interp_bridge_depth > 1 &&
-            (pc_before & 0x7FFFFF) == (s_sched_yield_pc & 0x7FFFFF)) {
+            ((pc_before & 0x7FFFFF) == (s_sched_yield_pc & 0x7FFFFF) ||
+             _nested_poll_block)) {
             const uint8_t _sched_flag =
                 bridge_bus_read(cpu, s_sched_yield_flag_addr);
             const int _blocked =
+                _nested_poll_block ||
                 _sched_flag == s_sched_yield_flag_value ||
                 (steps > 16 &&
                  bridge_bus_read(cpu, pc_before) == 0xAD &&
