@@ -2,6 +2,15 @@
 
 #include "cpu_trace.h"
 
+/* Unconditional, unlike the rest of this file: interp_bridge.c reads and
+ * writes these on every step (`if (g_wram_watch_any) ...`), trace build or
+ * not, so the symbols must always exist. Nothing outside a SNESRECOMP_TRACE
+ * build ever arms a watch, so g_wram_watch_any simply stays 0 there and the
+ * check is a correct no-op -- but a no-op still needs something to link
+ * against. */
+uint8_t   g_wram_watch_any = 0;
+uint32_t  g_cpu_trace_write_pc24 = 0;
+
 #if SNESRECOMP_TRACE
 
 #include "common_cpu_infra.h"
@@ -2025,8 +2034,6 @@ void cpu_trace_set_func_watch(const char *name) {
  * way (bank=$7E, addr=$008c) and (bank=$00, addr=$008c) trip the same
  * watch without us having to know about mirroring at check time. */
 WramWatch g_wram_watches[CPU_WRAM_WATCH_MAX];
-uint8_t   g_wram_watch_any = 0;
-uint32_t  g_cpu_trace_write_pc24 = 0;
 
 void cpu_trace_set_wram_watch(uint8_t bank, uint16_t addr, int width,
                               int match_value, uint8_t value, int enabled) {
