@@ -242,11 +242,11 @@ static uint8_t *resolve_image(const SnesVariantDecl *d,
             free(owned_source);
             return NULL;
         }
-        RomPatchStatus st = rom_patch_apply(source, source_size, patch, patch_size,
+        RomPatchStatus st = snes_rom_patch_apply(source, source_size, patch, patch_size,
                                             VARIANT_MAX_IMAGE, &image, &image_size);
         free(patch);
         if (st != kRomPatch_Ok) {
-            snprintf(reason, reason_cap, "%s", rom_patch_status_text(st));
+            snprintf(reason, reason_cap, "%s", snes_rom_patch_status_text(st));
             free(owned_source);
             return NULL;
         }

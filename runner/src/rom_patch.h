@@ -42,17 +42,17 @@ typedef enum RomPatchFormat {
     kRomPatchFormat_Bps,
 } RomPatchFormat;
 
-RomPatchFormat rom_patch_detect(const uint8_t *patch, size_t patch_size);
+RomPatchFormat snes_rom_patch_detect(const uint8_t *patch, size_t patch_size);
 
 /* Apply `patch` to `source`, producing a malloc-owned image in (*out, *out_size).
  * `max_size` bounds the result (an IPS may grow the image; 16 MiB is a sane
  * cap for SNES). On any failure nothing is allocated and *out is NULL. */
-RomPatchStatus rom_patch_apply(const uint8_t *source, size_t source_size,
+RomPatchStatus snes_rom_patch_apply(const uint8_t *source, size_t source_size,
                                const uint8_t *patch, size_t patch_size,
                                size_t max_size,
                                uint8_t **out, size_t *out_size);
 
-const char *rom_patch_status_text(RomPatchStatus status);
+const char *snes_rom_patch_status_text(RomPatchStatus status);
 
 #ifdef __cplusplus
 }

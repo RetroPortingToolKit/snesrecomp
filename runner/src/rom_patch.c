@@ -14,14 +14,14 @@ static uint32_t le32(const uint8_t *p) {
            ((uint32_t)p[3] << 24);
 }
 
-RomPatchFormat rom_patch_detect(const uint8_t *patch, size_t patch_size) {
+RomPatchFormat snes_rom_patch_detect(const uint8_t *patch, size_t patch_size) {
     if (!patch) return kRomPatchFormat_Unknown;
     if (patch_size >= 8 && memcmp(patch, "PATCH", 5) == 0) return kRomPatchFormat_Ips;
     if (patch_size >= 16 && memcmp(patch, "BPS1", 4) == 0) return kRomPatchFormat_Bps;
     return kRomPatchFormat_Unknown;
 }
 
-const char *rom_patch_status_text(RomPatchStatus status) {
+const char *snes_rom_patch_status_text(RomPatchStatus status) {
     switch (status) {
     case kRomPatch_Ok: return "ok";
     case kRomPatch_Invalid: return "patch is not a valid IPS or BPS file";
@@ -198,7 +198,7 @@ static RomPatchStatus apply_bps(const uint8_t *source, size_t source_size,
     return kRomPatch_Ok;
 }
 
-RomPatchStatus rom_patch_apply(const uint8_t *source, size_t source_size,
+RomPatchStatus snes_rom_patch_apply(const uint8_t *source, size_t source_size,
                                const uint8_t *patch, size_t patch_size,
                                size_t max_size,
                                uint8_t **out, size_t *out_size) {
@@ -209,7 +209,7 @@ RomPatchStatus rom_patch_apply(const uint8_t *source, size_t source_size,
     Image img = {0};
     img.max_size = max_size;
     RomPatchStatus status;
-    switch (rom_patch_detect(patch, patch_size)) {
+    switch (snes_rom_patch_detect(patch, patch_size)) {
     case kRomPatchFormat_Ips:
         status = apply_ips(source, source_size, patch, patch_size, &img);
         break;

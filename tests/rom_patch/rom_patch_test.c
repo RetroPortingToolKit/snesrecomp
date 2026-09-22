@@ -45,8 +45,8 @@ static void test_ips(void) {
   put(&p, "EOF", 3);
 
   uint8_t *out = NULL; size_t n = 0;
-  CHECK(rom_patch_detect(p.data, p.n) == kRomPatchFormat_Ips);
-  CHECK(rom_patch_apply(src, 64, p.data, p.n, 1 << 20, &out, &n) == kRomPatch_Ok);
+  CHECK(snes_rom_patch_detect(p.data, p.n) == kRomPatchFormat_Ips);
+  CHECK(snes_rom_patch_apply(src, 64, p.data, p.n, 1 << 20, &out, &n) == kRomPatch_Ok);
   CHECK(out && n == 66);
   if (out && n == 66) {
     CHECK(out[9] == 9 && out[10] == 0xaa && out[12] == 0xcc && out[13] == 13);
@@ -57,24 +57,24 @@ static void test_ips(void) {
   free(out);
 
   /* Growth past the cap is refused, not clamped. */
-  CHECK(rom_patch_apply(src, 64, p.data, p.n, 65, &out, &n) == kRomPatch_TooLarge);
+  CHECK(snes_rom_patch_apply(src, 64, p.data, p.n, 65, &out, &n) == kRomPatch_TooLarge);
   CHECK(out == NULL && n == 0);
 
   /* Truncation extension. */
   Buf t = {{0}, 0};
   put(&t, "PATCH", 5); put(&t, "EOF", 3); put24be(&t, 16);
-  CHECK(rom_patch_apply(src, 64, t.data, t.n, 1 << 20, &out, &n) == kRomPatch_Ok);
+  CHECK(snes_rom_patch_apply(src, 64, t.data, t.n, 1 << 20, &out, &n) == kRomPatch_Ok);
   CHECK(n == 16 && out && out[15] == 15);
   free(out);
 
   /* Malformed: record runs past the end; trailing junk. */
   Buf bad = {{0}, 0};
   put(&bad, "PATCH", 5); put24be(&bad, 0); put16be(&bad, 9); put(&bad, "xy", 2);
-  CHECK(rom_patch_apply(src, 64, bad.data, bad.n, 1 << 20, &out, &n) == kRomPatch_Invalid);
+  CHECK(snes_rom_patch_apply(src, 64, bad.data, bad.n, 1 << 20, &out, &n) == kRomPatch_Invalid);
   Buf junk = {{0}, 0};
   put(&junk, "PATCH", 5); put(&junk, "EOF", 3); put8(&junk, 0);
-  CHECK(rom_patch_apply(src, 64, junk.data, junk.n, 1 << 20, &out, &n) == kRomPatch_Invalid);
-  CHECK(rom_patch_apply(src, 64, (const uint8_t *)"NOPE!!!!", 8, 1 << 20, &out, &n) == kRomPatch_Invalid);
+  CHECK(snes_rom_patch_apply(src, 64, junk.data, junk.n, 1 << 20, &out, &n) == kRomPatch_Invalid);
+  CHECK(snes_rom_patch_apply(src, 64, (const uint8_t *)"NOPE!!!!", 8, 1 << 20, &out, &n) == kRomPatch_Invalid);
 }
 
 /* Build a BPS that turns `src` into `tgt` using all four actions:
@@ -106,33 +106,33 @@ static void test_bps(void) {
   Buf p = {{0}, 0};
   build_bps(&p, src, 16, tgt, 20, 0);
   uint8_t *out = NULL; size_t n = 0;
-  CHECK(rom_patch_detect(p.data, p.n) == kRomPatchFormat_Bps);
-  CHECK(rom_patch_apply(src, 16, p.data, p.n, 1 << 20, &out, &n) == kRomPatch_Ok);
+  CHECK(snes_rom_patch_detect(p.data, p.n) == kRomPatchFormat_Bps);
+  CHECK(snes_rom_patch_apply(src, 16, p.data, p.n, 1 << 20, &out, &n) == kRomPatch_Ok);
   CHECK(n == 20 && out && memcmp(out, tgt, 20) == 0);
   free(out);
 
   /* Wrong source: size mismatch and CRC mismatch are both refused. */
-  CHECK(rom_patch_apply(src, 15, p.data, p.n, 1 << 20, &out, &n) == kRomPatch_SourceMismatch);
+  CHECK(snes_rom_patch_apply(src, 15, p.data, p.n, 1 << 20, &out, &n) == kRomPatch_SourceMismatch);
   uint8_t other[16]; memcpy(other, src, 16); other[3] ^= 0xff;
-  CHECK(rom_patch_apply(other, 16, p.data, p.n, 1 << 20, &out, &n) == kRomPatch_SourceMismatch);
+  CHECK(snes_rom_patch_apply(other, 16, p.data, p.n, 1 << 20, &out, &n) == kRomPatch_SourceMismatch);
 
   /* A patch whose own CRC is wrong is invalid; a bad target CRC is a
    * target mismatch (the bytes were produced, then refused). */
   p.data[6] ^= 1;
-  CHECK(rom_patch_apply(src, 16, p.data, p.n, 1 << 20, &out, &n) == kRomPatch_Invalid);
+  CHECK(snes_rom_patch_apply(src, 16, p.data, p.n, 1 << 20, &out, &n) == kRomPatch_Invalid);
   build_bps(&p, src, 16, tgt, 20, 1);
-  CHECK(rom_patch_apply(src, 16, p.data, p.n, 1 << 20, &out, &n) == kRomPatch_TargetMismatch);
+  CHECK(snes_rom_patch_apply(src, 16, p.data, p.n, 1 << 20, &out, &n) == kRomPatch_TargetMismatch);
   CHECK(out == NULL);
 
   /* Result larger than the cap. */
   build_bps(&p, src, 16, tgt, 20, 0);
-  CHECK(rom_patch_apply(src, 16, p.data, p.n, 19, &out, &n) == kRomPatch_TooLarge);
+  CHECK(snes_rom_patch_apply(src, 16, p.data, p.n, 19, &out, &n) == kRomPatch_TooLarge);
 }
 
 int main(void) {
   test_ips();
   test_bps();
-  CHECK(rom_patch_status_text(kRomPatch_Ok)[0] != '\0');
+  CHECK(snes_rom_patch_status_text(kRomPatch_Ok)[0] != '\0');
   if (g_failures) {
     printf("%d failure(s)\n", g_failures);
     return 1;
