@@ -50,6 +50,10 @@ SuperFx *superfx_create(uint8_t *rom, uint32_t rom_size, uint8_t *ram,
 }
 void superfx_destroy(SuperFx *fx) { (void)fx; }
 void superfx_reset(SuperFx *fx) { (void)fx; }
+/* Cart serialization now consults these, although this LoROM dispatch test
+ * never saves a machine and deliberately does not link either subsystem. */
+uint32_t snes_saveload_get_version(void) { return 5; }
+void superfx_saveload(SuperFx *fx, struct SaveLoadInfo *sli) { (void)fx; (void)sli; }
 void superfx_sync(SuperFx *fx, uint64_t master_clock) {
     (void)fx; (void)master_clock;
 }
@@ -270,6 +274,12 @@ int main(void) {
                    "alternate program cannot reach stock AOT table");
     fails += check(cpu_dispatch_inline_arg_bytes(0x008300u) == 3,
                    "inline arguments use active program metadata");
+    cpu_select_interpreted_program();
+    fails += check(!cpu_dispatch_has_entry(&cpu, 0x008100u) &&
+                   !cpu_dispatch_has_entry(&cpu, 0x008300u),
+                   "uncompiled content reaches neither stock nor alternate AOT");
+    fails += check(cpu_dispatch_inline_arg_bytes(0x008300u) == 0,
+                   "uncompiled content inherits no native inline metadata");
     cpu_select_program(NULL, 0, NULL, 0);
     fails += check(cpu_dispatch_has_entry(&cpu, 0x008100u),
                    "default program restores stock dispatch");
