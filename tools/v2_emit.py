@@ -235,6 +235,7 @@ def main() -> int:
     # take the digest before ram_routine blobs are materialized into the copy
     # the analyzer sees.
     rom_sha256_hex = hashlib.sha256(rom).hexdigest()
+    rom_image_size = len(rom)
     parsed = _load_cfgs(cfg_dir)
     # Materialize ram_routine blobs into the ROM image + reloc registry so
     # their WRAM entries decode as ordinary AOT bodies. Their WRAM roots join
@@ -393,6 +394,7 @@ def main() -> int:
         module_id=args.module_id,
         module_prefix=args.module_prefix,
         rom_sha256_hex=rom_sha256_hex,
+        rom_size=rom_image_size,
     )
     elapsed = time.perf_counter() - started
     print(

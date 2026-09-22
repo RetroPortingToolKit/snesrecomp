@@ -766,10 +766,16 @@ def emit_program(*, rom: bytes, parsed, manifest: ProgramManifest,
                  check_link_closure: bool = True,
                  module_id: str = "main",
                  module_prefix: str | None = None,
-                 rom_sha256_hex: str | None = None) -> EmissionResult:
+                 rom_sha256_hex: str | None = None,
+                 rom_size: int | None = None) -> EmissionResult:
     validate_module_identity(module_id, module_prefix)
+    # Identity of the IMAGE the module was generated from. The caller passes
+    # both when its `rom` already carries materialized ram_routine blobs (the
+    # runtime verifies the player's file, which never does).
     if rom_sha256_hex is None:
         rom_sha256_hex = hashlib.sha256(rom).hexdigest()
+    if rom_size is None:
+        rom_size = len(rom)
     entries_by_bank, emitted, name_for_pc, cfg_by_bank = build_emission_entries(
         manifest, parsed, enable_hle=enable_hle)
     cfg_dirs = sorted({pathlib.Path(path).resolve().parent
@@ -969,7 +975,7 @@ def emit_program(*, rom: bytes, parsed, manifest: ProgramManifest,
             "/* Manifest-driven generation: unresolved execution remains LLE. */\n")
         write_if_changed(
             staging / MODULE_DESCRIPTOR_SOURCE,
-            emit_module_descriptor(module_id, module_prefix, len(rom),
+            emit_module_descriptor(module_id, module_prefix, rom_size,
                                    rom_sha256_hex))
         if module_prefix:
             all_bases = sorted({
