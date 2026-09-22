@@ -626,7 +626,8 @@ def _collect_ram_routines(parsed):
 def emit_dispatch_table(manifest: ProgramManifest, emitted_variants: Mapping,
                         name_for_pc: Mapping[int, str],
                         inline_arg_map: Mapping[int, int],
-                        ram_routines=()) -> str:
+                        ram_routines=(),
+                        module_prefix: str | None = None) -> str:
     known_pcs = sorted({key.pc24 for key in manifest.nodes})
 
     def base_name(pc24):
@@ -636,8 +637,11 @@ def emit_dispatch_table(manifest: ProgramManifest, emitted_variants: Mapping,
     lines = [
         "/* Auto-generated from the authoritative LLE/AOT manifest. */",
         "#include \"cpu_state.h\"",
-        "",
     ]
+    if module_prefix:
+        # The table and every body it names live in this module's namespace.
+        lines.append(f"#include \"{MODULE_NAMESPACE_HEADER}\"")
+    lines.append("")
     for pc24 in known_pcs:
         base = base_name(pc24)
         for m, x in sorted(emitted_variants.get(pc24, ())):
@@ -969,7 +973,8 @@ def emit_program(*, rom: bytes, parsed, manifest: ProgramManifest,
         write_if_changed(
             staging / "dispatch_v2.c",
             emit_dispatch_table(manifest, emitted, name_for_pc, inline_arg_map,
-                                ram_routines=_collect_ram_routines(parsed)))
+                                ram_routines=_collect_ram_routines(parsed),
+                                module_prefix=module_prefix))
         write_if_changed(
             staging / "unresolved_stubs_v2.c",
             "/* Manifest-driven generation: unresolved execution remains LLE. */\n")

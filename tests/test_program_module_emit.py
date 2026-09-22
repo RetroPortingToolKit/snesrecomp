@@ -15,8 +15,10 @@ TESTS_DIR = pathlib.Path(__file__).resolve().parent
 REPO_ROOT = TESTS_DIR.parent
 sys.path.insert(0, str(REPO_ROOT / 'recompiler'))
 
+from v2.program_analysis import ProgramManifest  # noqa: E402
 from v2.program_emit import (  # noqa: E402
     collect_bank_symbols,
+    emit_dispatch_table,
     emit_module_descriptor,
     emit_module_namespace,
     validate_module_identity,
@@ -99,3 +101,12 @@ def test_descriptor_rejects_short_digest():
     except ValueError:
         return
     raise AssertionError("short digest accepted")
+
+
+def test_dispatch_table_joins_the_module_namespace():
+    manifest = ProgramManifest()
+    plain = emit_dispatch_table(manifest, {}, {}, {})
+    prefixed = emit_dispatch_table(manifest, {}, {}, {}, module_prefix="smas")
+    assert MODULE_NAMESPACE_HEADER not in plain
+    assert f'#include "{MODULE_NAMESPACE_HEADER}"' in prefixed
+    assert "const DispatchEntry g_dispatch_table[]" in prefixed
