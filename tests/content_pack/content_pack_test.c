@@ -80,6 +80,17 @@ static void catalog(void) {
         CHECK(!cp_manifest_read("pack.ini",p,error,sizeof(error)) && !strcmp(p->id,"sentinel"));
     }
     manifest("../escape","");CHECK(!cp_manifest_read("pack.ini",p,error,sizeof(error)));
+    manifest("alias","alternate_target_sha256=ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad\n");
+    CHECK(cp_manifest_read("pack.ini",p,error,sizeof(error)) && p->alternate_target_count==1);
+    sha256_compute((const uint8_t *)"abc",3,p->source_hash);
+    FILE *patch=fopen("identity.ips","wb");CHECK(patch);CHECK(fwrite("PATCHEOF",1,8,patch)==8);fclose(patch);
+    uint8_t *out=NULL;size_t size=0;
+    CHECK(cp_pack_apply(p,(const uint8_t *)"abc",3,"identity.ips",&out,&size,error,sizeof(error)));
+    CHECK(size==3 && !memcmp(out,"abc",3));free(out);
+    CHECK(!cp_pack_apply(p,(const uint8_t *)"abd",3,"identity.ips",&out,&size,error,sizeof(error)));
+    p->alternate_target_hash[0][0]^=1;
+    CHECK(!cp_pack_apply(p,(const uint8_t *)"abc",3,"identity.ips",&out,&size,error,sizeof(error)));
+    remove("identity.ips");
     cp_catalog_free(&c);CHECK(!c.count);free(p);remove("pack.ini");
 }
 int main(void) { patches();catalog();puts("Content patches and additive catalog passed");return 0; }

@@ -85,6 +85,8 @@ int cp_manifest_read(const char *path, CpPack *out, char *error, size_t cap) {
             case 5: ok = cp_hash_parse(value, p->source_hash); break;
             case 6: ok = cp_hash_parse(value, p->target_hash); break;
             }
+        } else if (!strcmp(line, "alternate_target_sha256") && p->alternate_target_count < 8) {
+            ok = cp_hash_parse(value, p->alternate_target_hash[p->alternate_target_count++]);
         } else if (!strcmp(line, "cup") && p->cup_count < CP_CUPS) {
             CpCup *c = &p->cups[p->cup_count++]; char *v[3];
             ok = fields(value, v, 3) && cp_id_valid(v[0]) && copy(c->id, sizeof(c->id), v[0]) &&
@@ -161,7 +163,10 @@ int cp_pack_apply(const CpPack *p, const uint8_t *source, size_t size,
         free(patch); fclose(f); return 0;
     }
     sha256_compute(target, target_size, hash);
-    if (memcmp(hash, p->target_hash, 32)) {
+    int matches = !memcmp(hash, p->target_hash, 32);
+    for (unsigned i = 0; i < p->alternate_target_count && i < 8; ++i)
+        matches |= !memcmp(hash, p->alternate_target_hash[i], 32);
+    if (!matches) {
         free(target); free(patch); fclose(f);
         return fail(error, cap, "Patch output does not match this pack/revision; nothing activated");
     }

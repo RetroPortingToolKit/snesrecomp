@@ -20,6 +20,7 @@ typedef struct CpTrack {
 typedef struct CpPack {
     char id[CP_ID], name[CP_NAME], author[CP_NAME], adapter[CP_ID];
     uint8_t source_hash[32], target_hash[32];
+    uint8_t alternate_target_hash[8][32]; unsigned alternate_target_count;
     CpCup cups[CP_CUPS]; CpTrack tracks[CP_TRACKS];
     unsigned cup_count, track_count;
 } CpPack;

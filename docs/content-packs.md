@@ -40,6 +40,11 @@ cup=bonus|Bonus Cup|0
 track=circuit|My Circuit|bonus|2
 ```
 
+An optional repeated `alternate_target_sha256=<64 hex digits>` accepts up to
+eight additional exact donor images. The host must establish equivalent
+resource semantics before listing them; an alternate hash is not permission
+to execute arbitrary replacement code. Source identity is still required.
+
 The last field of a cup/track is an adapter-local guest slot (0–255). It is
 metadata, never a framework dispatch address. A manifest author must verify
 the adapter contract; a patch format cannot prove compatibility with a host's
@@ -66,6 +71,11 @@ so its file extension or apparent successful application is insufficient.
 Different encodings of the same output, including IPS versus BPS, are accepted.
 Apply every pack to its declared immutable base, never to a previous pack's
 patched image.
+
+Additive resource consumers should decode and validate typed resources, discard
+the donor image and keep their canonical engine and shared hooks. F-Zero's
+course library follows this model. The framework does not infer resource
+ownership from changed ROM bytes.
 
 Before executing code-changing content without a matching native module,
 `cpu_select_interpreted_program()` installs an intentionally empty dispatch
