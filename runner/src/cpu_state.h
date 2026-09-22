@@ -579,6 +579,9 @@ extern const unsigned        g_ram_routine_guard_count;
  * Passing NULL restores the original generated program. Never call mid-frame. */
 void cpu_select_program(const DispatchEntry *dispatch, unsigned count,
                         const RamRoutineGuard *guards, unsigned guard_count);
+/* A code-changing resource without a compiled module must never fall back to
+ * the stock table (NULL means stock). Select an intentionally empty program. */
+void cpu_select_interpreted_program(void);
 
 uint8 cpu_dispatch_inline_arg_bytes(uint32 pc24);
 

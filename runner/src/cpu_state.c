@@ -904,6 +904,10 @@ void CpuDispatchLogDumpJson(FILE *f) {
  * mismatch (or a RAM body with no guard record — fail safe) suppresses the AOT
  * bounce so the interpreter floor runs the real bytes, and logs loudly. */
 static const DispatchEntry *s_program_dispatch;
+void cpu_select_interpreted_program(void) {
+    static const DispatchEntry empty[1] = {{0}};
+    cpu_select_program(empty, 0, NULL, 0);
+}
 static unsigned s_program_dispatch_count;
 static const RamRoutineGuard *s_program_guards;
 static unsigned s_program_guard_count;

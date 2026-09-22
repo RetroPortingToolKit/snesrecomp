@@ -1,6 +1,7 @@
 # Compiled output
 build/
 build-cli/
+build-content-packs/
 dist/
 *.exe
 *.obj

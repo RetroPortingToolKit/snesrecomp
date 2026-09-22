@@ -1,0 +1,10 @@
+cmake_minimum_required(VERSION 3.20)
+project(ContentPackTests C)
+enable_testing()
+add_executable(content_pack_tests content_pack_test.c ../../runner/src/content_pack.c
+    ../../runner/src/content_patch.c ../../runner/src/sha256.c)
+target_include_directories(content_pack_tests PRIVATE ../../runner/src)
+if(NOT MSVC)
+    target_compile_options(content_pack_tests PRIVATE -Wall -Wextra -Werror)
+endif()
+add_test(NAME content_pack COMMAND content_pack_tests)
