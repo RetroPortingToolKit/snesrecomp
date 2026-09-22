@@ -8,8 +8,10 @@
 #include <limits.h>
 #ifdef _WIN32
 #include <direct.h>
+#include <io.h>
 #else
 #include <sys/stat.h>
+#include <unistd.h>
 #endif
 #include "recomp_hw.h"
 #include "framedump.h"
@@ -2434,21 +2436,58 @@ void RtlReadSram(void) {
   }
 }
 
-void RtlWriteSram(void) {
+/* Battery file replacement is write-temp, flush, then rename: the previous
+ * revision becomes save.srm.bak only once the new bytes are durably on disk,
+ * so a crash at any point leaves either the old file or the new one in place,
+ * never a truncated one and never a moment with no save.srm at all. Content
+ * variants flush on every switch (RtlWriteSram then a new save root), which
+ * is exactly when a torn write would destroy progress that was just made. */
+int RtlWriteSram(void) {
   if (!g_sram || g_sram_size <= 0)
-    return;
-  char path[128], bak[140];
+    return 1;
+  char path[128], bak[140], tmp[140];
   RtlEnsureSaveDir();
   RtlSramFilePath(path, sizeof(path));
   snprintf(bak, sizeof(bak), "%s.bak", path);
-  rename(path, bak);
-  FILE *f = fopen(path, "wb");
-  if (f) {
-    fwrite(g_sram, 1, g_sram_size, f);
-    fclose(f);
-  } else {
-    fprintf(stderr, "Unable to write %s\n", path);
+  snprintf(tmp, sizeof(tmp), "%s.tmp", path);
+  FILE *f = fopen(tmp, "wb");
+  if (!f) {
+    fprintf(stderr, "Unable to write %s\n", tmp);
+    return 0;
   }
+  int ok = fwrite(g_sram, 1, g_sram_size, f) == (size_t)g_sram_size;
+  ok = ok && fflush(f) == 0;
+#ifdef _WIN32
+  ok = ok && _commit(_fileno(f)) == 0;
+#else
+  ok = ok && fsync(fileno(f)) == 0;
+#endif
+  ok = fclose(f) == 0 && ok;
+  if (!ok) {
+    fprintf(stderr, "Unable to write %s\n", tmp);
+    remove(tmp);
+    return 0;
+  }
+  /* Keep exactly one previous revision. A missing current file (first save
+   * in this namespace) is not an error. */
+  remove(bak);
+  FILE *cur = fopen(path, "rb");
+  if (cur) {
+    fclose(cur);
+    if (rename(path, bak) != 0) {
+      fprintf(stderr, "Unable to rotate %s to %s\n", path, bak);
+      remove(tmp);
+      return 0;
+    }
+  }
+  if (rename(tmp, path) != 0) {
+    fprintf(stderr, "Unable to publish %s\n", path);
+    /* Put the previous revision back so the namespace still has a file. */
+    rename(bak, path);
+    remove(tmp);
+    return 0;
+  }
+  return 1;
 }
 
 static const uint8 *SimpleHdma_GetPtr(uint32 p) {

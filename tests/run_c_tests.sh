@@ -443,3 +443,36 @@ echo "=== Super FX state and presentation isolation ==="
     "$ROOT/runner/src/snes/superfx.c" \
     -o "$OUT/superfx_state_test"
 "$OUT/superfx_state_test"
+
+echo "=== program module registry ==="
+"$CC" -std=c11 -Wall -Wextra -Werror -O1 \
+    -I "$ROOT/runner/src" -I "$ROOT/runner/src/snes" \
+    "$ROOT/tests/program_module/program_module_test.c" \
+    "$ROOT/runner/src/program_module.c" \
+    "$ROOT/runner/src/sha256.c" \
+    -o "$OUT/program_module_test"
+"$OUT/program_module_test"
+
+echo "=== ROM patch (IPS/BPS) ==="
+"$CC" -std=c11 -Wall -Wextra -Werror -O1 \
+    -I "$ROOT/runner/src" \
+    "$ROOT/tests/rom_patch/rom_patch_test.c" \
+    "$ROOT/runner/src/rom_patch.c" \
+    "$ROOT/runner/src/crc32.c" \
+    -o "$OUT/rom_patch_test"
+"$OUT/rom_patch_test"
+
+echo "=== content variants + selector ==="
+"$CC" -std=c11 -Wall -Wextra -Werror -O1 \
+    -I "$ROOT/runner/src" -I "$ROOT/runner/src/snes" -I "$ROOT/third_party" \
+    -DSNESRECOMP_ENABLE_MODS=0 \
+    "$ROOT/tests/content_variant/content_variant_test.c" \
+    "$ROOT/runner/src/content_variant.c" \
+    "$ROOT/runner/src/variant_selector.c" \
+    "$ROOT/runner/src/program_module.c" \
+    "$ROOT/runner/src/rom_patch.c" \
+    "$ROOT/runner/src/crc32.c" \
+    "$ROOT/runner/src/sha256.c" \
+    "$ROOT/runner/src/snes_overlay_draw.c" \
+    -o "$OUT/content_variant_test"
+(cd "$OUT" && "$OUT/content_variant_test")

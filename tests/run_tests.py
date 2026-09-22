@@ -27,6 +27,7 @@ TEST_MODULES = [
     'test_attract_demo_regression',
     'test_dispatch_extents',
     'test_emitter_mask_shape',
+    'test_program_module_emit',
     'test_smwdisx_compare',
     'test_sync_funcs_h',
     'test_snes_cycles',

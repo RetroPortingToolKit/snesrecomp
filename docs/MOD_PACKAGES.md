@@ -169,3 +169,14 @@ The initial operation vocabulary is intentionally narrow: trusted activation
 plugins only. Future guarded ROM writes, asset overlays, or interpreter hooks
 must retain the same pre-boot validation and no-arbitrary-code model rather than
 turning package order into an implicit patch priority.
+
+## Content variants: `[[variant]]`, `[[patch]]`, `external_rom.sha256`
+
+A package may declare selectable **content variants** -- another program run
+from a user-supplied image, or a ROM hack -- each with its own recompiled
+module and isolated saves. The manifest vocabulary, the runtime registry and
+the in-game Left/Right picker are documented in `CONTENT_VARIANTS.md`. Two
+rules carry over from the trust model above: an `[[external_rom]]` that a
+variant runs must declare `sha256`, and the engine (not a plugin) verifies it
+before any use; a `[[patch]]` is applied in memory to the verified source and
+its `target_sha256` is checked before a module may run the result.

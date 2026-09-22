@@ -29,6 +29,7 @@ from v2.program_emit import (  # noqa: E402
     discover_host_roots,
     discover_profile_roots,
     emit_program,
+    validate_module_identity,
 )
 from v2_analyze import (  # noqa: E402
     _load_cfgs,
@@ -85,7 +86,9 @@ def _analysis_input_digest(*, rom: bytes, generator_digest: str,
                            analysis_backend: str,
                            enable_hle: bool, max_insns: int,
                            max_nodes: int, shard_threshold_bytes: int,
-                           shard_pc_span: int) -> str:
+                           shard_pc_span: int,
+                           module_id: str = "main",
+                           module_prefix: str | None = None) -> str:
     value = {
         "format": CACHE_FORMAT_VERSION,
         "rom": hashlib.sha256(rom).hexdigest(),
@@ -98,6 +101,7 @@ def _analysis_input_digest(*, rom: bytes, generator_digest: str,
         "cfg_roots": bool(cfg_roots),
         "analysis_backend": str(analysis_backend),
         "hle": bool(enable_hle),
+        "module": [str(module_id), str(module_prefix or "")],
         "max_insns": int(max_insns),
         "max_nodes": int(max_nodes),
         "sharding": [int(shard_threshold_bytes), int(shard_pc_span)],
@@ -177,6 +181,18 @@ def main() -> int:
              "coverage policy: the declared surface is materialized as AOT "
              "wherever the analysis proves it; LLE remains the failsafe for "
              "anything unprovable, never the plan of record.")
+    parser.add_argument(
+        "--module-id", default="main",
+        help="program-module id recorded in the generated module_v2.c "
+             "descriptor and used by the runtime registry "
+             "(runner/src/program_module.h) to select this tree "
+             "(default: main)")
+    parser.add_argument(
+        "--module-prefix", default=None,
+        help="prefix every generated symbol as <prefix>_<name> through a "
+             "generated module_namespace.h so this module can be linked "
+             "beside another generated module (content variants). Requires "
+             "a funcs.h beside the cfg files; default: no prefix")
     parser.add_argument("--no-host-root-scan", action="store_true")
     parser.add_argument("--no-hle", action="store_true")
     parser.add_argument("--max-insns", type=int, default=4096)
@@ -211,6 +227,14 @@ def main() -> int:
     cfg_dir = pathlib.Path(args.cfg_dir).resolve()
     out_dir = pathlib.Path(args.out_dir).resolve()
     rom = load_rom(args.rom)
+    try:
+        validate_module_identity(args.module_id, args.module_prefix)
+    except ValueError as exc:
+        parser.error(str(exc))
+    # The module descriptor names the IMAGE this tree was generated from, so
+    # take the digest before ram_routine blobs are materialized into the copy
+    # the analyzer sees.
+    rom_sha256_hex = hashlib.sha256(rom).hexdigest()
     parsed = _load_cfgs(cfg_dir)
     # Materialize ram_routine blobs into the ROM image + reloc registry so
     # their WRAM entries decode as ordinary AOT bodies. Their WRAM roots join
@@ -281,6 +305,7 @@ def main() -> int:
         max_nodes=args.max_nodes,
         shard_threshold_bytes=shard_threshold_bytes,
         shard_pc_span=shard_pc_span,
+        module_id=args.module_id, module_prefix=args.module_prefix,
     )
     cached = _verified_cached_stats(out_dir, analysis_input_digest)
     if cached is not None and not args.no_link_closure_check:
@@ -336,7 +361,8 @@ def main() -> int:
                 analysis_backend="python", enable_hle=not args.no_hle,
                 max_insns=args.max_insns, max_nodes=args.max_nodes,
                 shard_threshold_bytes=shard_threshold_bytes,
-                shard_pc_span=shard_pc_span)
+                shard_pc_span=shard_pc_span,
+                module_id=args.module_id, module_prefix=args.module_prefix)
         manifest, helpers, inline_args = build_manifest(
             rom, parsed, max_insns=args.max_insns, max_nodes=args.max_nodes,
             all_cfg_roots=args.cfg_roots,
@@ -364,6 +390,9 @@ def main() -> int:
         shard_threshold_bytes=shard_threshold_bytes,
         shard_pc_span=shard_pc_span,
         check_link_closure=not args.no_link_closure_check,
+        module_id=args.module_id,
+        module_prefix=args.module_prefix,
+        rom_sha256_hex=rom_sha256_hex,
     )
     elapsed = time.perf_counter() - started
     print(
