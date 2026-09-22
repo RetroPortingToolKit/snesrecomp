@@ -453,7 +453,14 @@ int snes_variant_prepare(const SnesContentVariant *variant, int profile,
     snes_program_module_select(v->module);   /* NULL => generated default */
     snes_generic_frame_driver_set_boot_policy(v->builtin ? NULL : &v->decl.boot);
     snes_generic_frame_driver_reset();
-    RtlRegisterGame(snes_variant_game_info_for(v));
+    {
+        const RtlGameInfo *info = snes_variant_game_info_for(v);
+        RtlRegisterGame(info);
+        /* A new session in the same process: the driver's sticky state
+         * (SMW's boot gate, the generic driver's resume PC) must not survive
+         * the machine it belonged to. */
+        if (info && info->session_reset) info->session_reset();
+    }
 
     char root[96];
     snes_variant_save_root(v, profile, base_root(), root, sizeof(root));
