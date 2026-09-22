@@ -35,6 +35,7 @@ TEST_MODULES = [
     'test_new_project',
     'test_rom_identity',
     'test_generate_ci',
+    'test_release_packaging',
 ]
 
 
