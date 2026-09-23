@@ -177,6 +177,7 @@ set(SNESRECOMP_RUNNER_SOURCES
     ${SNESRECOMP_RUNNER_ROOT}/src/launcher_picker.c
     ${SNESRECOMP_RUNNER_ROOT}/src/rom_image_verify.c
     ${SNESRECOMP_RUNNER_ROOT}/src/crc32.c
+    ${SNESRECOMP_RUNNER_ROOT}/src/snapshot_guard.c
     ${SNESRECOMP_RUNNER_ROOT}/src/sha256.c
     ${SNESRECOMP_RUNNER_ROOT}/src/keybinds.c
     ${SNESRECOMP_RUNNER_ROOT}/src/snes_overlay_draw.c

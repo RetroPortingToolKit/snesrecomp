@@ -18,6 +18,7 @@
 #include "snes/snes.h"
 #include "snes/apu.h"
 #include "snes/joypad.h"
+#include "snapshot_guard.h"
 #include "snes/dsp.h"
 #include "snes/cart.h"
 #include "snes/dma.h"
@@ -378,6 +379,12 @@ static bool memory_sli_peek(SaveLoadInfo *sli, size_t offset, void *data, size_t
     return false;
   memcpy(data, m->data + m->position + offset, n);
   return true;
+}
+
+void RtlStateStreamFail(SaveLoadInfo *sli) {
+  if (!sli) return;
+  if (sli->func == memory_sli_func) ((MemorySli *)sli)->error = true;
+  else if (sli->func == file_sli_func) ((FileSli *)sli)->error = true;
 }
 
 size_t RtlStateBytesRemaining(SaveLoadInfo *sli) {
@@ -864,6 +871,25 @@ bool RtlRunFrame(uint32 inputs) {
 }
 
 bool RtlSaveSnapshot(const char *filename) {
+  if (g_rtl_game_info && g_rtl_game_info->snapshot_allowed &&
+      !g_rtl_game_info->snapshot_allowed()) return false;
+  /* Guarded games use the same envelope and validation for files and memory.
+   * Count first: game extensions may contain a runtime-sized actor roster. */
+  if (g_rtl_game_info && g_rtl_game_info->snapshot_guard_identity &&
+      g_rtl_game_info->snapshot_guard_identity()) {
+    size_t capacity=RtlSaveSnapshotToMemory(NULL,0);
+    if (!capacity) return false;
+    void *bytes=malloc(capacity);
+    if (!bytes) return false;
+    size_t size=RtlSaveSnapshotToMemory(bytes,capacity);
+    bool ok=false;
+    if (size) {
+      FILE *out=fopen(filename,"wb");
+      if (out) { ok=fwrite(bytes,1,size,out)==size; if(fclose(out)!=0)ok=false; }
+    }
+    free(bytes);
+    return ok;
+  }
   FILE *f = fopen(filename, "wb");
   if (!f) {
     printf("Failed fopen for save: %s\n", filename);
@@ -888,9 +914,30 @@ bool RtlSaveSnapshot(const char *filename) {
 }
 
 bool RtlLoadSnapshot(const char *filename) {
+  if (g_rtl_game_info && g_rtl_game_info->snapshot_allowed &&
+      !g_rtl_game_info->snapshot_allowed()) return false;
   FILE *f = fopen(filename, "rb");
   if (!f)
     return false;
+  /* Preflight must run before snes_saveload writes the first guest byte. Route
+   * guarded/title-validated input through the common memory loader. Also detect
+   * an envelope in an unguarded session so it cannot become a normal save. */
+  uint8 probe[8];
+  size_t probed=fread(probe,1,sizeof(probe),f);
+  if (fseek(f,0,SEEK_SET)!=0) {fclose(f);return false;}
+  bool guarded=probed==8 && !memcmp(probe,"RSGUARD\1",8);
+  if (guarded || (g_rtl_game_info &&
+      (g_rtl_game_info->snapshot_guard_identity || g_rtl_game_info->snapshot_preflight))) {
+    if (fseek(f,0,SEEK_END)!=0) {fclose(f);return false;}
+    long end=ftell(f);
+    if (end<=0 || fseek(f,0,SEEK_SET)!=0) {fclose(f);return false;}
+    void *bytes=malloc((size_t)end);
+    if (!bytes) {fclose(f);return false;}
+    bool ok=fread(bytes,1,(size_t)end,f)==(size_t)end;
+    fclose(f);
+    if(ok)ok=RtlLoadSnapshotFromMemory(bytes,(size_t)end);
+    free(bytes);return ok;
+  }
   uint32 hdr[2];
   if (fread(hdr, sizeof(hdr), 1, f) != 1
       || hdr[0] != RTL_SAV_MAGIC
@@ -934,9 +981,32 @@ bool RtlLoadSnapshot(const char *filename) {
   return true;
 }
 
+size_t RtlSnapshotGuestSize(uint32 *version_out) {
+  MemorySli count = {{&memory_sli_func}, NULL, 0, sizeof(uint32)*2, true, false};
+  RtlApuLock();
+  uint32 previous = snes_saveload_get_version();
+  /* snes_saveload normalizes the emulator-only E mirror even when counting.
+   * Preserve it: a preflight query must not change the running machine. */
+  bool e = g_snes->cpu->e;
+  snes_saveload_set_version(RTL_SAV_VERSION);
+  snes_saveload(g_snes, &count.base);
+  snes_saveload_set_version(previous);
+  g_snes->cpu->e = e;
+  RtlApuUnlock();
+  if (version_out) *version_out = RTL_SAV_VERSION;
+  return count.error ? 0 : count.position;
+}
+
 size_t RtlSaveSnapshotToMemory(void *data, size_t capacity) {
+  if (g_rtl_game_info && g_rtl_game_info->snapshot_allowed &&
+      !g_rtl_game_info->snapshot_allowed()) return 0;
+  const char *guard=g_rtl_game_info && g_rtl_game_info->snapshot_guard_identity
+      ? g_rtl_game_info->snapshot_guard_identity() : NULL;
+  size_t prefix=guard?SNES_SNAPSHOT_GUARD_PREFIX:0;
+  if (guard && !snes_snapshot_guard_identity_valid(guard)) return 0;
+  if (data && capacity<prefix) return 0;
   MemorySli memory = {
-    { &memory_sli_func }, (uint8 *)data, capacity, 0, true, false
+    { &memory_sli_func }, (uint8 *)data, capacity, prefix, true, false
   };
   uint32 hdr[2] = { RTL_SAV_MAGIC, RTL_SAV_VERSION };
   memory_sli_func(&memory.base, hdr, sizeof hdr);
@@ -946,10 +1016,17 @@ size_t RtlSaveSnapshotToMemory(void *data, size_t capacity) {
   if (g_rtl_game_info && g_rtl_game_info->state_save_extra)
     g_rtl_game_info->state_save_extra(&memory.base);
   RtlApuUnlock();
-  return memory.error ? 0 : memory.position;
+  if (memory.error) return 0;
+  return guard ? snes_snapshot_guard_finish(data,capacity,memory.position-prefix,guard)
+               : memory.position;
 }
 
 bool RtlLoadSnapshotFromMemory(const void *data, size_t size) {
+  if (g_rtl_game_info && g_rtl_game_info->snapshot_allowed &&
+      !g_rtl_game_info->snapshot_allowed()) return false;
+  const char *guard=g_rtl_game_info && g_rtl_game_info->snapshot_guard_identity
+      ? g_rtl_game_info->snapshot_guard_identity() : NULL;
+  if(!snes_snapshot_guard_open(data,size,guard,&data,&size)) return false;
   if (!data || size < sizeof(uint32) * 2) return false;
   uint32 hdr[2];
   memcpy(hdr, data, sizeof hdr);
@@ -958,6 +1035,8 @@ bool RtlLoadSnapshotFromMemory(const void *data, size_t size) {
       (g_rtl_game_info && hdr[1] < g_rtl_game_info->minimum_state_version))
     return false;
 
+  if (g_rtl_game_info && g_rtl_game_info->snapshot_preflight &&
+      !g_rtl_game_info->snapshot_preflight(data,size)) return false;
   MemorySli memory = {
     { &memory_sli_func, &memory_sli_peek }, (uint8 *)data, size, sizeof hdr, false, false
   };

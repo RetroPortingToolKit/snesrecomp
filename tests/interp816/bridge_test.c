@@ -350,6 +350,17 @@ static void load(uint32 pc24, const uint8_t *code, int len) {
     memcpy(&RAM[pc24 & 0xFFFFFF], code, (size_t)len);
 }
 
+static unsigned hook_order,hook_a,hook_b,hook_c,hook_dest;
+static void observe_a(CpuState *cpu,uint32_t pc) {
+    (void)pc;++hook_a;hook_order=hook_order*10+1;cpu->X=0x23;
+}
+static void redirect_b(CpuState *cpu,uint32_t pc) {
+    (void)cpu;(void)pc;++hook_b;hook_order=hook_order*10+2;
+    interp_bridge_pre_opcode_redirect(0x008010);
+}
+static void forbidden_c(CpuState *cpu,uint32_t pc) {(void)cpu;(void)pc;++hook_c;}
+static void observe_dest(CpuState *cpu,uint32_t pc) {(void)cpu;(void)pc;++hook_dest;}
+
 int main(void) {
     const char *journal = "tier2_bridge_test.jsonl";
     remove(journal);
@@ -928,6 +939,31 @@ int main(void) {
       CHECK(r == RECOMP_RETURN_SKIP_1, "r=%d exp SKIP_1", (int)r);
       CHECK(g_c.S == 0x01FF,
             "S=%04X exp 01FF (inner JSR and outer JSL consumed)", g_c.S); }
+
+    /* S14: composition is ordered/idempotent; redirection stops old-PC hooks
+     * and classifies the destination opcode, including its return boundary. */
+    { memset(RAM,0,MEMSZ);init_cpu();g_aot_called=0;
+      interp_bridge_set_pre_opcode_hook(0,NULL);
+      RAM[0x8000]=0xea;                    /* old PC is NOP */
+      uint8_t c[]={0x20,0x00,0x81,0xa9,0x55,0x60}; /* destination JSR AOT; LDA #55; RTS */
+      load(0x8010,c,sizeof(c));
+      CHECK(interp_bridge_add_pre_opcode_hook(0x008000,observe_a),"first observer registered");
+      CHECK(interp_bridge_add_pre_opcode_hook(0x808000,observe_a),"same observer/mirrored PC idempotent");
+      CHECK(interp_bridge_add_pre_opcode_hook(0x008000,redirect_b),"second observer composed");
+      CHECK(interp_bridge_add_pre_opcode_hook(0x008000,forbidden_c),"third observer registered");
+      CHECK(interp_bridge_add_pre_opcode_hook(0x008010,observe_dest),"destination observer registered");
+      cpu_push_jsr_return_frame(&g_c);
+      int rc=interp_bridge_run(&g_c,0x008000);
+      CHECK(rc==1 && g_c.S==0x01ff,"redirected routine returns balanced");
+      CHECK(hook_order==12 && hook_a==1 && hook_b==1 && hook_c==0,"ordered composition and terminal redirect");
+      CHECK(hook_dest==1 && g_aot_called==1,"destination hooks and JSR classification run");
+      CHECK((g_c.A&0xff)==0x55 && g_c.X==0x23,"hook changes survive execution");
+      init_cpu();RAM[0x8010]=0x60;          /* NOP -> RTS must recognize immediate return */
+      cpu_push_jsr_return_frame(&g_c);
+      rc=interp_bridge_run(&g_c,0x008000);
+      CHECK(rc==1 && g_c.S==0x01ff,"redirected RTS is classified as return");
+      interp_bridge_set_pre_opcode_hook(0,NULL);
+    }
 
     printf("\n==== interp_bridge Phase-1: %d/%d checks passed ====\n", g_check - g_fail, g_check);
     if (g_fail) { printf("RESULT: FAIL (%d)\n", g_fail); return 1; }

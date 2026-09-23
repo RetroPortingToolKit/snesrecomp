@@ -163,6 +163,15 @@ typedef struct RtlGameInfo {
   size_t (*exec_state_bound)(void);
   size_t (*exec_state_save)(void *out, size_t capacity);
   int    (*exec_state_load)(const void *in, size_t size);
+  /* Optional mode/schema identity for checksummed snapshots. A non-NULL
+   * identity requires a matching integrity envelope before any guest writes.
+   * Unmodified games retain their original RTLS output. */
+  const char *(*snapshot_guard_identity)(void);
+  /* Validate/stage title-owned payloads from the unwrapped RTLS stream before
+   * guest restoration. Must not mutate live gameplay state. False aborts load. */
+  bool (*snapshot_preflight)(const void *data, size_t size);
+  /* Optional session gate, checked by every file/memory save and load path. */
+  bool (*snapshot_allowed)(void);
 } RtlGameInfo;
 
 extern const RtlGameInfo *g_rtl_game_info;
