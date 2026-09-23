@@ -100,6 +100,10 @@ static int g_pop_underflow = 0;
  * stub that never advanced the top, that whole branch was untestable and
  * S8d below could not fail. */
 static CpuState g_c;
+static void redirect_to_return(CpuState *cpu, uint32_t pc) {
+    (void)cpu; (void)pc;
+    interp_bridge_pre_opcode_redirect(0x008500);
+}
 void RecompStackPush(const char *name) {
     if (g_push_count < 16) g_push_log[g_push_count] = name;
     g_push_count++;
@@ -929,6 +933,20 @@ int main(void) {
       CHECK(g_c.S == 0x01FF,
             "S=%04X exp 01FF (inner JSR and outer JSL consumed)", g_c.S); }
 
+    /* S14: redirecting an ordinary instruction or a call directly to RTS
+     * must decode RTS anew and consume exactly the inherited return frame. */
+    for (unsigned i = 0; i < 2; ++i) {
+      memset(RAM, 0, MEMSZ); init_cpu(); g_aot_called = 0;
+      uint8_t c[] = {i ? 0x20 : 0xA9, 0x00, 0x81, 0x60};
+      load(0x8400, c, sizeof c); RAM[0x8500] = 0x60;
+      cpu_push_jsr_return_frame(&g_c);
+      interp_bridge_set_pre_opcode_hook(0x008400, redirect_to_return);
+      int rc = interp_bridge_run(&g_c, 0x008400);
+      interp_bridge_set_pre_opcode_hook(0, NULL);
+      printf("S14 hook redirects %s to terminal RTS\n", i ? "JSR" : "LDA");
+      CHECK(rc == 1 && g_c.S == 0x01FF, "rc=%d S=%04X", rc, g_c.S);
+      CHECK(g_aot_called == 0, "abandoned call dispatched %d times", g_aot_called);
+    }
     printf("\n==== interp_bridge Phase-1: %d/%d checks passed ====\n", g_check - g_fail, g_check);
     if (g_fail) { printf("RESULT: FAIL (%d)\n", g_fail); return 1; }
     tier2_capture_close();
