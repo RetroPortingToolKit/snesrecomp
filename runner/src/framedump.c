@@ -3,6 +3,8 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
+#include "common_rtl.h"
+#include "snes/ppu.h"
 
 #if defined(_WIN32)
 #include <direct.h>
@@ -16,6 +18,67 @@ FrameDumpCallback g_framedump_callback;
 static char g_framedump_dir[512];
 static uint32_t g_framedump_start;
 static uint32_t g_framedump_end = UINT32_MAX;
+static int g_framedump_pixels;
+
+static void put_u32(uint8_t *p, uint32_t value) {
+  for (int i = 0; i < 4; ++i) p[i] = (uint8_t)(value >> (8 * i));
+}
+
+void FrameDump_Present(uint32_t frame, const uint8_t *bgra, uint32_t pitch,
+                       uint32_t width, uint32_t height) {
+  if (!g_framedump_pixels || !bgra || !width || !height || width > 16384 ||
+      height > 16384 || pitch < width * 4 ||
+      frame < g_framedump_start || frame > g_framedump_end) return;
+  char path[768];
+  snprintf(path, sizeof(path), "%s/frame_%06u.bmp", g_framedump_dir, frame);
+  FILE *f = fopen(path, "wb");
+  if (!f) return;
+  uint8_t header[54] = {'B', 'M'};
+  const uint32_t size = width * height * 4;
+  put_u32(header + 2, 54 + size);
+  put_u32(header + 10, 54);
+  put_u32(header + 14, 40);
+  put_u32(header + 18, width);
+  put_u32(header + 22, 0u - height);
+  header[26] = 1;
+  header[28] = 32;
+  put_u32(header + 34, size);
+  fwrite(header, 1, sizeof(header), f);
+  for (uint32_t y = 0; y < height; ++y)
+    fwrite(bgra + (size_t)y * pitch, 4, width, f);
+  fclose(f);
+  /* Device resources at the same completed presentation boundary as the BMP.
+   * Opt-in and finite; never pauses the guest or restores a captured state. */
+  const char *video = getenv("SNESRECOMP_FRAMEDUMP_VIDEO");
+  if (g_ppu && video && strcmp(video, "1") == 0) {
+    snprintf(path, sizeof(path), "%s/frame_%06u_vram.bin", g_framedump_dir, frame);
+    f = fopen(path, "wb");
+    if (f) { fwrite(g_ppu->vram, 1, sizeof(g_ppu->vram), f); fclose(f); }
+    snprintf(path, sizeof(path), "%s/frame_%06u_cgram.bin", g_framedump_dir, frame);
+    f = fopen(path, "wb");
+    if (f) { fwrite(g_ppu->cgram, 1, sizeof(g_ppu->cgram), f); fclose(f); }
+    snprintf(path, sizeof(path), "%s/frame_%06u_ppu.json", g_framedump_dir, frame);
+    f = fopen(path, "w");
+    if (f) {
+      fprintf(f, "{\"frame\":%u,\"bgmode\":%u,\"bg_tile_address\":%u,"
+                 "\"bg_maps\":[%u,%u,%u,%u],\"hscroll\":[%u,%u,%u,%u],"
+                 "\"vscroll\":[%u,%u,%u,%u],\"screen_enabled\":[%u,%u],"
+                 "\"screen_windowed\":[%u,%u],\"cgadsub\":%u,\"cgwsel\":%u,"
+                 "\"fixed_color\":%u,\"windowsel\":%u,"
+                 "\"window_positions\":[%u,%u,%u,%u]}\n",
+              frame,g_ppu->bgmode,g_ppu->bgTileAdr,
+              g_ppu->bgXsc[0],g_ppu->bgXsc[1],g_ppu->bgXsc[2],g_ppu->bgXsc[3],
+              g_ppu->hScroll[0],g_ppu->hScroll[1],g_ppu->hScroll[2],g_ppu->hScroll[3],
+              g_ppu->vScroll[0],g_ppu->vScroll[1],g_ppu->vScroll[2],g_ppu->vScroll[3],
+              g_ppu->screenEnabled[0],g_ppu->screenEnabled[1],
+              g_ppu->screenWindowed[0],g_ppu->screenWindowed[1],
+              g_ppu->cgadsub,g_ppu->cgwsel,g_ppu->fixedColor,g_ppu->windowsel,
+              g_ppu->window1left,g_ppu->window1right,
+              g_ppu->window2left,g_ppu->window2right);
+      fclose(f);
+    }
+  }
+}
 
 // --- CRC32 (standard polynomial) ---
 static uint32_t s_crc32_table[256];
@@ -73,6 +136,8 @@ static void framedump_callback(uint32_t frame, const uint8_t *wram) {
 }
 
 void FrameDump_Init(const char *dir) {
+  const char *pixels = getenv("SNESRECOMP_FRAMEDUMP_PIXELS");
+  g_framedump_pixels = pixels && strcmp(pixels, "1") == 0;
   strncpy(g_framedump_dir, dir, sizeof(g_framedump_dir) - 1);
   const char *start = getenv("SNESRECOMP_FRAMEDUMP_START");
   const char *end = getenv("SNESRECOMP_FRAMEDUMP_END");
