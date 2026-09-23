@@ -1470,6 +1470,7 @@ static int _interp_run_core(CpuState *cpu, uint32_t entry_pc24,
             qring[steps & 63]=now;
         }
         if (s_pre_opcode_hook_count > 0) {
+            int redirected = 0;
             const uint32_t key = pc_before & 0x7FFFFFu;
             for (int hi = 0; hi < s_pre_opcode_hook_count; hi++) {
                 if (s_pre_opcode_hooks[hi].pc24 == key) {
@@ -1481,11 +1482,15 @@ static int _interp_run_core(CpuState *cpu, uint32_t entry_pc24,
                         in.k = (uint8_t)((s_pre_opcode_redirect_pc24 >> 16) & 0xFF);
                         in.pc = (uint16_t)(s_pre_opcode_redirect_pc24 & 0xFFFF);
                         s_pre_opcode_redirect_valid = 0;
-                        continue;
+                        redirected = 1;
                     }
                     break;
                 }
             }
+            /* Restart opcode decoding, including call/return bookkeeping.
+             * Continuing the hook-search loop executed the target with the
+             * old PC's opcode classification and could miss a terminal RTS. */
+            if (redirected) continue;
         }
         /* Opt-in control-flow tripwire: game code normally executes from the
          * LoROM $8000-$FFFF half of a bank.  If a return/jump crosses from ROM
