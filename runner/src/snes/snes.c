@@ -68,6 +68,23 @@ void snes_set_hdma_beam_enabled(Snes *snes, bool enabled) {
   snes->hdmaBeamOff = !enabled;
 }
 
+static SnesMasterClockChargeHook s_master_clock_charge_hook;
+static SnesWramWriteLogHook s_wram_write_log_hook;
+
+void snes_set_master_clock_charge_hook(SnesMasterClockChargeHook hook) {
+  s_master_clock_charge_hook = hook;
+}
+
+void snes_set_wram_write_log_hook(SnesWramWriteLogHook hook) {
+  s_wram_write_log_hook = hook;
+}
+
+static void snes_note_direct_wram_write(uint32_t ram_off, uint8_t value,
+                                        const char *via) {
+  if (s_wram_write_log_hook)
+    s_wram_write_log_hook(ram_off, value, via);
+}
+
 Snes* snes_init(uint8_t *ram) {
   Snes* snes = calloc(1, sizeof(Snes));  /* zero padding: saveload/co-sim hash determinism */
     snes->ram = ram;
@@ -324,6 +341,7 @@ void snes_writeBBus(Snes* snes, uint8_t adr, uint8_t val) {
       uint32_t wa = snes->ramAdr & 0x1ffffu;
       uint8_t old = snes->ram[wa];
       snes->ram[wa] = val;
+      snes_note_direct_wram_write(wa, val, "wmdata");
 #if SNESRECOMP_TRACE
       snes_trace_direct_wram_write(wa, old, val);
 #endif
@@ -824,8 +842,12 @@ void snes_writeReg(Snes* snes, uint16_t adr, uint8_t val) {
             dma_master += 8 + (uint64_t)n * 8;
           }
         }
-        g_cpu.master_cycles += dma_master;
-        snes_sync_master_clock(snes, g_cpu.master_cycles);
+        if (s_master_clock_charge_hook) {
+          s_master_clock_charge_hook(snes, dma_master);
+        } else {
+          g_cpu.master_cycles += dma_master;
+          snes_sync_master_clock(snes, g_cpu.master_cycles);
+        }
       }
       dma_startDma(snes->dma, val, false);
       while (dma_cycle(snes->dma)) {}
@@ -878,6 +900,7 @@ void snes_write(Snes* snes, uint32_t adr, uint8_t val) {
     uint32_t addr = ((bank & 1) << 16) | adr;
     uint8_t old = snes->ram[addr];
     snes->ram[addr] = val; // ram
+    snes_note_direct_wram_write(addr, val, "snes_write");
 #if SNESRECOMP_TRACE
     snes_trace_direct_wram_write(addr, old, val);
 #endif
@@ -890,6 +913,7 @@ void snes_write(Snes* snes, uint32_t adr, uint8_t val) {
     if(adr < 0x2000) {
       uint8_t old = snes->ram[adr];
       snes->ram[adr] = val; // ram mirror
+      snes_note_direct_wram_write((uint32_t)adr, val, "snes_write_mirror");
 #if SNESRECOMP_TRACE
       snes_trace_direct_wram_write((uint32_t)adr, old, val);
 #endif

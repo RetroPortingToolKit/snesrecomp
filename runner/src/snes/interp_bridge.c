@@ -864,6 +864,59 @@ static void itrace_dump(uint32_t entry, const ITraceEnt *head, int nhead,
     }
 }
 
+/* ── Always-on global interp step ring ─────────────────────────────────
+ * The per-run head[]/ring[] above are stack locals — invisible to a
+ * post-mortem or halt fired mid-run. This ring records EVERY interpreted
+ * step (pc, op, sp, frame) continuously so a late observer can read the
+ * interpreter's recent control flow backward (ring-buffer doctrine: no
+ * arm-then-capture). 8192 entries ≈ several frames of pure-interp code. */
+#define ITRACE_RECENT_LEN 8192
+typedef struct { uint32_t pc; int32_t frame; uint16_t sp; uint8_t op; uint8_t pad; } ITraceRecentEnt;
+static ITraceRecentEnt g_itrace_recent[ITRACE_RECENT_LEN];
+static uint64_t g_itrace_recent_n = 0;
+
+void interp_bridge_dump_recent_steps(int n, FILE *out) {
+    if (!out) out = stderr;
+    if (n <= 0 || (uint64_t)n > g_itrace_recent_n) n = (int)(g_itrace_recent_n < ITRACE_RECENT_LEN
+                                                            ? g_itrace_recent_n : ITRACE_RECENT_LEN);
+    if ((uint64_t)n > g_itrace_recent_n) n = (int)g_itrace_recent_n;
+    fprintf(out, "[interp_recent] last %d interp steps (of %llu total):\n",
+            n, (unsigned long long)g_itrace_recent_n);
+    for (int i = n; i >= 1; i--) {
+        const ITraceRecentEnt *e =
+            &g_itrace_recent[(g_itrace_recent_n - (uint64_t)i) & (ITRACE_RECENT_LEN - 1)];
+        fprintf(out, "  f%-6d $%06X op=%02X sp=%04X\n", e->frame, e->pc, e->op, e->sp);
+    }
+}
+
+/* Install the ring dump as cpu_state.c's halt-path hook (explicit hook, not
+ * a PE weak symbol — see cpu_state.c). Runs at image load.
+ *
+ * __attribute__((constructor)) is a GCC/Clang extension; MSVC rejects it
+ * outright ("syntax error: missing ')' before '('"), which broke every target
+ * that compiles this file. MSVC's equivalent is a function pointer placed in
+ * the .CRT$XCU section, which the CRT walks before main(). */
+static void itrace_install_dump_hook(void);
+#if defined(_MSC_VER)
+#  pragma section(".CRT$XCU", read)
+__declspec(allocate(".CRT$XCU"))
+/* External linkage: /include: below needs a symbol the linker can see,
+ * and it stops the section pointer being discarded. */
+void (*itrace_install_dump_hook_ctor)(void) = itrace_install_dump_hook;
+#  if defined(_M_IX86)
+#    pragma comment(linker, "/include:_itrace_install_dump_hook_ctor")
+#  else
+#    pragma comment(linker, "/include:itrace_install_dump_hook_ctor")
+#  endif
+static void itrace_install_dump_hook(void)
+#else
+__attribute__((constructor))
+static void itrace_install_dump_hook(void)
+#endif
+{
+    g_interp_recent_dump_hook = interp_bridge_dump_recent_steps;
+}
+
 /* Tier-2 coverage table (definitions below, § gap manifest): shared by the
  * tier-down entries AND the in-bridge gap recorders in the core loop. */
 enum { TIER2_KIND_DISPATCH = 0, TIER2_KIND_INDIRECT_GOTO = 1,
@@ -1821,6 +1874,11 @@ static int _interp_run_core(CpuState *cpu, uint32_t entry_pc24,
             if (itn < 8) head[itn] = _e;
             if (trace) ring[itn & 255] = _e;
             itn++;
+            extern int snes_frame_counter;
+            ITraceRecentEnt *_g =
+                &g_itrace_recent[g_itrace_recent_n++ & (ITRACE_RECENT_LEN - 1)];
+            _g->pc = pc_before; _g->frame = snes_frame_counter;
+            _g->sp = in.sp; _g->op = op; _g->pad = 0;
         }
         /* Env-gated diagnostic (SNESRECOMP_C2WATCH=1): log every interpreted
          * opcode in the menu-blit range $C2:FC40-$C2:FF00 with the live mode
@@ -1885,16 +1943,14 @@ static int _interp_run_core(CpuState *cpu, uint32_t entry_pc24,
                         "op=$%02X frame=%d sp=$%04X — corrupted control transfer\n",
                         _pbnk, (unsigned)pc_before, op, snes_frame_counter,
                         (unsigned)in.sp);
-                    /* Step history at the trap. This branch had an
-                     * always-on file-static ring (g_itrace_recent); main
-                     * replaced it with the function-local one above, so use
-                     * that instead of reviving a duplicate. `head` (first 8
-                     * steps) is always recorded; the 256-entry `ring` only
-                     * fills under SNESRECOMP_ITRACE, so pass total=0 when
-                     * untraced -- printing the entry path and claiming NO
-                     * spin history beats dumping an unfilled ring. */
+                    /* Step history at the trap: this run's entry path
+                     * (`head`, always recorded; the 256-entry `ring` only
+                     * fills under SNESRECOMP_ITRACE, so total=0 when
+                     * untraced), then the always-on global ring, which
+                     * spans runs and needs no arming. */
                     itrace_dump(entry_pc24, head, (int)(itn < 8 ? itn : 8),
                                 ring, trace ? itn : 0);
+                    interp_bridge_dump_recent_steps(512, stderr);
                     fflush(stderr);
                     exit(43);
                 }

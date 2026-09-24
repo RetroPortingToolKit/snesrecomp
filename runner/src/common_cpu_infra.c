@@ -58,6 +58,11 @@ const char *rtl_game_title(void) {
                                                      : "unknown";
 }
 
+static void rtl_snes_charge_master_cycles(Snes *snes, uint64_t clocks) {
+  g_cpu.master_cycles += clocks;
+  snes_sync_master_clock(snes, g_cpu.master_cycles);
+}
+
 void RtlRegisterGame(const RtlGameInfo *info) {
   g_rtl_game_info = info;
   tier2_capture_set_default_enabled(info && info->tier2_capture);
@@ -1051,6 +1056,8 @@ Snes *SnesInit(const uint8 *data, int data_size) {
   return NULL;
 #else
   g_snes = snes_init(g_ram);
+  snes_set_master_clock_charge_hook(rtl_snes_charge_master_cycles);
+  snes_set_wram_write_log_hook(wlog_addr_note_direct);
   /* The CpuState's WRAM pointer is host state, not simulation state: no reset
    * path sets it, and a CpuState that never had it dereferences NULL on the
    * first guest stack push (interp816_pushByte -> cpu_write8 -> cpu->ram[off])
