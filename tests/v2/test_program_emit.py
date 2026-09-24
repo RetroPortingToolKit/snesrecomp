@@ -158,6 +158,59 @@ def test_hle_override_covers_all_mx_modes_at_lorom_mirror(tmp_path):
     assert "0x808099u, { NULL" not in dispatch
 
 
+def test_hle_override_without_static_demand_gets_dispatch_row(tmp_path):
+    rom_path, cfg_dir, out_dir = _fixture(tmp_path, target_opcode=0xEA)
+    rom = bytearray(rom_path.read_bytes())
+    # Only reached at runtime, e.g. through a RAM vector.
+    rom[0x50:0x52] = bytes([0x80, 0xFE])
+    rom_path.write_bytes(rom)
+    (cfg_dir / "bank00.cfg").write_text(
+        "bank = 00\n"
+        "func I_RESET 8000 end:8004 entry_mx:1,1\n"
+        "hle_func 8050 HleRuntimeOnly\n",
+        encoding="utf-8")
+
+    result = _run(rom_path, cfg_dir, out_dir)
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    source = (out_dir / "bank00_v2.c").read_text(encoding="utf-8")
+    dispatch = (out_dir / "dispatch_v2.c").read_text(encoding="utf-8")
+    manifest = json.loads(
+        (out_dir / "program_manifest.json").read_text(encoding="utf-8"))
+    assert not any(node.startswith("008050:") for node in manifest["nodes"])
+    slots = ", ".join(f"bank_00_8050_M{m}X{x}"
+                      for m in (0, 1) for x in (0, 1))
+    assert f"0x008050u, {{ {slots} }}" in dispatch
+    for m in (0, 1):
+        for x in (0, 1):
+            assert f"RecompReturn bank_00_8050_M{m}X{x}(CpuState *cpu)" \
+                in source
+    assert source.count("RecompReturn _r = HleRuntimeOnly(cpu);") == 4
+
+
+def test_hle_override_without_static_demand_keeps_analysis(tmp_path):
+    rom_path, cfg_dir, out_dir = _fixture(tmp_path, target_opcode=0xEA)
+    rom = bytearray(rom_path.read_bytes())
+    rom[0x50:0x52] = bytes([0x80, 0xFE])
+    rom_path.write_bytes(rom)
+    plain = _run(rom_path, cfg_dir, tmp_path / "plain")
+    assert plain.returncode == 0, plain.stdout + plain.stderr
+    (cfg_dir / "bank00.cfg").write_text(
+        "bank = 00\n"
+        "func I_RESET 8000 end:8004 entry_mx:1,1\n"
+        "hle_func 8050 HleRuntimeOnly\n",
+        encoding="utf-8")
+    result = _run(rom_path, cfg_dir, out_dir)
+    assert result.returncode == 0, result.stdout + result.stderr
+
+    def nodes(directory):
+        manifest = json.loads(
+            (directory / "program_manifest.json").read_text(encoding="utf-8"))
+        return manifest["nodes"]
+
+    assert nodes(out_dir) == nodes(tmp_path / "plain")
+
+
 def test_lle_only_declared_sibling_remains_an_emission_boundary(tmp_path):
     rom_path, cfg_dir, out_dir = _fixture(tmp_path, target_opcode=0x00)
     rom = bytearray(rom_path.read_bytes())
