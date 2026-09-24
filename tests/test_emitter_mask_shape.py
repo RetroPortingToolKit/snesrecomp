@@ -17,7 +17,7 @@ or worse, a prior emitter regressed.
 import pathlib
 import sys
 
-# Set up sys.path the same way run_tests.py does so v2.* imports work
+# Set up sys.path the same way tests/conftest.py does so v2.* imports work
 TESTS_DIR = pathlib.Path(__file__).resolve().parent
 REPO_ROOT = TESTS_DIR.parent
 sys.path.insert(0, str(REPO_ROOT / 'recompiler'))

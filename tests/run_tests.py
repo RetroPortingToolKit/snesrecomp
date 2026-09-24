@@ -1,84 +1,37 @@
 #!/usr/bin/env python3
+"""Run the snesrecomp Python regression suite.
+
+pytest collects every tests/**/test_*.py (see tests/conftest.py for the path
+setup and the few directories that are not unit tests). There is no module
+list to keep in sync: a new test file runs as soon as it exists.
+
+The codegen width lint runs first and aborts the run if it fails.
+Extra arguments are passed to pytest (e.g. `-k program_emit`, `-x`).
+
+Exit code: 0 all pass, non-zero otherwise.
 """
-Regression test runner for the SNES recompiler.
-
-Each test is a function in this directory that asserts an invariant about
-either (a) decoder output — the byte-for-byte decompress oracle — or
-(b) structural properties of emitted .c code for specific ROM regions.
-
-Tests are expected to be cheap and repeatable. Anything that needs a real
-runtime launch belongs in a separate integration harness.
-
-Exit code: 0 all pass, 1 any fail.
-"""
+import pathlib
 import subprocess
 import sys
-import importlib
-import pathlib
-import traceback
 
-TESTS_DIR = pathlib.Path(__file__).parent
+TESTS_DIR = pathlib.Path(__file__).resolve().parent
 REPO_ROOT = TESTS_DIR.parent
 
-TEST_MODULES = [
-    # v2-applicable tests that survived the v1 trim. v1-specific tests
-    # (recomp.py / src/gen/*_gen.c paths) were removed; their structural
-    # cousins for v2 live under tests/v2/ and run via tests/v2/run_tests.py.
-    'test_attract_demo_regression',
-    'test_dispatch_extents',
-    'test_emitter_mask_shape',
-    'test_smwdisx_compare',
-    'test_sync_funcs_h',
-    'test_snes_cycles',
-    'test_cx4_datarom',
-    'test_run_benchmark_pairs',
-    'test_new_project',
-    'test_rom_identity',
-    'test_generate_ci',
-]
+
+def main(argv) -> int:
+    lint = REPO_ROOT / "tools" / "lint_codegen_widths.py"
+    rc = subprocess.call([sys.executable, str(lint)])
+    if rc != 0:
+        print("lint_codegen_widths failed - aborting test run")
+        return rc
+    try:
+        import pytest
+    except ImportError:
+        print("pytest is required: python -m pip install pytest")
+        return 2
+    return pytest.main(["-c", str(REPO_ROOT / "pytest.ini"),
+                        "--rootdir", str(REPO_ROOT), str(TESTS_DIR), *argv])
 
 
-def main() -> int:
-    sys.path.insert(0, str(TESTS_DIR))
-    # Width-mask DRY lint runs first — load-bearing gate. Fast-fails the
-    # test loop if any new emitter slipped raw width literals past the
-    # widths.py chokepoint. Plan source: DRY_REFACTOR.md Step 3.
-    lint_path = REPO_ROOT / 'tools' / 'lint_codegen_widths.py'
-    if lint_path.exists():
-        rc = subprocess.call([sys.executable, str(lint_path)])
-        if rc != 0:
-            print('lint_codegen_widths failed — aborting test loop')
-            return rc
-    passed = 0
-    failed = 0
-    fail_log = []
-    for modname in TEST_MODULES:
-        mod = importlib.import_module(modname)
-        tests = [(n, getattr(mod, n)) for n in dir(mod) if n.startswith('test_')]
-        for name, fn in tests:
-            label = f'{modname}.{name}'
-            try:
-                fn()
-                print(f'  PASS  {label}')
-                passed += 1
-            except AssertionError as e:
-                print(f'  FAIL  {label}: {e}')
-                fail_log.append((label, str(e)))
-                failed += 1
-            except Exception:
-                print(f'  ERR   {label}')
-                tb = traceback.format_exc()
-                fail_log.append((label, tb))
-                failed += 1
-    print()
-    print(f'{passed} passed, {failed} failed')
-    if fail_log:
-        print()
-        for label, msg in fail_log:
-            print(f'--- {label} ---')
-            print(msg)
-    return 0 if failed == 0 else 1
-
-
-if __name__ == '__main__':
-    sys.exit(main())
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

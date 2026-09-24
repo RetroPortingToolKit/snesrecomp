@@ -221,7 +221,7 @@ def test_reachable_exit_mx_fixed_point_redecodes_caller_continuation():
     assert root.disposition == NodeDisposition.AOT_ELIGIBLE
 
 
-def test_proven_noreturn_callee_does_not_poison_caller_continuation():
+def test_proven_noreturn_callee_leaves_caller_to_lle():
     rom = make_lorom_bank0({
         0x8000: bytes([0x20, 0x00, 0x90, 0x00]),  # JSR $9000; dead BRK
         0x9000: bytes([0xCB]),                    # WAI: no return path
@@ -240,8 +240,14 @@ def test_proven_noreturn_callee_does_not_poison_caller_continuation():
     root_key = VariantKey(0x008000, 1, 1)
     wait_key = VariantKey(0x009000, 1, 1)
     assert manifest.exit_mode_sets[wait_key] == frozenset()
-    assert manifest.exit_mode_sets[root_key] == frozenset()
-    assert manifest.nodes[root_key].disposition == NodeDisposition.AOT_ELIGIBLE
+    # A truncated caller publishes no exit fact of its own.
+    assert root_key not in manifest.exit_mode_sets
+    assert root_key not in manifest.exit_modes
+    # The JSR has no decoded continuation, so AOT would have nothing to resume
+    # if the callee ever yields back; LLE owns the caller (native analyzer
+    # rule since 9b52008, nonterminal_call_leaf_is_not_aot_safe).
+    assert manifest.nodes[root_key].disposition == NodeDisposition.LLE_ONLY
+    assert "truncated_call_continuation" in manifest.nodes[root_key].reasons
     assert manifest.nodes[root_key].max_pc24 == 0x008000
 
 

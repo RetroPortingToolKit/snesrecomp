@@ -28,7 +28,7 @@ Invocation:
     python tools/lint_codegen_widths.py
 Exit 0 if clean; non-zero with line-listed offenders otherwise.
 
-Wired into snesrecomp/tests/run_tests.py so it runs alongside the
+Run first by snesrecomp/tests/run_tests.py, alongside the
 unit-test loop. Failure aborts the test run.
 """
 import pathlib
