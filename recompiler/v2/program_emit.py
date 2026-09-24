@@ -406,6 +406,24 @@ def build_emission_entries(manifest: ProgramManifest, parsed,
      templates_any, cfg_by_bank) = _cfg_name_maps(parsed)
     entries_by_bank = defaultdict(list)
     emitted = defaultdict(set)
+    all_modes = ((0, 0), (0, 1), (1, 0), (1, 1))
+
+    def materialize(pc24, modes):
+        bank = (pc24 >> 16) & 0xFF
+        for m, x in modes:
+            if (m, x) in emitted[pc24]:
+                continue
+            template = templates_exact.get(
+                (pc24, m, x), templates_any.get(pc24))
+            mirror_pc24 = _lorom_mirror_pc24(pc24)
+            if template is None and mirror_pc24 is not None:
+                template = templates_exact.get(
+                    (mirror_pc24, m, x), templates_any.get(mirror_pc24))
+            name = name_for_pc.get(
+                pc24, f"bank_{bank:02X}_{pc24 & 0xFFFF:04X}")
+            entries_by_bank[bank].append(_copy_entry(
+                template, name=name, pc24=pc24, m=m, x=x))
+            emitted[pc24].add((m, x))
 
     for key, node in sorted(manifest.nodes.items()):
         bank = (key.pc24 >> 16) & 0xFF
@@ -423,31 +441,28 @@ def build_emission_entries(manifest: ProgramManifest, parsed,
         # for an absent exact slot would execute the ROM body instead of the
         # declared override.  Materialize the tiny HLE shim for every exact
         # M/X combination whenever any live manifest demand reaches it.
-        modes = ((0, 0), (0, 1), (1, 0), (1, 1)) if has_hle else (
-            (key.m, key.x),)
-        for m, x in modes:
-            if (m, x) in emitted[key.pc24]:
-                continue
-            template = templates_exact.get(
-                (key.pc24, m, x), templates_any.get(key.pc24))
-            mirror_pc24 = _lorom_mirror_pc24(key.pc24)
-            if template is None and mirror_pc24 is not None:
-                template = templates_exact.get(
-                    (mirror_pc24, m, x), templates_any.get(mirror_pc24))
-            name = name_for_pc.get(
-                key.pc24, f"bank_{bank:02X}_{pc16:04X}")
-            entries_by_bank[bank].append(_copy_entry(
-                template, name=name, pc24=key.pc24, m=m, x=x))
-            emitted[key.pc24].add((m, x))
+        materialize(key.pc24, all_modes if has_hle else ((key.m, key.x),))
+
+    # Declared overrides also cover boundaries only reached at runtime.
+    if enable_hle:
+        for bank, _path, cfg in parsed:
+            declared = set(getattr(cfg, "hle_func", {}))
+            declared.update(getattr(cfg, "hle_spc_upload", ()))
+            for pc16 in sorted(declared):
+                pc24 = ((bank & 0xFF) << 16) | (pc16 & 0xFFFF)
+                mirror_pc24 = _lorom_mirror_pc24(pc24)
+                if pc24 in emitted or (
+                        mirror_pc24 is not None and mirror_pc24 in emitted):
+                    continue
+                materialize(pc24, all_modes)
 
     # Every analyzed PC is a known executable entry even when it had no cfg
     # label.  Give it the same deterministic synthetic name used by emission
     # and the dispatch table so cross-boundary branches can resolve to an AOT
     # tail call (or exact LLE fallback) instead of an unresolved-goto trap.
-    for key in sorted(manifest.nodes):
+    for pc24 in sorted({key.pc24 for key in manifest.nodes} | set(emitted)):
         name_for_pc.setdefault(
-            key.pc24,
-            f"bank_{(key.pc24 >> 16) & 0xFF:02X}_{key.pc24 & 0xFFFF:04X}")
+            pc24, f"bank_{(pc24 >> 16) & 0xFF:02X}_{pc24 & 0xFFFF:04X}")
 
     # Keep each friendly alias bound to its cfg-canonical exact variant even
     # though other exact variants sort lexically before it.
@@ -489,7 +504,9 @@ def emit_dispatch_table(manifest: ProgramManifest, emitted_variants: Mapping,
                         name_for_pc: Mapping[int, str],
                         inline_arg_map: Mapping[int, int],
                         ram_routines=()) -> str:
-    known_pcs = sorted({key.pc24 for key in manifest.nodes})
+    known_pcs = sorted({key.pc24 for key in manifest.nodes} |
+                       {pc24 for pc24, modes in emitted_variants.items()
+                        if modes})
 
     def base_name(pc24):
         return name_for_pc.get(
