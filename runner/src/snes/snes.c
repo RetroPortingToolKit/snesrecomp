@@ -833,7 +833,6 @@ void snes_writeReg(Snes* snes, uint16_t adr, uint8_t val) {
        * gundamwing-parity-root-cause. HDMA stays uncharged here (per-line,
        * far smaller; out of scope for this fix). */
       {
-        extern CpuState g_cpu;
         uint64_t dma_master = 12;
         for (int ch = 0; ch < 8; ch++) {
           if (val & (1 << ch)) {
@@ -842,11 +841,18 @@ void snes_writeReg(Snes* snes, uint16_t adr, uint8_t val) {
             dma_master += 8 + (uint64_t)n * 8;
           }
         }
+        /* SnesInit installs the CpuState-clock charge; a host that drives
+         * the beam itself installs its own (see snes.h). With no hook the
+         * device layer advances its own beam, so snes.c needs no CpuState. */
         if (s_master_clock_charge_hook) {
           s_master_clock_charge_hook(snes, dma_master);
         } else {
-          g_cpu.master_cycles += dma_master;
-          snes_sync_master_clock(snes, g_cpu.master_cycles);
+          while (dma_master) {
+            uint32_t chunk = dma_master > 0xffffffffull
+                ? 0xffffffffu : (uint32_t)dma_master;
+            snes_advance_master_cycles(snes, chunk);
+            dma_master -= chunk;
+          }
         }
       }
       dma_startDma(snes->dma, val, false);
