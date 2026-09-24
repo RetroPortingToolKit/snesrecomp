@@ -1834,7 +1834,7 @@ def emit_function(rom: bytes, bank: int, start: int,
                                         f"(void)cpu_trace_dispatch_oob(cpu, "
                                         f"0x{site_pc24:06x}, 0xFFFF);")
                                     lines.append(
-                                        f"{{ RecompReturn _r = interp_tier_dispatch_balanced(cpu, "
+                                        f"{{ RecompReturn _r = interp_tier_dispatch_tail(cpu, "
                                         f"0x{site_pc24:06x}u, 0x{site_pc24:06x}u, "
                                         f"_entry_s, _hrv); RecompStackPop(); return _r; }} "
                                         f"/* balanced_interp_dispatch */")

@@ -862,6 +862,7 @@ def build_manifest(rom: bytes, parsed, *, max_insns: int, max_nodes: int,
                 round_exit_equations, active_exit_modes,
                 active_exit_mode_sets)
             recursive_solution_keys = set()
+            recursive_nonempty_solution_keys = set()
             for key, modes in sorted(recursive_solutions.items()):
                 fact_key = (key.pc24, key.m, key.x)
                 if (fact_key in declared_exit_modes
@@ -869,6 +870,8 @@ def build_manifest(rom: bytes, parsed, *, max_insns: int, max_nodes: int,
                         or fact_key in unstable_exit_mode_sets):
                     continue
                 recursive_solution_keys.add(fact_key)
+                if modes:
+                    recursive_nonempty_solution_keys.add(fact_key)
                 if len(modes) == 1:
                     round_exit_modes.setdefault(key, next(iter(modes)))
                 else:
@@ -923,11 +926,18 @@ def build_manifest(rom: bytes, parsed, *, max_insns: int, max_nodes: int,
             # inferred exit fact retained from an earlier shorter graph is no
             # longer proven. Retract it and let callers stop at the boundary.
             # Declared cfg/HLE ABI facts are independent of ROM decode and stay.
+            # A truncated call continuation is only rescued by a recursive
+            # solution that actually proves a return mode.
             for node_key, node in manifest.nodes.items():
                 fact_key = (node_key.pc24, node_key.m, node_key.x)
+                truncated = "truncated_call_continuation" in node.reasons
+                unresolved = ("unproven_callee_exit" in node.reasons
+                              or "structural_poison" in node.reasons)
                 if (fact_key not in declared_exit_modes
-                        and fact_key not in recursive_solution_keys
-                        and "unproven_callee_exit" in node.reasons):
+                        and ((truncated and fact_key
+                              not in recursive_nonempty_solution_keys)
+                             or (unresolved and fact_key
+                                 not in recursive_solution_keys))):
                     next_exit_modes.pop(fact_key, None)
                     next_exit_mode_sets.pop(fact_key, None)
             facts_stable = (

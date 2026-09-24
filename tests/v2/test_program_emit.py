@@ -5,12 +5,27 @@ import subprocess
 import sys
 from collections import Counter
 
+import pytest
+
 from v2.cfg_loader import load_bank_cfg
 from v2.program_analysis import VariantKey
 from v2.program_emit import discover_host_roots
 
 
 REPO = pathlib.Path(__file__).resolve().parents[2]
+_BACKEND = None
+
+
+@pytest.fixture(autouse=True)
+def _pin_backend(analysis_backend, monkeypatch):
+    monkeypatch.setattr(sys.modules[__name__], "_BACKEND", analysis_backend)
+
+
+def _emit(*args):
+    return subprocess.run([
+        sys.executable, str(REPO / "tools" / "v2_emit.py"), *args,
+        "--analysis-backend", _BACKEND,
+    ], text=True, capture_output=True)
 
 
 def _fixture(tmp_path, target_opcode=0x00):
@@ -32,11 +47,9 @@ def _fixture(tmp_path, target_opcode=0x00):
 
 
 def _run(rom_path, cfg_dir, out_dir):
-    return subprocess.run([
-        sys.executable, str(REPO / "tools" / "v2_emit.py"),
+    return _emit(
         "--rom", str(rom_path), "--cfg-dir", str(cfg_dir),
-        "--out-dir", str(out_dir), "--no-host-root-scan",
-    ], text=True, capture_output=True)
+        "--out-dir", str(out_dir), "--no-host-root-scan")
 
 
 def test_manifest_emitter_keeps_structural_target_as_lle(tmp_path):
@@ -49,14 +62,14 @@ def test_manifest_emitter_keeps_structural_target_as_lle(tmp_path):
     manifest = json.loads(
         (out_dir / "program_manifest.json").read_text(encoding="utf-8"))
 
-    # A call whose return M/X cannot be proven tiers the caller to LLE too;
+    # A call with no proven continuation tiers the caller to LLE too;
     # preserving the caller width would be a speculative AOT decode.
     assert "I_RESET_M1X1" not in source
     assert "bank_00_8010_M1X1" not in source
     assert "0x008000u, { NULL, NULL, NULL, NULL }" in dispatch
     assert "0x008010u, { NULL, NULL, NULL, NULL }" in dispatch
     assert manifest["nodes"]["008000:M1X1"]["disposition"] == "lle_only"
-    assert "unproven_callee_exit" in \
+    assert "truncated_call_continuation" in \
         manifest["nodes"]["008000:M1X1"]["reasons"]
     assert manifest["nodes"]["008010:M1X1"]["disposition"] == "lle_only"
 
@@ -345,11 +358,9 @@ def test_host_alias_dispatches_live_mx_and_missing_exact_slot_to_lle(tmp_path):
     source_dir.mkdir()
     (source_dir / "host.c").write_text(
         "void f(void) { I_RESET(&g_cpu); }\n", encoding="utf-8")
-    result = subprocess.run([
-        sys.executable, str(REPO / "tools" / "v2_emit.py"),
+    result = _emit(
         "--rom", str(rom_path), "--cfg-dir", str(cfg_dir),
-        "--out-dir", str(out_dir), "--source-root", str(source_dir),
-    ], text=True, capture_output=True)
+        "--out-dir", str(out_dir), "--source-root", str(source_dir))
     assert result.returncode == 0, result.stdout + result.stderr
 
     source = (out_dir / "bank00_v2.c").read_text(encoding="utf-8")
@@ -396,11 +407,9 @@ def test_cross_bank_name_promoted_when_unclaimed(tmp_path):
         "bank = 01\nname 008100 UniqueCrossBankName\n", encoding="utf-8")
     out_dir = tmp_path / "gen"
 
-    result = subprocess.run([
-        sys.executable, str(REPO / "tools" / "v2_emit.py"),
+    result = _emit(
         "--rom", str(rom_path), "--cfg-dir", str(cfg_dir),
-        "--out-dir", str(out_dir), "--no-host-root-scan",
-    ], text=True, capture_output=True)
+        "--out-dir", str(out_dir), "--no-host-root-scan")
     assert result.returncode == 0, result.stdout + result.stderr
 
     source = (out_dir / "bank00_v2.c").read_text(encoding="utf-8")
@@ -441,11 +450,9 @@ def test_cross_bank_name_collision_falls_back_to_synthetic_name(tmp_path):
         "bank = 01\nname 008100 Foo\n", encoding="utf-8")
     out_dir = tmp_path / "gen"
 
-    result = subprocess.run([
-        sys.executable, str(REPO / "tools" / "v2_emit.py"),
+    result = _emit(
         "--rom", str(rom_path), "--cfg-dir", str(cfg_dir),
-        "--out-dir", str(out_dir), "--no-host-root-scan",
-    ], text=True, capture_output=True)
+        "--out-dir", str(out_dir), "--no-host-root-scan")
     assert result.returncode == 0, result.stdout + result.stderr
 
     source = (out_dir / "bank00_v2.c").read_text(encoding="utf-8")

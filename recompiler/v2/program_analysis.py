@@ -402,11 +402,20 @@ def summarize_decode_graph(
             for site, target, m, x in unknown_exits)
     if getattr(graph, "unstable_exit_fact", False):
         reasons.add("unstable_exit_fact")
+    # A non-terminal call whose decode stopped at the call has no proven
+    # continuation; AOT would have to guess where the callee returns.  Mirrors
+    # has_truncated_call_continuation in recompiler-rs/src/bin/analyze.rs.
+    if any(decoded.insn.mnem in ("JSR", "JSL")
+           and not getattr(decoded.insn, "terminal_jsr", False)
+           and not decoded.successors
+           for decoded in graph.insns.values()):
+        reasons.add("truncated_call_continuation")
 
     disposition = (NodeDisposition.LLE_ONLY
                    if ("structural_poison" in reasons
                        or "unproven_callee_exit" in reasons
-                       or "unstable_exit_fact" in reasons)
+                       or "unstable_exit_fact" in reasons
+                       or "truncated_call_continuation" in reasons)
                    else NodeDisposition.AOT_ELIGIBLE)
     demands = tuple(sorted(edges))
     if "structural_poison" in reasons:

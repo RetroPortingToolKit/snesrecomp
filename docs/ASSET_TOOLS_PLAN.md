@@ -180,7 +180,7 @@ The point of the whole exercise:
 
 - **Decoders**: synthetic fixture bundles (known tile/palette patterns
   hand-assembled, like the scaffolder's fixture ROM) with byte-exact expected
-  PNGs; registered in `tests/run_tests.py`. Mutation-check the bit-plane and
+  PNGs; collected by `tests/run_tests.py`. Mutation-check the bit-plane and
   palette-index math — the classic failure is a plausible-looking wrong
   decode.
 - **Attribution**: fixture with two known writers (one AOT, one interp) →
