@@ -367,13 +367,34 @@ if (!snes_lobby_try_fill_launch(&join)) return 0;
 
 ## Engine host scaffold (`snes_host_*`)
 
-Shared MotK + LAN lobby + rematch primitives live in the runner (linked by
-`snesrecomp_enable_recomp_net`). Games should **not** copy lobby callback
+Shared MotK + LAN lobby + rematch primitives are linked by
+`snesrecomp_enable_recomp_net`. Games should **not** copy lobby callback
 tables or soft-return glue.
+
+**Where the lobby lives (lifted 2026-09-25).** The two big pieces are no
+longer SNES code:
+
+| Was | Now | SNES side |
+|-----|-----|-----------|
+| `runner/src/lobby/snes_lobby_client.c` (4,653 lines) + vendored `lobby/ws/` | recomp-net `recomp_net/lobby_client.h`, `src/lobby/rnet_lobby_client.c` (+ its `lobby_ws`) | `snes_lobby_client.{h,c}`: the old names, `SnesLobbyMatchCaps` with its widescreen fields (carried as SNES keys through recomp-net's caps codec), `SNES_NET_` env alias |
+| `runner/src/netplay/snes_host_lobby.c` (2,967 lines) | recomp-ui `src/recomp_netplay_host.h` / `src/netplay/recomp_netplay_host.c` (optional target `recomp_launcher_netplay`) | `snes_host_lobby.c`: identity/opts → hooks, widescreen settlement, the mod runtime as mod hooks, the rollback fork report |
+
+So the port needs a recomp-ui that carries `recomp_target_launcher_netplay()`
+(configure fails naming it otherwise), included before
+`snesrecomp_enable_recomp_net`. The `snes_host_lobby_*` / `snes_lobby_*` API
+the ports call is unchanged. Environment: `RNET_LOBBY_URL` /
+`RNET_LOBBY_GAME_VERSION` are the generic names; `SNES_NET_LOBBY_URL` /
+`SNES_NET_GAME_VERSION` still work (the generic name wins when both are set);
+`RECOMP_NETPLAY_LIST_DEBUG` beside `SNESRECOMP_LOBBY_LIST_DEBUG`.
+
+Known SNES gap, stated where it bites: session slots stay seat-mapped
+(`RECOMP_NETPLAY_SLOTS_SEAT`) because the engine does not read
+`launch.slot_port[]` yet, so a host who moved to seat 1 is session slot 1
+here, not slot 0 as recomp-ui's HOST_NETPLAY.md contract asks.
 
 | API | Role |
 |-----|------|
-| `snes_host_lobby_init` / `snes_host_lobby_callbacks` | MotK WS + LAN file-registry adapter for `RecompLauncherCGameInfo.netplay` |
+| `snes_host_lobby_init` / `snes_host_lobby_callbacks` | SNES adapter over recomp-ui's `recomp_netplay_host` (MotK WS + LAN) for `RecompLauncherCGameInfo.netplay` |
 | `snes_host_lobby_prepare_rematch` / `snes_host_app_begin_soft_return` | Soft-return waiting-room prep |
 | `snes_host_lobby_set_runtime_error` | Waiting-room error string after a failed session |
 | `snes_host_app_apply_launch` | Map `RecompLauncherCNetplayLaunch` → `SnesNetplayConfig` |
@@ -431,7 +452,8 @@ another lobby copy:
 | Self-test AutoLaunch | Optional | `snes_host_lobby_auto_launch` (thin game wrapper OK) |
 
 Do **not** re-copy MotK create/join/`fill_launch` / LAN file-registry glue into
-games — that lives in `snes_host_lobby.c`.
+games — or into engines: it lives in recomp-ui's `recomp_netplay_host.c`, and
+`snes_host_lobby.c` is the SNES adapter over it.
 
 ## Layering policy (prefer engine / UI over game trees)
 

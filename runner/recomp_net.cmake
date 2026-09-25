@@ -157,22 +157,21 @@ function(snesrecomp_enable_recomp_net target)
         message(STATUS
             "SNESRECOMP_NET_FORCE_TURN: ICE requires TURN + relay-only candidates")
     endif()
-    # SNES host facade and launcher-facing lobby client. The lobby remains
-    # transport/UI agnostic; recomp-ui consumes it through game callbacks.
+    # SNES host facade and the SNES spelling of the lobby client. The client
+    # itself is recomp-net's (recomp_net/lobby_client.h) and the launcher
+    # backend recomp-ui's (recomp_netplay_host.h); what is compiled here is the
+    # SNES adapter over each.
     if(NOT SNESRECOMP_ENABLE_NET)
         target_sources(${target} PRIVATE
             "${SNESRECOMP_RUNNER_ROOT}/src/netplay/snes_netplay.c"
             "${SNESRECOMP_RUNNER_ROOT}/src/netplay/snes_host_session.c"
             "${SNESRECOMP_RUNNER_ROOT}/src/netplay/snes_host_lobby.c"
-        "${SNESRECOMP_RUNNER_ROOT}/src/netplay/snes_netplay_identity.c"
+            "${SNESRECOMP_RUNNER_ROOT}/src/netplay/snes_netplay_identity.c"
             "${SNESRECOMP_RUNNER_ROOT}/src/netplay/snes_host_app.c"
-            "${SNESRECOMP_RUNNER_ROOT}/src/lobby/snes_lobby_client.c"
-            "${SNESRECOMP_RUNNER_ROOT}/src/lobby/ws/rnet_ws.c"
-            "${SNESRECOMP_RUNNER_ROOT}/src/lobby/ws/rnet_sha1.c")
+            "${SNESRECOMP_RUNNER_ROOT}/src/lobby/snes_lobby_client.c")
         target_include_directories(${target} PRIVATE
             "${SNESRECOMP_RUNNER_ROOT}/src/netplay"
-            "${SNESRECOMP_RUNNER_ROOT}/src/lobby"
-            "${SNESRECOMP_RUNNER_ROOT}/src/lobby/ws")
+            "${SNESRECOMP_RUNNER_ROOT}/src/lobby")
     endif()
     # Every netplay port carries the rollback session (retcomm-rbengine +
     # snes_netplay_rb): delay-sync stays the runtime default, rollback is
@@ -180,10 +179,23 @@ function(snesrecomp_enable_recomp_net target)
     # checkbox most projects answered no to.
     snesrecomp_enable_rollback(${target})
     target_compile_definitions(${target} PRIVATE SNES_HAS_LOBBY_CLIENT=1)
-    # Host lobby adapter needs recomp-ui types when the launcher is linked.
+    # Host lobby adapter needs recomp-ui types when the launcher is linked,
+    # and -- since the lobby lift -- recomp-ui's shared netplay backend, which
+    # snes_host_lobby.c is a thin adapter over. There is no SNES copy to fall
+    # back to: a recomp-ui that predates the backend is a configure error
+    # naming what to bump, not a build that silently loses its lobby.
     if(DEFINED RECOMP_UI_ROOT AND EXISTS "${RECOMP_UI_ROOT}/src/recomp_launcher.h")
         target_include_directories(${target} PRIVATE "${RECOMP_UI_ROOT}/src")
         target_compile_definitions(${target} PRIVATE SNES_HOST_HAS_RECOMP_UI=1)
+        if(NOT COMMAND recomp_target_launcher_netplay)
+            message(FATAL_ERROR
+                "snesrecomp_enable_recomp_net(${target}): recomp-ui at "
+                "${RECOMP_UI_ROOT} has no recomp_target_launcher_netplay(). "
+                "The SNES lobby is now recomp-ui's shared netplay backend "
+                "(src/recomp_netplay_host.h): include(recomp_ui.cmake) before "
+                "this call, from a recomp-ui that carries it.")
+        endif()
+        recomp_target_launcher_netplay(${target} RECOMP_NET_TARGET recomp_net)
     endif()
     if(WIN32)
         target_link_libraries(${target} PRIVATE ws2_32)
@@ -210,16 +222,20 @@ if(SNESRECOMP_ENABLE_NET)
         "${SNESRECOMP_RUNNER_ROOT}/src/netplay/snes_host_lobby.c"
         "${SNESRECOMP_RUNNER_ROOT}/src/netplay/snes_netplay_identity.c"
         "${SNESRECOMP_RUNNER_ROOT}/src/netplay/snes_host_app.c"
-        "${SNESRECOMP_RUNNER_ROOT}/src/lobby/snes_lobby_client.c"
-        "${SNESRECOMP_RUNNER_ROOT}/src/lobby/ws/rnet_ws.c"
-        "${SNESRECOMP_RUNNER_ROOT}/src/lobby/ws/rnet_sha1.c")
+        "${SNESRECOMP_RUNNER_ROOT}/src/lobby/snes_lobby_client.c")
     list(APPEND SNESRECOMP_RUNNER_LIBRARIES recomp_net)
     list(APPEND SNESRECOMP_RUNNER_INCLUDE_DIRS
         "${SNESRECOMP_RECOMP_NET_ROOT}/include"
         "${SNESRECOMP_RUNNER_ROOT}/src/netplay"
-        "${SNESRECOMP_RUNNER_ROOT}/src/lobby"
-        "${SNESRECOMP_RUNNER_ROOT}/src/lobby/ws")
+        "${SNESRECOMP_RUNNER_ROOT}/src/lobby")
     add_compile_definitions(SNESRECOMP_NET=1 SNES_HAS_LOBBY_CLIENT=1)
+    # snes_host_lobby.c is an adapter over recomp-ui's shared netplay backend.
+    # This directory-scope path has no target to link it to: a port that also
+    # links the launcher must call recomp_target_launcher_netplay(<target>)
+    # itself (snesrecomp_enable_recomp_net does it for the per-target path).
+    message(STATUS
+        "SNESRECOMP_ENABLE_NET: link recomp-ui's netplay backend with "
+        "recomp_target_launcher_netplay(<target>) when the launcher is linked")
     if(WIN32)
         list(APPEND SNESRECOMP_RUNNER_LIBRARIES ws2_32)
     endif()
