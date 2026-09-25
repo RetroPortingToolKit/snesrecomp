@@ -559,9 +559,12 @@ through `snes_host_barrier_admit` needs nothing more; one that polls
 `snes_netplay_poll_admit` itself must check `snes_netplay_return_to_lobby_requested()`
 while `snes_netplay_active()` and leave, reading `snes_netplay_refusal()`
 first. Until 2026-09-25 nothing in the runner read the request: the desktop
-host played a refused match on, and only a game host that had copied the
-check (Gundam's `main.c`) left. Proven two-process with
-`SNES_RB_FORCE_BOOT_FORK=1` and `SNES_RB_FORCE_MOD_MISMATCH=1` on one peer.
+host's loop (`host_main.c`) never checks it, so by reading it plays a refused
+match on (not run -- no desktop-host port here builds netplay), and only game
+hosts that had copied the check (Gundam, Metal Warriors `main.c`) left, without
+saying why. Proven two-process on Gundam with `SNES_RB_FORCE_BOOT_FORK=1` and
+`SNES_RB_FORCE_MOD_MISMATCH=1` on one peer: both peers log the refusal and
+leave within ~0.7 s of the second one starting.
 
 ### 3. Re-init SDL + session_reset on rematch
 
