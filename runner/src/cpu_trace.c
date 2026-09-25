@@ -2,6 +2,15 @@
 
 #include "cpu_trace.h"
 
+/* Unconditional, unlike the rest of this file: interp_bridge.c reads and
+ * writes these on every step (`if (g_wram_watch_any) ...`), trace build or
+ * not, so the symbols must always exist. Nothing outside a SNESRECOMP_TRACE
+ * build ever arms a watch, so g_wram_watch_any simply stays 0 there and the
+ * check is a correct no-op -- but a no-op still needs something to link
+ * against. */
+uint8_t   g_wram_watch_any = 0;
+uint32_t  g_cpu_trace_write_pc24 = 0;
+
 #if SNESRECOMP_TRACE
 
 #include "common_cpu_infra.h"
@@ -1231,6 +1240,10 @@ void cpu_trace_block_watch_check(CpuState *cpu, uint32_t pc24) {
 }
 
 void cpu_trace_block(CpuState *cpu, uint32_t pc24) {
+    /* Generated code has no per-instruction PC: drop the interpreter's
+     * published one so a WRAM write from this block is never blamed on
+     * the last interpreted instruction. */
+    g_cpu_trace_write_pc24 = 0;
     /* AOT block-charge probe (2026-08-31): env SNESRECOMP_AOTBLK="lo-hi"
      * (frame window). Logs pc24 + master_cycles at every AOT block entry so
      * the AOT charge per block can be diffed against the LLE per-block sums
@@ -2021,7 +2034,6 @@ void cpu_trace_set_func_watch(const char *name) {
  * way (bank=$7E, addr=$008c) and (bank=$00, addr=$008c) trip the same
  * watch without us having to know about mirroring at check time. */
 WramWatch g_wram_watches[CPU_WRAM_WATCH_MAX];
-uint8_t   g_wram_watch_any = 0;
 
 void cpu_trace_set_wram_watch(uint8_t bank, uint16_t addr, int width,
                               int match_value, uint8_t value, int enabled) {
@@ -2133,7 +2145,11 @@ void cpu_trace_wram_write_check(CpuState *cpu, uint8_t bank, uint16_t addr,
          * captured event after capture() returns: explicit
          * bank/width/addr16/old_value/new_value eliminate the
          * "arm one byte at a time" workaround. */
-        uint32_t pc24 = ((uint32_t)cpu->PB << 16); /* low 16 unknown at write site */
+        /* Prefer the publisher's exact PC; fall back to bank-only when no
+         * one has published (AOT blocks, DMA-driven writes). */
+        uint32_t pc24 = g_cpu_trace_write_pc24
+                            ? g_cpu_trace_write_pc24
+                            : ((uint32_t)cpu->PB << 16);
         capture(cpu, pc24, CPU_TR_WRAM_WRITE, hit_val,
                 (uint16_t)(((uint16_t)bank << 8) | (uint16_t)hit_byte));
         /* The just-captured event is at index (g_cpu_trace_idx - 1). */

@@ -761,11 +761,13 @@ void ppu_runLine(Ppu* ppu, int line) {
     ppu->lineHasSprites = !PPU_forcedBlank(ppu) && ppu_evaluateSprites(ppu, line - 1);
 
     if (ppu->renderFlags & kPpuRenderFlags_NewRenderer) {
+      debug_server_on_ppu_line_drawn(line, 1, ppu->bgmode);
       PPU_T0; PpuDrawWholeLine(ppu, line); PPU_ACC(g_ppu_sec_line_ms);
 #ifdef SNESRECOMP_INTERP_PROFILE
       g_ppu_sec_line_n++;
 #endif
     } else {
+      debug_server_on_ppu_line_drawn(line, 0, ppu->bgmode);
       ppu_draw_whole_line_legacy(ppu, line);
     }
     if (ppu->mode7Hd.pixels)

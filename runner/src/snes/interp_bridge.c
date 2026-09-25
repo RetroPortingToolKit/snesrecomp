@@ -621,6 +621,38 @@ int interp_bridge_in_lle_scheduler(void) { return s_lle_sched_depth > 0; }
 uint32 interp_bridge_lle_resume_pc(void) { return s_lle_resume_pc24; }
 void interp_bridge_set_lle_resume_pc(uint32_t pc) { s_lle_resume_pc24 = pc; }
 
+/* SNESRECOMP_RESUME_DIAG=1: report every assignment to the LLE resume PC.
+ *
+ * There is ONE resume PC and several yield sites. When a poll deep inside a
+ * routine yields, it records where to come back to -- but a later yield on the
+ * way out (the scheduler's own WaitForNMI, say) overwrites it, and the guest
+ * resumes somewhere that never finishes the abandoned routine. Anything that
+ * routine was holding behind a PHP is then lost, which is how Super Metroid's
+ * message-box helper leaks M=1 into the PLM loop (DEVELOPMENT.md, 2026-09-19).
+ *
+ * Printing old -> new at every site distinguishes "the inner PC is never
+ * recorded" from "it is recorded and then clobbered". */
+static int lle_resume_diag(void) {
+    static int s_rd = -1;
+    if (s_rd < 0) {
+        s_rd = getenv("SNESRECOMP_RESUME_DIAG") ? 1 : 0;
+    }
+    return s_rd;
+}
+
+static void lle_resume_set(uint32_t pc, int site) {
+    if (lle_resume_diag()) {
+        static int n;
+        if (n < 200) {
+            n++;
+            fprintf(stderr, "[resume] site=%d $%06X -> $%06X\n",
+                    site, (unsigned)s_lle_resume_pc24, (unsigned)pc);
+        }
+    }
+    s_lle_resume_pc24 = pc;
+}
+
+
 /* ── rollback state (see interp_bridge.h) ─────────────────────────────── */
 
 typedef struct {
@@ -1341,14 +1373,14 @@ static int _interp_run_core(CpuState *cpu, uint32_t entry_pc24,
             if (s_d9_bytes_ok) {
                 for (;;) {
                     if (auto_quiescent && !in.i && g_snes && g_snes->inIrq) {
-                        s_lle_resume_pc24 = ((uint32_t)in.k << 16) | in.pc;
+                        lle_resume_set(((uint32_t)in.k << 16) | in.pc, 1211);
                         sync_interp_to_cpu(&in, cpu);
                         bridge_apu_flush(cpu);
                         return 1;
                     }
                     if (auto_quiescent && s_lle_master_deadline &&
                         cpu->master_cycles >= s_lle_master_deadline) {
-                        s_lle_resume_pc24 = ((uint32_t)in.k << 16) | in.pc;
+                        lle_resume_set(((uint32_t)in.k << 16) | in.pc, 1218);
                         sync_interp_to_cpu(&in, cpu);
                         bridge_apu_flush(cpu);
                         return 1;
@@ -1384,14 +1416,14 @@ static int _interp_run_core(CpuState *cpu, uint32_t entry_pc24,
                         cart_sync_coprocessors(g_snes->cart, cpu->master_cycles);
                     cpu->coprocessor_master_cycles = cpu->master_cycles;
                     if (auto_quiescent && !in.i && g_snes && g_snes->inIrq) {
-                        s_lle_resume_pc24 = 0xC084B4u;
+                        lle_resume_set(0xC084B4u, 1254);
                         sync_interp_to_cpu(&in, cpu);
                         bridge_apu_flush(cpu);
                         return 1;
                     }
                     if (auto_quiescent && s_lle_master_deadline &&
                         cpu->master_cycles >= s_lle_master_deadline) {
-                        s_lle_resume_pc24 = 0xC084B4u;
+                        lle_resume_set(0xC084B4u, 1261);
                         sync_interp_to_cpu(&in, cpu);
                         bridge_apu_flush(cpu);
                         return 1;
@@ -1717,7 +1749,7 @@ static int _interp_run_core(CpuState *cpu, uint32_t entry_pc24,
             const int _branch_taken =
                 _poll_branch == 0x30 ? _negative : !_negative;
             if (_branch_taken) {
-                s_lle_resume_pc24 = pc_before;
+                lle_resume_set(pc_before, 1587);
                 sync_interp_to_cpu(&in, cpu);
                 bridge_apu_flush(cpu);
                 return 1;
@@ -1752,7 +1784,7 @@ static int _interp_run_core(CpuState *cpu, uint32_t entry_pc24,
                 ? ((uint8_t)in.a == cpu_read8(cpu, in.db, _wait_addr))
                 : (in.a == cpu_read16(cpu, in.db, _wait_addr));
             if (_equal) {
-                s_lle_resume_pc24 = pc_before;
+                lle_resume_set(pc_before, 1622);
                 sync_interp_to_cpu(&in, cpu);
                 bridge_apu_flush(cpu);
                 return 1;
@@ -1785,7 +1817,7 @@ static int _interp_run_core(CpuState *cpu, uint32_t entry_pc24,
             bridge_bus_read(cpu, pc_before - 1) == 0x42) {
             const int8_t _rel = (int8_t)bridge_bus_read(cpu, pc_before + 1);
             if (_rel < 0) {
-                s_lle_resume_pc24 = (pc_before + 2 + _rel) & 0xFFFFFFu;
+                lle_resume_set((pc_before + 2 + _rel) & 0xFFFFFFu, 1655);
                 sync_interp_to_cpu(&in, cpu);
                 bridge_apu_flush(cpu);
                 return 1;
@@ -1817,12 +1849,36 @@ static int _interp_run_core(CpuState *cpu, uint32_t entry_pc24,
          * serviced normally. A frame between here and the scheduler that also
          * cannot yield re-arms one level further out, so this walks outward to
          * the scheduler from any depth. */
+        /* The same argument applies to a nested frame standing on a
+         * stable-value poll (`LDA v; loop: CMP v; BEQ loop`) that is NOT the
+         * scheduler's own yield PC. Forward progress there also requires an
+         * interrupt to change memory, and a nested frame cannot let one
+         * happen, so it is a block point for identical reasons -- but the
+         * hand-off used to key on the scheduler's PC alone and skipped it.
+         *
+         * Measured (Super Metroid, Morph Ball pickup): `$85:8136` waits a
+         * frame with `SEP #$20; LDA $05B8; CMP $05B8; BEQ -5` and is reached
+         * through a PLM dispatch, i.e. nested (`yield_pc == 0`, confirmed by
+         * the [pollshape] probe). It span to the step cap, the routine was
+         * abandoned mid-way, and its `SEP #$20` was never undone by the `PLP`
+         * at `$85:8141`. M=1 then leaked into the bank-$84 PLM loop, where
+         * `AND #$00FF` decodes as `AND #$FF` plus a stray `$00` -- a BRK at
+         * `$84:8911` into InvalidInterrupt_Crash. See DEVELOPMENT.md
+         * 2026-09-19. Handing the block outward lets the frame that owns the
+         * yield contract service the poll normally. */
+        const int _nested_poll_block =
+            !yield_pc && steps > 16 &&
+            bridge_bus_read(cpu, pc_before) == 0xCD &&
+            bridge_bus_read(cpu, pc_before + 3) == 0xF0 &&
+            bridge_bus_read(cpu, pc_before + 4) == 0xFB;
         if (!yield_pc && s_lle_sched_depth > 0 && s_sched_yield_pc &&
             s_interp_bridge_depth > 1 &&
-            (pc_before & 0x7FFFFF) == (s_sched_yield_pc & 0x7FFFFF)) {
+            ((pc_before & 0x7FFFFF) == (s_sched_yield_pc & 0x7FFFFF) ||
+             _nested_poll_block)) {
             const uint8_t _sched_flag =
                 bridge_bus_read(cpu, s_sched_yield_flag_addr);
             const int _blocked =
+                _nested_poll_block ||
                 _sched_flag == s_sched_yield_flag_value ||
                 (steps > 16 &&
                  bridge_bus_read(cpu, pc_before) == 0xAD &&
@@ -1885,7 +1941,7 @@ static int _interp_run_core(CpuState *cpu, uint32_t entry_pc24,
                 }
             }
             if (_yield_flag == yield_flag_value) {
-                s_lle_resume_pc24 = pc_before;
+                lle_resume_set(pc_before, 1755);
                 sync_interp_to_cpu(&in, cpu);
                 bridge_apu_flush(cpu);
                 return 1;
@@ -1985,6 +2041,81 @@ static int _interp_run_core(CpuState *cpu, uint32_t entry_pc24,
                 &g_itrace_recent[g_itrace_recent_n++ & (ITRACE_RECENT_LEN - 1)];
             _g->pc = pc_before; _g->frame = snes_frame_counter;
             _g->sp = in.sp; _g->op = op; _g->pad = 0;
+        }
+        /* Publish the write-site PC for WRAM-watch events. Only while a watch
+         * is armed, so the ordinary path pays nothing: without this a captured
+         * write records just the bank and reads "PC ~$xx:????", which locates
+         * a clobber to a function but never to the instruction. */
+        {
+            extern uint8_t g_wram_watch_any;
+            extern uint32_t g_cpu_trace_write_pc24;
+            if (g_wram_watch_any) g_cpu_trace_write_pc24 = pc_before;
+        }
+        /* SNESRECOMP_INTERP_CATCH_PC=<hex pc24> (needs SNESRECOMP_INTERP_TRACE
+         * for the ring): dump the instruction ring the FIRST time the
+         * interpreter reaches that PC.
+         *
+         * The bail-time dump is useless for a PC the guest then spins on: by
+         * the time the step cap hits, all 256 ring slots hold the spin and
+         * none hold the path in. Catching the arrival keeps the preceding
+         * instructions, which is the only way to see who jumped there. */
+        if (trace) {
+            static int s_catch_init;
+            static unsigned long s_catch_pc;
+            static int s_catch_done;
+            /* SNESRECOMP_INTERP_CATCH_NTH=<n>: fire on the nth arrival at the
+             * watched PC instead of the first (default 1). A PC that is
+             * legitimately reached before it is reached wrongly -- a function
+             * entry re-entered by a bad resume, say -- needs the later visit;
+             * catching the first one only ever shows the healthy path. */
+            static long s_catch_nth = 1;
+            static long s_catch_seen;
+            if (!s_catch_init) {
+                s_catch_init = 1;
+                const char *_ce = getenv("SNESRECOMP_INTERP_CATCH_PC");
+                if (_ce && *_ce) s_catch_pc = strtoul(_ce, NULL, 16);
+                const char *_cn = getenv("SNESRECOMP_INTERP_CATCH_NTH");
+                if (_cn && *_cn) {
+                    s_catch_nth = strtol(_cn, NULL, 0);
+                    if (s_catch_nth < 1) s_catch_nth = 1;
+                }
+            }
+            /* SNESRECOMP_INTERP_CATCH_OFFROM=1: catch the moment execution
+             * leaves ROM instead of a fixed PC. Addresses $2000-$7FFF in any
+             * bank but $7E/$7F are registers and open bus on this mapping --
+             * never code. Chasing a fixed PC backwards only moves the window
+             * 256 steps at a time when the guest sleds through blank memory
+             * one byte per step; this fires on the first byte of the sled,
+             * while the ring still holds the code that jumped there. */
+            static int s_offrom_init;
+            static int s_offrom;
+            if (!s_offrom_init) {
+                s_offrom_init = 1;
+                const char *_oe = getenv("SNESRECOMP_INTERP_CATCH_OFFROM");
+                s_offrom = (_oe && _oe[0] && _oe[0] != '0') ? 1 : 0;
+            }
+            const uint8_t _cb = (uint8_t)(pc_before >> 16);
+            const uint16_t _ca = (uint16_t)pc_before;
+            const int _off_rom = s_offrom && _cb != 0x7E && _cb != 0x7F &&
+                                 _ca >= 0x2000 && _ca < 0x8000;
+            int _pc_hit = 0;
+            if (s_catch_pc && pc_before == (uint32_t)s_catch_pc)
+                _pc_hit = (++s_catch_seen == s_catch_nth);
+            if (!s_catch_done && (_off_rom || _pc_hit)) {
+                s_catch_done = 1;
+                fprintf(stderr,
+                        "[interp_catch] first arrival at $%06X after %ld steps"
+                        " (entry=$%06X sp=$%04X db=$%02X pb=$%02X m=%u x=%u"
+                        " a=$%04X)\n",
+                        (unsigned)pc_before, itn, (unsigned)entry_pc24,
+                        (unsigned)in.sp, in.db, in.k, in.mf, in.xf, in.a);
+                const long _cs = itn > 256 ? itn - 256 : 0;
+                fprintf(stderr, "[interp_catch] preceding %ld steps:\n",
+                        itn - _cs);
+                for (long _ci = _cs; _ci < itn; _ci++)
+                    fprintf(stderr, "    $%06X op=$%02X\n",
+                            ring[_ci & 255].pc, ring[_ci & 255].op);
+            }
         }
         /* Env-gated diagnostic (SNESRECOMP_C2WATCH=1): log every interpreted
          * opcode in the menu-blit range $C2:FC40-$C2:FF00 with the live mode
@@ -2199,7 +2330,7 @@ static int _interp_run_core(CpuState *cpu, uint32_t entry_pc24,
         if (in.waiting) {
             in.waiting = false;
             if (auto_quiescent || yield_pc) {
-                s_lle_resume_pc24 = ((uint32_t)in.k << 16) | in.pc;
+                lle_resume_set(((uint32_t)in.k << 16) | in.pc, 2131);
                 s_lle_wai_yield = 1;
                 sync_interp_to_cpu(&in, cpu);
                 bridge_apu_flush(cpu);
@@ -2324,7 +2455,7 @@ static int _interp_run_core(CpuState *cpu, uint32_t entry_pc24,
                     if (s_lle_unwind_active) {
                         if (s_lle_unwind_owner_depth == s_interp_bridge_depth) {
                             if (s_lle_unwind_is_deadline) {
-                                s_lle_resume_pc24 = s_lle_unwind_pc24;
+                                lle_resume_set(s_lle_unwind_pc24, 2250);
                                 s_lle_unwind_active = 0;
                                 s_lle_unwind_owner_depth = 0;
                                 s_lle_unwind_is_deadline = 0;
@@ -2509,7 +2640,7 @@ static int _interp_run_core(CpuState *cpu, uint32_t entry_pc24,
      * Interrupt handlers must complete (RTI) or be discarded entirely;
      * the caller (so_rtl.c) saves/restores the CPU stack to handle bail. */
     if (!stop_on_rti)
-        s_lle_resume_pc24 = ((uint32_t)in.k << 16) | in.pc;
+        lle_resume_set(((uint32_t)in.k << 16) | in.pc, 2435);
     sync_interp_to_cpu(&in, cpu);
     bridge_apu_flush(cpu);
     /* Post-sync diagnostic: decode the instruction at step-cap PC */

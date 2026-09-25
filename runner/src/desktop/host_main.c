@@ -538,7 +538,15 @@ static void PreparePpuFrame(void) {
     g_ppu_render_flags |= kPpuRenderFlags_NoSpriteLimits;
   else
     g_ppu_render_flags &= ~kPpuRenderFlags_NoSpriteLimits;
-  uint32 flags = g_game->native_widescreen ? g_ppu_render_flags : 0;
+  /* Neither render flag is widescreen-specific: kPpuRenderFlags_NewRenderer
+   * selects the span renderer over the per-pixel reference one, and
+   * kPpuRenderFlags_NoSpriteLimits lifts the per-line sprite cap. Widescreen
+   * is carried by PpuSetExtraSpace and the ws* fields, not by these bits.
+   * Gating the whole word on native_widescreen therefore silently discarded
+   * BOTH settings on every non-widescreen port: config `NewRenderer`, the
+   * ToggleRenderer hotkey and `no_sprite_limits` all resolved to a value the
+   * PPU never saw, so those ports always ran the reference rasteriser. */
+  uint32 flags = g_ppu_render_flags;
   if (g_ws_active) flags |= kPpuRenderFlags_NewRenderer;
   PpuBeginDrawing(g_ppu, g_my_pixels,
                   (g_game->native_widescreen ? fw : 256) * 4, flags);
