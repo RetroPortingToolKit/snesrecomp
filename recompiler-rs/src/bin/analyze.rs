@@ -1042,8 +1042,7 @@ fn analyze(
 > {
     let mapping = detect_rom_mapping(rom);
     let mut active_exact = inputs.declared_exit_modes.clone();
-    let mut active_sets: HashMap<(u32, u8, u8), Vec<(u8, u8)>> =
-        inputs.declared_exit_sets.clone();
+    let mut active_sets: HashMap<(u32, u8, u8), Vec<(u8, u8)>> = inputs.declared_exit_sets.clone();
     let mut unstable_exact = HashSet::new();
     let mut unstable_sets = HashSet::new();
     let mut poisoned = HashSet::new();

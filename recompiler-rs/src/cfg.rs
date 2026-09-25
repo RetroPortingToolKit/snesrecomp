@@ -776,9 +776,7 @@ pub fn parse_bank_cfg(text: &str, path: &str) -> Result<BankCfg, String> {
             let mut exits: Vec<(u8, u8)> = Vec::new();
             for part in exit_list.split(',') {
                 let mx = parse_mx(part.trim()).ok_or_else(|| {
-                    format!(
-                        "{path}: exit_mx_set bad exit variant {part:?} (want M0X0..M1X1)"
-                    )
+                    format!("{path}: exit_mx_set bad exit variant {part:?} (want M0X0..M1X1)")
                 })?;
                 if !exits.contains(&mx) {
                     exits.push(mx);
@@ -1097,10 +1095,13 @@ mod tests {
         // A one-element set is an exact fact wearing a set's clothes; it
         // belongs in exit_mx_at, and silently accepting it here would give
         // two spellings for one thing.
-        let err = parse_bank_cfg("bank = 02
+        let err = parse_bank_cfg(
+            "bank = 02
 exit_mx_set 028000 M0X0 M0X1
-", "t")
-            .unwrap_err();
+",
+            "t",
+        )
+        .unwrap_err();
         assert!(err.contains("exit_mx_at"), "unhelpful message: {err}");
     }
 
@@ -1108,16 +1109,18 @@ exit_mx_set 028000 M0X0 M0X1
     fn exit_mx_set_rejects_malformed_variants() {
         for line in [
             "exit_mx_set 028000 M0X0
-",          // no exit list
+", // no exit list
             "exit_mx_set 028000 Q0X0 M0X1,M1X1
 ", // bad entry variant
             "exit_mx_set 028000 M0X0 M0X1,M2X1
 ", // bad exit variant
             "exit_mx_set zzzz M0X0 M0X1,M1X1
-",   // bad address
+", // bad address
         ] {
-            let src = format!("bank = 02
-{line}");
+            let src = format!(
+                "bank = 02
+{line}"
+            );
             assert!(
                 parse_bank_cfg(&src, "t").is_err(),
                 "should have been rejected: {line}"
