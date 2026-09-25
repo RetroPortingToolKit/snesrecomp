@@ -78,8 +78,9 @@ function(_snesrecomp_add_recomp_net)
     endif()
 endfunction()
 
-# Internal: add retcomm-rbengine once. It links recomp_net itself, and finds
-# it through RECOMP_NET_ROOT rather than re-adding the subdirectory.
+# Internal: add retcomm-rbengine once. recomp-net is added first: rbengine
+# releases before the peer-facing modules moved to recomp-net look for it
+# through RECOMP_NET_ROOT rather than re-adding the subdirectory.
 function(_snesrecomp_add_rbengine)
     if(TARGET retcomm_rbengine)
         return()
@@ -123,7 +124,9 @@ function(snesrecomp_enable_rollback target)
     endif()
     set_target_properties(${target} PROPERTIES SNESRECOMP_ROLLBACK_ENABLED TRUE)
     _snesrecomp_add_rbengine()
-    target_link_libraries(${target} PRIVATE retcomm_rbengine)
+    # snes_netplay_rb calls recomp-net's scheduler / input history /
+    # hash_confirm directly; rbengine supplies only the snap ring and clock.
+    target_link_libraries(${target} PRIVATE recomp_net retcomm_rbengine)
     target_compile_definitions(${target} PRIVATE SNESRECOMP_NET_ROLLBACK=1)
     if(NOT SNESRECOMP_ENABLE_NET)
         target_sources(${target} PRIVATE

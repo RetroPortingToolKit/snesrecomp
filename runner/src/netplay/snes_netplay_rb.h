@@ -8,8 +8,9 @@
  *
  *   snes_netplay (facade, mode gate)
  *     ├── snes_netplay_rb        this file — snapshots, digests, resim, episode wire
- *     ├── retcomm-rbengine       invent policy, input history, hash_confirm, snap ring
- *     └── recomp-net             RNetSession tips + RNetRbSession episode FSM
+ *     ├── recomp-net             RNetSession tips + RNetRbSession episode FSM,
+ *     │                          invent policy, input history, hash_confirm
+ *     └── retcomm-rbengine       snap ring, monotonic clock
  *
  * The delay-sync path never calls anything here, and rollback never changes
  * how delay-sync admits — `SNES_NET_MODE=delay` (or a lobby peer that does not
@@ -34,7 +35,12 @@
 #include <stdint.h>
 
 #include "recomp_net/recomp_net.h"
-#include "retcomm_rbengine/retcomm_rbengine.h"
+#include "recomp_net/hash_confirm.h"
+#include "recomp_net/input_hist.h"
+#include "recomp_net/rb_post.h"
+#include "recomp_net/sched.h"
+#include "retcomm_rbengine/mono_ms.h"
+#include "retcomm_rbengine/snap_ring.h"
 
 #ifdef __cplusplus
 extern "C" {
