@@ -1726,4 +1726,73 @@ mod tests {
         let graph = decode_function(&rom, 0, 0x8000, 1, 1, None, &env);
         assert!(!has_truncated_call_continuation(&graph));
     }
+
+    fn equation(
+        local: &[(u8, u8)],
+        deps: &[ExitDependency],
+        assumptions: &[ExitAssumption],
+    ) -> ExitEquation {
+        ExitEquation {
+            local_modes: local.iter().copied().collect(),
+            dependencies: deps.iter().copied().collect(),
+            assumptions: assumptions.iter().copied().collect(),
+        }
+    }
+
+    fn solve(
+        equations: Vec<(VariantKey, ExitEquation)>,
+    ) -> BTreeMap<VariantKey, BTreeSet<(u8, u8)>> {
+        let equations: BTreeMap<_, _> = equations.into_iter().collect();
+        solve_exit_equation_sccs(&equations, &HashMap::new(), &HashMap::new())
+    }
+
+    #[test]
+    fn exit_equation_solver_bootstraps_closed_recursive_component() {
+        let first = VariantKey::new(0xB98000, 0, 0);
+        let second = VariantKey::new(0xB98100, 0, 0);
+        let blocked = VariantKey::new(0xB98200, 0, 0);
+        let solved = solve(vec![
+            (first, equation(&[(0, 0)], &[(second.pc24, 0, 0)], &[])),
+            (second, equation(&[], &[(first.pc24, 0, 0)], &[])),
+            (blocked, equation(&[], &[(0xB9F000, 0, 0)], &[])),
+        ]);
+        assert_eq!(solved[&first], BTreeSet::from([(0, 0)]));
+        assert_eq!(solved[&second], BTreeSet::from([(0, 0)]));
+        assert!(!solved.contains_key(&blocked));
+    }
+
+    #[test]
+    fn exit_equation_solver_rejects_false_preservation_probe() {
+        let caller = VariantKey::new(0xB98000, 0, 0);
+        let callee = VariantKey::new(0xB98100, 0, 0);
+        let callee_dep = (callee.pc24, 0, 0);
+        let solved = solve(vec![
+            (
+                caller,
+                equation(&[(0, 0)], &[callee_dep], &[(callee_dep, 0, 0)]),
+            ),
+            (callee, equation(&[(1, 0)], &[(caller.pc24, 0, 0)], &[])),
+        ]);
+        assert!(solved.is_empty());
+    }
+
+    #[test]
+    fn exit_equation_solver_preserves_closed_noreturn_fact() {
+        let looping = VariantKey::new(0xB98000, 0, 0);
+        let solved = solve(vec![(looping, equation(&[], &[], &[]))]);
+        assert_eq!(solved[&looping], BTreeSet::new());
+    }
+
+    #[test]
+    fn probe_requirement_does_not_become_caller_exit() {
+        let caller = VariantKey::new(0xB98000, 0, 0);
+        let helper = VariantKey::new(0xB98100, 0, 0);
+        let helper_dep = (helper.pc24, 0, 0);
+        let solved = solve(vec![
+            (caller, equation(&[], &[], &[(helper_dep, 0, 0)])),
+            (helper, equation(&[(0, 0)], &[], &[])),
+        ]);
+        assert_eq!(solved[&caller], BTreeSet::new());
+        assert_eq!(solved[&helper], BTreeSet::from([(0, 0)]));
+    }
 }

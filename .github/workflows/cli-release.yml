@@ -19,14 +19,17 @@ jobs:
       - uses: actions/setup-python@v6
         with:
           python-version: "3.13"
-      # The headless contract (docs/LOCAL_CODEGEN_SDK.md) is what recomp-ui and
-      # the RetComM launcher drive. Check it before anything slow: a CLI that
-      # cannot answer `generate --json-progress` cannot rebuild any shipped game.
-      - name: Smoke test headless generate / verify-rom contract
-        run: python tools/smoke_sdk_generate.py
       - name: Select pinned Rust toolchain
         working-directory: recompiler-rs
         run: rustup show active-toolchain
+      # The headless contract (docs/LOCAL_CODEGEN_SDK.md) is what recomp-ui and
+      # the RetComM launcher drive. A CLI that cannot answer `generate
+      # --json-progress` cannot rebuild any shipped game. Generation needs the
+      # native analyzer, so build it first.
+      - name: Build native analyzer
+        run: python tools/build_native_analyzer.py
+      - name: Smoke test headless generate / verify-rom contract
+        run: python tools/smoke_sdk_generate.py
       - name: Install packager
         run: python -m pip install pyinstaller==6.21.0
       - name: Build CLI package

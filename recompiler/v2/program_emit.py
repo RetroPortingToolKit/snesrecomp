@@ -591,7 +591,7 @@ def _stable_hash(value) -> str:
     return hashlib.sha256(data).hexdigest()
 
 
-def _bank_cache_key(bank: int, manifest: ProgramManifest,
+def _bank_cache_key(bank: int, manifest: ProgramManifest, rom_digest: str,
                     generator_digest: str, config_digest: str,
                     helpers: Mapping, inline_args: Mapping,
                     enable_hle: bool, host_alias_entries: Mapping,
@@ -604,6 +604,10 @@ def _bank_cache_key(bank: int, manifest: ProgramManifest,
     return _stable_hash({
         "format": CACHE_FORMAT_VERSION,
         "bank": bank,
+        # Emission reads the ROM bytes themselves. A change that leaves every
+        # node, demand and disposition in place (an operand, an opcode of the
+        # same length) is otherwise invisible to this key.
+        "rom": rom_digest,
         "nodes": nodes,
         "exit_modes": [
             (key.manifest_key, pair[0] & 1, pair[1] & 1)
@@ -652,6 +656,7 @@ def emit_program(*, rom: bytes, parsed, manifest: ProgramManifest,
         if pc24 in root_pcs
     }
 
+    rom_digest = hashlib.sha256(rom).hexdigest()
     live_cache_path = pathlib.Path(out_dir) / ".snesrecomp-cache.json"
     try:
         old_cache = json.loads(live_cache_path.read_text(encoding="utf-8"))
@@ -686,7 +691,7 @@ def emit_program(*, rom: bytes, parsed, manifest: ProgramManifest,
 
         for bank in all_banks:
             cache_key = _bank_cache_key(
-                bank, manifest, generator_digest, config_digest,
+                bank, manifest, rom_digest, generator_digest, config_digest,
                 dispatch_helpers, inline_arg_map, enable_hle,
                 host_alias_entries, shard_threshold_bytes, shard_pc_span)
             new_bank_keys[f"{bank:02X}"] = cache_key
