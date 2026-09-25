@@ -17,7 +17,7 @@ extern Snes *g_snes;
  * the second are published through RtlSetPadState by the facade, so nothing
  * in the resim path needs to know how many there are. */
 #define RB_MAX_SLOTS 8
-/* SNES pads are 12 bits, active high. rbengine's invent helpers fill an
+/* SNES pads are 12 bits, active high. recomp-net's invent helpers fill an
  * unknown row with 0xFFFF because PSX pads are active low — on SNES that
  * would read as every button held. 12-bit rows can never legitimately be
  * 0xFFFF, so the sentinel is unambiguous and rb_row_sanitize maps it to
@@ -56,11 +56,11 @@ static struct {
     SnesNetplayRbBindings b;
     RNetRbSession  *rb;
     RbeSnapRing    *snaps;
-    RbeInputHist    ih;
+    RNetInputHist    ih;
     /* Late-wire corrections that arrived while an episode was open and were
      * therefore never resimulated, per stage. See rb_reconcile_wire. */
     uint32_t        drop_stage_n[kRbTipHold + 1];
-    RbeHashConfirm  hc;
+    RNetHashConfirm  hc;
 
     int      started;
     uint32_t sim;            /* authoritative local sim tick */
@@ -448,7 +448,7 @@ static uint32_t rb_vt_state_digest(void *ctx, uint32_t tick, uint32_t partition)
 static uint8_t rb_vt_hash_confirm_through(void *ctx, uint32_t tick)
 {
     (void)ctx;
-    return rbe_hc_confirm_through(&g_rb.hc, tick);
+    return rnet_hc_confirm_through(&g_rb.hc, tick);
 }
 
 /*
@@ -486,7 +486,7 @@ static uint8_t rb_vt_get_input_row(void *ctx, int32_t slot, uint32_t tick,
     (void)ctx;
     if (!out || slot < 0 || slot >= rb_slot_count())
         return 0;
-    if (rbe_ih_get(&g_rb.ih, (int)slot, tick, out)) {
+    if (rnet_ih_get(&g_rb.ih, (int)slot, tick, out)) {
         rb_row_sanitize(out);
         return 1;
     }
@@ -497,7 +497,7 @@ static uint8_t rb_vt_get_input_row(void *ctx, int32_t slot, uint32_t tick,
     if (!s)
         return 0;
     memset(&sample, 0, sizeof(sample));
-    if (!rnet_session_peek_input(s, (int)slot, rbe_sched_wire_for_sim(tick),
+    if (!rnet_session_peek_input(s, (int)slot, rnet_sched_wire_for_sim(tick),
                                  &sample) ||
         !sample.valid)
         return 0; /* past the published horizon — genuinely cannot cover it */
@@ -518,7 +518,7 @@ static uint8_t rb_vt_get_input_row(void *ctx, int32_t slot, uint32_t tick,
     /* Keep the history whole. The replay leaves sim at target+1, so Live will
      * never step onto these ticks and fill them itself, and a later episode
      * sealing back across them would find the same hole. */
-    rbe_ih_put(&g_rb.ih, (int)slot, out);
+    rnet_ih_put(&g_rb.ih, (int)slot, out);
     rb_row_sanitize(out);
     return 1;
 }
@@ -630,7 +630,7 @@ static int rb_boot_digest_gate(void)
 
     if (g_rb.boot_dig_local_valid) {
         local = g_rb.boot_dig_local;
-    } else if (rbe_hc_local_digest(&g_rb.hc, 0u, &local)) {
+    } else if (rnet_hc_local_digest(&g_rb.hc, 0u, &local)) {
         SnesStateDigestParts p;
         g_rb.boot_dig_local = local;
         g_rb.boot_dig_local_valid = 1u;
@@ -676,7 +676,7 @@ static int rb_boot_digest_gate(void)
 
     if (g_rb.boot_dig_peer_valid) {
         peer = g_rb.boot_dig_peer;
-    } else if (rbe_hc_peer_digest(&g_rb.hc, 0u, &peer)) {
+    } else if (rnet_hc_peer_digest(&g_rb.hc, 0u, &peer)) {
         g_rb.boot_dig_peer = peer;
         g_rb.boot_dig_peer_valid = 1u;
     } else {
@@ -890,7 +890,7 @@ static void rb_modset_pump(void)
 /*
  * Measured link latency for the scheduler's invent-grace budget.
  *
- * retcomm-rbengine has always asked for this; psxrecomp has always answered;
+ * The scheduler has always asked for this; psxrecomp has always answered;
  * this host never bound the callback, so sched_rtt_ms() returned 0 and
  * np_invent_rtt_ms() fell back to its synthetic D-scaled floor on every link.
  * Across 18,325 invent-grace decisions logged at simulated round trips from 0
@@ -1009,7 +1009,7 @@ static const char *rb_gate_lockstep_tag(void *ctx)
 
 static void rb_bind_sched(void)
 {
-    RbeSchedBridge br;
+    RNetSchedBridge br;
     static int s_rollback = 1;
 
     memset(&br, 0, sizeof(br));
@@ -1031,7 +1031,7 @@ static void rb_bind_sched(void)
     br.gates.desync_hold = &rb_gate_lockstep_no_invent;   /* tag only */
     /* Media gates stay NULL: the SNES host has no FMV path, so invent is
      * never held for media and auto-D always samples. */
-    rbe_sched_bind(&br);
+    rnet_sched_bind(&br);
 }
 
 /* ── lifecycle ───────────────────────────────────────────────────────── */
@@ -1193,15 +1193,15 @@ int snes_netplay_rb_start(void)
         return 0;
     }
 
-    rbe_ih_reset(&g_rb.ih, slots);
-    rbe_hc_reset(&g_rb.hc);
+    rnet_ih_reset(&g_rb.ih, slots);
+    rnet_hc_reset(&g_rb.hc);
 
     /* Seed a neutral row per seat so hold-last never has to fall back to the
      * PSX-shaped 0xFFFF sentinel on the first invent. */
     for (i = 0; i < slots; ++i) {
         RNetRbFrame f;
         rb_row_make(&f, 0u, 0u, 0);
-        rbe_ih_put(&g_rb.ih, i, &f);
+        rnet_ih_put(&g_rb.ih, i, &f);
     }
 
     rb_bind_sched();
@@ -1285,7 +1285,7 @@ void snes_netplay_rb_shutdown(void)
     free(g_rb.snap_scratch);
     g_rb.snap_scratch = NULL;
     g_rb.snap_scratch_cap = 0;
-    rbe_sched_bind(NULL);
+    rnet_sched_bind(NULL);
     g_rb.started = 0;
     g_rb.stage = kRbIdle;
     g_rb.sim = 0;
@@ -1528,8 +1528,8 @@ static void rb_commit_episode(void)
     /* Ticks through the target are now agreed; drop the live-invent
      * FRAME_COMMITs that preceded the correction so the watermark restarts
      * from a tick both peers actually ran. */
-    rbe_hc_prime_after(&g_rb.hc, g_rb.corr.target_tick);
-    rbe_sched_note_episode_boundary();
+    rnet_hc_prime_after(&g_rb.hc, g_rb.corr.target_tick);
+    rnet_sched_note_episode_boundary();
     if (rnet_rb_enter_tip_hold(g_rb.rb)) {
         rb_stage_set(kRbTipHold);
     } else {
@@ -1708,7 +1708,7 @@ static int rb_begin_episode(uint32_t mismatch_tick, int slot, int as_initiator,
                                    ? rbe_snap_ring_oldest_tick(g_rb.snaps) : 0u),
                     (unsigned)snes_netplay_rb_confirmed_through(),
                     (unsigned)g_rb.fork_cap);
-            rbe_sched_note_mispredict(g_rb.sim - mismatch_tick);
+            rnet_sched_note_mispredict(g_rb.sim - mismatch_tick);
             return 0;
         }
         target = rnet_rb_suggest_target(g_rb.rb, mismatch_tick, sim_tip);
@@ -2218,7 +2218,7 @@ static void rb_drain_wire(void)
     }
 
     while (rnet_session_take_rb_frame_commit(s, &a, &b))
-        rbe_hc_note_peer(&g_rb.hc, a, b);
+        rnet_hc_note_peer(&g_rb.hc, a, b);
 }
 
 /* ── episode pump ────────────────────────────────────────────────────── */
@@ -2254,7 +2254,7 @@ static void rb_pump_episode(void)
          * treating that as this episode's answer is a false fork. Drop it and
          * keep waiting for one that describes the tip we actually verified. */
         if (g_rb.peer_post_seen &&
-            !rbe_rb_peer_post_tip_ok(g_rb.peer_post_target,
+            !rnet_rb_peer_post_tip_ok(g_rb.peer_post_target,
                                      g_rb.corr.target_tick))
             g_rb.peer_post_seen = 0;
         if (g_rb.peer_post_seen) {
@@ -2357,9 +2357,9 @@ static void rb_reconcile_wire(void)
     /* Nothing older than the history window can be reconciled anyway, and an
      * un-advancing watermark would otherwise make this scan grow without
      * bound as the match runs. */
-    if (g_rb.sim > RBE_INPUT_HIST_DEPTH &&
-        from < g_rb.sim - RBE_INPUT_HIST_DEPTH)
-        from = g_rb.sim - RBE_INPUT_HIST_DEPTH;
+    if (g_rb.sim > RNET_INPUT_HIST_DEPTH &&
+        from < g_rb.sim - RNET_INPUT_HIST_DEPTH)
+        from = g_rb.sim - RNET_INPUT_HIST_DEPTH;
 
     if (!s)
         return;
@@ -2372,12 +2372,12 @@ static void rb_reconcile_wire(void)
             RNetRbFrame published;
             RNetRbFrame wire;
 
-            if (!rbe_ih_get(&g_rb.ih, slot, t, &published))
+            if (!rnet_ih_get(&g_rb.ih, slot, t, &published))
                 continue;
             if (!published.is_predicted)
                 continue;
             if (!rnet_session_peek_remote_input(
-                    s, slot, rbe_sched_wire_for_sim(t), &sample) ||
+                    s, slot, rnet_sched_wire_for_sim(t), &sample) ||
                 !sample.valid)
                 continue;
 
@@ -2387,23 +2387,23 @@ static void rb_reconcile_wire(void)
                         0);
             if (wire.buttons == published.buttons) {
                 /* Prediction held: promote in place, no episode. */
-                rbe_ih_promote(&g_rb.ih, slot, &wire);
+                rnet_ih_promote(&g_rb.ih, slot, &wire);
                 continue;
             }
 
             {
                 RNetInputContractFrame pub_c, wire_c;
                 RNetInputContractDecision d;
-                rbe_ih_frame_to_contract(&published, &pub_c);
-                rbe_ih_frame_to_contract(&wire, &wire_c);
+                rnet_ih_frame_to_contract(&published, &pub_c);
+                rnet_ih_frame_to_contract(&wire, &wire_c);
                 d = rnet_rb_decide_stick_replace(g_rb.rb, &pub_c, &wire_c,
                                                  1 /* completed sim */);
-                rbe_ih_promote(&g_rb.ih, slot, &wire);
+                rnet_ih_promote(&g_rb.ih, slot, &wire);
                 if (!rnet_input_contract_decision_is_rewind(d))
                     continue;
             }
 
-            rbe_sched_note_mispredict(g_rb.sim > t ? g_rb.sim - t : 0u);
+            rnet_sched_note_mispredict(g_rb.sim > t ? g_rb.sim - t : 0u);
             if (g_rb.stage == kRbIdle) {
                 rb_begin_episode(t, slot, 1, 0u, 0u, 0u, 0u);
             } else if (t >= g_rb.corr.load_tick &&
@@ -2417,7 +2417,7 @@ static void rb_reconcile_wire(void)
                  * Counting these as drops reported 42 findings that were all
                  * fine, which is worse than reporting none. */
             } else {
-                /* Genuinely lost. rbe_ih_promote above already marked the row
+                /* Genuinely lost. rnet_ih_promote above already marked the row
                  * authoritative, so the next scan skips it: this was the only
                  * chance to act, the tick is outside every span we will
                  * replay, and we do not resimulate it. kRbTipHold raises the
@@ -2476,7 +2476,7 @@ int snes_netplay_rb_poll_admit(void)
 
     memset(&st, 0, sizeof(st));
     rnet_session_get_stats(s, &st);
-    rbe_sched_sync_delay_from_session();
+    rnet_sched_sync_delay_from_session();
 
     /*
      * Seal the local tip for this sim tick exactly ONCE.
@@ -2494,9 +2494,9 @@ int snes_netplay_rb_poll_admit(void)
         g_rb.tip_prepared_valid = 1;
     }
 
-    wire = rbe_sched_wire_for_sim(g_rb.sim);
-    if (rbe_sched_pre_admit(g_rb.sim, wire, &st)) {
-        g_rb.stall_tag = rbe_sched_admit_stall_tag();
+    wire = rnet_sched_wire_for_sim(g_rb.sim);
+    if (rnet_sched_pre_admit(g_rb.sim, wire, &st)) {
+        g_rb.stall_tag = rnet_sched_admit_stall_tag();
         return 0;
     }
 
@@ -2523,7 +2523,7 @@ int snes_netplay_rb_poll_admit(void)
                 published = (uint16_t)(sample.bytes[0] |
                                        ((uint16_t)sample.bytes[1] << 8));
             rb_row_make(&row, g_rb.sim, published, 0);
-            rbe_ih_put(&g_rb.ih, slot, &row);
+            rnet_ih_put(&g_rb.ih, slot, &row);
             g_rb.resolved[slot] = row.buttons;
             if (slot == 0 && sample.valid && sample.size >= 4) {
                 g_rb.sync_bytes[0] = sample.bytes[2];
@@ -2564,9 +2564,9 @@ int snes_netplay_rb_poll_admit(void)
                         (uint16_t)(sample.bytes[0] |
                                    ((uint16_t)sample.bytes[1] << 8)),
                         0);
-            rbe_ih_put(&g_rb.ih, slot, &row);
+            rnet_ih_put(&g_rb.ih, slot, &row);
             g_rb.resolved[slot] = row.buttons;
-            rbe_sched_note_remote_hit();
+            rnet_sched_note_remote_hit();
             /* Slot 0 carries the authoritative game sync bytes. */
             if (slot == 0 && sample.size >= 4) {
                 g_rb.sync_bytes[0] = sample.bytes[2];
@@ -2578,12 +2578,12 @@ int snes_netplay_rb_poll_admit(void)
 
         {
             const char *why = NULL;
-            if (rbe_sched_on_remote_miss(slot, g_rb.sim, wire, &st,
+            if (rnet_sched_on_remote_miss(slot, g_rb.sim, wire, &st,
                                           g_rb.prediction_cap, &why)) {
                 g_rb.stall_tag = why ? why : "remote_miss";
                 return 0;
             }
-            if (!rbe_ih_invent_hold_last(&g_rb.ih, slot, g_rb.sim, &row))
+            if (!rnet_ih_invent_hold_last(&g_rb.ih, slot, g_rb.sim, &row))
                 return 0;
             if (g_rb.force_invent_slot == slot) {
                 /* Guarantee the invention is WRONG: hold-last would otherwise
@@ -2595,14 +2595,14 @@ int snes_netplay_rb_poll_admit(void)
             rb_row_sanitize(&row);
             /* Sanitise wrote through a copy; store the corrected row so the
              * PSX-shaped neutral can never reach the sim or a seal. */
-            rbe_ih_put(&g_rb.ih, slot, &row);
+            rnet_ih_put(&g_rb.ih, slot, &row);
             g_rb.resolved[slot] = row.buttons;
             any_invent = 1;
         }
     }
 
-    rbe_sched_post_admit(any_invent);
-    rbe_sched_clear_admit_stall();
+    rnet_sched_post_admit(any_invent);
+    rnet_sched_clear_admit_stall();
     g_rb.stall_tag = NULL;
     rb_snap_take(g_rb.sim); /* state before this tick — see rb_snap_take */
     rb_publish_resolved(g_rb.sim);
@@ -2619,7 +2619,7 @@ int snes_netplay_rb_poll_admit(void)
  * resolved_through is what bounds the reconcile scan and feeds peer
  * convergence. So a genuine state fork degraded rollback QUIETLY: corrections
  * kept being sought over a window that could no longer grow, with nothing in
- * the log. The engine exports rbe_hc_peek_mismatch for exactly this and the
+ * the log. The engine exports rnet_hc_peek_mismatch for exactly this and the
  * host had never called it; psxrecomp calls it in two places.
  *
  * Checked only while idle, and only after the mismatch PERSISTS.
@@ -2663,7 +2663,7 @@ static void rb_check_chain_fork(void)
 
     if (g_rb.stage != kRbIdle || !g_rb.rb)
         return;
-    if (!rbe_hc_peek_mismatch(&g_rb.hc, &tick, &local, &peer)) {
+    if (!rnet_hc_peek_mismatch(&g_rb.hc, &tick, &local, &peer)) {
         g_rb.chain_pending_tick = 0u; /* cleared on its own: it was in flight */
         return;
     }
@@ -2713,7 +2713,7 @@ void snes_netplay_rb_finish_frame(void)
         fprintf(stderr, "rbe: forced boot fork — publishing %08x for tick 0\n",
                 (unsigned)master);
     }
-    rbe_hc_note_local(&g_rb.hc, g_rb.sim, master);
+    rnet_hc_note_local(&g_rb.hc, g_rb.sim, master);
     if (s)
         rnet_session_send_rb_frame_commit(s, g_rb.sim, master);
 
@@ -2724,11 +2724,11 @@ void snes_netplay_rb_finish_frame(void)
     rb_send_identity();
 
     /* A stuck watermark whose next tick aged out of the ring is not a fork. */
-    (void)rbe_hc_heal_stale_gap(&g_rb.hc);
+    (void)rnet_hc_heal_stale_gap(&g_rb.hc);
     /* ...but one that is still stuck after healing may well be. */
     rb_check_chain_fork();
     if (g_rb.rb)
-        rnet_rb_set_peer_convergence(g_rb.rb, rbe_hc_resolved_through(&g_rb.hc));
+        rnet_rb_set_peer_convergence(g_rb.rb, rnet_hc_resolved_through(&g_rb.hc));
 }
 
 /* ── diagnostics ─────────────────────────────────────────────────────── */
