@@ -45,6 +45,32 @@ recomp-ui so every title benefits. Do not grow game `main.c` with shared
 networking UX. Per-title sticky state uses `RtlGameInfo.session_reset` (and
 related hooks) — see `docs/RECOMP_NET.md` → "Layering policy".
 
+## In-game launcher (opt-in)
+
+A title on the shared desktop host (`runner/src/desktop/host_main.c`) sets
+`SnesDesktopHostGame.in_game_launcher = 1` to let the player reopen the full
+launcher mid-game: `[KeyMap] OpenLauncher` (default Ctrl+L once opted in) or
+`[Controller] LauncherGesture` (default Select+L3). The guest is frozen and
+the game window hidden while the launcher runs in-process with
+`GameInfo.in_session = 1` (RESUME instead of PLAY, a QUIT GAME button,
+closing the window resumes).
+
+On RESUME the host sorts every edit into one of two buckets:
+
+| Applied live | Restart required |
+|---|---|
+| fullscreen, window scale, pixel aspect, filtering, shader, vsync, volume, frame blend, run-ahead, rewind, `[KeyMap]`, `[GamepadMap]`, `keybinds.ini`, player device | renderer / output method, audio rate, mods (`state.toml` changed), a different ROM |
+
+A restart saves `saves/resume.sav`, shuts down completely, and starts the
+executable again with `--no-launcher --resume-state <path> --rom <rom>`
+(`runner/src/desktop/host_relaunch.c`); the new process loads the state before
+its first frame and deletes it. A different ROM restarts from power-on.
+
+Self-test, no human needed: `SNESRECOMP_INGAME_LAUNCHER_SELFTEST=<frame>`
+opens it at that frame, recomp-ui's `LNG_SMOKE_FRAMES=<n>` closes it after n
+frames (RESUME), and `SNESRECOMP_INGAME_LAUNCHER_SELFTEST_RESTART=1` takes the
+restart path. The guest must come back bit-identical.
+
 ## What stayed in snesrecomp
 
 - `runner/src/launcher.c` / `launcher.h` — shared ROM resolution policy
