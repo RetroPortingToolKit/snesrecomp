@@ -165,6 +165,47 @@ static void barrier_soft_exit(int from_lobby, int *running, const char *origin,
     *running = 0;
 }
 
+/*
+ * The match was REFUSED: leave it. The one consumer of the rollback driver's
+ * request_return_to_lobby while a session is up.
+ *
+ * A refusal (boot digest mismatch, mod-set refusal) raises the return-to-lobby
+ * request with the session still running. Nothing in the runner read it: the
+ * desktop host's admit loop never checked, so its match played on -- every
+ * episode forking at its baseline after a boot fork, or two mod sets in one
+ * match (NETPLAY.md section 4: abort rather than degrade). A game host that
+ * checked the flag itself (Gundam's main.c) left, but only because it had
+ * copied the check. So it is consumed HERE, in the admit pump every host
+ * calls, and a host inherits it by pumping admission.
+ *
+ * The session being up is what separates a refusal from a request this file
+ * made itself: every soft exit below shuts the session down first. The reason
+ * is logged, and handed to the launcher's last_error so the waiting room that
+ * reopens says why (recomp-ui docs/HOST_NETPLAY.md, "soft-return"). From a
+ * lobby, the host then soft-returns both players to the room; each peer
+ * refuses on its own evidence, and one that has not refused yet sees our
+ * BYE and leaves on it.
+ */
+static int barrier_refused(int from_lobby, int *running, int *desync_logged,
+                           int *wait_logged)
+{
+  const char *why;
+
+  if (!snes_netplay_return_to_lobby_requested())
+    return 0;
+  why = snes_netplay_refusal();
+  if (!why || !why[0])
+    why = "refused";
+  fprintf(stderr,
+          "snes_netplay: match refused (%s) at sim=%u — leaving the match%s\n",
+          why, (unsigned)snes_netplay_sim_tick(),
+          from_lobby ? "; returning both players to the lobby" : "");
+  if (from_lobby)
+    snes_host_lobby_set_runtime_error(why);
+  barrier_soft_exit(from_lobby, running, why, desync_logged, wait_logged);
+  return 1;
+}
+
 static int barrier_poll_admit(int enter_need)
 {
   if (snes_netplay_poll_admit()) {
@@ -239,6 +280,12 @@ int snes_host_barrier_admit(int from_lobby, int *running,
   peer_ms = hooks->peer_timeout_ms ? hooks->peer_timeout_ms : 1500u;
   connect_ms = hooks->connect_timeout_ms;
 
+  /* A refusal raised since the last call (by whatever the driver read after
+   * its admission: finish_frame, the wire). Before every other exit, so the log names the refusal
+   * rather than whatever the peer's own departure looks like. */
+  if (barrier_refused(from_lobby, running, &desync_logged, &wait_logged))
+    return 0;
+
   /* A coordinated stop (SIGUSR1 -> rollback drain). Checked BEFORE the
    * peer-gone exit: the peer that finishes draining first leaves at once, and
    * its BYE made this side take the peer_disconnect exit below with its own
@@ -247,6 +294,16 @@ int snes_host_barrier_admit(int from_lobby, int *running,
    * the peer left in the queue and finish first. */
   if (snes_netplay_draining() && snes_netplay_peer_disconnected(peer_ms))
     (void)snes_netplay_poll_admit();
+  /* Likewise a peer that refused the match and left before we read why: its
+   * BYE lands right behind the tick-0 digest or identity that makes US refuse
+   * too, so let the driver read the queue once before calling it a
+   * disconnect. Both peers then log the refusal, not one refusal and one
+   * "peer_disconnect". */
+  else if (snes_netplay_rollback_active() &&
+           snes_netplay_peer_disconnected(peer_ms))
+    (void)snes_netplay_poll_admit();
+  if (barrier_refused(from_lobby, running, &desync_logged, &wait_logged))
+    return 0;
   if (snes_netplay_quiesced()) {
     fprintf(stderr, "snes_netplay: rollback drained — exiting\n");
     barrier_soft_exit(from_lobby, running, "quiesced", &desync_logged,
@@ -332,8 +389,15 @@ int snes_host_barrier_admit(int from_lobby, int *running,
    * decides when to wait instead. Leaving the latch armed would throttle
    * rollback straight back into lockstep.
    */
-  if (snes_netplay_rollback_active())
-    return snes_netplay_poll_admit();
+  if (snes_netplay_rollback_active()) {
+    int admitted = snes_netplay_poll_admit();
+    /* The refusal can be raised inside this very poll (the boot-digest gate
+     * settles here). The driver then admits nothing, but leave now rather
+     * than a frame later. */
+    if (barrier_refused(from_lobby, running, &desync_logged, &wait_logged))
+      return 0;
+    return admitted;
+  }
 
   {
     uint32_t sim = snes_netplay_sim_tick();

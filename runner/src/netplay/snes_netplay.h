@@ -200,6 +200,16 @@ void snes_netplay_request_return_to_lobby(void);
 int  snes_netplay_return_to_lobby_requested(void);
 void snes_netplay_clear_return_to_lobby(void);
 
+/*
+ * Why the match was REFUSED, NULL if it was not: the rollback driver's code
+ * (boot_digest_mismatch, mod_set_mismatch, mod_set_not_agreed). A refusal
+ * also raises the return-to-lobby request above while the session is still
+ * up; snes_host_barrier_admit() is where it is consumed, so every host that
+ * pumps admission through it leaves the match instead of playing it. Read it
+ * before snes_netplay_shutdown(), which ends the driver.
+ */
+const char *snes_netplay_refusal(void);
+
 /* Host-only savestate sync (chunked over recomp-net). Load uses hash-probe
  * first (skip transfer when guest already has the blob), then a short ready
  * rendezvous before hard_resync. SAVE still ships async after host write.

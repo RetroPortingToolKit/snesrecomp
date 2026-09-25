@@ -34,6 +34,7 @@ static inline void snes_netplay_rb_stage_local(uint16_t buttons) { (void)buttons
 static inline uint32_t snes_netplay_rb_sim_tick(void) { return 0; }
 static inline int  snes_netplay_rb_quiesced(void) { return 0; }
 static inline int  snes_netplay_rb_draining(void) { return 0; }
+static inline const char *snes_netplay_rb_refusal(void) { return NULL; }
 #endif
 #include "common_rtl.h"
 #include "common_cpu_infra.h"
@@ -177,6 +178,7 @@ static int g_return_to_lobby_stub;
 void snes_netplay_request_return_to_lobby(void) { g_return_to_lobby_stub = 1; }
 int  snes_netplay_return_to_lobby_requested(void) { return g_return_to_lobby_stub; }
 void snes_netplay_clear_return_to_lobby(void) { g_return_to_lobby_stub = 0; }
+const char *snes_netplay_refusal(void) { return NULL; }
 
 int  snes_netplay_is_host(void) { return 0; }
 int  snes_netplay_request_save(int slot)
@@ -529,6 +531,11 @@ int snes_netplay_quiesced(void)
 int snes_netplay_draining(void)
 {
     return snes_netplay_rollback_active() && snes_netplay_rb_draining();
+}
+
+const char *snes_netplay_refusal(void)
+{
+    return snes_netplay_rollback_active() ? snes_netplay_rb_refusal() : NULL;
 }
 
 int snes_netplay_active(void)

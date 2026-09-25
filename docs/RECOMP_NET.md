@@ -545,6 +545,24 @@ Connect-wait time lives in `snes_netplay_connect_timed_out` and is reset on
 `static` wait clock across rematch — that caused instant false
 `connect_timeout_lan` after Escape → soft-return → Play.
 
+### 2a. A refused match soft-returns the same way
+
+The rollback driver refuses a match whose peers did not boot the same
+(`boot_digest_mismatch`) or do not run the same mods (`mod_set_mismatch`,
+`mod_set_not_agreed`). It then admits no further tick and raises the
+return-to-lobby request with the session still up. `snes_host_barrier_admit`
+is the consumer: it logs `snes_netplay: match refused (<code>) at sim=N`,
+puts the code in the launcher's `last_error` (`snes_host_lobby_set_runtime_error`)
+and takes the same soft exit as a peer leaving, so `*running` drops to 0 and a
+lobby match comes back to the waiting room. A host that pumps admission
+through `snes_host_barrier_admit` needs nothing more; one that polls
+`snes_netplay_poll_admit` itself must check `snes_netplay_return_to_lobby_requested()`
+while `snes_netplay_active()` and leave, reading `snes_netplay_refusal()`
+first. Until 2026-09-25 nothing in the runner read the request: the desktop
+host played a refused match on, and only a game host that had copied the
+check (Gundam's `main.c`) left. Proven two-process with
+`SNES_RB_FORCE_BOOT_FORK=1` and `SNES_RB_FORCE_MOD_MISMATCH=1` on one peer.
+
 ### 3. Re-init SDL + session_reset on rematch
 
 recomp-ui's `launcher_platform_close()` calls **`SDL_Quit()`**. At

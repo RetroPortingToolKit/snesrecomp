@@ -148,6 +148,9 @@ uint32_t snes_netplay_rb_confirmed_through(void);
 uint32_t snes_netplay_rb_confirmed_remaining(void);
 int      snes_netplay_rb_episode_active(void);
 const char *snes_netplay_rb_stall_tag(void);
+/* Why the driver refused this match (boot_digest_mismatch, mod_set_mismatch,
+ * mod_set_not_agreed), NULL if it did not. See snes_netplay_refusal(). */
+const char *snes_netplay_rb_refusal(void);
 /* Last observed digest fork: 1 if one has happened, with the partition name
  * and tick. Partition naming comes from snes_state_digest_part_name. */
 int  snes_netplay_rb_last_fork(uint32_t *tick, const char **partition);

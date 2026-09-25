@@ -606,6 +606,11 @@ const char *snes_netplay_rb_stall_tag(void)
     return rnet_rb_driver_stall_tag(g_rb.drv);
 }
 
+const char *snes_netplay_rb_refusal(void)
+{
+    return rnet_rb_driver_refusal(g_rb.drv);
+}
+
 int snes_netplay_rb_last_fork(uint32_t *tick, const char **partition)
 {
     return rnet_rb_driver_last_fork(g_rb.drv, tick, partition);
