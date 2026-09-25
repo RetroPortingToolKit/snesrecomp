@@ -417,6 +417,13 @@ void   cpu_write16(CpuState *cpu, uint8 bank, uint16 addr, uint16 v);
  * interpreter's bridge shims use the plain accessors (they account
  * transfers themselves). */
 uint32_t  cpu_region_speed(uint32_t adr);
+/* SNESRECOMP_WLOG_ADDR hook for direct-WRAM stores that bypass cpu_write8/16
+ * (DMA A-bus writes in snes_write, WMDATA $2180). wa = g_ram offset. */
+void wlog_addr_note_direct(uint32_t wa, uint8_t v, const char *via);
+/* Optional interp step-ring dump used by the WLOG_ADDR_HALT path; installed
+ * by interp_bridge.c at load when that TU is linked, NULL otherwise. */
+#include <stdio.h>
+extern void (*g_interp_recent_dump_hook)(int n, FILE *out);
 uint8  cpu_read8_paced (CpuState *cpu, uint8 bank, uint16 addr);
 uint16 cpu_read16_paced(CpuState *cpu, uint8 bank, uint16 addr);
 void   cpu_write8_paced (CpuState *cpu, uint8 bank, uint16 addr, uint8  v);

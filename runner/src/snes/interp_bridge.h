@@ -30,6 +30,9 @@
 
 #include <stdint.h>
 #include <stdio.h>
+/* Dump the last n entries of the always-on global interp step ring
+ * (pc/op/sp/frame per interpreted opcode) to `out` (NULL = stderr). */
+void interp_bridge_dump_recent_steps(int n, FILE *out);
 #include "cpu_state.h"
 
 /* Launch-time main-scheduler AOT policy: -1 default/environment, 0 floor,

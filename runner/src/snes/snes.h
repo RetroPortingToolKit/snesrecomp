@@ -9,6 +9,9 @@
 #include <stdbool.h>
 
 typedef struct Snes Snes;
+typedef void (*SnesMasterClockChargeHook)(Snes *snes, uint64_t clocks);
+typedef void (*SnesWramWriteLogHook)(uint32_t ram_off, uint8_t value,
+                                     const char *via);
 
 #include "cpu.h"
 #include "apu.h"
@@ -129,6 +132,19 @@ void snes_saveload(Snes *snes, SaveLoadInfo *sli);
 void snes_catchupApu(Snes *snes);
 void snes_advance_master_cycles(Snes *snes, uint32_t clocks);
 void snes_sync_master_clock(Snes *snes, uint64_t master_clock);
+/* A host that drives the beam itself (its own per-opcode hPos/vPos walk)
+ * must install this: a $420B DMA's guest time is charged through it, and the
+ * default (SnesInit installs one) advances g_cpu.master_cycles and syncs the
+ * beam, which on such a host moves hPos/vPos behind its back -- the lines
+ * crossed never get their HDMA step, the frame-end crossing is never counted
+ * and the APU never gets the time. Such a host must also set
+ * g_interp_apu_driving, or every $4212 read adds a synthetic 64-clock beam
+ * step that can jump over h=1024 and drop that line's HDMA transfer (SimCity
+ * scenario view: every 4th scanline one line late, issue #63). */
+void snes_set_master_clock_charge_hook(SnesMasterClockChargeHook hook);
+/* Notified on every direct WRAM store that bypasses cpu_write8/16 (WMDATA
+ * $2180, snes_write's WRAM and mirror stores, i.e. DMA A-bus writes). */
+void snes_set_wram_write_log_hook(SnesWramWriteLogHook hook);
 /* Next comparator edge for hosts that deliver each raster IRQ separately. */
 void snes_set_hdma_beam_enabled(Snes *snes, bool enabled);
 bool snes_next_irq_master(const Snes *snes, uint64_t now, uint64_t *out);
