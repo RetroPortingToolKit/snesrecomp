@@ -231,6 +231,14 @@ Live ─mispredict─> begin_episode ─> seal_inputs ─> RB_SYNC BEGIN + RB_SE
   guaranteed POST mismatch.
 - Any failure aborts loudly with a cooldown. Nothing here continues silently
   after a fork — `recomp-ai-rules/NETPLAY.md` §5, a digest mismatch is a stop.
+- A correction is owed until an episode that replays it **commits**
+  (recomp-net 5fe484b). Before that, a NACK, abort, watchdog, dual-initiation
+  yield or the silent cooldown refusal lost it: reconcile had already promoted
+  the true row, so the tick was never scanned again. An abort after the
+  baseline load also restores the live tip instead of leaving the engine on
+  the load tick. Both were invisible on Gundam's attract screen, whose state
+  does not keep the injector's flipped P2 bit past a tick; they showed only as
+  the advisory `RB chain stall`.
 
 ## 8. SNES pad polarity
 
