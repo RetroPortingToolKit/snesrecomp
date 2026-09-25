@@ -2787,7 +2787,7 @@ static bool ppu_evaluateSprites(Ppu* ppu, int line) {
              * one is hinted and keeps its margin pixels. */
             static int ws_edge_clip_on = -1;
             if (ws_edge_clip_on < 0) {
-              const char *e = getenv("SC_WS_OBJ_EDGE_CLIP");
+              const char *e = getenv("SNESRECOMP_WS_OBJ_EDGE_CLIP");
               ws_edge_clip_on = (e && *e) ? (*e != '0') : 1;
             }
             /* NOT while the sprite is moving.
