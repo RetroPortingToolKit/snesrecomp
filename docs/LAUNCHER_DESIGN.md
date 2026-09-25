@@ -78,9 +78,10 @@ restart path. The guest must come back bit-identical.
 - `runner/src/launcher_picker.c` — native platform file selection
 - `runner/src/rom_image_verify.c` — copier-header stripping and CRC/SHA checks
   (console-agnostic helpers used when the GUI is skipped with `--no-launcher`)
-- Lobby / netplay backends — `snes_lobby_client.*`, `snes_netplay.*`,
-  `snes_host_session.*`, `snes_host_lobby.*`, `snes_host_app.*` (MotK+LAN
-  adapter + rematch helpers for recomp-ui via `snesrecomp_enable_recomp_net`)
+- Lobby / netplay backends — `snes_netplay.*`, `snes_host_session.*`,
+  `snes_host_app.*`, and the SNES adapters `snes_lobby_client.*` (over
+  recomp-net's lobby client) and `snes_host_lobby.*` (over recomp-ui's
+  `recomp_netplay_host`), linked via `snesrecomp_enable_recomp_net`
 - `lib/recomp-net` — delay-sync / ICE transport submodule
 
 ## What was removed
