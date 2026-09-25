@@ -32,6 +32,9 @@ static inline int  snes_netplay_rb_poll_admit(void) { return 0; }
 static inline void snes_netplay_rb_finish_frame(void) {}
 static inline void snes_netplay_rb_stage_local(uint16_t buttons) { (void)buttons; }
 static inline uint32_t snes_netplay_rb_sim_tick(void) { return 0; }
+static inline int  snes_netplay_rb_quiesced(void) { return 0; }
+static inline int  snes_netplay_rb_draining(void) { return 0; }
+static inline const char *snes_netplay_rb_refusal(void) { return NULL; }
 #endif
 #include "common_rtl.h"
 #include "common_cpu_infra.h"
@@ -123,6 +126,8 @@ void snes_netplay_set_sync_byte_hooks(SnesNetplayCaptureSyncBytes capture,
 #if !defined(SNESRECOMP_NET)
 
 int  snes_netplay_rollback_active(void) { return 0; }
+int  snes_netplay_quiesced(void) { return 0; }
+int  snes_netplay_draining(void) { return 0; }
 
 int  snes_netplay_active(void) { return 0; }
 int  snes_netplay_is_running(void) { return 0; }
@@ -173,6 +178,7 @@ static int g_return_to_lobby_stub;
 void snes_netplay_request_return_to_lobby(void) { g_return_to_lobby_stub = 1; }
 int  snes_netplay_return_to_lobby_requested(void) { return g_return_to_lobby_stub; }
 void snes_netplay_clear_return_to_lobby(void) { g_return_to_lobby_stub = 0; }
+const char *snes_netplay_refusal(void) { return NULL; }
 
 int  snes_netplay_is_host(void) { return 0; }
 int  snes_netplay_request_save(int slot)
@@ -515,6 +521,21 @@ static int resolve_use_ice(const SnesNetplayConfig *cfg)
 int snes_netplay_rollback_active(void)
 {
     return g_np_rollback && g_np.active;
+}
+
+int snes_netplay_quiesced(void)
+{
+    return snes_netplay_rollback_active() && snes_netplay_rb_quiesced();
+}
+
+int snes_netplay_draining(void)
+{
+    return snes_netplay_rollback_active() && snes_netplay_rb_draining();
+}
+
+const char *snes_netplay_refusal(void)
+{
+    return snes_netplay_rollback_active() ? snes_netplay_rb_refusal() : NULL;
 }
 
 int snes_netplay_active(void)
@@ -1784,6 +1805,11 @@ int snes_netplay_poll_admit(void)
 
     np_pump_session();
     if (!rnet_session_is_running(g_np.session)) {
+        /* Rollback's coordinated stop must still be pumped here: a peer that
+         * drained first leaves, its BYE stops this session, and the driver
+         * finishes our drain from what is left in the queue. Returns STALL. */
+        if (g_np_rollback)
+            (void)snes_netplay_rb_poll_admit();
         snes_netplay_diag_tick();
         return 0;
     }

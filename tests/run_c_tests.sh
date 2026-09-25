@@ -317,18 +317,19 @@ for mode in 0 1 2 3; do
         "./audio_trace_clock_gate_test_$mode" open-fail)
 done
 
-echo "=== lobby mod plan (match_caps.mods wire shape) ==="
-# Includes snes_lobby_client.c directly to exercise the real codec, so it needs
-# the same guard define and include roots the runner build uses.
+echo "=== SNES lobby caps (widescreen keys over recomp-net's client) ==="
+# The lobby client moved to recomp-net (its codec/state-machine test is
+# lib/recomp-net tests/lobby_client_test.c). This compiles the SNES adapter
+# together with the real client to test the SNES keys end to end.
 "$CC" -std=c11 -Wall -Wextra -O1 \
-    -D_POSIX_C_SOURCE=200809L -DSNES_HAS_LOBBY_CLIENT=1 \
+    -D_POSIX_C_SOURCE=200809L -D_DEFAULT_SOURCE \
     -I "$ROOT/runner/src" -I "$ROOT/runner/src/lobby" \
-    -I "$ROOT/runner/src/lobby/ws" -I "$ROOT/lib/recomp-net/include" \
-    "$ROOT/tests/netplay/lobby_mod_plan_test.c" \
+    -I "$ROOT/lib/recomp-net/include" -I "$ROOT/lib/recomp-net/src" \
+    "$ROOT/tests/netplay/snes_lobby_caps_test.c" \
     "$ROOT/lib/recomp-net/src/chat/rnet_chat_filter.c" \
     "$ROOT/lib/recomp-net/src/chat/rnet_chat_report.c" \
-    -o "$OUT/lobby_mod_plan_test"
-"$OUT/lobby_mod_plan_test"
+    -o "$OUT/snes_lobby_caps_test"
+"$OUT/snes_lobby_caps_test"
 
 echo "=== keybinds: the runner-layout keyboard word ==="
 # Needs SDL headers for the scancode enum only (no window, no device). Skipped

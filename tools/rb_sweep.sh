@@ -120,6 +120,10 @@ grid=(
   "loss 2% + rtt 200ms     |RNET_SIM_LATENCY_MS=100 RNET_SIM_JITTER_MS=25 RNET_SIM_LOSS_PCT=2"
   "min ring (depth 16)     |SNES_RB_SNAP_DEPTH=16 RNET_SIM_LATENCY_MS=100"
   "deep ring (depth 240)   |SNES_RB_SNAP_DEPTH=240 RNET_SIM_LATENCY_MS=100"
+  # Every other cell runs the ENGINE's runway (12), because rb_loopback.sh
+  # passes a knob only when it is set -- until 2026-09-25 it passed 0 as its
+  # "unset" value, so those cells measured tip-hold held for 0 ticks. The
+  # "runway" column below is read back from each peer's start banner.
   "runway 4 (below rtt)    |SNES_RB_TIP_RUNWAY=4 RNET_SIM_LATENCY_MS=100"
   "runway 24 (above rtt)   |SNES_RB_TIP_RUNWAY=24 RNET_SIM_LATENCY_MS=100"
   "disconnect mid-match    |RB_LOOPBACK_KILL_AT=20 RNET_SIM_LATENCY_MS=30"
@@ -138,9 +142,11 @@ grid=(
 # fails a third of the time stops being read, which is the failure this whole
 # harness exists to avoid.
 
-printf '%-24s %-9s %3s %7s %7s %7s %7s  %s\n' \
-  cell verdict rc episodes aborts extends stalls note
-printf '%.0s─' {1..96}; echo
+printf '%-24s %-9s %3s %7s %7s %7s %7s %6s %9s %5s  %s\n' \
+  cell verdict rc episodes aborts extends stalls runway 'tiphold' unopn note
+printf '%-24s %-9s %3s %7s %7s %7s %7s %6s %9s %5s\n' \
+  '' '' '' '' '' '' '' '' 'n/mean' ''
+printf '%.0s─' {1..118}; echo
 
 for row in "${grid[@]}"; do
     name="${row%%|*}"; name="${name%"${name##*[![:space:]]}"}"
@@ -167,11 +173,20 @@ for row in "${grid[@]}"; do
     ex=$(cat $logs 2>/dev/null | grep -c 'RB tip-extend epoch' || true)
     st=$(cat $logs 2>/dev/null | grep -c 'RB chain stall' || true)
     drop=$(cat $logs 2>/dev/null | grep -oE 'dropped=[0-9]+' | tail -1)
+    # The runway each peer ran with, from its own banner ("12", or "12/4" if
+    # the peers disagreed -- which would itself be a finding).
+    rw=$(grep -h -m1 'ROLLBACK start' "$OUT/$slug"/initiator.log "$OUT/$slug"/follower.log \
+         2>/dev/null | grep -oE 'tip_runway=[0-9]+' | cut -d= -f2 | sort -u | paste -sd/)
+    thn=$(cat $logs 2>/dev/null | grep -c 'tip-hold for' || true)
+    thm=$(cat $logs 2>/dev/null | sed -n 's/.*RB tip-hold ended .* held=\([0-9]*\) ticks.*/\1/p' \
+          | awk '{s+=$1; n++} END {if (n) printf "%.1f", s/n; else print "-"}')
+    uo=$(cat $logs 2>/dev/null | grep -c 'RB drain: correction not opened' || true)
     # rc is printed, not just accumulated: a cell that prints PASS while
     # exiting non-zero is otherwise invisible, and the sweep total then
     # disagrees with every row above it for no stated reason.
-    printf '%-24s %-9s %3s %7s %7s %7s %7s  %s\n' \
-      "$name" "${verdict:0:9}" "$rc" "$ep" "$ab" "$ex" "$st" "${drop:-}"
+    printf '%-24s %-9s %3s %7s %7s %7s %7s %6s %9s %5s  %s\n' \
+      "$name" "${verdict:0:9}" "$rc" "$ep" "$ab" "$ex" "$st" "${rw:--}" \
+      "$thn/$thm" "$uo" "${drop:-}"
 done
 
 echo
