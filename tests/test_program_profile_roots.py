@@ -134,8 +134,7 @@ def test_declared_profile_target_is_safe_even_when_landing_is_not_a_call():
             VariantKey(0x808ABC, 0, 0),)
 
 
-def test_profile_manifest_materializes_observed_exact_variant(
-        analysis_backend):
+def test_profile_manifest_materializes_observed_exact_variant():
     with tempfile.TemporaryDirectory() as temp:
         tmp_path = pathlib.Path(temp)
         rom_path, cfg_dir, out_dir = _fixture(tmp_path)
@@ -153,7 +152,6 @@ def test_profile_manifest_materializes_observed_exact_variant(
             "--rom", str(rom_path), "--cfg-dir", str(cfg_dir),
             "--out-dir", str(out_dir), "--no-host-root-scan",
             "--profile-manifest", str(profile),
-            "--analysis-backend", analysis_backend,
         ], text=True, capture_output=True)
 
         assert result.returncode == 0, result.stdout + result.stderr

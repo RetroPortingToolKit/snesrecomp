@@ -33,9 +33,8 @@ from v2.program_emit import (  # noqa: E402
 from v2_analyze import (  # noqa: E402
     _load_cfgs,
     _seed_auto_vectors,
-    build_manifest,
     build_manifest_native,
-    native_analyzer_path,
+    ensure_native_analyzer,
 )
 
 
@@ -182,10 +181,10 @@ def main() -> int:
     parser.add_argument("--max-insns", type=int, default=4096)
     parser.add_argument("--max-nodes", type=int, default=100_000)
     parser.add_argument(
-        "--analysis-backend", choices=("auto", "python", "native"),
-        default="auto",
-        help="whole-program analyzer (default: use the release native binary "
-             "when present, otherwise Python)")
+        "--analysis-backend", choices=("auto", "native", "python"),
+        default="native",
+        help="accepted for compatibility: the native analyzer is the only "
+             "one; auto means native, and python is an error")
     parser.add_argument(
         "--no-link-closure-check", action="store_true",
         help="skip the post-emit check that every called <Name>_M<m>X<x> "
@@ -204,6 +203,9 @@ def main() -> int:
         help="entry-PC range per bank translation unit (default: 0x800; "
              "0 disables sharding)")
     args = parser.parse_args()
+    if args.analysis_backend == "python":
+        parser.error("the Python analyzer was retired; the native analyzer "
+                     "is the only one (drop --analysis-backend python)")
     shard_threshold_bytes = max(0, args.bank_shard_threshold_kib) * 1024
     shard_pc_span = max(0, args.bank_shard_pc_span)
 
@@ -213,14 +215,15 @@ def main() -> int:
     rom = load_rom(args.rom)
     parsed = _load_cfgs(cfg_dir)
     # Materialize ram_routine blobs into the ROM image + reloc registry so
-    # their WRAM entries decode as ordinary AOT bodies. Their WRAM roots join
-    # additional_roots so the (Python-backend) manifest includes them; the
-    # native analyzer seeds the same roots from cfg independently.
+    # their WRAM entries decode as ordinary AOT bodies. The native analyzer
+    # seeds the same WRAM roots from cfg; passing them as additional roots
+    # too keeps the demand explicit.
     rom, ram_routine_roots = _install_ram_routines(rom, parsed)
-    native_path = native_analyzer_path()
-    analysis_backend = args.analysis_backend
-    if analysis_backend == "auto":
-        analysis_backend = "native" if native_path.is_file() else "python"
+    try:
+        native_path = ensure_native_analyzer()
+    except (OSError, RuntimeError) as exc:
+        parser.error(str(exc))
+    analysis_backend = "native"
     source_roots = [pathlib.Path(p).resolve() for p in args.source_root]
     if not source_roots and not args.no_host_root_scan:
         conventional = cfg_dir.parent / "src"
@@ -246,18 +249,14 @@ def main() -> int:
     additional_roots = tuple(sorted(
         set(host_roots) | set(profile_roots) | set(ram_routine_roots)))
 
-    def generator_digest_for(backend):
-        native_inputs = ()
-        if backend == "native":
-            native_inputs = (
-                REPO / "recompiler-rs" / "src",
-                REPO / "recompiler-rs" / "Cargo.toml",
-                REPO / "recompiler-rs" / "Cargo.lock",
-                native_path,
-            )
+    def generator_digest_for():
         tree_digest = _tree_digest((
             REPO / "recompiler" / "v2", pathlib.Path(__file__).resolve(),
-            REPO / "tools" / "v2_analyze.py", *native_inputs))
+            REPO / "tools" / "v2_analyze.py",
+            REPO / "recompiler-rs" / "src",
+            REPO / "recompiler-rs" / "Cargo.toml",
+            REPO / "recompiler-rs" / "Cargo.lock",
+            native_path))
         # This environment switch changes every emitted AOT body, so it must
         # participate in the published-output cache key.  Treat any non-empty
         # value as enabled to match emit_function.py's codegen guard.
@@ -266,7 +265,7 @@ def main() -> int:
             f"{tree_digest}\0aot_deny_gate={int(deny_gate)}".encode()
         ).hexdigest()
 
-    generator_digest = generator_digest_for(analysis_backend)
+    generator_digest = generator_digest_for()
     config_digest = _config_digest(parsed)
     analysis_input_digest = _analysis_input_digest(
         rom=rom,
@@ -300,47 +299,22 @@ def main() -> int:
         print(f"v2_emit: reused verified published output {out_dir}")
         return 0
 
-    if analysis_backend == "native":
-        try:
-            # The Python analyzer normally materializes friendly vector
-            # entries as a side effect.  Native analysis owns a separate
-            # cfg model, so mirror that mutation before Python emission.
-            _seed_auto_vectors(parsed, rom)
-            manifest, helpers, inline_args, native_output = \
-                build_manifest_native(
-                    rom_path=args.rom, cfg_dir=cfg_dir,
-                    all_cfg_roots=args.cfg_roots,
-                    additional_roots=additional_roots,
-                    force_lle=profile_force_lle,
-                    executable=native_path,
-                    max_insns=args.max_insns,
-                    max_nodes=args.max_nodes)
-            if native_output:
-                print(native_output)
-        except (OSError, RuntimeError, ValueError) as exc:
-            if args.analysis_backend == "native":
-                parser.error(str(exc))
-            print(f"v2_emit: native analysis unavailable ({exc}); "
-                  "falling back to Python")
-            analysis_backend = "python"
-    if analysis_backend == "python":
-        # A failed auto-native attempt must not publish Python output under a
-        # native cache identity. The next successful native run must analyze.
-        if generator_digest != generator_digest_for("python"):
-            generator_digest = generator_digest_for("python")
-            analysis_input_digest = _analysis_input_digest(
-                rom=rom, generator_digest=generator_digest,
-                config_digest=config_digest,
-                additional_roots=additional_roots, cfg_roots=args.cfg_roots,
-                force_lle=profile_force_lle,
-                analysis_backend="python", enable_hle=not args.no_hle,
-                max_insns=args.max_insns, max_nodes=args.max_nodes,
-                shard_threshold_bytes=shard_threshold_bytes,
-                shard_pc_span=shard_pc_span)
-        manifest, helpers, inline_args = build_manifest(
-            rom, parsed, max_insns=args.max_insns, max_nodes=args.max_nodes,
+    # The emitter's cfg model needs the friendly auto_vectors entries
+    # (I_RESET/I_NMI/I_IRQ); the native analyzer seeds its own copy.
+    _seed_auto_vectors(parsed, rom)
+    try:
+        manifest, helpers, inline_args, native_output = build_manifest_native(
+            rom_path=args.rom, cfg_dir=cfg_dir,
             all_cfg_roots=args.cfg_roots,
-            additional_roots=additional_roots)
+            additional_roots=additional_roots,
+            force_lle=profile_force_lle,
+            executable=native_path,
+            max_insns=args.max_insns,
+            max_nodes=args.max_nodes)
+    except (OSError, RuntimeError, ValueError) as exc:
+        parser.error(f"native analysis failed: {exc}")
+    if native_output:
+        print(native_output)
     result = emit_program(
         rom=rom,
         parsed=parsed,

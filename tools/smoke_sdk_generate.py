@@ -84,7 +84,6 @@ def main() -> int:
             "--out-dir", str(out_dir),
             "--funcs-h", str(funcs_h),
             "--no-host-root-scan",
-            "--analysis-backend", "python",
             "--expected-crc32", crc32,
             "--json-progress",
         ])

@@ -1,4 +1,8 @@
-"""Analysis-only driver stays deterministic and never emits generated C."""
+"""Whole-program analysis through the native analyzer: manifest contracts.
+
+The exit-equation solver's unit tests live beside it in
+recompiler-rs/src/bin/analyze.rs.
+"""
 
 import pathlib
 import sys
@@ -10,60 +14,21 @@ REPO = pathlib.Path(__file__).resolve().parent.parent.parent
 if str(REPO / "tools") not in sys.path:
     sys.path.insert(0, str(REPO / "tools"))
 
-from v2_analyze import (  # noqa: E402
-    _load_cfgs,
-    _solve_exit_equation_sccs,
-    build_manifest,
-    build_manifest_native,
-    native_analyzer_path,
-)
+from v2_analyze import _load_cfgs, build_manifest_native  # noqa: E402
 from v2.program_analysis import NodeDisposition, VariantKey  # noqa: E402
 from v2.program_emit import build_emission_entries  # noqa: E402
 
 
-def test_exit_equation_solver_bootstraps_closed_recursive_component():
-    first = VariantKey(0xB98000, 0, 0)
-    second = VariantKey(0xB98100, 0, 0)
-    blocked = VariantKey(0xB98200, 0, 0)
-    equations = {
-        first: ({(0, 0)}, {(second.pc24, 0, 0)}),
-        second: (set(), {(first.pc24, 0, 0)}),
-        blocked: (set(), {(0xB9F000, 0, 0)}),
-    }
-    solved = _solve_exit_equation_sccs(equations, {}, {})
-    assert solved[first] == frozenset({(0, 0)})
-    assert solved[second] == frozenset({(0, 0)})
-    assert blocked not in solved
-
-
-def test_exit_equation_solver_rejects_false_preservation_probe():
-    caller = VariantKey(0xB98000, 0, 0)
-    callee = VariantKey(0xB98100, 0, 0)
-    callee_dep = (callee.pc24, 0, 0)
-    equations = {
-        caller: ({(0, 0)}, {callee_dep}, {(callee_dep, 0, 0)}),
-        callee: ({(1, 0)}, {(caller.pc24, 0, 0)}, frozenset()),
-    }
-    assert _solve_exit_equation_sccs(equations, {}, {}) == {}
-
-
-def test_exit_equation_solver_preserves_closed_noreturn_fact():
-    loop = VariantKey(0xB98000, 0, 0)
-    solved = _solve_exit_equation_sccs(
-        {loop: (set(), set())}, {}, {})
-    assert solved[loop] == frozenset()
-
-
-def test_probe_requirement_does_not_become_caller_exit():
-    caller = VariantKey(0xB98000, 0, 0)
-    helper = VariantKey(0xB98100, 0, 0)
-    helper_dep = (helper.pc24, 0, 0)
-    solved = _solve_exit_equation_sccs({
-        caller: (set(), set(), {(helper_dep, 0, 0)}),
-        helper: ({(0, 0)}, set(), frozenset()),
-    }, {}, {})
-    assert solved[caller] == frozenset()
-    assert solved[helper] == frozenset({(0, 0)})
+def analyze(rom, parsed, *, max_insns=4096, max_nodes=100_000,
+            all_cfg_roots=False):
+    """Run the native analyzer on `rom` against the cfg dir `parsed` came from."""
+    cfg_dir = parsed[0][1].parent
+    rom_path = cfg_dir / "fixture.sfc"
+    rom_path.write_bytes(rom)
+    manifest, helpers, inline, _output = build_manifest_native(
+        rom_path=rom_path, cfg_dir=cfg_dir, all_cfg_roots=all_cfg_roots,
+        max_insns=max_insns, max_nodes=max_nodes)
+    return manifest, helpers, inline
 
 
 def test_manifest_from_cfg_roots_is_stable_and_follows_calls():
@@ -76,10 +41,10 @@ def test_manifest_from_cfg_roots_is_stable_and_follows_calls():
         (cfg_dir / "bank00.cfg").write_text(
             "bank = 00\nfunc Root 8000 end:8004 entry_mx:1,0\n",
             encoding="utf-8")
-        first, first_helpers, first_inline = build_manifest(
+        first, first_helpers, first_inline = analyze(
             rom, _load_cfgs(cfg_dir), max_insns=128, max_nodes=128,
             all_cfg_roots=True)
-        second, second_helpers, second_inline = build_manifest(
+        second, second_helpers, second_inline = analyze(
             rom, _load_cfgs(cfg_dir), max_insns=128, max_nodes=128,
             all_cfg_roots=True)
 
@@ -90,48 +55,35 @@ def test_manifest_from_cfg_roots_is_stable_and_follows_calls():
     assert not first_inline and not second_inline
 
 
-def test_native_manifest_matches_python_ptrcall_emission_contract():
-    """CI exercises the native boundary; source-only users may skip it."""
-    if not native_analyzer_path().is_file():
-        return
+def test_ptrcall_dispatch_target_is_a_root_with_proven_exits():
     rom = make_lorom_bank0({
         0x8000: bytes([0xF4, 0x08, 0x80, 0x6C, 0x10, 0x00]),
         0x8009: bytes([0x60]),
         0x8010: bytes([0x60]),
     })
     with tempfile.TemporaryDirectory() as directory:
-        root = pathlib.Path(directory)
-        cfg_dir = root / "cfg"
-        cfg_dir.mkdir()
-        rom_path = root / "fixture.sfc"
-        rom_path.write_bytes(rom)
+        cfg_dir = pathlib.Path(directory)
         (cfg_dir / "bank00.cfg").write_text(
             "bank = 00\n"
             "indirect_dispatch 8003 1 ptrcall targets:8010\n"
             "func Root 8000 end:800a entry_mx:1,1\n"
             "func Handler 8010 end:8011 entry_mx:1,1\n",
             encoding="utf-8")
-        expected, _helpers, _inline = build_manifest(
-            rom, _load_cfgs(cfg_dir), max_insns=4096, max_nodes=100_000,
-            all_cfg_roots=True)
-        actual, _helpers, _inline, _output = build_manifest_native(
-            rom_path=rom_path, cfg_dir=cfg_dir, all_cfg_roots=True)
+        manifest, _helpers, _inline = analyze(
+            rom, _load_cfgs(cfg_dir), all_cfg_roots=True)
 
-    assert actual.roots == expected.roots
-    assert set(actual.nodes) == set(expected.nodes)
-    assert actual.exit_modes == expected.exit_modes
-    assert actual.exit_mode_sets == expected.exit_mode_sets
-    assert {
-        key: node.disposition for key, node in actual.nodes.items()
-    } == {
-        key: node.disposition for key, node in expected.nodes.items()
-    }
+    root = VariantKey(0x008000, 1, 1)
+    handler = VariantKey(0x008010, 1, 1)
+    assert manifest.roots == (root, handler)
+    assert set(manifest.nodes) == {root, handler}
+    assert manifest.exit_modes == {root: (1, 1), handler: (1, 1)}
+    assert not manifest.exit_mode_sets
+    assert all(node.disposition == NodeDisposition.AOT_ELIGIBLE
+               for node in manifest.nodes.values())
 
 
 def test_native_poisoned_callee_does_not_publish_false_noreturn_fact():
     """An undecodable target is unknown, not a proven non-returning callee."""
-    if not native_analyzer_path().is_file():
-        return
     rom = make_lorom_bank0({
         0x8000: bytes([0x22, 0x00, 0x80, 0x7F, 0x60]),
     })
@@ -178,7 +130,7 @@ def test_default_roots_are_vectors_not_every_function_boundary():
             "func ReachedBoundary 9000 end:9001\n"
             "func UnreachableBoundary a000 end:a001\n",
             encoding="utf-8")
-        manifest, _helpers, _inline = build_manifest(
+        manifest, _helpers, _inline = analyze(
             bytes(image), _load_cfgs(cfg_dir),
             max_insns=128, max_nodes=128)
 
@@ -206,7 +158,7 @@ def test_reachable_exit_mx_fixed_point_redecodes_caller_continuation():
             "func Root 8000 end:8007 entry_mx:1,1\n"
             "func ForceX16 9000 end:9003 entry_mx:1,1\n",
             encoding="utf-8")
-        manifest, _helpers, _inline = build_manifest(
+        manifest, _helpers, _inline = analyze(
             rom, _load_cfgs(cfg_dir), max_insns=128, max_nodes=128,
             all_cfg_roots=True)
 
@@ -233,7 +185,7 @@ def test_proven_noreturn_callee_leaves_caller_to_lle():
             "func Root 8000 end:8004 entry_mx:1,1\n"
             "func WaitForever 9000 end:9001 entry_mx:1,1\n",
             encoding="utf-8")
-        manifest, _helpers, _inline = build_manifest(
+        manifest, _helpers, _inline = analyze(
             rom, _load_cfgs(cfg_dir), max_insns=128, max_nodes=128,
             all_cfg_roots=True)
 
@@ -270,7 +222,7 @@ def test_recursive_unknown_exit_component_converges_to_lle():
             "func RecursiveA 8000 end:8004 entry_mx:1,1\n"
             "func RecursiveB 9000 end:9006 entry_mx:1,1\n",
             encoding="utf-8")
-        manifest, _helpers, _inline = build_manifest(
+        manifest, _helpers, _inline = analyze(
             rom, _load_cfgs(cfg_dir), max_insns=128, max_nodes=128,
             all_cfg_roots=True)
 
@@ -314,21 +266,14 @@ def test_recursive_preservation_proof_survives_truncated_round():
             "func RecursiveA 8000 end:8009 entry_mx:1,1\n"
             "func RecursiveB 9000 end:9009 entry_mx:1,1\n",
             encoding="utf-8")
-        expected, _helpers, _inline = build_manifest(
+        manifest, _helpers, _inline = analyze(
             rom, _load_cfgs(cfg_dir), max_insns=128, max_nodes=128,
             all_cfg_roots=True)
-        if native_analyzer_path().is_file():
-            actual, _helpers, _inline, _output = build_manifest_native(
-                rom_path=rom_path, cfg_dir=cfg_dir, all_cfg_roots=True)
-        else:
-            actual = expected
 
     for pc24 in (0x008000, 0x009000):
         key = VariantKey(pc24, 1, 1)
-        assert expected.exit_modes[key] == (1, 1)
-        assert expected.nodes[key].disposition == NodeDisposition.AOT_ELIGIBLE
-        assert actual.exit_modes[key] == (1, 1)
-        assert actual.nodes[key].disposition == NodeDisposition.AOT_ELIGIBLE
+        assert manifest.exit_modes[key] == (1, 1)
+        assert manifest.nodes[key].disposition == NodeDisposition.AOT_ELIGIBLE
 
 
 def test_lorom_mirror_uses_declared_function_boundaries():
@@ -345,7 +290,7 @@ def test_lorom_mirror_uses_declared_function_boundaries():
             "func MirroredTarget 8100 end:8103 entry_mx:1,1\n"
             "func MirroredSibling 8200 end:8201 entry_mx:1,1\n",
             encoding="utf-8")
-        manifest, _helpers, _inline = build_manifest(
+        manifest, _helpers, _inline = analyze(
             rom, _load_cfgs(cfg_dir), max_insns=128, max_nodes=128,
             all_cfg_roots=True)
 
@@ -373,7 +318,7 @@ def test_hle_overlay_preserves_entry_mx_for_caller_analysis():
             "func YieldOverlay 9000 end:9002 entry_mx:1,1\n"
             "hle_func 9000 HleYieldOverlay\n",
             encoding="utf-8")
-        manifest, _helpers, _inline = build_manifest(
+        manifest, _helpers, _inline = analyze(
             rom, _load_cfgs(cfg_dir), max_insns=128, max_nodes=128,
             all_cfg_roots=True)
 
@@ -399,7 +344,7 @@ def test_hle_overlay_contract_applies_to_lorom_execution_mirror():
             "hle_func 9000 HleYieldOverlay\n",
             encoding="utf-8")
         parsed = _load_cfgs(cfg_dir)
-        manifest, _helpers, _inline = build_manifest(
+        manifest, _helpers, _inline = analyze(
             rom, parsed, max_insns=128, max_nodes=128,
             all_cfg_roots=True)
 

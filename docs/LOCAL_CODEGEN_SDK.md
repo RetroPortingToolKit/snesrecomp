@@ -21,7 +21,6 @@ python snesrecomp_cli.py generate \
   --cfg-roots \
   [--expected-crc32 ...] \
   [--expected-sha256 ...] \
-  [--analysis-backend auto|python|native] \
   [--no-host-root-scan] \
   [--source-root PATH]... \
   [--json-progress]
