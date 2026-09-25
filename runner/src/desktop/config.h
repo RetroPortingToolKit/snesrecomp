@@ -41,6 +41,9 @@ enum {
   /* OpenGL-only framebuffer capture. Kept separate from the diagnostic
    * SNESRECOMP_SCREENSHOT path, which is driven by environment variables. */
   kKeys_Screenshot,
+  /* Reopen the launcher mid-game (SnesDesktopHostGame.in_game_launcher).
+   * Appended for the same reason as SaveStateMenu. */
+  kKeys_OpenLauncher,
   kKeys_Total,
 };
 
@@ -101,6 +104,9 @@ typedef struct Config {
    * or "none". The host parses it; the SNES pad has no stick buttons, so
    * L3/R3 come from the gamepad itself. */
   char rewind_gesture[64];
+  /* [Controller] LauncherGesture: the same syntax, opening the launcher
+   * mid-game for a host that offers it (default "Select+L3"). */
+  char launcher_gesture[64];
 
   /* Presentation and emulation options the desktop host offers through the
    * launcher's Display page, persisted by WriteConfigFile:
@@ -186,11 +192,18 @@ enum {
 extern Config g_config;
 
 void ConfigUseStateMenuDefaults(void);
+/* Opt in before parsing: binds [KeyMap] OpenLauncher to Ctrl+L by default. */
+void ConfigUseInGameLauncherDefaults(void);
 void ParseConfigFile(const char *filename);
 // Re-apply only the [KeyMap] section (launcher hotkey editor wrote it after
 // the initial parse). Keyboard command map is rebuilt; gamepad map and all
 // scalar settings are left alone.
 void ConfigReloadKeyMap(const char *filename);
+// Re-apply only the [GamepadMap] button bindings (the launcher's controller
+// page wrote them after the initial parse). The gamepad command map is
+// rebuilt; every scalar setting, EnableGamepadN and the deadzone included,
+// keeps its live value.
+void ConfigReloadGamepadMap(const char *filename);
 /* True when ParseConfigFile read a [KeyMap] line that carried a former
  * generated default and mapped it to the current one; WriteConfigFile then
  * rewrites that line. The host writes the file once when this is set. */

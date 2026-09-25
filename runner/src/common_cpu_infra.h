@@ -134,6 +134,15 @@ typedef struct RtlGameInfo {
    * process-lifetime LLE / frame gates do not survive snes_free.
    * Per-title sticky state belongs here (not scattered in main.c). */
   void (*session_reset)(void);
+  /* Optional console-reset hook -- NULL-safe. RtlReset (the Reset hotkey)
+   * resets the machine underneath a live session; a title that gates its boot
+   * on host-side state (a "did I_RESET run" latch, task fibers, LLE resume
+   * points) must drop that state here or it resumes its main loop against
+   * freshly reset hardware, which is a black screen. Distinct from
+   * session_reset, which also restores process-lifetime settings a reset must
+   * keep, and from the desktop host's on_reset, which fires after every state
+   * jump (loads, rewind), not only a reset. */
+  void (*hardware_reset)(void);
   /* Developer-only promotion telemetry. When false (the default), normal
    * release runs do not create tier2_*.json/jsonl artifacts. Developers can
    * still opt in at launch with SNESRECOMP_TIER2_CAPTURE=1. */

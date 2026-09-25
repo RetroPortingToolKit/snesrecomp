@@ -463,6 +463,9 @@ void RtlReset(int mode) {
   g_audio_last_output_r = 0;
   g_spc_player->initialize(g_spc_player);
   RtlApuUnlock();
+  /* After the hardware, so the title reboots against the reset machine. */
+  if (g_rtl_game_info && g_rtl_game_info->hardware_reset)
+    g_rtl_game_info->hardware_reset();
 }
 
 /* Differential first-divergence trace (docs/MULTI_TIER.md §12a). Env-gated,

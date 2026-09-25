@@ -228,6 +228,9 @@ static void load_ini(const char *path) {
 
 void keybinds_init(const char *exe_path) {
     derive_ini_path(exe_path);
+    /* Re-callable: the host reloads after an in-game launcher edited the file,
+     * and a binding the file no longer names must not survive from before. */
+    s_binds = s_default_binds;
     FILE *test = fopen(s_ini_path, "r");
     if (test) {
         fclose(test);

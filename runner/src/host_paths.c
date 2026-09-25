@@ -96,6 +96,12 @@ int snesrecomp_abspath(const char *path, char *out, size_t max_len) {
 #endif
 }
 
+int snesrecomp_exe_path(char *out, size_t max_len) {
+    if (!out || max_len == 0) return 0;
+    out[0] = '\0';
+    return get_exe_path(out, max_len);
+}
+
 int snesrecomp_exe_basename(char *out, size_t max_len) {
     char exe_path[1024];
     if (!out || max_len == 0) return 0;

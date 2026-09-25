@@ -94,24 +94,45 @@ static void GL_APIENTRY MessageCallback(GLenum source,
     Die("OpenGL error!\n");
 }
 
+static SDL_GLContext g_context;
+/* The shader path that is loaded (or that failed to load), so Reconfigure
+ * reloads only when the setting actually changed. */
+static char g_shader_path[1024];
+static bool g_shader_resolved;
+
+static void ApplySwapInterval(void) {
+  int interval = g_vsync_set ? g_vsync_override
+                             : (g_config.disable_frame_delay ? 0 : 1);
+  /* Not every driver has EXT_swap_control_tear; fall back to an ordinary
+   * wait rather than to immediate, which is what the player did not ask
+   * for. SDL2 returns 0 on success, SDL3 returns true. */
+#if SNESRECOMP_SDL3
+  bool ok = SDL_GL_SetSwapInterval(interval);
+#else
+  bool ok = SDL_GL_SetSwapInterval(interval) == 0;
+#endif
+  if (!ok && interval < 0) SDL_GL_SetSwapInterval(1);
+}
+
+static void LoadShaderFromConfig(void) {
+  const char *want = g_config.shader ? g_config.shader : "";
+  if (g_shader_resolved && strcmp(want, g_shader_path) == 0)
+    return;
+  if (g_glsl_shader) {
+    GlslShader_Destroy(g_glsl_shader);
+    g_glsl_shader = NULL;
+  }
+  snprintf(g_shader_path, sizeof(g_shader_path), "%s", want);
+  g_shader_resolved = true;
+  if (want[0])
+    g_glsl_shader = GlslShader_CreateFromFile(want);
+}
+
 static bool OpenGLRenderer_Init(SDL_Window *window) {
   g_window = window;
-  SDL_GLContext context = SDL_GL_CreateContext(window);
-  (void)context;
+  g_context = SDL_GL_CreateContext(window);
 
-  {
-    int interval = g_vsync_set ? g_vsync_override
-                               : (g_config.disable_frame_delay ? 0 : 1);
-    /* Not every driver has EXT_swap_control_tear; fall back to an ordinary
-     * wait rather than to immediate, which is what the player did not ask
-     * for. SDL2 returns 0 on success, SDL3 returns true. */
-#if SNESRECOMP_SDL3
-    bool ok = SDL_GL_SetSwapInterval(interval);
-#else
-    bool ok = SDL_GL_SetSwapInterval(interval) == 0;
-#endif
-    if (!ok && interval < 0) SDL_GL_SetSwapInterval(1);
-  }
+  ApplySwapInterval();
   ogl_LoadFunctions();
 
   if (!ogl_IsVersionGEQ(3, 3))
@@ -232,10 +253,18 @@ static bool OpenGLRenderer_Init(SDL_Window *window) {
     printf("%s\n", infolog);
   }
 
-  if (g_config.shader)
-    g_glsl_shader = GlslShader_CreateFromFile(g_config.shader);
+  LoadShaderFromConfig();
 
   return true;
+}
+
+/* After another GL context was current (the in-game launcher's), or a
+ * presentation setting changed under the live window. Filtering and aspect
+ * are read every frame and need nothing here. */
+static void OpenGLRenderer_Reconfigure(void) {
+  if (g_context) SDL_GL_MakeCurrent(g_window, g_context);
+  ApplySwapInterval();
+  LoadShaderFromConfig();
 }
 
 static void OpenGLRenderer_Destroy(void) {
@@ -406,6 +435,7 @@ static const struct RendererFuncs kOpenGLRendererFuncs = {
   &OpenGLRenderer_GetOutputSize,
   &OpenGLRenderer_BeginDraw,
   &OpenGLRenderer_EndDraw,
+  &OpenGLRenderer_Reconfigure,
 };
 
 void OpenGLRenderer_Create(struct RendererFuncs *funcs) {

@@ -64,6 +64,7 @@
 #include "launcher_cache.h"
 #include "host_paths.h"
 #include "host_args.h"
+#include "host_relaunch.h"
 #include "keybinds.h"
 #include "host_report.h"
 #include "post_mortem.h"
@@ -360,6 +361,7 @@ static struct RendererFuncs g_renderer_funcs;
 /* Set by the hotkeys; consumed once in the frame loop. */
 static int g_savestate_menu_hotkey;
 static int g_rewind_hotkey;
+static int g_open_launcher_hotkey;   /* in_game_launcher only */
 static uint64_t g_state_generation;
 
 /* The last field actually presented, kept so an overlay can freeze the guest
@@ -415,6 +417,14 @@ static void GameReset(void) {
   g_blend_frame = 0;
 #endif
   g_reset_clock = true;
+}
+
+/* The Reset hotkey, and the script's `reset`: one path, so a test of the
+ * script command is a test of what the player presses. */
+static void ConsoleReset(void) {
+  host_report_breadcrumb("console reset");
+  RtlReset(1);
+  GameReset();
 }
 
 /* The renderer list (config.ini [Graphics] Renderer, the launcher's Renderer
@@ -660,6 +670,7 @@ static ScriptEntry *NewScriptEntry(int *cap) {
  *   wait N                  frames before the next command
  *   press <buttons> [N]     hold a+b+... for N frames (default 1)
  *   loadstate N             load save-state slot N
+ *   reset                   the Reset hotkey's console reset
  *   poke <addr> <hex>       write WRAM bytes for one frame
  *   pokefor <addr> <hex> N  write WRAM bytes for N frames
  *   forcepoke <addr> <hex>  write WRAM bytes every frame from now on */
@@ -688,6 +699,12 @@ static void LoadScript(const char *path) {
       sscanf(line, "%*s %d", &slot);
       ScriptEntry *e = NewScriptEntry(&cap);
       e->mask = 0x80000000 | (slot & 0xF);  // special flag: high bit = loadstate
+      e->hold_frames = 1;
+      e->wait_frames = pending_wait;
+      pending_wait = 0;
+    } else if (strcmp(cmd, "reset") == 0) {
+      ScriptEntry *e = NewScriptEntry(&cap);
+      e->mask = 0x10000000;  // special flag: console reset
       e->hold_frames = 1;
       e->wait_frames = pending_wait;
       pending_wait = 0;
@@ -774,6 +791,10 @@ static uint32 TickScript(void) {
       if (e->mask & 0x80000000) {
         RtlSaveLoad(kSaveLoad_Load, e->mask & 0xF);
         GameReset();
+        return 0;
+      }
+      if (e->mask & 0x10000000) {
+        ConsoleReset();
         return 0;
       }
       if (e->mask & 0x40000000) {
@@ -1342,17 +1363,28 @@ static void PumpOverlayEvents(bool *running, void (*key_down)(int key, int repea
   }
 }
 
-/* Rewind's controller gesture, config.ini [Controller] RewindGesture (default
- * Select+R3; "none" disables). Pad buttons joined with '+': the SNES names
- * (b y select start up down left right a x l r) come from seat 0's input
- * word, and l3/r3 -- which the SNES pad has no bit for -- from the gamepad's
- * own held-button set. A gesture of fewer than two buttons is refused: one
- * ordinary button pressed in the middle of a fight is not a gesture, which
- * is how a per-game host once opened rewind on a boost dash. */
-static uint16 g_rewind_gesture_pad;      /* SNES_PAD_* bits, all required */
-static uint32 g_rewind_gesture_raw;      /* kGamepadBtn_* bits, all required */
-static bool g_rewind_gesture_ok;
-static void RewindGestureConfigure(void) {
+/* Controller gestures, from config.ini [Controller]: RewindGesture (default
+ * Select+R3) and, for a host that offers the in-game launcher,
+ * LauncherGesture (default Select+L3); "none" disables either. Pad buttons
+ * joined with '+': the SNES names (b y select start up down left right a x l
+ * r) come from seat 0's input word, and l3/r3 -- which the SNES pad has no
+ * bit for -- from the gamepad's own held-button set. A gesture of fewer than
+ * two buttons is refused: one ordinary button pressed in the middle of a
+ * fight is not a gesture, which is how a per-game host once opened rewind on
+ * a boost dash. */
+typedef struct PadGesture {
+  uint16 pad;      /* SNES_PAD_* bits, all required */
+  uint32 raw;      /* kGamepadBtn_* bits, all required */
+  bool ok;
+  bool was_held;
+} PadGesture;
+static PadGesture g_rewind_gesture;
+static PadGesture g_launcher_gesture;
+
+/* Lower-cased `spec` into bits; returns the number of buttons, or -1 when a
+ * name is not a button. */
+static int PadGestureParse(const char *spec, uint16 *pad, uint32 *raw,
+                           const char *tag, const char *key) {
   static const struct { const char *name; uint16 bit; } kNames[] = {
     { "b", SNES_PAD_B }, { "y", SNES_PAD_Y }, { "select", SNES_PAD_SELECT },
     { "back", SNES_PAD_SELECT }, { "start", SNES_PAD_START },
@@ -1360,18 +1392,9 @@ static void RewindGestureConfigure(void) {
     { "right", SNES_PAD_RIGHT }, { "a", SNES_PAD_A }, { "x", SNES_PAD_X },
     { "l", SNES_PAD_L }, { "r", SNES_PAD_R },
   };
-  char spec[sizeof(g_config.rewind_gesture)];
   int bad = 0, held = 0;
-  g_rewind_gesture_pad = 0;
-  g_rewind_gesture_raw = 0;
-  g_rewind_gesture_ok = false;
-  snprintf(spec, sizeof(spec), "%s", g_config.rewind_gesture[0] ? g_config.rewind_gesture : "Select+R3");
-  for (char *c = spec; *c; c++)
-    if (*c >= 'A' && *c <= 'Z') *c = (char)(*c - 'A' + 'a');
-  if (!strcmp(spec, "none")) {
-    fprintf(stderr, "[rewind] pad gesture disabled ([Controller] RewindGesture = none)\n");
-    return;
-  }
+  *pad = 0;
+  *raw = 0;
   for (const char *p = spec; *p; ) {
     char tok[24];
     size_t n = 0;
@@ -1381,38 +1404,55 @@ static void RewindGestureConfigure(void) {
     tok[n] = '\0';
     while (*p && *p != '+') ++p;
     if (!tok[0]) continue;
-    if (!strcmp(tok, "r3")) { g_rewind_gesture_raw |= 1u << kGamepadBtn_R3; held++; continue; }
-    if (!strcmp(tok, "l3")) { g_rewind_gesture_raw |= 1u << kGamepadBtn_L3; held++; continue; }
+    if (!strcmp(tok, "r3")) { *raw |= 1u << kGamepadBtn_R3; held++; continue; }
+    if (!strcmp(tok, "l3")) { *raw |= 1u << kGamepadBtn_L3; held++; continue; }
     int hit = 0;
     for (size_t i = 0; i < sizeof(kNames) / sizeof(kNames[0]); ++i) {
       if (strcmp(tok, kNames[i].name)) continue;
-      g_rewind_gesture_pad |= kNames[i].bit;
+      *pad |= kNames[i].bit;
       held++;
       hit = 1;
       break;
     }
     if (!hit) {
-      fprintf(stderr, "[rewind] unknown button \"%s\" in [Controller] RewindGesture\n", tok);
+      fprintf(stderr, "[%s] unknown button \"%s\" in [Controller] %s\n", tag, tok, key);
       bad = 1;
     }
   }
-  if (bad || held < 2) {
-    fprintf(stderr, "[rewind] \"%s\" is not a usable gesture; using Select+R3\n", spec);
-    g_rewind_gesture_pad = SNES_PAD_SELECT;
-    g_rewind_gesture_raw = 1u << kGamepadBtn_R3;
-  }
-  g_rewind_gesture_ok = true;
+  return bad ? -1 : held;
 }
+
+static void PadGestureConfigure(PadGesture *g, const char *configured,
+                                const char *fallback, const char *tag,
+                                const char *key) {
+  char spec[64];
+  memset(g, 0, sizeof(*g));
+  snprintf(spec, sizeof(spec), "%s", configured && configured[0] ? configured : fallback);
+  for (char *c = spec; *c; c++)
+    if (*c >= 'A' && *c <= 'Z') *c = (char)(*c - 'A' + 'a');
+  if (!strcmp(spec, "none")) {
+    fprintf(stderr, "[%s] pad gesture disabled ([Controller] %s = none)\n", tag, key);
+    return;
+  }
+  if (PadGestureParse(spec, &g->pad, &g->raw, tag, key) < 2) {
+    fprintf(stderr, "[%s] \"%s\" is not a usable gesture; using %s\n", tag, spec, fallback);
+    char def[64];
+    snprintf(def, sizeof(def), "%s", fallback);
+    for (char *c = def; *c; c++)
+      if (*c >= 'A' && *c <= 'Z') *c = (char)(*c - 'A' + 'a');
+    PadGestureParse(def, &g->pad, &g->raw, tag, key);
+  }
+  g->ok = true;
+}
+
 /* Edge-triggered: true on the frame the whole gesture becomes held. */
-static bool RewindGesturePressed(void) {
-  static bool was_held;
-  if (!g_rewind_gesture_ok) return false;
+static bool PadGesturePressed(PadGesture *g) {
+  if (!g->ok) return false;
   const uint32 pad = OverlayNavInputs();
   const uint32 raw = g_gamepad[0].modifiers;
-  const bool held = (pad & g_rewind_gesture_pad) == g_rewind_gesture_pad &&
-                    (raw & g_rewind_gesture_raw) == g_rewind_gesture_raw;
-  const bool pressed = held && !was_held;
-  was_held = held;
+  const bool held = (pad & g->pad) == g->pad && (raw & g->raw) == g->raw;
+  const bool pressed = held && !g->was_held;
+  g->was_held = held;
   return pressed;
 }
 
@@ -1980,12 +2020,23 @@ static void SdlRenderer_EndDraw(void) {
   SDL_RenderPresent(g_renderer);
 }
 
+/* SDL_Renderer re-activates its own context on every call, so only the
+ * settings a live renderer holds need re-applying. */
+static void SdlRenderer_Reconfigure(void) {
+  if (!g_renderer) return;
+  if (g_config.output_method != kOutputMethod_SDLSoftware)
+    snesrecomp_sdl_set_render_vsync(g_renderer, VSyncInterval());
+  if (g_texture)
+    snesrecomp_sdl_set_texture_linear(g_texture, g_config.linear_filtering);
+}
+
 static const struct RendererFuncs kSdlRendererFuncs = {
   &SdlRenderer_Init,
   &SdlRenderer_Destroy,
   &SdlRenderer_GetOutputSize,
   &SdlRenderer_BeginDraw,
   &SdlRenderer_EndDraw,
+  &SdlRenderer_Reconfigure,
 };
 
 void MkDir(const char *s) {
@@ -2126,6 +2177,470 @@ static int FindRomBesideExe(char *out, size_t cap) {
 
 /* ── main ─────────────────────────────────────────────────────────────────── */
 
+/* ── The launcher, before boot and mid-game ──────────────────────────────── */
+
+/* The ROM this binary was generated from. File scope because both launcher
+ * entries hand it to recomp-ui, and the console resolver checks against it. */
+static uint8_t g_rom_sha256[32];
+static uint32_t g_rom_crc32;
+static int g_rom_identity_ok;
+static const char *g_program_path;       /* argv[0]: keybinds.ini sits beside it */
+static const char *g_rom_path = "";      /* the running ROM, once resolved */
+static char g_mod_state_path[1100];      /* <catalog>/state.toml; "" without mods */
+
+/* A restart the in-game launcher asked for, carried out after shutdown. */
+static struct {
+  bool pending;
+  bool with_state;
+  char rom[1024];
+  char state[1024];
+} g_relaunch;
+
+/* Every gamepad SDL knows about, seated by OpenOneGamepad's rules. */
+static void OpenAllGamepads(void) {
+#if SNESRECOMP_SDL3
+  int njs = 0;
+  SDL_JoystickID *joysticks = SDL_GetJoysticks(&njs);
+#else
+  int njs = SDL_NumJoysticks();
+#endif
+  printf("[Gamepad] SDL reports %d joystick(s). enable_gamepad=[%d,%d]\n",
+         njs, g_config.enable_gamepad[0], g_config.enable_gamepad[1]);
+  for (int i = 0; i < njs; i++) {
+#if SNESRECOMP_SDL3
+    /* SDL3 enumerates by instance ID rather than by index. */
+    SDL_JoystickID joystick = joysticks[i];
+    const char *name = SDL_GetJoystickNameForID(joystick);
+    int is_gc = SDL_IsGamepad(joystick);
+#else
+    SDL_JoystickID joystick = i;
+    const char *name = SDL_JoystickNameForIndex(i);
+    int is_gc = SDL_IsGameController(i);
+#endif
+    printf("[Gamepad]   #%d name=%s is_game_controller=%d\n",
+           i, name ? name : "(null)", is_gc);
+    OpenOneGamepad(joystick);
+  }
+#if SNESRECOMP_SDL3
+  SDL_free(joysticks);
+#endif
+  if (njs == 0) {
+    printf("[Gamepad] No joysticks detected. "
+           "On Windows, plug controller in BEFORE launching, "
+           "or check that XInput drivers are installed.\n");
+  }
+}
+
+/* Re-seat the pads after the launcher changed which player uses one. */
+static void ReassignGamepads(void) {
+  for (int i = 0; i < 2; i++) {
+    if (g_gamepad[i].raw_joystick && g_gamepad[i].joystick)
+      SDL_JoystickClose(g_gamepad[i].joystick);
+    memset(&g_gamepad[i], 0, sizeof(g_gamepad[i]));
+    g_gamepad[i].joystick_id = -1;
+  }
+  g_pad_buttons = 0;
+  OpenAllGamepads();
+}
+
+#if defined(RECOMP_LAUNCHER)
+/* What the launcher opens on: the live settings, and what this host offers.
+ * In session, netplay and Generate & rebuild are withheld -- the first would
+ * replace a session that is still alive, the second the binary running it. */
+static void LauncherSeed(RecompLauncherCSettings *ls, RecompLauncherCGameInfo *gi,
+                         const char *config_file, int in_session) {
+  const SnesDesktopHostGame *game = g_game;
+  memset(ls, 0, sizeof(*ls));
+  ls->output_method = g_config.output_method;
+  ls->window_scale  = g_config.window_scale ? g_config.window_scale : 2;
+  ls->fullscreen    = g_config.fullscreen;
+  ls->ignore_aspect = g_config.ignore_aspect_ratio;
+  ls->linear_filter = g_config.linear_filtering;
+  ls->aspect_index = SnesDisplayAspect_Clamp(g_config.display_aspect);
+  if (g_config.shader)
+    snprintf(ls->shader_path, sizeof(ls->shader_path), "%s", g_config.shader);
+  ls->enable_audio  = g_config.enable_audio;
+  ls->audio_freq    = g_config.audio_freq;
+  ls->volume        = g_config.volume;
+  /* [Controller] SourceP1/SourceP2 is the real three-way answer (0 none,
+   * 1 keyboard, 2 gamepad) and matches the launcher's row exactly.
+   * EnableGamepadN is the older, lossier spelling and only decides the
+   * seed when the file predates the Source keys -- deriving from it
+   * unconditionally is what turned "player 2 on the keyboard" into
+   * "player 2 unassigned" on every relaunch. */
+  ls->player_src[0] = ConfigHasPlayerSource(0) ? g_config.player_src[0]
+                                               : (g_config.enable_gamepad[0] ? 2 : 1);
+  ls->player_src[1] = ConfigHasPlayerSource(1) ? g_config.player_src[1]
+                                               : (g_config.enable_gamepad[1] ? 2 : 0);
+  /* Config stores deadzone as a raw stick radius; the launcher edits a
+   * 0-100%. Convert in both directions, ROUNDING each way: truncating
+   * both made the round trip lossy -- 10% saved as 32767/10 = 3276 read
+   * back as 9%, so the slider walked down a percent every time the
+   * player pressed Play. */
+  ls->deadzone[0] = ls->deadzone[1] =
+      (g_config.gamepad_deadzone * 100 + 32767 / 2) / 32767;
+  ls->skip_launcher = g_config.skip_launcher;
+  ls->msu1_enabled  = 0;
+  /* Display rows the framework host wires (see FrameBlendConfigure,
+   * RendererApply, the vsync flags at presenter creation, and
+   * snes_runahead_run_frame in the frame loop). */
+  ls->frame_blend   = g_config.frame_blend ? 1 : 0;
+  ls->run_ahead     = g_config.run_ahead;
+  ls->vsync         = g_config.vsync == kSnesVSync_Adaptive
+                          ? RECOMP_LAUNCHER_VSYNC_ADAPTIVE
+                          : g_config.vsync == kSnesVSync_Off
+                                ? RECOMP_LAUNCHER_VSYNC_OFF
+                                : RECOMP_LAUNCHER_VSYNC_ON;
+  ls->renderer      = RendererChoice();
+  if (game->rewind_settings) {
+    ls->rewind_enabled  = g_config.rewind_enabled ? 1 : 0;
+    ls->rewind_depth    = g_config.rewind_depth;
+    ls->rewind_interval = g_config.rewind_interval;
+  }
+
+  memset(gi, 0, sizeof(*gi));
+  /* SNES system identity (theme, platform label, ROM noun). One profile
+   * call keeps the identity from drifting across SNES titles. */
+  launcher_profile_apply("snes", gi);
+  static char region_buf[64];
+  gi->name = game->display_name;
+  if (game->region && game->region[0]) {
+    snprintf(region_buf, sizeof(region_buf), "(%s)", game->region);
+    gi->region = region_buf;
+  }
+  /* In session the running game holds SRAM in memory and writes it at exit,
+   * so the SAVES panel's import/delete would be silently overwritten. */
+  gi->sram_path = in_session ? NULL : game->sram_path;
+  gi->num_players = game->num_players > 0 ? game->num_players : 1;
+  gi->expected_crc = g_rom_crc32;
+  gi->has_expected_crc = g_rom_identity_ok;
+  gi->known_sha256 = g_rom_identity_ok
+      ? (const uint8_t (*)[32])&g_rom_sha256 : NULL;
+  gi->num_known_sha256 = g_rom_identity_ok ? 1 : 0;
+  /* Additive: a title catalogued by SHA-1 sets these instead of, or as
+   * well as, the SHA-256 above. */
+  gi->known_sha1_hex = game->known_sha1_hex;
+  gi->num_known_sha1 = (size_t)(game->known_sha1_hex
+                                    ? game->num_known_sha1 : 0);
+  gi->widescreen_supported = game->widescreen_supported;
+  gi->msu1_supported = game->msu1_supported;
+  /* Capability rows: each is drawn only because this host wires it. A
+   * row that does nothing is worse than no row. */
+#if defined(SNESRECOMP_HOST_HAS_BLEND)
+  gi->has_frame_blend  = 1;
+#endif
+  SnesLauncherVideo_Configure(ls, gi,
+      game->display_aspect_supported && !game->aspect_labels,
+      game->shader_supported, g_config.display_aspect, g_config.shader);
+  if (game->aspect_labels && game->num_aspect_labels > 0) {
+    /* A port that rasterizes its own field owns the choices and the
+     * meaning of the index; this host only carries them to the row. */
+    gi->aspect_labels = game->aspect_labels;
+    gi->num_aspect_labels = game->num_aspect_labels;
+    gi->aspect_setting_label = game->aspect_setting_label
+                                   ? game->aspect_setting_label
+                                   : "Aspect ratio";
+    gi->aspect_setting_help = game->aspect_setting_help;
+  }
+  /* Rewind rows. The runtime has always had the ring; without this the
+   * player has no way to size it or switch it off. */
+  gi->has_rewind_depth = game->rewind_settings ? 1 : 0;
+  gi->has_run_ahead    = 1;   /* the runtime snapshots a machine in a frame */
+  gi->has_vsync        = 1;
+  gi->has_renderer     = 1;
+  RendererEnumerate();
+  gi->renderer_labels  = g_renderer_label_ptr;
+  gi->num_renderers    = g_renderer_count;
+  gi->config_path = config_file;  /* hotkey editor targets the live config */
+  gi->mods = NULL;
+  if (game->mods_provider)
+    gi->mods = (const RecompLauncherCModProvider *)game->mods_provider();
+#if SNESRECOMP_ENABLE_MODS
+  if (!gi->mods && g_mods_ready)
+    gi->mods = snes_mod_runtime_launcher_provider_c();
+#endif
+  gi->in_session = in_session;
+  gi->has_open_launcher_hotkey = game->in_game_launcher ? 1 : 0;
+#if defined(SNES_HAS_LOBBY_CLIENT)
+  /* The netplay button is capability-gated: these two fields are what
+   * make the launcher show it. */
+  if (!in_session) {
+    gi->netplay_supported = 1;
+    host_lobby_ensure_init();
+    gi->netplay = snes_host_lobby_callbacks();
+  }
+#endif
+#if defined(SNESRECOMP_HOST_HAS_CODEGEN)
+  /* Wire "Generate & rebuild…". No-ops when the SDK, CMake or the build
+   * tree is absent, which is the normal state of a shipped build. */
+  if (!in_session)
+    snesrecomp_codegen_host_autowire(gi, gi->name);
+#endif
+}
+
+/* The player's edits, into g_config and the file. Runs on EVERY way out of
+ * the launcher but UNAVAILABLE: recomp-ui hands *io back on quit too, and a
+ * setting the player changed before closing the window is still a setting
+ * they changed -- it used to be dropped on the floor, which read as "the
+ * launcher forgets everything". */
+static void LauncherCommit(const RecompLauncherCSettings *ls, const char *config_file) {
+  const SnesDesktopHostGame *game = g_game;
+  g_config.output_method       = (uint8)ls->output_method;
+  g_config.window_scale        = (uint8)ls->window_scale;
+  g_config.fullscreen          = (uint8)ls->fullscreen;
+  g_config.ignore_aspect_ratio = ls->ignore_aspect != 0;
+  g_config.linear_filtering    = ls->linear_filter != 0;
+  if (game->display_aspect_supported)
+    g_config.display_aspect = (uint8)SnesDisplayAspect_Clamp(ls->aspect_index);
+  if (game->shader_supported) {
+    static char shader_path[sizeof(ls->shader_path)];
+    snprintf(shader_path, sizeof(shader_path), "%s", ls->shader_path);
+    g_config.shader = shader_path[0] ? shader_path : NULL;
+  }
+  g_config.enable_audio        = true;   /* always on */
+  g_config.audio_freq          = (uint16)ls->audio_freq;
+  g_config.volume              = ls->volume;
+  ApplyVolume();
+  g_config.player_src[0]       = ls->player_src[0];
+  g_config.player_src[1]       = ls->player_src[1];
+  g_config.enable_gamepad[0]   = ls->player_src[0] == 2;
+  g_config.enable_gamepad[1]   = ls->player_src[1] == 2;
+  g_config.gamepad_deadzone    = (ls->deadzone[0] * 32767 + 50) / 100;
+  g_config.skip_launcher       = ls->skip_launcher != 0;
+  g_config.frame_blend         = ls->frame_blend != 0;
+  g_config.run_ahead           = ls->run_ahead;
+  if (game->rewind_settings) {
+    g_config.rewind_enabled  = ls->rewind_enabled != 0;
+    if (ls->rewind_depth > 0)    g_config.rewind_depth = ls->rewind_depth;
+    if (ls->rewind_interval > 0) g_config.rewind_interval = ls->rewind_interval;
+  }
+  g_config.vsync               = ls->vsync == RECOMP_LAUNCHER_VSYNC_OFF
+                                     ? kSnesVSync_Off
+                                     : ls->vsync == RECOMP_LAUNCHER_VSYNC_ADAPTIVE
+                                           ? kSnesVSync_Adaptive
+                                           : kSnesVSync_On;
+  RendererApply(ls->renderer);   /* sets renderer + output_method */
+#if defined(SNES_HAS_LOBBY_CLIENT)
+  /* The Netplay page persisted the name itself the moment it was
+   * typed (snes_netplay_identity_store). g_config still holds what
+   * the file said BEFORE the launcher ran, so writing the file now
+   * without re-reading would hand the player's new name straight
+   * back to the old one. */
+  snes_netplay_identity_load(g_config.netplay_player_name,
+                             sizeof(g_config.netplay_player_name));
+#endif
+  WriteConfigFile(config_file);
+  /* The launcher's Hotkeys and controller editors write [KeyMap] and
+   * [GamepadMap] straight into the config file, which was parsed before the
+   * launcher ran -- re-apply both so rebinds work now, not on the next run.
+   * [GamepadMap] used to be missed here, so a pad rebind made in the
+   * launcher did nothing until the game was started again. */
+  ConfigReloadKeyMap(config_file);
+  ConfigReloadGamepadMap(config_file);
+}
+
+/* The launcher's edits that a live session can take, applied to it. The
+ * rest (renderer, audio rate, mods, ROM) never reach here: they restart. */
+static void ApplyLiveSettings(const Config *before) {
+  const uint32 fs_mask = SNESRECOMP_SDL_WINDOW_FULLSCREEN_DESKTOP | SDL_WINDOW_FULLSCREEN;
+  if (g_config.fullscreen != before->fullscreen) {
+    uint32 want = g_config.fullscreen == 2 ? SDL_WINDOW_FULLSCREEN
+                : g_config.fullscreen      ? SNESRECOMP_SDL_WINDOW_FULLSCREEN_DESKTOP : 0;
+    g_win_flags = (g_win_flags & ~fs_mask) | want;
+    SDL_SetWindowFullscreen(g_window, want);
+    g_cursor = want == 0;
+    snesrecomp_sdl_show_cursor(g_cursor);
+  }
+  /* The window follows the scale and, through WindowBaseWidth, the pixel
+   * aspect -- but only a window that is a window, and only one the player
+   * has not sized explicitly in config.ini. */
+  bool custom_size = g_config.window_width != 0 && g_config.window_height != 0;
+  if (!custom_size && !(g_win_flags & fs_mask) &&
+      (g_config.window_scale != before->window_scale ||
+       g_config.display_aspect != before->display_aspect ||
+       g_config.fullscreen != before->fullscreen)) {
+    if (g_config.window_scale)
+      g_current_window_scale = IntMin(g_config.window_scale, kMaxWindowScale);
+    ChangeWindowScale(0);
+  }
+#ifndef __ANDROID__
+  snesrecomp_opengl_set_vsync(VSyncInterval());
+#endif
+  if (g_renderer_funcs.Reconfigure) g_renderer_funcs.Reconfigure();
+  if (g_config.frame_blend != before->frame_blend)
+    FrameBlendConfigure();
+  if (g_config.run_ahead != before->run_ahead)
+    snes_runahead_set_frames(g_config.run_ahead);
+  if (g_game->rewind_settings &&
+      (g_config.rewind_enabled != before->rewind_enabled ||
+       g_config.rewind_depth != before->rewind_depth ||
+       g_config.rewind_interval != before->rewind_interval)) {
+    snes_rewind_set_defaults(g_config.rewind_enabled, g_config.rewind_depth,
+                             g_config.rewind_interval);
+    snes_rewind_shutdown();
+    snes_rewind_configure();
+  }
+  /* keybinds.ini: the controller page's keyboard half. */
+  keybinds_init(g_program_path);
+  if (g_config.player_src[0] != before->player_src[0] ||
+      g_config.player_src[1] != before->player_src[1] ||
+      g_config.enable_gamepad[0] != before->enable_gamepad[0] ||
+      g_config.enable_gamepad[1] != before->enable_gamepad[1])
+    ReassignGamepads();
+}
+
+/* Why a launcher edit cannot be applied to the live session, or NULL. */
+/* The launcher hands back a path. Two paths to the same dump are the same
+ * game, and must resume rather than start again from power-on. */
+static bool SameRomImage(const char *a, const char *b) {
+  if (!a[0] || !b[0] || strcmp(a, b) == 0) return true;
+  size_t na = 0, nb = 0;
+  uint8 *da = ReadWholeFile(a, &na), *db = ReadWholeFile(b, &nb);
+  bool same = da && db && na == nb && memcmp(da, db, na) == 0;
+  free(da);
+  free(db);
+  return same;
+}
+
+static const char *RestartReason(const Config *before, const char *rom,
+                                 const uint8 *mods_before, size_t mods_before_len) {
+  if (!SameRomImage(rom, g_rom_path)) return "a different ROM";
+  if (g_config.enable_audio != before->enable_audio) return "audio output";
+  if (g_config.output_method != before->output_method ||
+      strcmp(g_config.renderer, before->renderer) != 0)
+    return "the renderer";
+  if (g_config.audio_freq != before->audio_freq) return "the audio rate";
+  if (g_mod_state_path[0]) {
+    /* The launcher's Mods page commits to state.toml on RESUME. Mod
+     * plugins activate once, before the first frame, so any difference in
+     * what that file says is a different game from here on. */
+    size_t after_len = 0;
+    uint8 *after = ReadWholeFile(g_mod_state_path, &after_len);
+    bool changed = (after == NULL) != (mods_before == NULL) ||
+                   (after && (after_len != mods_before_len ||
+                              memcmp(after, mods_before, after_len) != 0));
+    free(after);
+    if (changed) return "the mods";
+  }
+  return NULL;
+}
+#endif /* RECOMP_LAUNCHER */
+
+/* The in-game launcher (SnesDesktopHostGame.in_game_launcher). The guest is
+ * FROZEN throughout, exactly like the save-state browser: no RtlRunFrame, no
+ * draw_ppu_frame. The game window is hidden rather than covered, so a
+ * fullscreen game does not sit on top of the launcher. */
+static void RunInGameLauncher(bool *running, const char **exit_reason) {
+#if !defined(RECOMP_LAUNCHER)
+  (void)running; (void)exit_reason;
+  host_report_breadcrumb("in-game launcher: this build has no launcher");
+#else
+  host_report_breadcrumb("in-game launcher OPEN - guest frozen until RESUME "
+                         "(or closing the launcher window)");
+  const Config before = g_config;
+  /* Turbo follows a HELD key; the launcher eats the release. */
+  g_turbo = false;
+  size_t mods_before_len = 0;
+  uint8 *mods_before = g_mod_state_path[0]
+      ? ReadWholeFile(g_mod_state_path, &mods_before_len) : NULL;
+  g_overlay_modal = true;
+  SetAudioPaused(true);
+  SDL_HideWindow(g_window);
+  /* This process keeps running after the launcher's window closes. */
+  recomp_launcher_set_preserve_sdl(1);
+  RecompLauncherCSettings ls;
+  RecompLauncherCGameInfo gi;
+  LauncherSeed(&ls, &gi, g_active_config_file, 1);
+  char rom[1024];
+  rom[0] = '\0';
+  int act = recomp_launcher_run_window(g_launcher_title, &ls, &gi, ".",
+                                       g_rom_path[0] ? g_rom_path : NULL,
+                                       rom, sizeof(rom));
+  recomp_launcher_set_preserve_sdl(0);
+  host_report_breadcrumb("in-game launcher: action=%d rom=%s", act,
+                         rom[0] ? rom : "(unchanged)");
+  if (act != RECOMP_LAUNCHER_RESULT_UNAVAILABLE)
+    LauncherCommit(&ls, g_active_config_file);
+  SDL_ShowWindow(g_window);
+  SDL_RaiseWindow(g_window);
+  /* Closing the launcher's window can queue an application quit (its window
+   * was the last visible one). That close meant "back to the game". */
+  SDL_FlushEvent(SDL_QUIT);
+  /* The launcher's ImGui backend shows the cursor every frame. */
+  snesrecomp_sdl_show_cursor(g_cursor);
+  if (g_renderer_funcs.Reconfigure) g_renderer_funcs.Reconfigure();
+
+  if (act == RECOMP_LAUNCHER_RESULT_QUIT) {
+    *running = false;
+    *exit_reason = "player quit from the in-game launcher";
+  } else if (act == RECOMP_LAUNCHER_RESULT_LAUNCH) {
+    const char *why = RestartReason(&before, rom, mods_before, mods_before_len);
+    if (!why && HostGetenv("INGAME_LAUNCHER_SELFTEST_RESTART")) {
+      why = "the self-test";
+      /* The restarted process inherits this environment; it must resume,
+       * not open the launcher and restart again. */
+      static const char *const kVars[] = {
+        "INGAME_LAUNCHER_SELFTEST", "INGAME_LAUNCHER_SELFTEST_RESTART",
+      };
+      for (size_t i = 0; i < sizeof(kVars) / sizeof(kVars[0]); i++) {
+        const char *prefixes[] = { "SNESRECOMP", g_game->env_prefix };
+        for (size_t p = 0; p < 2; p++) {
+          char name[96];
+          if (!prefixes[p] || !prefixes[p][0]) continue;
+          snprintf(name, sizeof(name), "%s_%s", prefixes[p], kVars[i]);
+#ifdef _WIN32
+          _putenv_s(name, "");
+#else
+          unsetenv(name);
+#endif
+        }
+      }
+    }
+    if (why) {
+      /* Start again, from here. A different ROM is a different game, so it
+       * starts from power-on; anything else resumes this exact frame. */
+      bool same_rom = SameRomImage(rom, g_rom_path);
+      snprintf(g_relaunch.rom, sizeof(g_relaunch.rom), "%s",
+               rom[0] ? rom : g_rom_path);
+      g_relaunch.with_state = false;
+      if (same_rom &&
+          snesrecomp_abspath("saves/resume.sav", g_relaunch.state,
+                             sizeof(g_relaunch.state))) {
+        g_relaunch.with_state = RtlSaveSnapshot(g_relaunch.state);
+      }
+      if (same_rom && !g_relaunch.with_state) {
+        /* Restarting now would throw the player's progress away. The edit is
+         * already in config.ini, so it takes effect on the next start. */
+        host_report_breadcrumb("in-game launcher: %s changed but the game could "
+                               "not be saved to restart; it applies next time "
+                               "the game starts", why);
+        ApplyLiveSettings(&before);
+      } else {
+        g_relaunch.pending = true;
+        *running = false;
+        *exit_reason = "in-game launcher: restarting to apply a setting";
+        host_report_breadcrumb("in-game launcher: %s changed, which a running game "
+                               "cannot take; restarting%s", why,
+                               g_relaunch.with_state ? " from this moment" : "");
+      }
+    } else {
+      ApplyLiveSettings(&before);
+      host_report_breadcrumb("in-game launcher CLOSED - settings applied, "
+                             "guest resuming");
+      /* The self-test's proof that the presenter came back: a capture of
+       * the real framebuffer (OpenGL only), not the CPU-side field. */
+      if (HostGetenv("INGAME_LAUNCHER_SELFTEST")) RequestScreenshot();
+    }
+  }
+  free(mods_before);
+  g_overlay_modal = false;
+  ResetAudioTimeline();
+  SetAudioPaused(g_paused);
+  OverlayNoteClosed();
+  g_reset_clock = true;
+#endif
+}
+
 int snesrecomp_desktop_main(const SnesDesktopHostGame *game, int argc, char **argv) {
   if (!game || !game->game_info || !game->display_name) {
     fprintf(stderr, "snesrecomp_desktop_main: descriptor needs display_name and game_info\n");
@@ -2185,6 +2700,7 @@ int snesrecomp_desktop_main(const SnesDesktopHostGame *game, int argc, char **ar
   /* Capture program path before argv shift — used to place keybinds.ini
    * next to the executable. */
   const char *program_path = (argc >= 1) ? argv[0] : NULL;
+  g_program_path = program_path;
   /* The command line is defined ONCE, in runner/src/host_args.c, and shared by
    * every port whether or not it has its own main(). See host_args.h: the flags
    * used to be re-implemented per port and the implementations disagreed, so
@@ -2228,6 +2744,7 @@ int snesrecomp_desktop_main(const SnesDesktopHostGame *game, int argc, char **ar
     }
   }
   if (game->state_menu_hotkeys) ConfigUseStateMenuDefaults();
+  if (game->in_game_launcher) ConfigUseInGameLauncherDefaults();
   ParseConfigFile(config_file);
   g_active_config_file = config_file;
   /* Local overrides (gitignored). Last parser to set a key wins. */
@@ -2251,19 +2768,23 @@ int snesrecomp_desktop_main(const SnesDesktopHostGame *game, int argc, char **ar
       { "VolumeUp", kKeys_VolumeUp }, { "VolumeDown", kKeys_VolumeDown },
       { "SaveStateMenu", kKeys_SaveStateMenu }, { "Rewind", kKeys_Rewind },
       { "Screenshot", kKeys_Screenshot }, { "DisplayPerf", kKeys_DisplayPerf },
-      { "Pause", kKeys_Pause },
+      { "Pause", kKeys_Pause }, { "Reset", kKeys_Reset },
+      { "OpenLauncher", kKeys_OpenLauncher },
     };
     static const SDL_Keycode kKeys[] = {
       SDLK_KP_PLUS, SDLK_KP_MINUS, SDLK_F11, SDLK_F12, SDLK_f, SDLK_p, SDLK_EQUALS, SDLK_MINUS,
-      SDLK_F7, SDLK_F8,
+      SDLK_F7, SDLK_F8, SDLK_r, SDLK_l,
     };
     for (size_t i = 0; i < sizeof(kProbe) / sizeof(kProbe[0]); i++) {
       const char *bound = "(unbound among the probed keys)";
       char buf[64];
       for (size_t k = 0; k < sizeof(kKeys) / sizeof(kKeys[0]); k++) {
-        for (int shift = 0; shift < 2; shift++) {
-          if (FindCmdForSdlKey(kKeys[k], shift ? KMOD_SHIFT : 0) == kProbe[i].cmd) {
-            snprintf(buf, sizeof(buf), "%s%s", shift ? "Shift+" : "", SDL_GetKeyName(kKeys[k]));
+        static const struct { SDL_Keymod mod; const char *name; } kMods[] = {
+          { 0, "" }, { KMOD_SHIFT, "Shift+" }, { KMOD_CTRL, "Ctrl+" },
+        };
+        for (size_t m = 0; m < sizeof(kMods) / sizeof(kMods[0]); m++) {
+          if (FindCmdForSdlKey(kKeys[k], kMods[m].mod) == kProbe[i].cmd) {
+            snprintf(buf, sizeof(buf), "%s%s", kMods[m].name, SDL_GetKeyName(kKeys[k]));
             bound = buf;
           }
         }
@@ -2290,7 +2811,11 @@ int snesrecomp_desktop_main(const SnesDesktopHostGame *game, int argc, char **ar
       g_config.output_method, g_config.new_renderer, g_config.window_scale,
       g_config.fullscreen, g_config.enable_audio, g_config.audio_freq,
       g_config.audio_samples);
-  RewindGestureConfigure();
+  PadGestureConfigure(&g_rewind_gesture, g_config.rewind_gesture, "Select+R3",
+                      "rewind", "RewindGesture");
+  if (game->in_game_launcher)
+    PadGestureConfigure(&g_launcher_gesture, g_config.launcher_gesture,
+                        "Select+L3", "launcher", "LauncherGesture");
 
 #if SNESRECOMP_ENABLE_MODS
   /* Before the launcher, which needs the provider to show the Mods page.
@@ -2305,6 +2830,8 @@ int snesrecomp_desktop_main(const SnesDesktopHostGame *game, int argc, char **ar
           game->expected_sha256_hex ? game->expected_sha256_hex : "");
       if (!g_mods_ready)
         fprintf(stderr, "mods: unavailable: %s\n", snes_mod_runtime_last_error_c());
+      else
+        snprintf(g_mod_state_path, sizeof(g_mod_state_path), "%s/state.toml", mods_dir);
     }
   }
 #endif
@@ -2315,10 +2842,7 @@ int snesrecomp_desktop_main(const SnesDesktopHostGame *game, int argc, char **ar
    * auto-stripped before hashing. */
   static char rom_path_buf[1024];
   {
-    static uint8_t kExpectedSha256[32];
-    static uint32_t kExpectedCrc32;
-    static int rom_identity_ok;
-    rom_identity_ok = DecodeRomIdentity(kExpectedSha256, &kExpectedCrc32);
+    g_rom_identity_ok = DecodeRomIdentity(g_rom_sha256, &g_rom_crc32);
     int rom_resolved_by_launcher = 0;
     char beside_exe[1024] = "";
     /* The ROM comes from the shared parser now: positional or --rom,
@@ -2358,53 +2882,8 @@ int snesrecomp_desktop_main(const SnesDesktopHostGame *game, int argc, char **ar
       if (want_launcher) {
         host_report_breadcrumb("launcher: opening GUI");
         RecompLauncherCSettings ls;
-        memset(&ls, 0, sizeof(ls));
-        ls.output_method = g_config.output_method;
-        ls.window_scale  = g_config.window_scale ? g_config.window_scale : 2;
-        ls.fullscreen    = g_config.fullscreen;
-        ls.ignore_aspect = g_config.ignore_aspect_ratio;
-        ls.linear_filter = g_config.linear_filtering;
-        ls.aspect_index = SnesDisplayAspect_Clamp(g_config.display_aspect);
-        if (g_config.shader)
-          snprintf(ls.shader_path, sizeof(ls.shader_path), "%s", g_config.shader);
-        ls.enable_audio  = g_config.enable_audio;
-        ls.audio_freq    = g_config.audio_freq;
-        ls.volume        = g_config.volume;
-        /* [Controller] SourceP1/SourceP2 is the real three-way answer (0 none,
-         * 1 keyboard, 2 gamepad) and matches the launcher's row exactly.
-         * EnableGamepadN is the older, lossier spelling and only decides the
-         * seed when the file predates the Source keys -- deriving from it
-         * unconditionally is what turned "player 2 on the keyboard" into
-         * "player 2 unassigned" on every relaunch. */
-        ls.player_src[0] = ConfigHasPlayerSource(0) ? g_config.player_src[0]
-                                                    : (g_config.enable_gamepad[0] ? 2 : 1);
-        ls.player_src[1] = ConfigHasPlayerSource(1) ? g_config.player_src[1]
-                                                    : (g_config.enable_gamepad[1] ? 2 : 0);
-        /* Config stores deadzone as a raw stick radius; the launcher edits a
-         * 0-100%. Convert in both directions, ROUNDING each way: truncating
-         * both made the round trip lossy -- 10% saved as 32767/10 = 3276 read
-         * back as 9%, so the slider walked down a percent every time the
-         * player pressed Play. */
-        ls.deadzone[0] = ls.deadzone[1] =
-            (g_config.gamepad_deadzone * 100 + 32767 / 2) / 32767;
-        ls.skip_launcher = g_config.skip_launcher;
-        ls.msu1_enabled  = 0;
-        /* Display rows the framework host wires (see FrameBlendConfigure,
-         * RendererApply, the vsync flags at presenter creation, and
-         * snes_runahead_run_frame in the frame loop). */
-        ls.frame_blend   = g_config.frame_blend ? 1 : 0;
-        ls.run_ahead     = g_config.run_ahead;
-        ls.vsync         = g_config.vsync == kSnesVSync_Adaptive
-                               ? RECOMP_LAUNCHER_VSYNC_ADAPTIVE
-                               : g_config.vsync == kSnesVSync_Off
-                                     ? RECOMP_LAUNCHER_VSYNC_OFF
-                                     : RECOMP_LAUNCHER_VSYNC_ON;
-        ls.renderer      = RendererChoice();
-        if (game->rewind_settings) {
-          ls.rewind_enabled  = g_config.rewind_enabled ? 1 : 0;
-          ls.rewind_depth    = g_config.rewind_depth;
-          ls.rewind_interval = g_config.rewind_interval;
-        }
+        RecompLauncherCGameInfo gi;
+        LauncherSeed(&ls, &gi, config_file, 0);
 
         /* Open on the ROM the player already has, so a second launch is PLAY
          * rather than Change-ROM: an explicit argument first, then the copy
@@ -2417,79 +2896,6 @@ int snesrecomp_desktop_main(const SnesDesktopHostGame *game, int argc, char **ar
         if (!init_rom[0] && !snesrecomp_rom_cache_read(init_rom, sizeof(init_rom)))
           init_rom[0] = '\0';
 
-        RecompLauncherCGameInfo gi;
-        memset(&gi, 0, sizeof(gi));
-        /* SNES system identity (theme, platform label, ROM noun). One profile
-         * call keeps the identity from drifting across SNES titles. */
-        launcher_profile_apply("snes", &gi);
-        static char region_buf[64];
-        gi.name = game->display_name;
-        if (game->region && game->region[0]) {
-          snprintf(region_buf, sizeof(region_buf), "(%s)", game->region);
-          gi.region = region_buf;
-        }
-        gi.sram_path = game->sram_path;
-        gi.num_players = game->num_players > 0 ? game->num_players : 1;
-        gi.expected_crc = kExpectedCrc32;
-        gi.has_expected_crc = rom_identity_ok;
-        gi.known_sha256 = rom_identity_ok
-            ? (const uint8_t (*)[32])&kExpectedSha256 : NULL;
-        gi.num_known_sha256 = rom_identity_ok ? 1 : 0;
-        /* Additive: a title catalogued by SHA-1 sets these instead of, or as
-         * well as, the SHA-256 above. */
-        gi.known_sha1_hex = game->known_sha1_hex;
-        gi.num_known_sha1 = (size_t)(game->known_sha1_hex
-                                         ? game->num_known_sha1 : 0);
-        gi.widescreen_supported = game->widescreen_supported;
-        gi.msu1_supported = game->msu1_supported;
-        /* Capability rows: each is drawn only because this host wires it. A
-         * row that does nothing is worse than no row. */
-#if defined(SNESRECOMP_HOST_HAS_BLEND)
-        gi.has_frame_blend  = 1;
-#endif
-        SnesLauncherVideo_Configure(&ls, &gi,
-            game->display_aspect_supported && !game->aspect_labels,
-            game->shader_supported, g_config.display_aspect, g_config.shader);
-        if (game->aspect_labels && game->num_aspect_labels > 0) {
-          /* A port that rasterizes its own field owns the choices and the
-           * meaning of the index; this host only carries them to the row. */
-          gi.aspect_labels = game->aspect_labels;
-          gi.num_aspect_labels = game->num_aspect_labels;
-          gi.aspect_setting_label = game->aspect_setting_label
-                                        ? game->aspect_setting_label
-                                        : "Aspect ratio";
-          gi.aspect_setting_help = game->aspect_setting_help;
-        }
-        /* Rewind rows. The runtime has always had the ring; without this the
-         * player has no way to size it or switch it off. */
-        gi.has_rewind_depth = game->rewind_settings ? 1 : 0;
-        gi.has_run_ahead    = 1;   /* the runtime snapshots a machine in a frame */
-        gi.has_vsync        = 1;
-        gi.has_renderer     = 1;
-        RendererEnumerate();
-        gi.renderer_labels  = g_renderer_label_ptr;
-        gi.num_renderers    = g_renderer_count;
-        gi.config_path = config_file;  /* hotkey editor targets the live config */
-        gi.mods = NULL;
-        if (game->mods_provider)
-          gi.mods = (const RecompLauncherCModProvider *)game->mods_provider();
-#if SNESRECOMP_ENABLE_MODS
-        if (!gi.mods && g_mods_ready)
-          gi.mods = snes_mod_runtime_launcher_provider_c();
-#endif
-#if defined(SNES_HAS_LOBBY_CLIENT)
-        /* The netplay button is capability-gated: these two fields are what
-         * make the launcher show it. */
-        gi.netplay_supported = 1;
-        host_lobby_ensure_init();
-        gi.netplay = snes_host_lobby_callbacks();
-#endif
-#if defined(SNESRECOMP_HOST_HAS_CODEGEN)
-        /* Wire "Generate & rebuild…". No-ops when the SDK, CMake or the build
-         * tree is absent, which is the normal state of a shipped build. */
-        snesrecomp_codegen_host_autowire(&gi, gi.name);
-#endif
-
         /* cwd is anchored to the exe dir and recomp_ui.cmake stages assets to
          * <exe>/assets, so "." resolves assets correctly. */
         int act = recomp_launcher_run_window(
@@ -2498,64 +2904,10 @@ int snesrecomp_desktop_main(const SnesDesktopHostGame *game, int argc, char **ar
         host_report_breadcrumb("launcher: action=%d rom=%s", act,
                                rom_path_buf[0] ? rom_path_buf : "(none)");
 
-        /* Apply and persist the player's edits on EVERY way out of the
-         * launcher, not only PLAY. recomp-ui hands *io back on quit too, and
-         * a setting the player changed before closing the window is still a
-         * setting they changed -- it used to be dropped on the floor, which
-         * read as "the launcher forgets everything". UNAVAILABLE is the one
-         * exception: the window never opened, so ls still holds exactly what
-         * this host seeded and rewriting the file would be pure noise. */
-        if (act != RECOMP_LAUNCHER_RESULT_UNAVAILABLE) {
-          g_config.output_method       = (uint8)ls.output_method;
-          g_config.window_scale        = (uint8)ls.window_scale;
-          g_config.fullscreen          = (uint8)ls.fullscreen;
-          g_config.ignore_aspect_ratio = ls.ignore_aspect != 0;
-          g_config.linear_filtering    = ls.linear_filter != 0;
-          if (game->display_aspect_supported)
-            g_config.display_aspect = (uint8)SnesDisplayAspect_Clamp(ls.aspect_index);
-          if (game->shader_supported) {
-            static char shader_path[sizeof(ls.shader_path)];
-            snprintf(shader_path, sizeof(shader_path), "%s", ls.shader_path);
-            g_config.shader = shader_path[0] ? shader_path : NULL;
-          }
-          g_config.enable_audio        = true;   /* always on */
-          g_config.audio_freq          = (uint16)ls.audio_freq;
-          g_config.volume              = ls.volume;
-          ApplyVolume();
-          g_config.player_src[0]       = ls.player_src[0];
-          g_config.player_src[1]       = ls.player_src[1];
-          g_config.enable_gamepad[0]   = ls.player_src[0] == 2;
-          g_config.enable_gamepad[1]   = ls.player_src[1] == 2;
-          g_config.gamepad_deadzone    = (ls.deadzone[0] * 32767 + 50) / 100;
-          g_config.skip_launcher       = ls.skip_launcher != 0;
-          g_config.frame_blend         = ls.frame_blend != 0;
-          g_config.run_ahead           = ls.run_ahead;
-          if (game->rewind_settings) {
-            g_config.rewind_enabled  = ls.rewind_enabled != 0;
-            if (ls.rewind_depth > 0)    g_config.rewind_depth = ls.rewind_depth;
-            if (ls.rewind_interval > 0) g_config.rewind_interval = ls.rewind_interval;
-          }
-          g_config.vsync               = ls.vsync == RECOMP_LAUNCHER_VSYNC_OFF
-                                             ? kSnesVSync_Off
-                                             : ls.vsync == RECOMP_LAUNCHER_VSYNC_ADAPTIVE
-                                                   ? kSnesVSync_Adaptive
-                                                   : kSnesVSync_On;
-          RendererApply(ls.renderer);   /* sets renderer + output_method */
-#if defined(SNES_HAS_LOBBY_CLIENT)
-          /* The Netplay page persisted the name itself the moment it was
-           * typed (snes_netplay_identity_store). g_config still holds what
-           * the file said BEFORE the launcher ran, so writing the file now
-           * without re-reading would hand the player's new name straight
-           * back to the old one. */
-          snes_netplay_identity_load(g_config.netplay_player_name,
-                                     sizeof(g_config.netplay_player_name));
-#endif
-          WriteConfigFile(config_file);
-          /* The launcher's Hotkeys editor writes [KeyMap] straight into the
-           * config file, which was parsed before the launcher ran - re-apply
-           * so rebinds work on THIS boot, not the next one. */
-          ConfigReloadKeyMap(config_file);
-        }
+        /* UNAVAILABLE: the window never opened, so ls still holds exactly
+         * what this host seeded and rewriting the file would be pure noise. */
+        if (act != RECOMP_LAUNCHER_RESULT_UNAVAILABLE)
+          LauncherCommit(&ls, config_file);
 
         if (act == RECOMP_LAUNCHER_RESULT_QUIT) {
           host_report_breadcrumb("exit: player quit from the launcher");
@@ -2601,7 +2953,7 @@ int snesrecomp_desktop_main(const SnesDesktopHostGame *game, int argc, char **ar
       int la_argc = (la_argv[1][0] != '\0') ? 2 : 1;
       if (!snesrecomp_launcher_resolve_rom_sha256(la_argc, la_argv, rom_path_buf,
                                                   sizeof(rom_path_buf),
-                                                  rom_identity_ok ? kExpectedSha256
+                                                  g_rom_identity_ok ? g_rom_sha256
                                                                   : NULL)) {
         /* User cancelled the picker or repeatedly chose a non-matching ROM. */
         snesrecomp_host_args_usage(program_path, NULL);
@@ -2617,6 +2969,7 @@ int snesrecomp_desktop_main(const SnesDesktopHostGame *game, int argc, char **ar
   argv = resolved_argv;
   argc = 1;
   host_report_breadcrumb("rom resolved: %s", rom_path_buf);
+  g_rom_path = rom_path_buf;
 
 #if SNESRECOMP_ENABLE_MODS
   /* Resolve the enabled features against THIS ROM and persist the plan. A
@@ -2911,43 +3264,21 @@ error_reading:;
   RtlReadSram();
 
   OverlaySelftestPadAttach();
-  {
-#if SNESRECOMP_SDL3
-    int njs = 0;
-    SDL_JoystickID *joysticks = SDL_GetJoysticks(&njs);
-#else
-    int njs = SDL_NumJoysticks();
-#endif
-    printf("[Gamepad] SDL reports %d joystick(s) at startup. "
-           "enable_gamepad=[%d,%d]\n",
-           njs, g_config.enable_gamepad[0], g_config.enable_gamepad[1]);
-    for (int i = 0; i < njs; i++) {
-#if SNESRECOMP_SDL3
-      /* SDL3 enumerates by instance ID rather than by index. */
-      SDL_JoystickID joystick = joysticks[i];
-      const char *name = SDL_GetJoystickNameForID(joystick);
-      int is_gc = SDL_IsGamepad(joystick);
-#else
-      SDL_JoystickID joystick = i;
-      const char *name = SDL_JoystickNameForIndex(i);
-      int is_gc = SDL_IsGameController(i);
-#endif
-      printf("[Gamepad]   #%d name=%s is_game_controller=%d\n",
-             i, name ? name : "(null)", is_gc);
-      OpenOneGamepad(joystick);
-    }
-#if SNESRECOMP_SDL3
-    SDL_free(joysticks);
-#endif
-    if (njs == 0) {
-      printf("[Gamepad] No joysticks detected. "
-             "On Windows, plug controller in BEFORE launching, "
-             "or check that XInput drivers are installed.\n");
-    }
-  }
+  OpenAllGamepads();
 
   if (g_config.autosave)
     HandleCommand(kKeys_Load + 0, true);
+
+  /* --resume-state: the in-game launcher restarted this game to apply a
+   * setting a live session cannot take, and saved the moment it left. The
+   * file is one-shot -- a later plain launch must not resume it again. */
+  if (args.resume_state) {
+    bool resumed = RtlLoadSnapshot(args.resume_state);
+    if (resumed) GameReset();
+    host_report_breadcrumb("resume state %s: %s", resumed ? "loaded" : "FAILED to load (kept)",
+                           args.resume_state);
+    if (resumed) remove(args.resume_state);
+  }
 
   if (script_file)
     LoadScript(script_file);
@@ -3065,7 +3396,8 @@ error_reading:;
       SetAudioPaused(audiopaused);
     }
 
-    if (g_paused && !g_savestate_menu_hotkey && !g_rewind_hotkey) {
+    if (g_paused && !g_savestate_menu_hotkey && !g_rewind_hotkey &&
+        !g_open_launcher_hotkey) {
       snes_host_clock_reset(&video_clock, MonotonicSeconds(), g_simulation_hz, presentation_hz);
       SDL_Delay(16);
       continue;
@@ -3096,6 +3428,8 @@ error_reading:;
      * Both seats' inputs come back merged from the netcode; on a stall the
      * held framebuffer is re-presented so the window stays live. */
     if (snes_netplay_active()) {
+      /* Refused mid-match; dropped rather than left to fire when it ends. */
+      g_open_launcher_hotkey = 0;
       SnesHostBarrierHooks hooks;
       int run = running;
       int admitted;
@@ -3276,7 +3610,37 @@ error_reading:;
       }
     }
 
-    if ((g_rewind_hotkey || RewindGesturePressed()) && !snes_rewind_is_open() &&
+    /* In-game launcher self-test (SNESRECOMP_INGAME_LAUNCHER_SELFTEST=<frame>,
+     * off by default): opens the launcher over the frozen guest at that frame.
+     * Pair it with recomp-ui's LNG_SMOKE_FRAMES=<n>, which closes the window
+     * after n frames -- RESUME, in session. The property is the overlays' own:
+     * a frozen guest comes back BIT IDENTICAL, so later frames must match a
+     * run that never opened it. ..._RESTART=1 takes the restart path instead,
+     * as an edit a live session cannot take would. */
+    {
+      static long launcher_frame = -2;
+      if (launcher_frame == -2) {
+        const char *v = HostGetenv("INGAME_LAUNCHER_SELFTEST");
+        launcher_frame = v ? strtol(v, NULL, 0) : -1;
+      }
+      if (game->in_game_launcher && launcher_frame >= 0 &&
+          (long)frameCtr == launcher_frame) {
+        fprintf(stderr, "[ingame_launcher_selftest] opening the launcher at frame %ld\n",
+                launcher_frame);
+        launcher_frame = -1;
+        g_open_launcher_hotkey = 1;
+      }
+    }
+    if (game->in_game_launcher &&
+        (g_open_launcher_hotkey || PadGesturePressed(&g_launcher_gesture)) &&
+        !snes_rewind_is_open() && !snes_savestate_menu_is_open()) {
+      g_open_launcher_hotkey = 0;
+      RunInGameLauncher(&running, &exit_reason);
+      if (!running) break;
+      continue;   /* guest was frozen: no frame to run or present */
+    }
+    g_open_launcher_hotkey = 0;
+    if ((g_rewind_hotkey || PadGesturePressed(&g_rewind_gesture)) && !snes_rewind_is_open() &&
         !snes_savestate_menu_is_open()) {
       /* Refused during netplay by snes_rewind_open() itself: one machine
        * cannot move its own clock backwards while a peer is watching. */
@@ -3451,6 +3815,28 @@ error_reading:;
 
   SDL_DestroyWindow(window);
   SDL_Quit();
+  /* After everything is released -- the audio device, the window, the SRAM
+   * and config writes -- so the new process starts against a quiet machine. */
+  if (g_relaunch.pending) {
+    const char *relaunch_args[8];
+    int n = 0;
+    relaunch_args[n++] = "--no-launcher";
+    if (g_active_config_file) {
+      relaunch_args[n++] = "--config";
+      relaunch_args[n++] = g_active_config_file;
+    }
+    if (g_relaunch.with_state) {
+      relaunch_args[n++] = "--resume-state";
+      relaunch_args[n++] = g_relaunch.state;
+    }
+    relaunch_args[n++] = "--rom";
+    relaunch_args[n++] = g_relaunch.rom;
+    if (!snesrecomp_host_relaunch(n, relaunch_args)) {
+      host_report_breadcrumb("in-game launcher: restart FAILED; start the game again");
+      return 1;
+    }
+    host_report_breadcrumb("in-game launcher: restarted");
+  }
   return 0;
 }
 
@@ -3508,8 +3894,7 @@ static void HandleCommand(uint32 j, bool pressed) {
       g_fullscreen_changed = true;
       break;
     case kKeys_Reset:
-      RtlReset(1);
-      GameReset();
+      ConsoleReset();
       break;
     case kKeys_Pause: g_paused = !g_paused; break;
     case kKeys_PauseDimmed:
@@ -3529,6 +3914,9 @@ static void HandleCommand(uint32 j, bool pressed) {
     case kKeys_SaveStateMenu: g_savestate_menu_hotkey = 1; break;
     case kKeys_Rewind: g_rewind_hotkey = 1; break;
     case kKeys_Screenshot: RequestScreenshot(); break;
+    case kKeys_OpenLauncher:
+      if (g_game->in_game_launcher) g_open_launcher_hotkey = 1;
+      break;
     case kKeys_ToggleRenderer:
       g_ppu_render_flags ^= kPpuRenderFlags_NewRenderer;
       printf("New renderer = %x\n", g_ppu_render_flags & kPpuRenderFlags_NewRenderer);
