@@ -95,6 +95,12 @@ int  snes_netplay_rb_poll_admit(void);
  * that the newly arrived wire opened. */
 void snes_netplay_rb_finish_frame(void);
 
+/* 1 once the driver's coordinated stop (armed by SIGUSR1) has DRAINED or hit
+ * its bound; the host then exits. See snes_netplay_quiesced(). */
+int  snes_netplay_rb_quiesced(void);
+/* 1 while that stop is in progress. */
+int  snes_netplay_rb_draining(void);
+
 /* Local pad for the tick being staged (12 SNES button bits, active high). */
 void snes_netplay_rb_stage_local(uint16_t buttons);
 

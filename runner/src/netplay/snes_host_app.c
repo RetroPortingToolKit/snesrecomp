@@ -239,6 +239,21 @@ int snes_host_barrier_admit(int from_lobby, int *running,
   peer_ms = hooks->peer_timeout_ms ? hooks->peer_timeout_ms : 1500u;
   connect_ms = hooks->connect_timeout_ms;
 
+  /* A coordinated stop (SIGUSR1 -> rollback drain). Checked BEFORE the
+   * peer-gone exit: the peer that finishes draining first leaves at once, and
+   * its BYE made this side take the peer_disconnect exit below with its own
+   * drain one poll from done -- no "RB quiesced", and the harness ledger
+   * ungradable. So when the peer has gone mid-drain, let the driver read what
+   * the peer left in the queue and finish first. */
+  if (snes_netplay_draining() && snes_netplay_peer_disconnected(peer_ms))
+    (void)snes_netplay_poll_admit();
+  if (snes_netplay_quiesced()) {
+    fprintf(stderr, "snes_netplay: rollback drained — exiting\n");
+    barrier_soft_exit(from_lobby, running, "quiesced", &desync_logged,
+                      &wait_logged);
+    return 0;
+  }
+
   if (snes_netplay_peer_disconnected(peer_ms)) {
     barrier_soft_exit(from_lobby, running, "peer_disconnect", &desync_logged,
                       &wait_logged);

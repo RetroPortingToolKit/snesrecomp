@@ -57,7 +57,7 @@ At runtime:
 | Variable | Effect |
 |----------|--------|
 | `SNES_NET_MODE=rollback` | Use the rollback admit path (default: `delay`) |
-| `SNES_RB_PREDICTION` | Prediction cap P in ticks (default 8) |
+| `SNES_RB_PREDICTION` | Prediction cap P in ticks (default: the session-settled P, else 4 + D clamped to 6..16 — rb_driver.c `start`; this row said 8) |
 | `SNES_RB_SNAP_INTERVAL` | Snapshot every N ticks (default 1 — see §4) |
 | `SNES_RB_SNAP_DEPTH` | Snapshot ring depth (default 40) |
 | `SNES_RB_TIP_RUNWAY` | TipHold quiet window (default 12) |
@@ -74,6 +74,25 @@ host storage).
 A build without `SNESRECOMP_NET_ROLLBACK` ignores `SNES_NET_MODE` entirely,
 and a rollback host that fails to start logs and falls back to delay-sync for
 that session rather than leaving the game with no admit path.
+
+**SIGUSR1 drains, then exits** (POSIX; added 2026-09-25). It calls the
+driver's coordinated stop (`rnet_rb_driver_request_quiesce`, recomp-net
+`docs/rollback.md`, "Coordinated stop"): no new episode opens, open ones
+finish, the peer is told and drains too, and the process leaves once neither
+side has anything in flight (`RB quiesced`, then `rollback drained — exiting`).
+`tools/rb_loopback.sh` stops both peers this way at its deadline, and grades
+its episode ledger only when both logged `RB quiesced`. It used to kill them,
+which could not tell an episode in flight at the kill from a lost one: the
+runway-4 sweep cell failed 1 of 1 on that race and passed 4 of 4 on repeat.
+
+The harness passes `SNES_RB_TIP_RUNWAY`, `SNES_RB_SNAP_DEPTH` and the
+`RNET_SIM_*` knobs **only when set**, and prints the values each peer actually
+started with. Until 2026-09-25 it passed `SNES_RB_TIP_RUNWAY=0` as its "unset"
+value; the host accepts 0, so ten of the thirteen sweep cells ran with tip-hold
+lasting 0 ticks and no cell measured the default runway (12) a player gets.
+Sweeps from before that date say nothing about the default runway. Each run now
+also reports tip-hold entries and how many ticks each hold lasted (`RB tip-hold
+ended ... held=N`); the runway is a ceiling, not a duration.
 
 ## 3. What SNES makes easy
 

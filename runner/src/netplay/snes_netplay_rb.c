@@ -3,6 +3,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <signal.h>   /* sig_atomic_t everywhere; SIGUSR1 / sigaction on POSIX */
 
 #include "snes_netplay.h"
 #include "snes_state_digest.h"
@@ -371,6 +372,52 @@ static uint32_t rb_host_now_ms(void *ctx)
     return rbe_mono_ms();
 }
 
+/* ── coordinated stop ────────────────────────────────────────────────── */
+
+/*
+ * SIGUSR1 asks the driver to drain and the host to exit once it has
+ * (rnet_rb_driver_request_quiesce). tools/rb_loopback.sh sends it to both
+ * peers at its deadline instead of killing them, which is what lets its
+ * episode ledger be exact: a kill cannot tell an episode in flight from a
+ * lost one, and the runway-4 sweep cell failed on exactly that race.
+ *
+ * The handler only sets a flag; the request is made from the sim thread in
+ * poll_admit, where the driver lives. Windows has no SIGUSR1 and no harness
+ * that sends it, so there is nothing to install there.
+ */
+static volatile sig_atomic_t s_quiesce_signalled;
+
+#if !defined(_WIN32)
+static void rb_on_sigusr1(int sig)
+{
+    (void)sig;
+    s_quiesce_signalled = 1;
+}
+#endif
+
+static void rb_install_quiesce_signal(void)
+{
+#if !defined(_WIN32)
+    struct sigaction sa;
+    memset(&sa, 0, sizeof(sa));
+    sa.sa_handler = rb_on_sigusr1;
+    sigemptyset(&sa.sa_mask);
+    sa.sa_flags = SA_RESTART;
+    sigaction(SIGUSR1, &sa, NULL);
+#endif
+}
+
+int snes_netplay_rb_draining(void)
+{
+    return rnet_rb_driver_quiesce_state(g_rb.drv) == RNET_RB_QUIESCE_DRAINING;
+}
+
+int snes_netplay_rb_quiesced(void)
+{
+    RNetRbQuiesce q = rnet_rb_driver_quiesce_state(g_rb.drv);
+    return q == RNET_RB_QUIESCE_DRAINED || q == RNET_RB_QUIESCE_TIMED_OUT;
+}
+
 /* ── lifecycle ───────────────────────────────────────────────────────── */
 
 void snes_netplay_rb_bind(const SnesNetplayRbBindings *b)
@@ -470,6 +517,8 @@ int snes_netplay_rb_start(void)
         g_rb.snaps = NULL;
         return 0;
     }
+    s_quiesce_signalled = 0;
+    rb_install_quiesce_signal();
     return 1;
 }
 
@@ -496,6 +545,11 @@ void snes_netplay_rb_stage_local(uint16_t buttons)
 
 int snes_netplay_rb_poll_admit(void)
 {
+    if (s_quiesce_signalled &&
+        rnet_rb_driver_quiesce_state(g_rb.drv) == RNET_RB_QUIESCE_NONE) {
+        fprintf(stderr, "snes_netplay: SIGUSR1 — draining rollback, then exiting\n");
+        rnet_rb_driver_request_quiesce(g_rb.drv);
+    }
     /* INLINE replay: the driver never hands back a replay tick, so the only
      * admit this loop runs is a live one. */
     return rnet_rb_driver_poll_admit(g_rb.drv) == RNET_RB_ADMIT_LIVE;
