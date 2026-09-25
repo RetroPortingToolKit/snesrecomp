@@ -2364,7 +2364,7 @@ static NOINLINE void PpuDrawWholeLine(Ppu *ppu, uint y) {
         if (outside_world && !keep_hud) {
           dst[0] = 0;
         } else {
-          uint32 color = ppu->cgram[pixel & 0xff];
+          uint32 color = PpuPixelColor(ppu,pixel,i);
           dst[0] = ppu->brightnessMult[color & clip_color_mask] << 16 |
             ppu->brightnessMult[(color >> 5) & clip_color_mask] << 8 |
             ppu->brightnessMult[(color >> 10) & clip_color_mask];
@@ -2388,7 +2388,7 @@ static NOINLINE void PpuDrawWholeLine(Ppu *ppu, uint y) {
         if (outside_world && !keep_hud) {
           dst[0] = 0;
         } else {
-          uint32 color = ppu->cgram[pixel & 0xff], color2;
+          uint32 color = PpuPixelColor(ppu,pixel,i), color2;
           uint32 r = color & clip_color_mask;
           uint32 g = (color >> 5) & clip_color_mask;
           uint32 b = (color >> 10) & clip_color_mask;
@@ -2396,7 +2396,7 @@ static NOINLINE void PpuDrawWholeLine(Ppu *ppu, uint y) {
           if (math_enabled_cur & (1 << main_layer)) {
             if (math_enabled_cur & 0x100) {  // addSubscreen ?
               if ((ppu->bgBuffers[1].data[i] & 0xff) != 0)
-                color2 = ppu->cgram[ppu->bgBuffers[1].data[i] & 0xff], color_map = half_color_map;
+                color2 = PpuPixelColor(ppu,ppu->bgBuffers[1].data[i],i), color_map = half_color_map;
               else  // Don't halve if PPU_addSubscreen(ppu) && backdrop
                 color2 = fixed_color;
             } else {
@@ -2430,16 +2430,16 @@ static bool PpuHdWindowCondition(unsigned mode, bool inside) {
  * opaque native BG pixel cannot serve as a mask: a fractional sample may be
  * transparent and reveal a sprite that the native sample had covered. */
 static uint32_t PpuHdColour(const Ppu *ppu, uint16_t main, uint16_t sub,
-                            bool inside) {
+                            bool inside, size_t x) {
   unsigned layer = (main >> 8) & 15;
-  unsigned colour = ppu->cgram[main & 255];
+  unsigned colour = PpuPixelColor(ppu,main,x);
   bool clip = PpuHdWindowCondition(PPU_clipMode(ppu), inside);
   bool math = !PpuHdWindowCondition(PPU_preventMathMode(ppu), inside) &&
       (PPU_mathEnabled(ppu) & (1u << layer));
   unsigned other = ppu->fixedColor;
   bool half = math && PPU_halfColor(ppu);
   if (math && PPU_addSubscreen(ppu)) {
-    if (sub & 255) other = ppu->cgram[sub & 255];
+    if (sub & 255) other = PpuPixelColor(ppu,sub,x);
     else half = false;
   }
   uint32_t output = 0;
@@ -2539,7 +2539,7 @@ static void PpuDrawMode7HdLine(Ppu *ppu, unsigned line) {
         if ((visible & 4) && object > main) main = object;
         if ((visible & 8) && object > sub) sub = object;
         row[(x + ppu->extraLeftRight) * scale + sx] =
-            PpuHdColour(ppu, main, sub, (visible & 16) != 0);
+            PpuHdColour(ppu, main, sub, (visible & 16) != 0, i);
       }
     }
   }
@@ -2644,7 +2644,39 @@ static bool PpuWidescreenOamLeftHintAllows(Ppu *ppu, uint8_t index, int x,
   return ppu->wsOamMotionGrace[slot] != 0;
 }
 
+void PpuSetExtraObjects(Ppu *ppu,const PpuExtraObject *objects,size_t count) {
+  ppu->extraObjects=objects;ppu->extraObjectCount=objects?count:0;
+}
+
+bool PpuComposeExtraObjects(const PpuExtraObject *objects,size_t count,
+    int y,int x0,size_t width,unsigned first_slot,
+    uint16_t *depth,uint16_t *colors,uint64_t *order) {
+  bool added=false;
+  for(size_t i=0;i<count;++i) {
+    const PpuExtraObject *o=&objects[i];
+    int64_t row=(int64_t)y-o->y, left=(int64_t)o->x-x0;
+    if(!o->pixels || !o->order || o->priority>3 || o->oamSlot>127 ||
+       o->stride<o->width || row<0 || row>=o->height) continue;
+    int64_t begin=left<0?0:left, end=left+o->width;
+    if(end>(int64_t)width)end=(int64_t)width;
+    uint64_t rank=((uint64_t)((o->oamSlot-first_slot)&127)<<32)|o->order;
+    uint16_t z=(uint16_t)(SPRITE_PRIO_TO_PRIO(o->priority,!o->math)<<8);
+    /* Preserve the legacy renderer's palette-based OBJ math classification. */
+    z|=o->math?0xc0:0x80;
+    for(int64_t x=begin;x<end;++x) {
+      uint16_t color=o->pixels[(size_t)row*o->stride+(size_t)(x-left)];
+      if(!(color&0x8000) || rank>=order[x])continue;
+      depth[x]=z;colors[x]=color;order[x]=rank;added=true;
+    }
+  }
+  return added;
+}
+
 static bool ppu_evaluateSprites(Ppu* ppu, int line) {
+  if(ppu->extraObjectCount) {
+    memset(ppu->objectColors,0,sizeof(ppu->objectColors));
+    memset(ppu->objectOrder,0xff,sizeof(ppu->objectOrder));
+  }
   static const uint8 spriteSizes[8][2] = {
     {8, 16}, {8, 32}, {8, 64}, {16, 32},
     {16, 64}, {32, 64}, {16, 32}, {16, 32}
@@ -2652,6 +2684,7 @@ static bool ppu_evaluateSprites(Ppu* ppu, int line) {
 
   // TODO: rectangular sprites, wierdness with sprites at -256
   uint8_t index = PPU_objPriority(ppu) ? (ppu->oamaddl & 0xfe) : 0;
+  unsigned first_slot=index>>1;
   int spritesFound = 0;
   int tilesFound = 0;
   uint8_t foundSprites[128];
@@ -2756,13 +2789,18 @@ static bool ppu_evaluateSprites(Ppu* ppu, int line) {
               }
         // Lower OAM indices are processed later and overwrite higher ones.
                 dst[0] = z + pixel;
+                if(ppu->extraObjectCount)
+                  ppu->objectOrder[dst-ppu->objBuffer.data]=(uint64_t)((slot-first_slot)&127)<<32;
             }
         }
         if(tilesFound > 34 &&
            !(ppu->renderFlags & kPpuRenderFlags_NoSpriteLimits))
       break;
   }
-  return tilesFound != 0;
+  bool extra=ppu->extraObjectCount && PpuComposeExtraObjects(
+      ppu->extraObjects,ppu->extraObjectCount,line,-kPpuExtraLeftRight,
+      kPpuBufWidth,first_slot,ppu->objBuffer.data,ppu->objectColors,ppu->objectOrder);
+  return tilesFound != 0 || extra;
 }
 
 static uint16_t ppu_getVramRemap(Ppu* ppu) {

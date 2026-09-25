@@ -72,6 +72,20 @@ typedef struct PpuWsElasticSeg {
 
 typedef uint16_t PpuZbufType;
 
+/* Optional host objects composed at the OBJ stage, with normal background
+ * priority, windows, brightness and color math. Pixels are RGB15; bit 15 marks
+ * opacity (including opaque black). No guest palette/VRAM/OAM is replaced.
+ * The caller owns the array and pixels until the next setter/reset. These are
+ * presentation data, excluded from the generic guest snapshot; a title must
+ * restore or regenerate them with its own state. */
+typedef struct PpuExtraObject {
+  int32_t x, y;
+  uint16_t width, height, stride;
+  uint8_t priority, math, oamSlot;
+  uint32_t order; /* stable tie within oamSlot; zero is reserved for native OAM */
+  const uint16_t *pixels;
+} PpuExtraObject;
+
 typedef struct PpuPixelPrioBufs {
   // This holds the prio in the upper 8 bits and the color in the lower 8 bits.
   // Sized for the widescreen border; logical screen x maps to
@@ -312,6 +326,10 @@ struct Ppu {
   uint32_t renderFlags;
   PpuPixelPrioBufs bgBuffers[2];
   PpuPixelPrioBufs objBuffer;
+  const PpuExtraObject *extraObjects;
+  size_t extraObjectCount;
+  uint16_t objectColors[kPpuBufWidth];
+  uint64_t objectOrder[kPpuBufWidth];
   /* Per-source isolated priority pixels for generic host-overlay captures. */
   PpuPixelPrioBufs overlayBuffers[kPpuOverlaySource_Count];
   PpuOverlayCapture overlayCaptures[kPpuOverlaySource_Count];
@@ -344,6 +362,20 @@ struct Ppu {
 
 #define SPRITE_PRIO_TO_PRIO(prio, level6) (((prio) * 4 + 2) * 16 + 4 + (level6 ? 2 : 0))
 #define SPRITE_PRIO_TO_PRIO_HI(prio) ((prio) * 4 + 2)
+
+void PpuSetExtraObjects(Ppu *ppu, const PpuExtraObject *objects, size_t count);
+/* Shared by the PPU and title renderers. Existing native objects must publish
+ * order=(((slot-first_slot)&127)<<32), transparent pixels UINT64_MAX, and colors=0. x0 is the
+ * screen coordinate of array element zero. Returns whether a pixel was added. */
+bool PpuComposeExtraObjects(const PpuExtraObject *objects, size_t count,
+    int y, int x0, size_t width, unsigned first_slot,
+    uint16_t *depth, uint16_t *colors, uint64_t *order);
+static inline uint16_t PpuPixelColor(const Ppu *ppu, uint16_t pixel, size_t x) {
+  unsigned layer=(pixel>>8)&15;
+  if (ppu->extraObjectCount && (layer==4 || layer==6) &&
+      (ppu->objectColors[x]&0x8000)) return ppu->objectColors[x]&0x7fff;
+  return ppu->cgram[pixel&255];
+}
 
 // Host-only debug render filter (SNESRECOMP_LAYER_MASK env; ppu.c). Guest
 // state and savestates are untouched — this only gates final composition.

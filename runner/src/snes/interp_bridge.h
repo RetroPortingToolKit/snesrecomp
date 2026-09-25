@@ -50,11 +50,15 @@ static inline bool interp_bridge_use_absolute_apu_timeline(
  * pay only the address check. At a match it synchronizes registers into
  * CpuState, invokes the callback, then copies any changes back.
  *
- * Up to 8 PCs may be armed (LoROM FastROM bit7 is masked). Calling with a
+ * Up to 192 registrations may be armed (LoROM FastROM bit7 is masked). Calling with a
  * non-NULL hook adds/replaces that PC; hook=NULL clears all slots. */
 typedef void (*InterpPreOpcodeHook)(CpuState *cpu, uint32_t pc24);
 void interp_bridge_set_pre_opcode_hook(uint32_t pc24,
                                        InterpPreOpcodeHook hook);
+/* Compose without replacing an existing owner's callback. Duplicate pairs are
+ * idempotent. Returns false on invalid input/capacity exhaustion. Callbacks run
+ * in registration order; a redirect completes handling for that original PC. */
+bool interp_bridge_add_pre_opcode_hook(uint32_t pc24, InterpPreOpcodeHook hook);
 void interp_bridge_pre_opcode_redirect(uint32_t pc24);
 
 /*

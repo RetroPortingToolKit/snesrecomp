@@ -314,6 +314,9 @@ void RtlWriteSram();
  * Pass NULL/"" to restore the default. */
 void RtlSetSaveRoot(const char *root);
 const char *RtlSaveRoot(void);
+/* Current RTLS guest prefix, including its header but excluding title extras.
+ * For opt-in preflight of states written by this exact guest schema. */
+size_t RtlSnapshotGuestSize(uint32 *version_out);
 void RtlEnsureSaveDir(void);
 void RtlSaveSlotPath(int slot, char *buf, size_t buflen);
 void RtlSramFilePath(char *buf, size_t buflen);
@@ -332,6 +335,9 @@ bool RtlLoadExecutionState(struct SaveLoadInfo *sli);
 /* Unread bytes in a snapshot stream, or SIZE_MAX for an unknown stream.
  * Lets game chunks distinguish historical layouts without probing past EOF. */
 size_t RtlStateBytesRemaining(struct SaveLoadInfo *sli);
+/* Propagate failure from a title extension (including allocation failure) to
+ * the caller, so an incomplete snapshot is never reported as saved/loaded. */
+void RtlStateStreamFail(struct SaveLoadInfo *sli);
 void RtlApplyExecutionState(void);
 /* Host timeline invalidation after a successful load or reset. */
 uint64_t RtlStateGeneration(void);
