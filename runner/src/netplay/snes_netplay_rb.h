@@ -4,12 +4,16 @@
 /*
  * SNES rollback host (SNES_NET_MODE=rollback).
  *
- * Layering, matching lib/retcomm-rbengine/docs/host_integration.md:
+ * Layering (lib/recomp-net/docs/rollback.md, "Episode driver"):
  *
  *   snes_netplay (facade, mode gate)
- *     ├── snes_netplay_rb        this file — snapshots, digests, resim, episode wire
- *     ├── recomp-net             RNetSession tips + RNetRbSession episode FSM,
- *     │                          invent policy, input history, hash_confirm
+ *     ├── snes_netplay_rb        this file — the engine vtable: snapshots,
+ *     │                          digests, pad layout, one tick, resim window
+ *     ├── recomp-net             the episode DRIVER (rb_driver.h: admit,
+ *     │                          reconcile, open/follow/seal/replay/verify/
+ *     │                          commit, tip-hold/extend, watchdogs, boot and
+ *     │                          mod-set gates) over RNetSession tips, the
+ *     │                          RNetRbSession core, input history, hash_confirm
  *     └── retcomm-rbengine       snap ring, monotonic clock
  *
  * The delay-sync path never calls anything here, and rollback never changes
@@ -35,6 +39,7 @@
 #include <stdint.h>
 
 #include "recomp_net/recomp_net.h"
+#include "recomp_net/rb_driver.h"
 #include "recomp_net/hash_confirm.h"
 #include "recomp_net/input_hist.h"
 #include "recomp_net/rb_post.h"

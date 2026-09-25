@@ -20,16 +20,24 @@ are platform-independent, and this one for what SNES changes.
 ```text
 game main loop                     unchanged: poll_admit → RtlRunFrame → finish_frame
   └── snes_netplay                 facade + mode gate
-        ├── snes_netplay_rb        this port: snapshots, digests, resim, episode wire
-        ├── retcomm-rbengine       invent policy, input history, hash_confirm, snap ring
-        └── recomp-net             RNetSession tips + RNetRbSession episode FSM
+        ├── snes_netplay_rb        this port: the engine vtable — snapshots,
+        │                          digests, pad layout, one tick, resim window
+        ├── recomp-net             the episode DRIVER (rb_driver.h) + scheduler,
+        │                          input history, hash_confirm, RNetRbSession core
+        └── retcomm-rbengine       snap ring, monotonic clock
 ```
 
-`retcomm-rbengine` is MotK-proven host policy with the PSX types removed, so
-the admission scheduler, the hold-last invent, the hash-confirm watermark, and
-the snapshot ring are shared with psxrecomp rather than rewritten here. What
-this repo owns is everything genuinely SNES: what a snapshot contains, what a
-digest covers, and how a resim runs.
+**Amended 2026-09-24.** The episode driver — admit, reconcile, open / follow /
+seal / replay / verify / commit, tip-hold and tip-extend, watchdogs, the fork
+cap, the boot-digest, mod-set and identity gates, lockstep degrade — was lifted
+out of `snes_netplay_rb.c` into recomp-net (`rnet_rb_driver_*`), by owner
+ruling, so n64lle and psxrecomp run the same one instead of each writing their
+own. `snes_netplay_rb.c` shrank from 2,810 lines to the SNES half: what a
+snapshot contains, what a digest covers, how a pad row is laid out, and how a
+resim tick runs and stays off screen. Log wording is unchanged, so
+`tools/rb_loopback.sh` and `tools/rb_sweep.sh` parse the same lines. Earlier
+text in this file that says a mechanism lives "here" now means "in the driver
+this port binds"; see recomp-net `docs/rollback.md`, "Episode driver".
 
 ## 2. Build and run
 
@@ -56,6 +64,12 @@ At runtime:
 
 `retcomm-rbengine`'s own `RBE_RB_*` scheduler knobs apply unchanged; see its
 README.
+
+Every `SNES_RB_*` knob the driver reads also answers to its generic name,
+`RNET_RB_*` (same suffix). The `SNES_RB_` spelling is consulted first, so the
+harness's per-peer pins cannot be overridden by a generic name leaking in from
+the parent environment. `SNES_RB_SNAP_DEPTH` stays this port's (the ring is
+host storage).
 
 A build without `SNESRECOMP_NET_ROLLBACK` ignores `SNES_NET_MODE` entirely,
 and a rollback host that fails to start logs and falls back to delay-sync for
@@ -200,9 +214,11 @@ Live ─mispredict─> begin_episode ─> seal_inputs ─> RB_SYNC BEGIN + RB_SE
                 └─ diverge ─> abort + cooldown
 ```
 
-- Epoch ids are partitioned by initiator slot (`counter << 1 | slot`) so
-  concurrent dual initiation cannot collide; the lower slot wins the tie-break
-  and the loser yields and follows.
+- Epoch ids are partitioned by initiator slot (`counter << 3 | slot`, all
+  eight seats; was `<< 1 | slot & 1` before the driver lift) so concurrent dual
+  initiation cannot collide; the lower slot wins the tie-break and the loser
+  yields and follows. The winner is read from the epoch, not assumed to be
+  "the other seat".
 - A follower with no snapshot at the requested load tick sends `OP_NACK`
   carrying its confirmed frontier, and the initiator demotes to a mutually
   provable tick instead of guessing `load - 1`.
@@ -218,18 +234,14 @@ Live ─mispredict─> begin_episode ─> seal_inputs ─> RB_SYNC BEGIN + RB_SE
 
 ## 8. SNES pad polarity
 
-`retcomm-rbengine` fills an unknown invent row with `0xFFFF`, because PSX pads
-are active low. **SNES pads in this runner are 12-bit active high**, so that
-value means every button held. Two guards, in `snes_netplay_rb.c`:
-
-- a neutral row is seeded per seat at start, so hold-last almost never reaches
-  the fallback;
-- `rb_row_sanitize` maps the `0xFFFF` sentinel to `0` and masks to 12 bits on
-  every row entering history, a seal, or the sim. A genuine SNES row can never
-  be `0xFFFF`, so the sentinel is unambiguous.
-
-`rbe_ih_invent_idle` is never called: its neutral is the same PSX-shaped
-value, and there is no seal gap-fill path here that needs it.
+recomp-net's input history defaults an unknown invent row to `0xFFFF`, because
+PSX pads are active low. **SNES pads in this runner are 12-bit active high**,
+so that value means every button held. The driver asks the host for its
+neutral (`neutral_row`: 0 here) and installs it per seat
+(`rnet_ih_set_neutral`), so hold-last never reaches the PSX fallback. The
+sanitizer (`sanitize_row`) still maps a `0xFFFF` sentinel to `0` and masks to
+12 bits on every row entering history, a seal, or the sim, for a row arriving
+from an older peer. A genuine SNES row can never be `0xFFFF`.
 
 ## 9. Not ported from MotK
 
