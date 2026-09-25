@@ -72,6 +72,13 @@ uint64_t bridgeq_prof_calls = 0;
 double bridgeq_prof_ms = 0.0;
 #endif
 static void bridge_apu_flush(CpuState *cpu) {
+    /* SNESRECOMP_INTERP_NOAPU=1: skip the bridge's APU catch-up entirely.
+     * Bisection aid for hosts that drive the SPC themselves -- if a run that
+     * hangs inside a single interpreted step completes with this set, the APU
+     * path is the hang and the two sides are both trying to own the clock. */
+    { static int noapu = -1;
+      if (noapu < 0) noapu = getenv("SNESRECOMP_INTERP_NOAPU") ? 1 : 0;
+      if (noapu) { s_apu_pending_master = 0; return; } }
     if (!s_apu_pending_master) return;
 #ifdef SNESRECOMP_INTERP_PROFILE
     { extern uint64_t apu_prof_calls; extern double apu_prof_ms;
@@ -226,6 +233,15 @@ static int bridge_yield_diag(void) {
     return v;
 }
 static void bridge_bus_write(void *mem, uint32_t adr, uint8_t val) {
+    /* SNESRECOMP_REGWRITE_DIAG=1: announce every hardware-register write
+     * BEFORE it is issued. For a bus access that does not return, the last
+     * line printed names the register that blocked. */
+    { static int rwd = -1;
+      if (rwd < 0) rwd = getenv("SNESRECOMP_REGWRITE_DIAG") ? 1 : 0;
+      if (rwd) { uint16_t a16 = (uint16_t)(adr & 0xFFFF);
+        if (a16 >= 0x2100 && a16 <= 0x43FF)
+          fprintf(stderr, "[regwrite] -> $%04X = %02X\n", (unsigned)a16,
+                  (unsigned)val); } }
     bridge_timing_bus(adr);
     g_interp_bridge_write_epoch++;
     CpuState *cpu = (CpuState *)mem;
@@ -247,6 +263,11 @@ static void bridge_bus_write(void *mem, uint32_t adr, uint8_t val) {
         rtl_sync_apu_to_cpu_locked();
         RtlApuUnlock();
     }
+    { static int rwd2 = -1;
+      if (rwd2 < 0) rwd2 = getenv("SNESRECOMP_REGWRITE_DIAG") ? 1 : 0;
+      if (rwd2) { uint16_t a16 = (uint16_t)(adr & 0xFFFF);
+        if (a16 >= 0x2100 && a16 <= 0x43FF)
+          fprintf(stderr, "[regwrite]    $%04X done\n", (unsigned)a16); } }
 }
 
 /* Word bus (interp816 read_word/write_word): claim a CONTIGUOUS pair that
@@ -441,9 +462,17 @@ static uint8_t  s_sched_yield_flag_value = 0;
 static int      s_lle_unwind_active = 0;
 static uint32_t s_lle_unwind_pc24   = 0;
 static int      s_lle_unwind_owner_depth = 0;
+/* Why a pending unwind was raised. A yield primitive (vblank wait, task
+ * switch) wants the interpreter to resume at the primitive's ROM entry and
+ * carry on. A master-deadline expiry wants the opposite: the host asked for
+ * a time bound, so control has to leave the bridge entirely, or the host can
+ * never re-arm and the bound fires forever on every subsequent bounce. Both
+ * arrive through the same interp_bridge_lle_yield_unwind() sentinel, so the
+ * cause has to be recorded where it is known. */
 static int      s_lle_unwind_is_deadline = 0;
 static int      s_lle_next_unwind_is_deadline = 0;
 static uint32_t s_lle_resume_pc24   = 0;
+static int      s_interp_pctrace    = 0;
 static int      s_lle_wai_yield     = 0;
 static int      s_lle_quiescent_yield = 0;
 static uint64_t s_lle_master_deadline = 0;
@@ -452,6 +481,36 @@ static uint64_t s_lle_master_deadline = 0;
  * owning interpreter's guest call chain. */
 static int      s_interp_bridge_depth = 0;
 static int      s_interp_bounce_owner_depth = 0;
+/* Count of AOT bodies entered through the paired ABI. Exposed so a host
+ * can tell a genuinely-compiled run from one that quietly interpreted
+ * everything -- without it, a wall-clock tier comparison is unreadable. */
+unsigned long long g_interp_bridge_bounces = 0;
+/* Opcodes the bridge INTERPRETED. Together with the bounce count this says
+ * how much of a run the AOT tier is actually carrying. */
+unsigned long long g_interp_bridge_steps = 0;
+
+/* Optional host coverage hooks. Both are NULL by default and cost one
+ * predictable branch when unset.
+ *
+ * A host that drives the guest through run_loop cannot see executed PCs the
+ * way a per-opcode host can, so any executed-PC bitmap it keeps is empty --
+ * which silently invalidates every coverage tool built on one.
+ *
+ * The two hooks are deliberately NOT interchangeable:
+ *
+ *   pc_hook     fires once per INTERPRETED opcode, with the architectural PC
+ *               and the live widths. Exact.
+ *   bounce_hook fires once per compiled body ENTERED, with its entry PC and
+ *               entry widths. This is an entry, not an extent: a compiled body
+ *               executes an unknown number of opcodes without reporting them.
+ *
+ * A host must not treat a bounce as coverage of the body interior. Manifest
+ * min_pc24/max_pc24 will not fill that gap either -- those bounds swallow
+ * nested routines and stop short of a truncated one, so expanding them
+ * manufactures coverage that was never executed. Report entered variants
+ * separately and join them by key instead. */
+void (*g_interp_bridge_pc_hook)(uint32_t pc24, int m_flag, int x_flag) = 0;
+void (*g_interp_bridge_bounce_hook)(uint32_t pc24, int m_flag, int x_flag) = 0;
 /* Architectural stack boundary of the currently active interpreter frame.
  * A rewritten AOT return that has already popped above this boundary belongs
  * to a compiled ancestor, not to this interpreter's guest call chain. */
@@ -640,12 +699,49 @@ void interp_bridge_set_master_deadline(uint64_t master_clock) {
 }
 
 int interp_bridge_lle_master_deadline_reached(const CpuState *cpu) {
+    /* SNESRECOMP_DEADLINE_DIAG=1: report why the bound is not firing.
+     *
+     * Every generated block polls this, so a host that arms a deadline and
+     * still hangs cannot tell whether the deadline was never reached or one of
+     * the two depth guards is zero -- the guards are file-static and invisible
+     * from outside. Rate-limited to a handful of lines. */
+    if (cpu && s_lle_master_deadline != 0 &&
+        cpu->master_cycles >= s_lle_master_deadline &&
+        !(s_lle_sched_depth > 0 && s_interp_bounce_owner_depth > 0)) {
+        static int diag_n = -1;
+        if (diag_n < 0) diag_n = getenv("SNESRECOMP_DEADLINE_DIAG") ? 0 : 1000;
+        if (diag_n < 8) {
+            diag_n++;
+            fprintf(stderr,
+                    "[deadline_diag] past deadline but suppressed: "
+                    "sched_depth=%d bounce_owner_depth=%d master=%llu "
+                    "deadline=%llu\n",
+                    s_lle_sched_depth, s_interp_bounce_owner_depth,
+                    (unsigned long long)cpu->master_cycles,
+                    (unsigned long long)s_lle_master_deadline);
+        }
+    }
     const int reached =
         cpu && s_lle_sched_depth > 0 && s_interp_bounce_owner_depth > 0 &&
         s_lle_master_deadline != 0 &&
         cpu->master_cycles >= s_lle_master_deadline;
-    if (reached)
+    if (reached) {
         s_lle_next_unwind_is_deadline = 1;
+        static int fired = -1;
+        if (fired < 0) fired = getenv("SNESRECOMP_DEADLINE_DIAG") ? 0 : 1000;
+        if (fired < 4) {
+            fired++;
+            fprintf(stderr, "[deadline_diag] FIRED master=%llu deadline=%llu "
+                    "sched=%d bounce=%d S=%04X X=%04X Y=%04X "
+                    "DB=%02X D=%04X PB=%02X m=%u x=%u\n",
+                    (unsigned long long)cpu->master_cycles,
+                    (unsigned long long)s_lle_master_deadline,
+                    s_lle_sched_depth, s_interp_bounce_owner_depth,
+                    (unsigned)cpu->S, (unsigned)cpu->X, (unsigned)cpu->Y,
+                    (unsigned)cpu->DB, (unsigned)cpu->D, (unsigned)cpu->PB,
+                    (unsigned)cpu->m_flag, (unsigned)cpu->x_flag);
+        }
+    }
     return reached;
 }
 
@@ -1177,6 +1273,16 @@ static int _interp_run_core(CpuState *cpu, uint32_t entry_pc24,
             interp_hist_add(pc_before);
         }
 #endif
+        /* SNESRECOMP_INTERP_PCTRACE=N: print the PC every N steps. For the case
+         * the bail-time trace cannot reach -- a run that never bails and never
+         * returns, where the question is simply "where is it". */
+        { static long pct = -1;
+          if (pct < 0) { const char *e = getenv("SNESRECOMP_INTERP_PCTRACE");
+                         pct = e ? atol(e) : 0; if (pct < 0) pct = 0;
+                         s_interp_pctrace = pct != 0; }
+          if (pct && (steps % pct) == 0)
+            fprintf(stderr, "[pctrace] step=%ld pc=%06X op=%02X\n", steps,
+                    (unsigned)pc_before, bridge_bus_read(cpu, pc_before)); }
 #if SNESRECOMP_REVERSE_DEBUG
         /* The reverse debugger must observe whichever execution tier owns the
          * next guest instruction. AOT blocks arrive through cpu_trace_block;
@@ -1978,7 +2084,16 @@ static int _interp_run_core(CpuState *cpu, uint32_t entry_pc24,
             sync_interp_to_cpu(&in, cpu);
         }
         cpu->coprocessor_master_cycles = cpu->master_cycles;
+        if (s_interp_pctrace && steps < 4)
+            fprintf(stderr, "[pctrace] step=%ld pre-runOpcode pc=%06X\n",
+                    steps, (unsigned)pc_before);
+        if (g_interp_bridge_pc_hook)
+            g_interp_bridge_pc_hook(pc_before & 0xFFFFFFu,
+                                    in.mf ? 1 : 0, in.xf ? 1 : 0);
         int _cyc = interp816_runOpcode(&in);   /* executes the opcode; pushes/pops frames */
+        if (s_interp_pctrace && steps < 4)
+            fprintf(stderr, "[pctrace] step=%ld post-runOpcode cyc=%d pc=%02X:%04X\n",
+                    steps, _cyc, in.k, in.pc);
         s_interp_bus_timing_active=0;
         if (dtrace && in.dp != dp_before) {
             extern int snes_frame_counter;
@@ -2001,6 +2116,7 @@ static int _interp_run_core(CpuState *cpu, uint32_t entry_pc24,
             unsigned _internal = (unsigned)_cyc > s_interp_bus_cycles
                                ? (unsigned)_cyc - s_interp_bus_cycles : 0;
             uint64_t _master = s_interp_bus_master + (uint64_t)_internal * 6u;
+            g_interp_bridge_steps++;
             cpu->cycles        += (uint64_t)_cyc;
             cpu->master_cycles += _master;
             /* DRAM refresh tax — shared watermark with the AOT tier's
@@ -2185,6 +2301,12 @@ static int _interp_run_core(CpuState *cpu, uint32_t entry_pc24,
                 int _saved_bounce_owner = s_interp_bounce_owner_depth;
                 s_interp_bounce_recomp_base = g_recomp_stack_top;
                 s_interp_bounce_owner_depth = s_interp_bridge_depth;
+                g_interp_bridge_bounces++;
+                if (g_interp_bridge_bounce_hook)
+                    g_interp_bridge_bounce_hook(target & 0xFFFFFFu,
+                                                cpu->m_flag ? 1 : 0,
+                                                cpu->x_flag ? 1 : 0);
+                s_lle_next_unwind_is_deadline = 0;
                 RecompReturn _air = cpu_dispatch_pc_paired(cpu, target, _fs);
                 s_interp_bounce_owner_depth = _saved_bounce_owner;
                 s_interp_bounce_recomp_base = _saved_bounce_base;

@@ -766,7 +766,7 @@ def build_manifest(rom: bytes, parsed, *, max_insns: int, max_nodes: int,
             if len(kept) != len(graph.unknown_callee_exit_sites):
                 graph.unknown_callee_exit_sites[:] = kept
         graph_has_poison = any(
-            decoded.insn.mnem in ("BRK", "COP")
+            decoded.insn.mnem == "BRK"
             and (decoded.insn.addr & 0xFFFFFF)
             not in graph.data_region_exec_pcs
             for decoded in graph.insns.values())
@@ -793,7 +793,7 @@ def build_manifest(rom: bytes, parsed, *, max_insns: int, max_nodes: int,
                 probe = None
             if (probe is not None
                     and not any(
-                        decoded.insn.mnem in ("BRK", "COP")
+                        decoded.insn.mnem == "BRK"
                         and (decoded.insn.addr & 0xFFFFFF)
                         not in probe.data_region_exec_pcs
                         for decoded in probe.insns.values())):

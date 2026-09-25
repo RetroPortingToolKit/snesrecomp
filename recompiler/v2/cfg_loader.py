@@ -110,6 +110,22 @@ class BankCfg:
     # is wrong for those (Bug C class, see
     # docs/ABSTRACT_INTERPRETATION_GAPS.md).
     exit_mx_at_per_variant: List[Tuple[int, int, int, int, int, int]] = field(default_factory=list)
+
+    # `exit_mx_set` directives: (bank, addr16, entry_m, entry_x, frozenset of
+    # (exit_m, exit_x)). Declares that a callee entered at one variant returns
+    # in MORE THAN ONE width depending on the path it takes -- which neither
+    # `exit_mx_at` (one width, broadcast to every variant) nor
+    # `exit_mx_at_per_variant` (one width per variant) can express.
+    #
+    # This is not hypothetical. SimCity's 02:8000 is entered only at m0x0 and
+    # returns in m0x1 or m1x1: 02:803C is `JMP $824B` into a shared tail that
+    # ends at a different RTL from its own. The decoder already models exactly
+    # this -- `callee_exit_mx_modes` forks the post-call fall-through into one
+    # DecodeKey per proven exit mode and the emitter picks the live one with a
+    # runtime width switch -- but until now only the whole-program fixed point
+    # could populate it, so a callee the solver could not prove had no way to
+    # be told the answer.
+    exit_mx_set: List[Tuple[int, int, int, int, frozenset]] = field(default_factory=list)
     # `auto_vectors` directive — when true and this cfg is bank 00,
     # v2_regen reads the SNES interrupt-vector table from the detected
     # LoROM/HiROM internal-header location and auto-seeds
@@ -782,6 +798,43 @@ def load_bank_cfg(path: str) -> BankCfg:
                 bank_id = (addr_24 >> 16) & 0xFF
                 addr16 = addr_24 & 0xFFFF
                 cfg.exit_mx_at.append((bank_id, addr16, m_val, x_val))
+                continue
+
+            # exit_mx_set <hex_24bit_addr> <entry MmXn> <exit MmXn>[,<exit MmXn>...]
+            #
+            # Declares a callee's exit widths as a SET, for the entry variant
+            # named. Use when a routine returns in more than one width from a
+            # single entry variant -- see the field comment above.
+            #
+            #   exit_mx_set 028000 M0X0 M0X1,M1X1
+            if head == 'exit_mx_set' and len(tokens) >= 4:
+                try:
+                    addr_24 = _parse_hex(tokens[1])
+                except ValueError:
+                    raise ValueError(
+                        f"{path}: exit_mx_set bad address in {stripped!r}")
+                entry = _parse_mx(tokens[2])
+                if entry is None:
+                    raise ValueError(
+                        f"{path}: exit_mx_set bad entry variant {tokens[2]!r} "
+                        f"(want M0X0..M1X1)")
+                # Join the tail before splitting so both `M0X1,M1X1` and
+                # `M0X1, M1X1` parse -- the tokenizer splits on whitespace.
+                exits = set()
+                for part in ''.join(tokens[3:]).split(','):
+                    mx = _parse_mx(part.strip())
+                    if mx is None:
+                        raise ValueError(
+                            f"{path}: exit_mx_set bad exit variant {part!r} "
+                            f"in {stripped!r} (want M0X0..M1X1)")
+                    exits.add(mx)
+                if len(exits) < 2:
+                    raise ValueError(
+                        f"{path}: exit_mx_set needs two or more distinct exit "
+                        f"widths in {stripped!r}; use exit_mx_at for a single one")
+                cfg.exit_mx_set.append((
+                    (addr_24 >> 16) & 0xFF, addr_24 & 0xFFFF,
+                    entry[0], entry[1], frozenset(exits)))
                 continue
 
             # data_region <bank> <start> <end>

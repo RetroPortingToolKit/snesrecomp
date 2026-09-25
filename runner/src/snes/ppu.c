@@ -74,7 +74,8 @@ static void PpuUpdateWidescreenOamHistory(Ppu *ppu, int line);
 Ppu* ppu_init(void) {
   Ppu* ppu = calloc(1, sizeof(Ppu));  /* zero padding: saveload/co-sim hash determinism */
   if (ppu)
-    ppu->wsOamMotionLastLine = -1;
+    ppu->wsOamMotionGraceOn = 1;
+  ppu->wsOamMotionLastLine = -1;
   return ppu;
 }
 
@@ -101,6 +102,7 @@ void ppu_reset(Ppu* ppu) {
     memcpy(ppu->overlayRenderBuffer, overlayBuffer, sizeof(overlayBuffer));
   }
   ppu->vramIncrement = 1;
+  ppu->wsOamMotionGraceOn = 1;
   ppu->wsOamMotionLastLine = -1;
 }
 
@@ -116,6 +118,7 @@ void ppu_saveload(Ppu *ppu, SaveLoadInfo *sli) {
 void PpuResetWidescreenOamHistory(Ppu *ppu) {
   if (!ppu)
     return;
+  ppu->wsOamMotionGraceOn = 1;
   ppu->wsOamMotionLastLine = -1;
   memset(ppu->wsOamMotionX, 0, sizeof(ppu->wsOamMotionX));
   memset(ppu->wsOamMotionSig, 0, sizeof(ppu->wsOamMotionSig));
@@ -2606,19 +2609,60 @@ static void PpuWsOamHistoryMarkSeen(Ppu *ppu, uint8_t slot) {
   ppu->wsOamMotionSeen[slot >> 3] |= (uint8_t)(1u << (slot & 7));
 }
 
+/* Once per FRAME, and a repeated line is not a new frame.
+ *
+ * The guard used to skip only when the line number ADVANCED, so an equal
+ * line number read as a frame boundary. That holds for a host that renders
+ * each line once. A host that re-renders lines into scratch surfaces -- to
+ * isolate the backgrounds, or the OBJ layer, for a widescreen compositor --
+ * arrives a second time with line == lastLine, which the old test took for a
+ * wrap. The body then ran on the order of once per line.
+ *
+ * That is fatal to a classifier built on per-frame deltas. OAM does not
+ * change between two passes over the same line, so every repeat saw dx == 0:
+ * the first pass set the grace and the repeats decremented it straight back
+ * to zero. Measured on SimCity's city view, which re-renders every line for
+ * its margin passes: the longest unbroken stretch of frames on which ANY
+ * slot held motion grace was 1, against 68 once this is keyed correctly.
+ * A moving sprite needs grace on every frame to stay drawn in a margin, so
+ * at 1 no game-authored object could ever hold one -- reported from play as
+ * the train missing from the widescreen margins.
+ *
+ * A real frame boundary is the line number going BACKWARDS, which a repeated
+ * line never does. line == 0 is accepted too, for hosts that pass it, with
+ * lastLine != 0 so a repeat there cannot double-run either. Hosts that render
+ * the field as lines 1..224 and never pass line 0 still wrap 224 -> 1.
+ *
+ * Deliberately not keyed on snes_frame_counter: RtlRunFrame owns that, and a
+ * host driving the PPU directly never calls it, which freezes the classifier
+ * outright -- tried, and it left the grace at zero for the whole run. */
 static void PpuUpdateWidescreenOamHistory(Ppu *ppu, int line) {
-  if (ppu->wsOamMotionLastLine >= 0 && line > ppu->wsOamMotionLastLine) {
-    ppu->wsOamMotionLastLine = (int16_t)line;
-    return;
-  }
+  const int last = ppu->wsOamMotionLastLine;
+  const bool new_frame = last < 0 || line < last || (line == 0 && last != 0);
   ppu->wsOamMotionLastLine = (int16_t)line;
+  if (!new_frame)
+    return;
   for (uint8_t slot = 0; slot < 128; slot++) {
     uint8_t index = (uint8_t)(slot * 2);
     int16_t x = (int16_t)PpuDecodeOamX(ppu, index);
     uint32_t sig = PpuOamMotionSignature(ppu, index);
     if (PpuWsOamHistorySeen(ppu, slot) &&
         sig == ppu->wsOamMotionSig[slot]) {
-      if (x != ppu->wsOamMotionX[slot]) {
+      /* A STEP, not a teleport.
+       *
+       * "X changed" is too weak a test for movement. SimCity's scenario
+       * selector blinks a selection bracket by flipping it between an
+       * on-screen position and one 256 px to the left, which hardware
+       * clips and a widened margin does not. Every toggle looks like
+       * motion, so the grace never expires and the bracket sits in the
+       * margin blinking -- measured as 128 stray green pixels there.
+       *
+       * Real movement is small and per-frame: the title sign this
+       * classifier exists for travels about 2 px a frame. A jump of a
+       * whole screen is a game hiding something, not an object moving,
+       * so it must not refresh the grace. */
+      const int dx = x - ppu->wsOamMotionX[slot];
+      if (dx != 0 && dx > -32 && dx < 32) {
         ppu->wsOamMotionGrace[slot] = kPpuWsOamMovingGraceFrames;
       } else if (ppu->wsOamMotionGrace[slot]) {
         ppu->wsOamMotionGrace[slot]--;
@@ -2641,7 +2685,7 @@ static bool PpuWidescreenOamLeftHintAllows(Ppu *ppu, uint8_t index, int x,
   int slot = index >> 1;
   if (ppu->wsOamLeftHint[slot >> 3] & (1u << (slot & 7)))
     return true;
-  return ppu->wsOamMotionGrace[slot] != 0;
+  return ppu->wsOamMotionGraceOn && ppu->wsOamMotionGrace[slot] != 0;
 }
 
 static bool ppu_evaluateSprites(Ppu* ppu, int line) {
@@ -2729,6 +2773,43 @@ static bool ppu_evaluateSprites(Ppu* ppu, int line) {
             int px_right = IntMin(256 + kPpuExtraLeftRight - (col + x), 8);
             PpuZbufType *dst = ppu->objBuffer.data + col + x + px_left + kPpuExtraLeftRight;
             int slot = index >> 1;
+             /* Clip an unhinted sprite at the SCREEN EDGE, per pixel.
+             *
+             * PpuWidescreenOamLeftHintAllows() gates whole sprites, so a
+             * sprite is drawn entirely or not at all. For an object sliding
+             * off the left that means it pops out in whole-sprite steps --
+             * the title's SimCity sign is three 16 px sprites, so it leaves
+             * in three 16 px chunks instead of sliding.
+             *
+             * Hardware clips at x=0 per pixel. Doing the same here makes the
+             * object leave smoothly and costs nothing elsewhere: a sprite
+             * fully on screen never has a negative pixel, and a host-placed
+             * one is hinted and keeps its margin pixels. */
+            static int ws_edge_clip_on = -1;
+            if (ws_edge_clip_on < 0) {
+              const char *e = getenv("SC_WS_OBJ_EDGE_CLIP");
+              ws_edge_clip_on = (e && *e) ? (*e != '0') : 1;
+            }
+            /* NOT while the sprite is moving.
+             *
+             * PpuWidescreenOamLeftHintAllows() now lets an unhinted OBJ
+             * with motion grace travel into the widened left margin. This
+             * clip then threw away every one of its pixels past x=0, so
+             * the object was admitted and immediately erased -- reported
+             * from play as the title's SimCity sign fading out ON screen
+             * rather than leaving at the true edge. Measured on the title:
+             * with the clip off the sign tracks smoothly from x=56..94
+             * down to x=34..72 across the margin; with it on those pixels
+             * are simply gone.
+             *
+             * It still applies to a sprite that is NOT moving, which is
+             * what it was written for: an unhinted parked object has no
+             * business in the margin, and clipping it at the screen edge
+             * beats popping it out a whole sprite at a time. */
+            const bool ws_clip_left =
+                ws_edge_clip_on && ppu->wsOamLeftHintStrict &&
+                !(ppu->wsOamLeftHint[slot >> 3] & (1u << (slot & 7))) &&
+                !(ppu->wsOamMotionGraceOn && ppu->wsOamMotionGrace[slot]);
             PpuOverlayCapture *obj_capture =
                 &ppu->overlayCaptures[kPpuOverlaySource_Obj];
             bool capture_slot = PpuOverlayActiveOnLine(
@@ -2744,6 +2825,7 @@ static bool ppu_evaluateSprites(Ppu* ppu, int line) {
         int pixel = (bits >> 0) & 1 | (bits >> 7) & 2 |
                     (bits >> 14) & 4 | (bits >> 21) & 8;
         if (pixel == 0) continue;
+        if (ws_clip_left && col + x + px < 0) continue;
               if (capture_slot) {
                 int screen_x = col + x + px;
                 if (screen_x >= obj_capture->x0 && screen_x < obj_capture->x1) {
@@ -2907,6 +2989,12 @@ uint8_t ppu_read(Ppu* ppu, uint8_t adr) {
  * CGRAM/OAM) are deliberately excluded — those are uploads, not per-line
  * display state, and replaying them would double-apply the data. */
 int g_ppu_scanout_latch_bypass = 0;
+
+static PpuVramWriteLogHook s_vram_write_log_hook;
+
+void ppu_set_vram_write_log_hook(PpuVramWriteLogHook hook) {
+  s_vram_write_log_hook = hook;
+}
 
 #define PPU_RASTER_MAX 256
 typedef struct { uint8_t line; uint16_t reg; uint8_t val; } PpuRasterEntry;
@@ -3188,6 +3276,8 @@ void ppu_write(Ppu* ppu, uint8_t adr, uint8_t val) {
       ppu->vram[vramAdr & 0x7fff] = (ppu->vram[vramAdr & 0x7fff] & 0xff00) | val;
       // $2118 == low byte of word; byte_addr = word << 1.
       debug_server_on_vram_write(((uint32_t)(vramAdr & 0x7fff) << 1), val);
+      if (s_vram_write_log_hook)
+        s_vram_write_log_hook(((uint32_t)(vramAdr & 0x7fff) << 1), val);
 #if SNESRECOMP_ENABLE_MODS
       snes_text_xlate_on_vram_write_c((uint16_t)(vramAdr & 0x7fff));
 #endif
@@ -3201,6 +3291,8 @@ void ppu_write(Ppu* ppu, uint8_t adr, uint8_t val) {
       ppu->vram[vramAdr & 0x7fff] = (ppu->vram[vramAdr & 0x7fff] & 0x00ff) | (val << 8);
       // $2119 == high byte of word; byte_addr = (word << 1) + 1.
       debug_server_on_vram_write(((uint32_t)(vramAdr & 0x7fff) << 1) + 1, val);
+      if (s_vram_write_log_hook)
+        s_vram_write_log_hook(((uint32_t)(vramAdr & 0x7fff) << 1) + 1, val);
 #if SNESRECOMP_ENABLE_MODS
       snes_text_xlate_on_vram_write_c((uint16_t)(vramAdr & 0x7fff));
 #endif

@@ -425,9 +425,15 @@ def _h_wdm(insn, vf): return [Nop()]
 def _h_brk(insn, vf): return [Break(
     cop=False, source_pc24=insn.addr & 0xFFFFFF,
     tier_to_lle=getattr(insn, 'data_region_exec', False))]
+# A real COP is a syscall: it pushes PB/PC/P, the handler runs, and its RTI
+# pops P again -- so a COP is M/X-transparent by hardware and decode may
+# continue past it in the same widths. The only thing that cannot be compiled
+# is the interrupt itself, so tier it to the authoritative interpreter
+# unconditionally. The previous `data_region_exec` gate meant a COP outside a
+# declared data region emitted a bare comment, i.e. the syscall was silently
+# skipped; that is only safe because such nodes were poisoned instead.
 def _h_cop(insn, vf): return [Break(
-    cop=True, source_pc24=insn.addr & 0xFFFFFF,
-    tier_to_lle=getattr(insn, 'data_region_exec', False))]
+    cop=True, source_pc24=insn.addr & 0xFFFFFF, tier_to_lle=True)]
 def _h_stp(insn, vf): return [Stop(wait=False)]
 def _h_wai(insn, vf): return [Stop(wait=True)]
 

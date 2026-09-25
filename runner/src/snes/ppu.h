@@ -284,6 +284,12 @@ struct Ppu {
   // Strict decode of ambiguous left-margin OAM positions. A NULL hint pointer
   // disables strict mode; a zeroed hint array enables strict mode with no slots
   // explicitly allowed.
+  // Host switch for the temporal fallback below. 1 (the default) lets an
+  // unhinted moving OBJ into the margins; 0 admits ONLY hinted slots.
+  // Screens whose margin content the host can enumerate exactly should
+  // turn it off -- a heuristic there shows sprites while the screen moves
+  // and hides them when it stops.
+  uint8_t wsOamMotionGraceOn;
   uint8_t wsOamLeftHintStrict;
   uint8_t wsOamLeftHint[16];
   // Strict decode of the ambiguous 9-bit OAM X band [256, 256+extraRightCur).
@@ -530,6 +536,12 @@ void ppu_sec_read(double *eval, double *line, double *bg, double *spr,
                   double *compose, double *hdma);
 uint8_t ppu_read(Ppu* ppu, uint8_t adr);
 void ppu_write(Ppu* ppu, uint8_t adr, uint8_t val);
+/* Notified on every CPU write to VRAM through $2118/$2119, with the BYTE
+ * address written and the value. Mirrors snes_set_wram_write_log_hook():
+ * a host can name the instruction responsible, which the AOT-side
+ * watchpoints cannot do on the interp816 path. Unset by default. */
+typedef void (*PpuVramWriteLogHook)(uint32_t byte_addr, uint8_t value);
+void ppu_set_vram_write_log_hook(PpuVramWriteLogHook hook);
 
 /* Raster journal — per-line replay of mid-frame INIDISP writes for frame-model
  * hosts. See the block comment in ppu.c. Host calls Begin after its
