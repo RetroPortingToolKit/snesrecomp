@@ -337,6 +337,7 @@ endif()
 
 set(SNESRECOMP_RUNNER_LIBRARIES)
 include(${CMAKE_CURRENT_LIST_DIR}/lua.cmake)
+include(${CMAKE_CURRENT_LIST_DIR}/data_packs.cmake)
 if(NOT WIN32)
     # cx4.c synthesizes its internal data ROM with libm.
     list(APPEND SNESRECOMP_RUNNER_LIBRARIES m)
