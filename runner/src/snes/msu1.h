@@ -21,6 +21,16 @@
 
 #include <stdint.h>
 #include <stdbool.h>
+#include <stddef.h>
+
+/* Optional host PCM routing. Called when selecting a track, under the APU
+ * lock; do not call MSU APIs from the callback. Write the full PCM filename
+ * and return true, or return false for missing-track/SPC fallback. A NULL
+ * callback restores ordinary <base>-<N>.pcm lookup. Registration survives
+ * chip resets; it does not change the .msu data channel or enable the chip. */
+typedef bool (*Msu1TrackResolver)(void *context, const char *base, uint16_t track,
+                                  char *path, size_t capacity);
+void msu1_set_track_resolver(Msu1TrackResolver resolver, void *context);
 
 /* Read the SNESRECOMP_MSU1 environment variable and arm the chip.
  *
