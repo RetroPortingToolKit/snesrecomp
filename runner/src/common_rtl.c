@@ -2492,7 +2492,22 @@ int RtlTryWriteSram(void) {
   return 1;
 }
 
-void RtlWriteSram(void) { (void)RtlTryWriteSram(); }
+void RtlWriteSram(void) {
+  if (!g_sram || g_sram_size <= 0)
+    return;
+  char path[128], bak[140];
+  RtlEnsureSaveDir();
+  RtlSramFilePath(path, sizeof(path));
+  snprintf(bak, sizeof(bak), "%s.bak", path);
+  rename(path, bak);
+  FILE *f = fopen(path, "wb");
+  if (f) {
+    fwrite(g_sram, 1, g_sram_size, f);
+    fclose(f);
+  } else {
+    fprintf(stderr, "Unable to write %s\n", path);
+  }
+}
 
 static const uint8 *SimpleHdma_GetPtr(uint32 p) {
   uint8 bank = (uint8)(p >> 16);

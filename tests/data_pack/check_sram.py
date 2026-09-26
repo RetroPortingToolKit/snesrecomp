@@ -12,7 +12,7 @@ parts=[]
 for name in names:
     start=source.index(name)
     opening=source.index('{',start)
-    end=source.index('}',opening)+1 if name in (names[1],names[5]) else source.index('\n}',opening)+2
+    end=source.index('}',opening)+1 if name == names[1] else source.index('\n}',opening)+2
     parts.append(source[start:end])
 prefix = '#include "common_rtl.h"\n#ifdef _WIN32\n#include <io.h>\n#include <direct.h>\n#else\n#include <unistd.h>\n#include <sys/stat.h>\n#endif\nuint8 *g_sram; int g_sram_size; static char s_save_root[96]="saves";\n'
 with tempfile.TemporaryDirectory(prefix='sram-check-') as temp:

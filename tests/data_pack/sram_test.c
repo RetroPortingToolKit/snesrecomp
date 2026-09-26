@@ -25,8 +25,9 @@ int main(void) {
   expect("sram-test/save.srm",2);expect("sram-test/save.srm.bak",1);
   MKDIR("sram-test/save.srm.tmp");memset(bytes,3,4);
   assert(!RtlTryWriteSram());expect("sram-test/save.srm",2);expect("sram-test/save.srm.bak",1);
+  /* Existing callers retain the direct-write path and ignore the opt-in temp. */
+  RtlWriteSram();expect("sram-test/save.srm",3);
   RMDIR("sram-test/save.srm.tmp");
-  RtlWriteSram();expect("sram-test/save.srm",3);expect("sram-test/save.srm.bak",2);
   remove("sram-test/save.srm");remove("sram-test/save.srm.bak");RMDIR("sram-test");
   puts("SRAM publication, backup and failed-write preservation passed");return 0;
 }

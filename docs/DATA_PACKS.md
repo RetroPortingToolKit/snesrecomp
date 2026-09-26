@@ -117,7 +117,7 @@ collection catalog/guarded IPS-BPS importer (`content_pack.h`, a lower-level
 import tool, not the shared JSON envelope), host MSU path resolution, scoped
 keyboard defaults, pre-opcode redirects and finite PPU captures. A status-returning
 `RtlTryWriteSram` lets content selection stop if the old namespace cannot be saved;
-the existing void `RtlWriteSram` entry point remains available. Configured mod
+the existing void `RtlWriteSram` keeps its original direct-write behavior. Configured mod
 resource paths have a bounded C accessor.
 
 Windows validation on 2026-09-25:
@@ -139,3 +139,18 @@ Windows validation on 2026-09-25:
 
 No game assets, source ROMs, recorded music or semantic DAT payloads are included
 in the framework. Pack presentation and gameplay semantics remain game-owned.
+
+## Merge compatibility audit
+
+- The CMake helper alone adds no target, C++ compiler, library lookup or runtime
+  behavior. Games must call `snesrecomp_target_data_packs` explicitly.
+- Legacy SRAM writers retain their original implementation. Only explicit
+  `RtlTryWriteSram` callers use durable temporary-file publication.
+- Keyboard defaults remain C/V unless the target defines overrides; MSU keeps
+  its ordinary filenames unless the host registers a resolver.
+- Interpreter changes only correct decoding after an explicitly registered
+  hook redirects the PC. Ordinary execution without redirects is unchanged.
+- Collection helpers, resource-path lookup and interpreted-program selection
+  are new callable APIs. They are not activated automatically.
+- Framebuffer and PPU captures require explicit host calls and environment
+  settings. The existing standalone frame dumper gains no game-global linkage.

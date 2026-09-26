@@ -3,7 +3,6 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
-#include "common_rtl.h"
 #include "snes/ppu.h"
 
 #if defined(_WIN32)
@@ -47,16 +46,23 @@ void FrameDump_Present(uint32_t frame, const uint8_t *bgra, uint32_t pitch,
   for (uint32_t y = 0; y < height; ++y)
     fwrite(bgra + (size_t)y * pitch, 4, width, f);
   fclose(f);
+}
+
+void FrameDump_Ppu(uint32_t frame, const Ppu *ppu) {
+  if (!g_framedump_pixels || !ppu || frame < g_framedump_start ||
+      frame > g_framedump_end) return;
+  char path[768];
+  FILE *f;
   /* Device resources at the same completed presentation boundary as the BMP.
    * Opt-in and finite; never pauses the guest or restores a captured state. */
   const char *video = getenv("SNESRECOMP_FRAMEDUMP_VIDEO");
-  if (g_ppu && video && strcmp(video, "1") == 0) {
+  if (video && strcmp(video, "1") == 0) {
     snprintf(path, sizeof(path), "%s/frame_%06u_vram.bin", g_framedump_dir, frame);
     f = fopen(path, "wb");
-    if (f) { fwrite(g_ppu->vram, 1, sizeof(g_ppu->vram), f); fclose(f); }
+    if (f) { fwrite(ppu->vram, 1, sizeof(ppu->vram), f); fclose(f); }
     snprintf(path, sizeof(path), "%s/frame_%06u_cgram.bin", g_framedump_dir, frame);
     f = fopen(path, "wb");
-    if (f) { fwrite(g_ppu->cgram, 1, sizeof(g_ppu->cgram), f); fclose(f); }
+    if (f) { fwrite(ppu->cgram, 1, sizeof(ppu->cgram), f); fclose(f); }
     snprintf(path, sizeof(path), "%s/frame_%06u_ppu.json", g_framedump_dir, frame);
     f = fopen(path, "w");
     if (f) {
@@ -66,15 +72,15 @@ void FrameDump_Present(uint32_t frame, const uint8_t *bgra, uint32_t pitch,
                  "\"screen_windowed\":[%u,%u],\"cgadsub\":%u,\"cgwsel\":%u,"
                  "\"fixed_color\":%u,\"windowsel\":%u,"
                  "\"window_positions\":[%u,%u,%u,%u]}\n",
-              frame,g_ppu->bgmode,g_ppu->bgTileAdr,
-              g_ppu->bgXsc[0],g_ppu->bgXsc[1],g_ppu->bgXsc[2],g_ppu->bgXsc[3],
-              g_ppu->hScroll[0],g_ppu->hScroll[1],g_ppu->hScroll[2],g_ppu->hScroll[3],
-              g_ppu->vScroll[0],g_ppu->vScroll[1],g_ppu->vScroll[2],g_ppu->vScroll[3],
-              g_ppu->screenEnabled[0],g_ppu->screenEnabled[1],
-              g_ppu->screenWindowed[0],g_ppu->screenWindowed[1],
-              g_ppu->cgadsub,g_ppu->cgwsel,g_ppu->fixedColor,g_ppu->windowsel,
-              g_ppu->window1left,g_ppu->window1right,
-              g_ppu->window2left,g_ppu->window2right);
+              frame,ppu->bgmode,ppu->bgTileAdr,
+              ppu->bgXsc[0],ppu->bgXsc[1],ppu->bgXsc[2],ppu->bgXsc[3],
+              ppu->hScroll[0],ppu->hScroll[1],ppu->hScroll[2],ppu->hScroll[3],
+              ppu->vScroll[0],ppu->vScroll[1],ppu->vScroll[2],ppu->vScroll[3],
+              ppu->screenEnabled[0],ppu->screenEnabled[1],
+              ppu->screenWindowed[0],ppu->screenWindowed[1],
+              ppu->cgadsub,ppu->cgwsel,ppu->fixedColor,ppu->windowsel,
+              ppu->window1left,ppu->window1right,
+              ppu->window2left,ppu->window2right);
       fclose(f);
     }
   }
