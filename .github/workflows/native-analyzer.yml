@@ -57,6 +57,17 @@ jobs:
       - name: Run C runtime tests
         if: runner.os == 'Linux'
         run: bash tests/run_c_tests.sh
+      - name: Run optional content-pack tests
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y libarchive-dev rapidjson-dev
+          cmake -S tests/data_pack -B build-data-packs
+          cmake --build build-data-packs --parallel 2
+          ctest --test-dir build-data-packs --output-on-failure
+          cmake -S tests/content_pack -B build-content-pack
+          cmake --build build-content-pack --parallel 2
+          ctest --test-dir build-content-pack --output-on-failure
       - name: Package binary
         shell: pwsh
         run: |

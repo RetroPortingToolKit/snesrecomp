@@ -30,6 +30,13 @@ echo "=== launcher ==="
     -o "$OUT/launcher_test"
 "$OUT/launcher_test"
 
+echo "=== MSU soundtrack routing ==="
+"$CC" -std=c11 -Wall -Wextra -O1 \
+    -D_POSIX_C_SOURCE=200809L -I "$ROOT/runner/src" \
+    "$ROOT/tests/audio/msu_track_resolver_test.c" \
+    "$ROOT/runner/src/snes/msu1.c" -lm -o "$OUT/msu_track_resolver_test"
+(cd "$OUT" && ./msu_track_resolver_test)
+
 echo "=== PPU sprite limits ==="
 "$CC" -std=c11 -Wall -Wextra -O1 \
     -DSNESRECOMP_REVERSE_DEBUG=0 \

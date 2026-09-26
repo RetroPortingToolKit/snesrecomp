@@ -226,6 +226,10 @@ int snes_mod_runtime_unapproved_cosmetics_c(char* out, uint32_t cap);
 
 int snes_mod_runtime_effective_set_c(char* out, uint32_t cap);
 
+/* Resolve an admitted feature's configured resource without truncation. */
+int snes_mod_runtime_resource_path_c(const char* package_id, const char* feature_id,
+                                      const char* resource_id, char* out, uint32_t cap);
+
 int snes_mod_runtime_feature_option_value_c(const char* package_id,
                                             const char* feature_id,
                                             const char* option_id,
