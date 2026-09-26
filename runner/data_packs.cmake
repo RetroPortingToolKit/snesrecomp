@@ -9,9 +9,10 @@ function(snesrecomp_target_data_packs target)
         add_library(snesrecomp_data_packs STATIC
             "${_SNES_DATA_PACK_SOURCE_DIR}/data_pack.cpp"
             "${_SNES_DATA_PACK_SOURCE_DIR}/sha256.c")
+        set_target_properties(snesrecomp_data_packs PROPERTIES CXX_STANDARD 17 CXX_STANDARD_REQUIRED ON)
         target_compile_features(snesrecomp_data_packs PUBLIC cxx_std_17)
         target_include_directories(snesrecomp_data_packs PUBLIC "${_SNES_DATA_PACK_SOURCE_DIR}")
-        target_include_directories(snesrecomp_data_packs SYSTEM PRIVATE "${SNESRECOMP_RAPIDJSON_INCLUDE_DIR}")
+        target_include_directories(snesrecomp_data_packs SYSTEM PUBLIC "${SNESRECOMP_RAPIDJSON_INCLUDE_DIR}")
         target_link_libraries(snesrecomp_data_packs PUBLIC LibArchive::LibArchive)
     endif()
     target_link_libraries(${target} PRIVATE snesrecomp_data_packs)

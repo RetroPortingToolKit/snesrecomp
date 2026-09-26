@@ -20,7 +20,7 @@ typedef struct SnesDataPack {
 /* Missing directory is an empty catalog; errors in individual packs do not
  * disable valid siblings. Duplicate IDs reject ALL copies, never first-wins.
  * Limits: 128 candidates, 128 MiB/payload, 512 MiB/catalog, 20,000 ZIP entries.
- * ZIP entries are read into bounded buffers, never extracted to disk. */
+ * Scanning reads bounded buffers without extraction; disk access is opt-in. */
 SnesDataPacks *snes_data_packs_scan(const char *directory, const char *game,
     const char *payload_format, const uint8_t base_sha256[32],
     const char *const *capabilities, size_t capability_count,
@@ -28,6 +28,14 @@ SnesDataPacks *snes_data_packs_scan(const char *directory, const char *game,
 size_t snes_data_packs_count(const SnesDataPacks *packs);
 const SnesDataPack *snes_data_packs_get(const SnesDataPacks *packs, size_t index);
 void snes_data_packs_destroy(SnesDataPacks *packs);
+
+/* Resolve an admitted pack for file-based decoders/streaming audio. Folders
+ * return their original root. ZIPs are extracted once into the caller's cache
+ * with bounded streaming I/O and a completion marker outside archive control.
+ * Returned UTF-8 path lives until catalog destruction. Null on failure.
+ * The cache never participates in discovery; removing the ZIP removes the pack. */
+const char *snes_data_pack_directory(SnesDataPacks *packs, size_t index,
+    const char *cache_directory, SnesDataPackError error, void *user);
 
 /* Read a relative asset from the same folder/ZIP. Caller owns *bytes (free()).
  * The caller's bound is enforced before allocation. No cross-pack fallback.

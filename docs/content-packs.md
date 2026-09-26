@@ -1,4 +1,8 @@
-# Additive content packs (experimental)
+# Collection catalog and guarded patch imports (experimental)
+
+For runtime folder/ZIP installation use [DATA_PACKS.md](DATA_PACKS.md). The
+INI format below is the lower-level reviewed donor/import format used by
+F-Zero tooling; it is not a second runtime ZIP envelope.
 
 `runner/src/content_pack.h` is a host-neutral catalog and guarded IPS/BPS loader.
 It deliberately does not merge cartridge address spaces or infer which changed

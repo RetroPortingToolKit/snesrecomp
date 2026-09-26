@@ -1,6 +1,7 @@
 // Folder/ZIP transport distilled from F-Zero's pack loader. Semantic formats,
 // title rendering, record keys, physics and audio routing belong to the game.
 #include "data_pack.h"
+#include "data_pack_io.hpp"
 #include "sha256.h"
 #include <archive.h>
 #include <archive_entry.h>
@@ -95,8 +96,8 @@ std::string entryName(archive_entry *entry) {
   check(archive_entry_is_encrypted(entry) == 0, "Encrypted ZIP entries are unsupported");
   return name;
 }
-// Validate the entire directory, not only the entry being requested. There is
-// no extraction/cache, so updates/removals on the next scan cannot reuse stale data.
+// Validate the entire directory, not only the entry being requested.
+// Optional disk materialization uses the same validation and content identity.
 std::string zipRoot(const fs::path &source) {
   auto a = openZip(source);
   archive_entry *entry;
@@ -174,7 +175,7 @@ std::string hex(const uint8_t *digest) {
   return s;
 }
 struct Entry {
-  std::string id, title, format, source, prefix;
+  std::string id, title, format, source, prefix, disk_root, payload_file;
   fs::path path;
   bool zip = false;
   Blob payload;
@@ -222,14 +223,97 @@ Entry load(const fs::path &path, const char *game, const char *format,
   const auto &b = m["payload"];
   p.format = str(b, "format");
   check(p.format == format, "Unsupported game payload format");
-  p.payload = p.read(str(b, "file"), PayloadLimit);
+  p.payload_file = str(b, "file");
+  p.payload = p.read(p.payload_file, PayloadLimit);
   uint8_t digest[32];
   sha256_compute(p.payload.data(), p.payload.size(), digest);
   check(hex(digest) == str(b, "sha256"), "Payload SHA-256 mismatch");
   return p;
 }
+// An archive-content fingerprint, not a standard SHA-256 digest. Its purpose is
+// a disposable cache namespace. Payload authenticity still uses standard SHA-256.
+std::string cacheKey(const fs::path &path) {
+  std::ifstream input(path, std::ios::binary);
+  check(bool(input), "Cannot hash pack archive");
+  std::array<uint8_t, 65536 + 32> block{};
+  uint8_t digest[32]{};
+  while (input) {
+    input.read(reinterpret_cast<char *>(block.data() + 32), 65536);
+    auto n = input.gcount();
+    if (n > 0) {
+      memcpy(block.data(), digest, 32);
+      sha256_compute(block.data(), static_cast<size_t>(n) + 32, digest);
+    }
+  }
+  check(input.eof(), "Cannot hash complete archive");
+  return hex(digest);
+}
+fs::path materialize(const Entry &p, const fs::path &cache_directory) {
+  if (!p.zip) return fs::canonical(p.path);
+  // Revalidate archive directory even on cache reuse. A live archive must never
+  // acquire new links/ambiguous names after admission.
+  check(zipRoot(p.path) == p.prefix, "Archive changed after discovery");
+  fs::create_directories(cache_directory);
+  auto base = fs::canonical(cache_directory);
+  auto cache = inside(base, cacheKey(p.path));
+  auto ready = cache; ready += ".ready";
+  if (!fs::is_regular_file(ready)) {
+    fs::create_directories(cache);
+    auto a = openZip(p.path);
+    archive_entry *entry;
+    uint64_t total = 0;
+    unsigned count = 0;
+    std::set<std::string> names;
+    int status;
+    while ((status = archive_read_next_header(a.get(), &entry)) == ARCHIVE_OK) {
+      check(++count <= 20000, "Too many ZIP entries");
+      auto name = entryName(entry);
+      if (name.back() == '/') name.pop_back();
+      check(names.insert(lower(name)).second, "Duplicate ZIP path");
+      auto target = inside(cache, name);
+      if (archive_entry_filetype(entry) == AE_IFDIR) {
+        fs::create_directories(target); continue;
+      }
+      auto size = archive_entry_size(entry);
+      check(size >= 0 && size <= INT64_C(2147483648), "ZIP entry exceeds size limit");
+      total += uint64_t(size);
+      check(total <= UINT64_C(8589934592), "ZIP exceeds total size limit");
+      fs::create_directories(target.parent_path());
+      std::ofstream out(target, std::ios::binary | std::ios::trunc);
+      check(bool(out), "Cannot create cached asset");
+      char buffer[65536];
+      int64_t written = 0;
+      la_ssize_t n;
+      while ((n = archive_read_data(a.get(), buffer, sizeof(buffer))) > 0) {
+        written += n;
+        check(written <= size, "ZIP entry exceeds declared size");
+        out.write(buffer, n);
+        check(bool(out), "Cannot write cached asset");
+      }
+      check(n == 0 && written == size, "Damaged ZIP asset or checksum");
+      out.close(); check(bool(out), "Cannot finish cached asset");
+    }
+    check(status == ARCHIVE_EOF, "Damaged ZIP directory");
+    std::ofstream marker(ready, std::ios::binary | std::ios::trunc);
+    marker << "1\n"; marker.close();
+    check(bool(marker), "Cannot complete ZIP cache");
+  }
+  auto root = p.prefix.empty() ? cache : inside(cache, p.prefix.substr(0, p.prefix.size()-1));
+  check(readFile(inside(root, p.payload_file), PayloadLimit) == p.payload,
+        "Cached payload differs from admitted pack");
+  return root;
+}
 }
 struct SnesDataPacks { std::vector<Entry> entries; };
+namespace snesrecomp::data_pack {
+fs::path inside(const fs::path &root, const std::string &relative) { return ::inside(root, relative); }
+std::string read(const fs::path &path, size_t limit) {
+  auto b = readFile(path, limit);
+  return std::string(b.begin(), b.end());
+}
+void validate_json(const rapidjson::Value &v) { validateJson(v); }
+std::string string(const rapidjson::Value &v, const char *key) { return str(v, key); }
+}
 extern "C" SnesDataPacks *snes_data_packs_scan(const char *directory, const char *game,
     const char *format, const uint8_t base[32], const char *const *caps, size_t ncaps,
     SnesDataPackError error, void *user) {
@@ -239,6 +323,7 @@ extern "C" SnesDataPacks *snes_data_packs_scan(const char *directory, const char
     if (!fs::exists(fs::u8path(directory))) return result.release();
     std::vector<fs::path> sources;
     for (const auto &item : fs::directory_iterator(fs::u8path(directory))) {
+      if (item.path().filename().u8string().front() == '.') continue;
       if (item.is_directory() && fs::exists(item.path() / "pack.json")) sources.push_back(item.path());
       else if (item.is_regular_file() && lower(item.path().extension().u8string()) == ".zip") sources.push_back(item.path());
     }
@@ -273,6 +358,18 @@ extern "C" const SnesDataPack *snes_data_packs_get(const SnesDataPacks *p, size_
   return p && i < p->entries.size() ? &p->entries[i].view : nullptr;
 }
 extern "C" void snes_data_packs_destroy(SnesDataPacks *p) { delete p; }
+extern "C" const char *snes_data_pack_directory(SnesDataPacks *p, size_t i,
+    const char *cache, SnesDataPackError error, void *user) {
+  try {
+    check(p && i < p->entries.size() && cache, "Invalid directory request");
+    auto &entry = p->entries[i];
+    if (entry.disk_root.empty()) entry.disk_root = materialize(entry, fs::u8path(cache)).u8string();
+    return entry.disk_root.c_str();
+  } catch (const std::exception &e) {
+    if (error) error(user, p && i < p->entries.size() ? p->entries[i].source.c_str() : "", e.what());
+    return nullptr;
+  }
+}
 extern "C" int snes_data_pack_read(const SnesDataPacks *p, size_t i, const char *name,
     size_t limit, uint8_t **bytes, size_t *size, SnesDataPackError error, void *user) {
   if (bytes) *bytes = nullptr;

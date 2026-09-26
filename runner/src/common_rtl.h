@@ -308,7 +308,9 @@ bool RtlUploadSpcImageFromDp(CpuState *cpu);
 bool RtlUploadSpcImageFromDpLive(CpuState *cpu);
 bool RtlRunFrame(uint32 inputs);
 void RtlReadSram();
-void RtlWriteSram();
+void RtlWriteSram(void);
+/* Durable save with failure reporting before a host changes save namespace. */
+int RtlTryWriteSram(void);
 /* Save-directory root for SRAM + savestate slots. Default "saves". Netplay
  * guests use "saves/netplay" so host-driven sync cannot clobber personal files.
  * Pass NULL/"" to restore the default. */

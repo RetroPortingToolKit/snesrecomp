@@ -6,8 +6,8 @@ import re
 import zipfile
 
 
-def write_pack(output, *, game, ident, title, base_sha256, payload_format,
-               payload_name, payload, requires=(), readme=''):
+def manifest_bytes(*, game, ident, title, base_sha256, payload_format,
+                   payload_name, payload, requires=()):
     if not re.fullmatch(r'[a-z0-9][a-z0-9._-]{0,62}', ident):
         raise ValueError('invalid pack ID')
     if not re.fullmatch(r'[0-9a-f]{64}', base_sha256):
@@ -20,7 +20,15 @@ def write_pack(output, *, game, ident, title, base_sha256, payload_format,
                     title=title, base_rom_sha256=base_sha256, requires=list(requires),
                     payload=dict(format=payload_format, file=payload_name,
                                  sha256=hashlib.sha256(payload).hexdigest()))
-    files = {'pack.json': (json.dumps(manifest, indent=2)+'\n').encode(), payload_name: payload}
+    return (json.dumps(manifest, indent=2)+'\n').encode('utf-8')
+
+
+def write_pack(output, *, game, ident, title, base_sha256, payload_format,
+               payload_name, payload, requires=(), readme=''):
+    encoded = manifest_bytes(game=game, ident=ident, title=title, base_sha256=base_sha256,
+                             payload_format=payload_format, payload_name=payload_name,
+                             payload=payload, requires=requires)
+    files = {'pack.json': encoded, payload_name: payload}
     if readme:
         files['README.txt'] = readme.encode('utf-8')
     output = Path(output)
@@ -34,4 +42,4 @@ def write_pack(output, *, game, ident, title, base_sha256, payload_format,
         output.mkdir()
         for name, data in files.items():
             (output/name).write_bytes(data)
-    return manifest
+    return json.loads(encoded)

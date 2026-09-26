@@ -6,8 +6,9 @@ LibArchive and RapidJSON. It is explicitly opt-in. Merely including
 behavior to an existing game.
 
 This extracts the transport/validation pattern used by F-Zero Forever into a
-game-independent layer. SMW's `feat/shared-data-packs` is the first consumer.
-The existing F-Zero loader has **not** been migrated on its release branch.
+game-independent layer. Both F-Zero Forever (`f-zero-forever`) and SMW's
+`feat/shared-data-packs` consume `feat/shared-content-packs`, based on main.
+Their submodule pins identify the exact shared revision.
 
 ## Boundary
 
@@ -24,8 +25,7 @@ The framework never executes pack code, applies guest writes, switches ROMs or
 imports arbitrary IPS/BPS hacks. It also does not prescribe a universal title
 screen or make a new mod checkbox. Required capabilities are a game-supplied
 allowlist, not a way to load ASM. Content-only SMW packs continue using its one
-stock program. The older `content_variant` program/ROM-switch mechanism is a
-different API and is not used by this proof.
+stock program. This branch does not introduce a program/ROM-switch registry.
 
 ## Manifest
 
@@ -56,10 +56,18 @@ packs are reported through a callback without disabling valid siblings.
 Duplicate valid IDs reject all copies; filenames never choose a winner.
 Stable IDs survive a folder/ZIP rename and should be used for save identities.
 
-ZIP entries are read in memory, never extracted, so no cache can resurrect a
-removed pack. The catalog snapshots payloads for the session. Add/remove/replace
-files between launches. Assets read later must remain available for that session.
-Install exactly one folder or ZIP for each ID. There is no hot reload.
+Scanning snapshots bounded payload bytes in memory and performs no extraction.
+Small assets use `snes_data_pack_read`. File-based decoders and streaming audio
+may opt into `snes_data_pack_directory`: folders return their existing root;
+ZIPs stream into a content-addressed cache under the caller's chosen directory.
+Only a complete extraction receives a completion marker outside the archive tree.
+The cached payload is compared to the admitted bytes before use. The cache never
+participates in discovery, so removing a ZIP removes the pack next launch.
+
+Treat this cache as disposable, private runtime data; do not edit it or share it
+between concurrent writers. Change the source folder/ZIP between launches.
+Assets must remain available for the session. Install exactly one folder or ZIP
+for each ID. There is no hot reload.
 
 Limits: 128 candidates, 128 MiB per payload, 512 MiB admitted payloads, 64 KiB
 manifest, 32 JSON nesting levels, 20,000 ZIP entries, 2 GiB per ZIP entry and
@@ -67,7 +75,8 @@ manifest, 32 JSON nesting levels, 20,000 ZIP entries, 2 GiB per ZIP entry and
 allocation bound. Absolute/traversing paths, external folder symlinks, archive
 links, encrypted entries, duplicate paths (case-insensitive), duplicate JSON
 keys and Windows device filenames are rejected. LibArchive normalizes legacy
-ZIP backslashes before path validation. No path is ever written by this API.
+ZIP backslashes before path validation. Optional materialization repeats the
+archive checks and contains writes within the cache.
 
 Hashing detects corrupt or mismatched content; it is not publisher authentication.
 The game-owned decoder remains the authority on supported content.
@@ -84,18 +93,49 @@ ctest --test-dir build-data-packs --output-on-failure
 ```
 
 `tools/data_pack.py` provides a small shared writer; a game importer supplies
-qualified bytes and metadata. The writer refuses to overwrite an existing pack.
+qualified bytes and metadata. `write_pack` refuses to overwrite an existing pack. `manifest_bytes` also
+lets multi-asset importers create the envelope around their semantic index.
 It does not convert ROMs or qualify mechanics.
 
-## Further reuse
+## Consumers and validation
 
-F-Zero can adopt the catalog through an adapter for its existing course index;
-its raw FZEdit importer, course hashes, records, title art and per-course music
-mapping remain F-Zero code. A future streaming-asset API is needed before moving
-F-Zero's large PCM files behind this memory-buffer API. Do not read whole songs
-through it or introduce game-specific MSU routing in the shared loader.
+F-Zero wraps its `courses.json` in this envelope (`f-zero`,
+`fzero.course-index`, capability `fzero-course-v1`). Shared materialization
+supplies paths to the existing FZEdit decoder, title resources and PCM streaming.
+Course filename to `music/<stem>.pcm` routing stays in F-Zero; no whole-song
+allocations or game-specific audio rules are introduced in the catalog.
+`data_pack_io.hpp` exposes the same bounded file, JSON and contained-path helpers
+for game-owned semantic adapters.
 
-Title-art enumeration, presets, conflict descriptions and presentation of pack
-errors are plausible future shared metadata. They are not implemented here;
-first establish a second real consumer before expanding the schema. Game format
-and capability versions can evolve independently of the transport envelope.
+SMW wraps the already qualified 30-stage THNAN semantic DAT
+(`super-mario-world`, `smw.semantic-dat`). It consumes bytes directly and keeps
+its existing title selection, stock program, stage hooks and save namespaces.
+Full-hack qualification remains separate from this transport refactor.
+
+This branch also carries dependencies needed by these consumers: the existing
+collection catalog/guarded IPS-BPS importer (`content_pack.h`, a lower-level
+import tool, not the shared JSON envelope), host MSU path resolution, scoped
+keyboard defaults, pre-opcode redirects and finite PPU captures. A status-returning
+`RtlTryWriteSram` lets content selection stop if the old namespace cannot be saved;
+the existing void `RtlWriteSram` entry point remains available. Configured mod
+resource paths have a bounded C accessor.
+
+Windows validation on 2026-09-25:
+
+- SRAM publication: new saves, backup rotation and failed-write preservation.
+- Shared catalog: folder/ZIP equivalence, duplicate IDs, hash/capability/target
+  rejection, unsafe archives, bounded assets, cache reuse/change/removal/tampering.
+  Filesystem symlink escape test skips when Windows lacks symlink privilege.
+- F-Zero: 13 C tests; all 75 course record hashes unchanged; folder and ZIP
+  catalogs identical; races started in CGP, Astra, MAX and Bower. Synthetic MSU
+  mixer checks cover installed soundtracks, same-filename Astra/Bower songs,
+  missing-song fallback and Practice. Raw FZEdit decoding matches the old loader
+  through folder and wrapped ZIP installations. Astra completed-cup records,
+  details, vehicle isolation and battery reload pass on both game engines.
+- SMW: 49 semantic importer/reader tests; 18 old/folder/ZIP comparison runs.
+  BMP, WRAM, VRAM and CGRAM match the original AIO build byte for byte for
+  stock, installed-but-unselected, title selection, stages 001/00F and Luigi.
+  Save namespaces remain isolated. The original worktree stays unchanged.
+
+No game assets, source ROMs, recorded music or semantic DAT payloads are included
+in the framework. Pack presentation and gameplay semantics remain game-owned.

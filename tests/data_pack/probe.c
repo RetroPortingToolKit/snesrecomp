@@ -13,6 +13,10 @@ int main(int argc,char **argv) {
   for(size_t i=0;i<snes_data_packs_count(p);++i) {
     const SnesDataPack *pack=snes_data_packs_get(p,i);
     printf("PACK\t%s\t%zu\n",pack->id,pack->payload_size);
+    if(argc>3) {
+      const char *root=snes_data_pack_directory(p,i,argv[3],error,NULL);
+      if(root)printf("DIR\t%s\n",root);
+    }
     if(argc>2) {
       uint8_t *bytes=NULL;size_t size=0;
       if(snes_data_pack_read(p,i,argv[2],16,&bytes,&size,error,NULL)) {

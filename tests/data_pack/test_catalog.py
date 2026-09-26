@@ -129,6 +129,44 @@ class CatalogTests(unittest.TestCase):
         self.archive(extras=[('second/pack.json',b'{}')])
         self.assertIn('exactly one pack.json',self.scan())
 
+    def materialize(self):
+        out=subprocess.check_output([str(PROBE),str(self.root),'cover.txt',str(self.root/'.cache')],text=True)
+        self.assertNotIn('ERROR',out)
+        return Path(next(s.split('\t',1)[1] for s in out.splitlines() if s.startswith('DIR\t')))
+
+    def test_materialized_folder_and_wrapped_zip(self):
+        folder=self.folder()
+        self.assertEqual(self.materialize(),folder.resolve())
+        self.assertFalse((self.root/'.cache').exists())
+        shutil.rmtree(folder)
+        self.archive(prefix='wrapped/',extras=[('wrapped/music/song.pcm',b'MSU1'+bytes(100000))])
+        root=self.materialize()
+        self.assertEqual((root/'data.bin').read_bytes(),PAYLOAD)
+        self.assertEqual((root/'music/song.pcm').stat().st_size,100004)
+        timestamp=(root/'data.bin').stat().st_mtime_ns
+        self.assertEqual(self.materialize(),root)
+        self.assertEqual((root/'data.bin').stat().st_mtime_ns,timestamp)
+
+    def test_hidden_cache_directory_is_not_a_pack(self):
+        self.folder('.cache')
+        self.assertEqual(self.scan(),'')
+
+    def test_materialized_cache_never_discovers_removed_or_changed_pack(self):
+        archive=self.archive();first=self.materialize();archive.unlink()
+        self.assertEqual(self.scan(),'')
+        m=copy.deepcopy(BASE);m['id']='replacement'
+        self.archive(manifest=m)
+        second=self.materialize()
+        self.assertNotEqual(first,second)
+        self.assertIn('PACK\treplacement',self.scan())
+        self.assertNotIn('PACK\tsample',self.scan())
+
+    def test_materialized_cache_payload_tampering_rejected(self):
+        self.archive();root=self.materialize();(root/'data.bin').write_bytes(b'wrong')
+        out=subprocess.check_output([str(PROBE),str(self.root),'cover.txt',str(self.root/'.cache')],text=True)
+        self.assertIn('Cached payload differs',out)
+        self.assertNotIn('DIR\t',out)
+
     def test_changed_and_removed_archive_no_cache(self):
         path=self.archive();self.assertIn('PACK\tsample',self.scan());path.unlink()
         m=copy.deepcopy(BASE);m['id']='replacement'
