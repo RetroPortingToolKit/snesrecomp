@@ -46,6 +46,18 @@ RNetIceState rnet_ice_xfer_state(const RNetIceXfer *x) { (void)x; TRAP("state");
 const char *rnet_ice_state_name(RNetIceState st) { (void)st; TRAP("state_name"); }
 int rnet_ws_write_text(int fd, const char *text, int client_mask)
 { (void)fd; (void)text; (void)client_mask; TRAP("rnet_ws_write_text"); }
+int rnet_ws_tx_queue_text(RNetWsTx *tx, const char *text, int client_mask)
+{ (void)tx; (void)text; (void)client_mask; TRAP("rnet_ws_tx_queue_text"); }
+long rnet_ws_tx_flush(RNetWsTx *tx, int fd)
+{ (void)tx; (void)fd; TRAP("rnet_ws_tx_flush"); }
+/* Bookkeeping, no socket: disconnect() frees the (empty) outbound buffer. */
+size_t rnet_ws_tx_pending(const RNetWsTx *tx) { return tx ? tx->len - tx->off : 0u; }
+void rnet_ws_tx_free(RNetWsTx *tx)
+{
+    if (!tx) return;
+    free(tx->buf);
+    memset(tx, 0, sizeof(*tx));
+}
 const char *rnet_account_session(void) { TRAP("rnet_account_session"); }
 
 static int fails;

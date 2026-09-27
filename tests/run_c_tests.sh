@@ -335,6 +335,7 @@ echo "=== SNES lobby caps (widescreen keys over recomp-net's client) ==="
     "$ROOT/tests/netplay/snes_lobby_caps_test.c" \
     "$ROOT/lib/recomp-net/src/chat/rnet_chat_filter.c" \
     "$ROOT/lib/recomp-net/src/chat/rnet_chat_report.c" \
+    "$ROOT/lib/recomp-net/src/platform/rnet_platform.c" \
     -o "$OUT/snes_lobby_caps_test"
 "$OUT/snes_lobby_caps_test"
 
@@ -429,6 +430,7 @@ echo "=== account secret path (rebuild must not sign you out) ==="
     -I "$ROOT/lib/recomp-net/include" -I "$ROOT/lib/recomp-net/src" \
     "$ROOT/tests/auth/secret_path_test.c" \
     "$ROOT/lib/recomp-net/src/auth/rnet_auth.c" \
+    "$ROOT/lib/recomp-net/src/auth/rnet_open_url.c" \
     "$ROOT/lib/recomp-net/src/auth/rnet_sha256.c" \
     -lpthread -o "$OUT/secret_path_test"
 "$OUT/secret_path_test"
