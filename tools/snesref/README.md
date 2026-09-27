@@ -191,8 +191,9 @@ of the previous frame through V=224, so its vblank writes come first.
 ### Patched snes9x core (debug exports)
 
 `cgram`/`oam`/`regs`/`ppuw` need a snes9x libretro core carrying
-`libretro/snesref_debug.{h,cpp}` (local branch `snesref-debug-exports`
-of the snes9x checkout). It exports `snesref_dbg_*` (resolved with
+`libretro/snesref_debug.{h,cpp}`, shipped here as
+`patches/snes9x-snesref-debug-exports.patch` (applies to upstream snes9x
+`b5cc765`: `git am <patch>` in a snes9x checkout). It exports `snesref_dbg_*` (resolved with
 `GetProcAddress`/`dlsym`; a stock core still works and those files are skipped
 with a warning) and keeps an **always-on** ring of the last 1M PPU register
 writes, hooked in `S9xSetPPU`, `S9xSetCPU($420C)` and the DMA fast paths;
