@@ -690,8 +690,66 @@ static inline uint8 PpuMosaicAt(Ppu *ppu, int i) {
  * instrumentation only -- it never affects rendering. */
 static int s_oam_snap_frame = -1;
 
+/* PPU register write journal -- see ppu.h. */
+#define PPU_WLOG_CAP (1u << 17)
+static PpuWlogEntry s_wlog[PPU_WLOG_CAP];
+static uint32_t s_wlog_head;          /* total entries ever written */
+static int s_wlog_line = kPpuWlogPreRaster;
+static uint32_t s_wlog_line_frame = 0xffffffffu;
+uint8_t g_ppu_wlog_src = kPpuWlogCpu;
+
+void ppu_wlog_note_reg(uint16_t reg, uint8_t val) {
+  const uint32_t frame = (uint32_t)snes_frame_counter;
+  PpuWlogEntry *e = &s_wlog[s_wlog_head++ & (PPU_WLOG_CAP - 1)];
+  e->frame = frame;
+  /* The line cursor belongs to the frame whose raster set it; the first
+   * writes of a new frame's raster (HDMA for line 0) come before any
+   * ppu_runLine of that frame. */
+  e->line = (int16_t)(frame == s_wlog_line_frame ? s_wlog_line : 0);
+  e->reg = reg;
+  e->val = val;
+  e->src = g_ppu_wlog_src;
+}
+
+static void ppu_wlog_note(uint8_t adr, uint8_t val) {
+  if (adr == 0x04 || adr == 0x18 || adr == 0x19 || adr == 0x22 || adr > 0x33)
+    return;
+  ppu_wlog_note_reg((uint16_t)(0x2100u + adr), val);
+}
+
+int ppu_wlog_collect(uint32_t frame, PpuWlogEntry *out, int cap, int *lost) {
+  const uint32_t n = s_wlog_head < PPU_WLOG_CAP ? s_wlog_head : PPU_WLOG_CAP;
+  const uint32_t first = s_wlog_head - n;
+  int count = 0;
+  if (lost) {
+    /* The oldest surviving entry is already inside the requested window:
+     * part of it may have been evicted. */
+    const PpuWlogEntry *o = &s_wlog[first & (PPU_WLOG_CAP - 1)];
+    *lost = n == PPU_WLOG_CAP &&
+            (o->frame > frame - 1u ||
+             (o->frame == frame - 1u && o->line >= kPpuWlogPreRaster) ||
+             o->frame == frame);
+  }
+  for (uint32_t i = first; i != s_wlog_head && count < cap; i++) {
+    const PpuWlogEntry *e = &s_wlog[i & (PPU_WLOG_CAP - 1)];
+    if (e->frame == frame - 1u && e->line >= kPpuWlogPreRaster) {
+      out[count] = *e;
+      out[count].frame = frame;
+      out[count].line = -1;
+      count++;
+    } else if (e->frame == frame && e->line < kPpuWlogPreRaster) {
+      out[count++] = *e;
+    }
+  }
+  return count;
+}
+
 void ppu_runLine(Ppu* ppu, int line) {
   PPU_T0_DECL
+  /* Writes from here to the next ppu_runLine land on line + 1; no register
+   * write happens inside a line's render. */
+  s_wlog_line = line + 1;
+  s_wlog_line_frame = (uint32_t)snes_frame_counter;
   /* Per-line HDMA state must be captured here, not at end-of-frame: games can
    * rewrite windows and scroll registers before every scanline. */
   debug_server_on_ppu_line(line);
@@ -3152,13 +3210,17 @@ void ppu_rasterApplyLine(Ppu *ppu, int line) {
       s_raster_hdmaen = val;
       s_raster_hdmaen_pending = 1;
     } else {
+      const uint8_t saved_src = g_ppu_wlog_src;
+      g_ppu_wlog_src = kPpuWlogReplay;
       ppu_write(ppu, (uint8_t)(reg & 0xFF), val);
+      g_ppu_wlog_src = saved_src;
     }
     s_raster_next++;
   }
 }
 
 void ppu_write(Ppu* ppu, uint8_t adr, uint8_t val) {
+  ppu_wlog_note(adr, val);
 //  if (adr != 24 && adr != 25)
 //    printf("ppu_write(%d, %d)\n", adr, val);
   switch(adr) {

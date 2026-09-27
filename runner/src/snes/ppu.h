@@ -572,6 +572,41 @@ int  ppu_rasterTakeHdmaen(uint8_t *out);
 void ppu_rasterRecord(uint16_t reg, uint16_t line, uint8_t val);
 void ppu_rasterApplyLine(Ppu *ppu, int line);
 int  ppu_rasterDebugDump(char *out, int cap);
+/* Always-on PPU register write journal (every build, Release included).
+ *
+ * Every $2100-$2133 write except the bulk data ports ($2104 OAMDATA, $2118/
+ * $2119 VMDATA, $2122 CGDATA) lands in a fixed ring, tagged with the frame
+ * counter, the raster line it takes effect on, and who wrote it. It is the
+ * recomp half of the per-line register diff against the oracle (snesref's
+ * `<tag>.ppuw.tsv`): a layer that is wrong on some lines is a register whose
+ * per-line value differs, and a write journal says which one and who wrote it.
+ * Probes query it; nothing arms it.
+ *
+ * Line attribution: a write made before ppu_runLine(L) of the frame being
+ * rasterized belongs to line L. Writes made after the raster walk ends (the
+ * next frame's CPU half) carry line kPpuWlogPreRaster and the frame counter of
+ * the frame just drawn -- ppu_wlog_collect() files them under the following
+ * frame, which is the one they affect. */
+enum {
+  kPpuWlogCpu = 0, kPpuWlogDma = 1, kPpuWlogHdma = 2, kPpuWlogReplay = 3,
+};
+enum { kPpuWlogPreRaster = 225 };
+typedef struct PpuWlogEntry {
+  uint32_t frame;
+  int16_t line;     /* 0..224, or -1 in collect() output = before the raster */
+  uint16_t reg;     /* CPU address: $21xx, or $420C */
+  uint8_t val;
+  uint8_t src;      /* kPpuWlog* */
+} PpuWlogEntry;
+extern uint8_t g_ppu_wlog_src;
+/* Writes that affected drawn frame `frame`, oldest first. Returns the count
+ * copied (<= cap); *lost is set when the ring has already evicted part of that
+ * frame. */
+int ppu_wlog_collect(uint32_t frame, PpuWlogEntry *out, int cap, int *lost);
+/* HDMAEN is not a PPU register but decides which lines HDMA touches, so the
+ * $420C write path journals itself too. */
+void ppu_wlog_note_reg(uint16_t reg, uint8_t val);
+
 void ppu_saveload(Ppu *ppu, SaveLoadInfo *sli);
 void PpuBeginDrawing(Ppu *ppu, uint8_t *pixels, size_t pitch, uint32_t render_flags);
 void PpuResetWidescreenOamHistory(Ppu *ppu);
