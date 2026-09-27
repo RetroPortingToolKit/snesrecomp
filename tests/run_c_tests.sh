@@ -453,3 +453,11 @@ echo "=== Super FX state and presentation isolation ==="
     "$ROOT/runner/src/snes/superfx.c" \
     -o "$OUT/superfx_state_test"
 "$OUT/superfx_state_test"
+
+echo "=== Super FX PC hooks ==="
+"$CC" -std=c11 -Wall -Wextra -Werror -O1 \
+    -I "$ROOT/runner/src" \
+    "$ROOT/tests/superfx/pc_hook_test.c" \
+    "$ROOT/runner/src/snes/superfx.c" \
+    -o "$OUT/superfx_pc_hook_test"
+"$OUT/superfx_pc_hook_test"

@@ -31,6 +31,9 @@ typedef struct {
   uint8_t  bAdr;    /* B-bus dest reg low byte: 18/19=VRAM,22=CGRAM,04=OAM */
   uint16_t aAdr;
   uint16_t size;    /* 0 encodes a full 0x10000 transfer            */
+  int16_t  line;    /* raster line it affects (ppu_wlog_position)   */
+  uint8_t  phase;   /* 0 = CPU half, 1 = raster walk                */
+  uint16_t dest;    /* VRAM word / CGRAM index / OAM address        */
 } DmaEvent;
 
 typedef struct {
@@ -117,6 +120,18 @@ void ppudma_record_dma(int channel, int fromB, uint8_t aBank, uint16_t aAdr,
   e->bAdr    = bAdr;
   e->aAdr    = aAdr;
   e->size    = size;
+  {
+    uint32_t wframe;
+    ppu_wlog_position(&wframe, &e->line);
+    e->frame = (int)wframe;
+  }
+  e->phase   = (uint8_t)s_frame_phase;
+  e->dest    = 0;
+  if (g_ppu && !fromB) {
+    if (bAdr == 0x18 || bAdr == 0x19) e->dest = g_ppu->vramPointer;
+    else if (bAdr == 0x22)            e->dest = g_ppu->cgramPointer;
+    else if (bAdr == 0x04)            e->dest = g_ppu->oamAdr;
+  }
   s_dma_widx++;
   if (!fromB) s_dma_this_frame++;
 
@@ -235,6 +250,56 @@ int ppudma_frame_at(uint64_t back, PpuFrameInfo *out) {
 
 uint64_t ppudma_frame_count(void) { return s_ppu_widx; }
 
+static void dma_info(const DmaEvent *e, PpuDmaInfo *out) {
+  out->frame   = e->frame;
+  out->line    = e->line;
+  out->phase   = e->phase;
+  out->channel = e->channel;
+  out->fromB   = e->fromB;
+  out->aBank   = e->aBank;
+  out->bAdr    = e->bAdr;
+  out->aAdr    = e->aAdr;
+  out->dest    = e->dest;
+  out->size    = e->size ? e->size : 0x10000u;
+}
+
+int ppudma_dma_at(uint64_t back, PpuDmaInfo *out) {
+  if (!out) return 0;
+  uint64_t have = s_dma_widx < (uint64_t)DMA_RING_LEN
+                      ? s_dma_widx : (uint64_t)DMA_RING_LEN;
+  if (back >= have) return 0;
+  dma_info(&s_dma_ring[(s_dma_widx - 1 - back) % DMA_RING_LEN], out);
+  return 1;
+}
+
+uint64_t ppudma_dma_count(void) { return s_dma_widx; }
+
+int ppudma_dma_collect(uint32_t frame, PpuDmaInfo *out, int cap, int *lost) {
+  uint64_t n = s_dma_widx < (uint64_t)DMA_RING_LEN
+                   ? s_dma_widx : (uint64_t)DMA_RING_LEN;
+  uint64_t first = s_dma_widx - n;
+  int count = 0;
+  if (lost) {
+    const DmaEvent *o = &s_dma_ring[first % DMA_RING_LEN];
+    *lost = n == DMA_RING_LEN &&
+            ((uint32_t)o->frame > frame - 1u ||
+             ((uint32_t)o->frame == frame - 1u && o->line >= kPpuWlogPreRaster) ||
+             (uint32_t)o->frame == frame);
+  }
+  for (uint64_t i = first; i != s_dma_widx && count < cap; i++) {
+    const DmaEvent *e = &s_dma_ring[i % DMA_RING_LEN];
+    if ((uint32_t)e->frame == frame - 1u && e->line >= kPpuWlogPreRaster) {
+      dma_info(e, &out[count]);
+      out[count].frame = (int)frame;
+      out[count].line = -1;
+      count++;
+    } else if ((uint32_t)e->frame == frame && e->line < kPpuWlogPreRaster) {
+      dma_info(e, &out[count++]);
+    }
+  }
+  return count;
+}
+
 void ppudma_dump_json(FILE *f) {
   /* Per-frame PPU snapshots (oldest-first within the retained window). */
   uint64_t pw = s_ppu_widx;
@@ -283,12 +348,13 @@ void ppudma_dump_json(FILE *f) {
     uint64_t off = dw - dn + i;
     const DmaEvent *e = &s_dma_ring[off % DMA_RING_LEN];
     fprintf(f,
-      "%s{\"seq\":%u,\"frame\":%d,\"ch\":%u,\"dir\":\"%s\","
-      "\"src\":%u,\"dst_reg\":%u,\"size\":%u}",
-      (i ? "," : ""), (unsigned)e->seq, e->frame, (unsigned)e->channel,
+      "%s{\"seq\":%u,\"frame\":%d,\"line\":%d,\"phase\":%u,\"ch\":%u,"
+      "\"dir\":\"%s\",\"src\":%u,\"dst_reg\":%u,\"dest\":%u,\"size\":%u}",
+      (i ? "," : ""), (unsigned)e->seq, e->frame, (int)e->line,
+      (unsigned)e->phase, (unsigned)e->channel,
       e->fromB ? "B2A" : "A2B",
       (unsigned)(((uint32_t)e->aBank << 16) | e->aAdr),
-      (unsigned)(0x2100 | e->bAdr),
+      (unsigned)(0x2100 | e->bAdr), (unsigned)e->dest,
       (unsigned)(e->size ? e->size : 0x10000u));
   }
   fprintf(f, "]},\n");
@@ -331,5 +397,21 @@ int ppudma_frame_at(uint64_t back, PpuFrameInfo *out) {
 }
 
 uint64_t ppudma_frame_count(void) { return 0; }
+
+int ppudma_dma_at(uint64_t back, PpuDmaInfo *out) {
+  (void)back;
+  (void)out;
+  return 0;
+}
+
+uint64_t ppudma_dma_count(void) { return 0; }
+
+int ppudma_dma_collect(uint32_t frame, PpuDmaInfo *out, int cap, int *lost) {
+  (void)frame;
+  (void)out;
+  (void)cap;
+  if (lost) *lost = 0;
+  return 0;
+}
 
 #endif

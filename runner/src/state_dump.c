@@ -7,6 +7,7 @@
 
 #include "common_rtl.h"
 #include "cpu_state.h"
+#include "ppu_dma_trace.h"
 #include "snes/cart.h"
 #include "snes/dma.h"
 #include "snes/ppu.h"
@@ -138,6 +139,27 @@ static void write_wlog(const char *dir, const char *tag, uint32_t frame) {
   free(e);
 }
 
+static void write_dmas(const char *dir, const char *tag, uint32_t frame) {
+  enum { kCap = 4096 };
+  PpuDmaInfo *e = (PpuDmaInfo *)malloc(sizeof(PpuDmaInfo) * kCap);
+  if (!e) return;
+  int lost = 0;
+  int n = ppudma_dma_collect(frame, e, kCap, &lost);
+  FILE *f = open_out(dir, tag, ".dma.tsv", "w");
+  if (f) {
+    fprintf(f, "# frame\tline\tphase\tchannel\tdir\tsource\tbreg\tdest\tsize%s\n",
+            lost ? "\t(ring evicted part of this frame)" : "");
+    for (int i = 0; i < n; i++)
+      fprintf(f, "%d\t%d\t%s\t%u\t%s\t%02X:%04X\t21%02X\t%04X\t%u\n",
+              e[i].frame, e[i].line, e[i].phase ? "raster" : "cpu",
+              (unsigned)e[i].channel, e[i].fromB ? "B2A" : "A2B",
+              (unsigned)e[i].aBank, (unsigned)e[i].aAdr, (unsigned)e[i].bAdr,
+              (unsigned)e[i].dest, (unsigned)e[i].size);
+    fclose(f);
+  }
+  free(e);
+}
+
 int snes_state_dump(const char *dir, const char *tag, const uint8_t *pixels,
                     int pitch_bytes, int x0, int height, uint32_t frame) {
   int rc = 0;
@@ -159,6 +181,7 @@ int snes_state_dump(const char *dir, const char *tag, const uint8_t *pixels,
                      g_snes->cart->ramSize);
   write_regs(dir, tag, frame);
   write_wlog(dir, tag, frame);
+  write_dmas(dir, tag, frame);
   if (g_snes && g_snes->cart && g_snes->cart->superfx) {
     static SuperFxJob jobs[4096];
     int n = superfx_job_log(jobs, 4096);

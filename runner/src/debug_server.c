@@ -6183,6 +6183,54 @@ static void cmd_ppu_frames(const char *args) {
     send_line(buf);
 }
 
+/* ppu_dmas [count=N] [skip=K] [frame=F]
+ *   The always-on DMA ring, newest first, each transfer with the raster line
+ *   it affected and the host half it ran in. frame=F instead returns every
+ *   DMA filed under drawn frame F (ppudma_dma_collect), oldest first. "Where
+ *   in the frame did the VRAM upload land" is read here, not armed for. */
+static void cmd_ppu_dmas(const char *args) {
+    int count = 64, skip = 0;
+    long frame = -1;
+    if (args) {
+        const char *p = strstr(args, "count=");
+        if (p) sscanf(p + 6, "%d", &count);
+        p = strstr(args, "skip=");
+        if (p) sscanf(p + 5, "%d", &skip);
+        p = strstr(args, "frame=");
+        if (p) sscanf(p + 6, "%ld", &frame);
+    }
+    if (count < 1) count = 1;
+    if (count > 1024) count = 1024;
+    if (skip < 0) skip = 0;
+    static PpuDmaInfo list[1024];
+    int n = 0, lost = 0;
+    if (frame >= 0) {
+        n = ppudma_dma_collect((uint32_t)frame, list, count, &lost);
+    } else {
+        while (n < count && ppudma_dma_at((uint64_t)(skip + n), &list[n])) n++;
+    }
+    static char buf[196608];
+    int pos = snprintf(buf, sizeof(buf),
+        "{\"ok\":true,\"total\":%llu,\"lost\":%d,\"dmas\":[",
+        (unsigned long long)ppudma_dma_count(), lost);
+    int emitted = 0;
+    for (int k = 0; k < n; k++) {
+        const PpuDmaInfo *d = &list[k];
+        if (pos > (int)sizeof(buf) - 256) break;
+        pos += snprintf(buf + pos, sizeof(buf) - pos,
+            "%s{\"frame\":%d,\"line\":%d,\"phase\":\"%s\",\"ch\":%u,"
+            "\"dir\":\"%s\",\"src\":\"%02X:%04X\",\"breg\":\"21%02X\","
+            "\"dest\":\"0x%04x\",\"size\":%u}",
+            emitted ? "," : "", d->frame, (int)d->line,
+            d->phase ? "raster" : "cpu", (unsigned)d->channel,
+            d->fromB ? "B2A" : "A2B", (unsigned)d->aBank, (unsigned)d->aAdr,
+            (unsigned)d->bAdr, (unsigned)d->dest, (unsigned)d->size);
+        emitted++;
+    }
+    snprintf(buf + pos, sizeof(buf) - pos, "],\"shown\":%d}", emitted);
+    send_line(buf);
+}
+
 /* tier2_dump [path]
  *   Write the tier-2 interp-coverage manifest ON DEMAND from the always-on
  *   in-memory table — no clean exit required (the atexit path is skipped by
@@ -8357,6 +8405,7 @@ static const CmdEntry s_commands[] = {
     {"interp_stats", cmd_interp_stats},
     {"interp_profile", cmd_interp_profile},
     {"ppu_frames",     cmd_ppu_frames},
+    {"ppu_dmas",       cmd_ppu_dmas},
     {"tier2_dump", cmd_tier2_dump},
     {"nlr_diag",       cmd_nlr_diag},
     {"stack_drift_get", cmd_stack_drift_get},
