@@ -69,6 +69,16 @@ typedef struct SuperFx {
   uint64_t instruction_count;
   SuperFxTraceEntry trace[256];
 
+  /* Address of the opcode in `pipeline` (PBR<<16 | R15 at fetch), so a PC
+   * hook fires on the instruction actually executing -- including a branch
+   * target entered after its delay slot. UINT32_MAX = unknown (after STOP,
+   * reset). Host-only; not part of the save-state range. */
+  uint32_t pipeline_pc;
+  struct SuperFxPcHookSlot *pc_hooks;
+  uint16_t pc_hook_count, pc_hook_cap;
+  bool redirect_pending;
+  uint16_t redirect_pc;
+
   /* Optional presentation-only enhancement state. Architectural GSU state
    * above remains authoritative and always follows native hardware behavior. */
   SuperFxEnhancementMode enhancement_mode;
@@ -123,6 +133,32 @@ void superfx_sync(SuperFx *fx, uint64_t master_clock);
  * parked polling SFR uses this to decide whether advancing time can change
  * what that poll reads. */
 bool superfx_is_running(const SuperFx *fx);
+
+/* GSU PC hooks: title policy run immediately before the GSU executes the
+ * instruction at `pc24` (PBR<<16 | address, as in the disassembly). The GSU is
+ * always interpreted, so a hook here fires whatever tier the 65816 side runs
+ * on -- unlike an interpreter pre-opcode hook, it cannot be bypassed by an AOT
+ * promotion. The hook may read and write registers (superfx_reg /
+ * superfx_set_reg) and Game Pak RAM (fx->ram), and may ask for the
+ * instruction at another address of the same bank to execute instead
+ * (superfx_hook_redirect). Nothing is armed by default; with no hooks the
+ * core pays one counter test per instruction. Passing hook=NULL disarms
+ * `pc24`. A hook changes guest execution: a title arms one only while its
+ * feature is on, and must leave it inert (or disarmed) otherwise. */
+typedef void SuperFxPcHook(SuperFx *fx, uint32_t pc24, void *context);
+bool superfx_set_pc_hook(SuperFx *fx, uint32_t pc24, SuperFxPcHook *hook,
+                         void *context);
+void superfx_clear_pc_hooks(SuperFx *fx);
+uint16_t superfx_reg(const SuperFx *fx, unsigned n);
+/* Game Pak RAM (in the current RAMBR bank) as the GSU sees it now, including a
+ * store it issued that has not completed yet. Reading fx->ram directly from a
+ * hook right after a store sees the OLD byte. Does not advance the core. */
+uint8_t superfx_ram_peek(const SuperFx *fx, uint16_t address);
+void superfx_set_reg(SuperFx *fx, unsigned n, uint16_t value);
+/* From inside a hook: execute the instruction at `address` (same PBR) next,
+ * instead of the hooked one. Branch delay slots are not modelled across a
+ * redirect, so do not redirect from, or into, a delay slot. */
+void superfx_hook_redirect(SuperFx *fx, uint16_t address);
 
 /* Always-on ring of GSU jobs: one entry per start (the S-CPU's R15 high-byte
  * write) with the master clock it started and stopped at (0 while still

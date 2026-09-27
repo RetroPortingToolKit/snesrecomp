@@ -1578,6 +1578,7 @@ uint16 ReadRegWord(uint16 reg) {
 static void WriteVramWord(Ppu *ppu, uint16 value) {
   uint16_t adr = ppu->vramPointer;
   ppu->vram[adr & 0x7fff] = value;
+  ppu->vramWriteCount++;
   // Atomic 16-bit STA $2118 hits both VRAM bytes at this word; record
   // each as a byte event so the differ can compare against the
   // oracle's REGISTER_2118 + REGISTER_2119 byte sequence.

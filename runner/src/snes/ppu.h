@@ -338,6 +338,18 @@ struct Ppu {
   PpuWidescreenLineEnhancer *widescreenLineEnhancer;
   void *widescreenLineEnhancerContext;
 
+  /* Host-only: bumped on every VRAM store (the $2118/$2119 ports, the 16-bit
+   * fast path, and a save-state load). A frame-model host that snapshots the
+   * picture per raster line compares it to tell whether VRAM changed since
+   * its last copy -- a title that uploads character data in a mid-frame
+   * forced blank (Yoshi's Island, line 217) otherwise gets one frame's OAM
+   * drawn with the next frame's tiles. Not guest state; never serialized. */
+  uint32_t vramWriteCount;
+  /* Host-only, same rule, for OAM ($2104, and a save-state load). Tells a
+   * host WHEN the sprite table it is drawing was uploaded, so it can pair it
+   * with whatever produced it. */
+  uint32_t oamWriteCount;
+
   // -- START OF SNAPSHOT, 0x10420 bytes
   uint16_t cgram[0x100];
   uint16_t oam[0x100];
@@ -606,6 +618,10 @@ int ppu_wlog_collect(uint32_t frame, PpuWlogEntry *out, int cap, int *lost);
 /* HDMAEN is not a PPU register but decides which lines HDMA touches, so the
  * $420C write path journals itself too. */
 void ppu_wlog_note_reg(uint16_t reg, uint8_t val);
+/* The frame counter and raster line a write made NOW is attributed to, by the
+ * same rule as the journal. Lets other always-on rings (the DMA ring) file
+ * their events on the line they affect. */
+void ppu_wlog_position(uint32_t *frame, int16_t *line);
 
 void ppu_saveload(Ppu *ppu, SaveLoadInfo *sli);
 void PpuBeginDrawing(Ppu *ppu, uint8_t *pixels, size_t pitch, uint32_t render_flags);

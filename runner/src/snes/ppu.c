@@ -112,7 +112,21 @@ void ppu_saveload(Ppu *ppu, SaveLoadInfo *sli) {
   uint32 version[2] = {'P' | 'P' << 8 | 'U' << 16 | '0' << 24, PPU_SAVESTATE_REGS_SIZE + PPU_SAVESTATE_MEM_SIZE};
   sli->func(sli, version, 8);
   sli->func(sli, &ppu->inidisp, PPU_SAVESTATE_REGS_SIZE);
+  /* The write counters must move on a load (it replaces VRAM and OAM
+   * wholesale) and must NOT move on a save: rewind and run-ahead save every
+   * few frames, and a host pairing "OAM was just uploaded" with what produced
+   * it would take each snapshot for an upload. There is no direction flag,
+   * so compare what the call left behind. */
+  static uint16_t vram_before[0x8000], oam_before[0x100];
+  static uint8_t high_before[0x20];
+  memcpy(vram_before, ppu->vram, sizeof(vram_before));
+  memcpy(oam_before, ppu->oam, sizeof(oam_before));
+  memcpy(high_before, ppu->highOam, sizeof(high_before));
   sli->func(sli, &ppu->cgram, PPU_SAVESTATE_MEM_SIZE);
+  if (memcmp(vram_before, ppu->vram, sizeof(vram_before)) != 0) ppu->vramWriteCount++;
+  if (memcmp(oam_before, ppu->oam, sizeof(oam_before)) != 0 ||
+      memcmp(high_before, ppu->highOam, sizeof(high_before)) != 0)
+    ppu->oamWriteCount++;
 }
 
 void PpuResetWidescreenOamHistory(Ppu *ppu) {
@@ -709,6 +723,12 @@ void ppu_wlog_note_reg(uint16_t reg, uint8_t val) {
   e->reg = reg;
   e->val = val;
   e->src = g_ppu_wlog_src;
+}
+
+void ppu_wlog_position(uint32_t *frame, int16_t *line) {
+  const uint32_t f = (uint32_t)snes_frame_counter;
+  if (frame) *frame = f;
+  if (line) *line = (int16_t)(f == s_wlog_line_frame ? s_wlog_line : 0);
 }
 
 static void ppu_wlog_note(uint8_t adr, uint8_t val) {
@@ -3246,6 +3266,7 @@ void ppu_write(Ppu* ppu, uint8_t adr, uint8_t val) {
       if(ppu->oamInHigh) {
         int hidx = ((ppu->oamAdr & 0xf) << 1) | ppu->oamSecondWrite;
         ppu->highOam[hidx] = val;
+        ppu->oamWriteCount++;
         debug_server_on_oam_write(1, (uint16_t)hidx, (uint16_t)val);
         if(ppu->oamSecondWrite) {
           ppu->oamAdr++;
@@ -3258,6 +3279,7 @@ void ppu_write(Ppu* ppu, uint8_t adr, uint8_t val) {
           uint16_t widx = ppu->oamAdr;
           uint16_t word = (uint16_t)((val << 8) | ppu->oamBuffer);
           ppu->oam[ppu->oamAdr++] = word;
+          ppu->oamWriteCount++;
           debug_server_on_oam_write(0, widx, word);
           if(ppu->oamAdr == 0) ppu->oamInHigh = true;
         }
@@ -3336,6 +3358,7 @@ void ppu_write(Ppu* ppu, uint8_t adr, uint8_t val) {
       // TODO: vram access during rendering (also cgram and oam)
       uint16_t vramAdr = ppu_getVramRemap(ppu);
       ppu->vram[vramAdr & 0x7fff] = (ppu->vram[vramAdr & 0x7fff] & 0xff00) | val;
+      ppu->vramWriteCount++;
       // $2118 == low byte of word; byte_addr = word << 1.
       debug_server_on_vram_write(((uint32_t)(vramAdr & 0x7fff) << 1), val);
       if (s_vram_write_log_hook)
@@ -3351,6 +3374,7 @@ void ppu_write(Ppu* ppu, uint8_t adr, uint8_t val) {
     case 0x19: {
       uint16_t vramAdr = ppu_getVramRemap(ppu);
       ppu->vram[vramAdr & 0x7fff] = (ppu->vram[vramAdr & 0x7fff] & 0x00ff) | (val << 8);
+      ppu->vramWriteCount++;
       // $2119 == high byte of word; byte_addr = (word << 1) + 1.
       debug_server_on_vram_write(((uint32_t)(vramAdr & 0x7fff) << 1) + 1, val);
       if (s_vram_write_log_hook)
