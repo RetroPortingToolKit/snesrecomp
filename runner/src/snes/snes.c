@@ -68,6 +68,11 @@ void snes_set_hdma_beam_enabled(Snes *snes, bool enabled) {
   snes->hdmaBeamOff = !enabled;
 }
 
+static bool s_raster_irq_beam_off;
+void snes_set_raster_irq_beam_enabled(bool enabled) {
+  s_raster_irq_beam_off = !enabled;
+}
+
 static SnesMasterClockChargeHook s_master_clock_charge_hook;
 static SnesWramWriteLogHook s_wram_write_log_hook;
 
@@ -419,7 +424,7 @@ static uint32_t snes_advance_beam(Snes *snes, uint32_t clocks, bool check_irq) {
                          ? 0 : (uint16_t)(snes->autoJoyTimer - span);
     }
 
-    if (check_irq &&
+    if (check_irq && !s_raster_irq_beam_off &&
         (snes->hIrqEnabled || snes->vIrqEnabled)) {
       bool line_matches = !snes->vIrqEnabled || v == snes->vTimer;
       uint32_t target = snes->hIrqEnabled ? (uint32_t)snes->hTimer * 4u : 0u;
@@ -864,6 +869,7 @@ void snes_writeReg(Snes* snes, uint16_t adr, uint8_t val) {
        * draws (SimpleHdma) re-arm from this latch — without it, LLE games keep
        * last_hdmaen at 0 and wipe channel hdmaActive before every present. */
       g_snesrecomp_last_hdmaen = val;
+      ppu_wlog_note_reg(0x420C, val);
       dma_startDma(snes->dma, val, true);
       break;
     }

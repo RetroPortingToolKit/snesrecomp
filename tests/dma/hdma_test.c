@@ -19,6 +19,10 @@ static int check(bool condition, const char *message) {
     return condition ? 0 : 1;
 }
 
+/* The PPU write journal (ppu.c) is not linked into this harness; dma.c only
+ * tags who is writing. */
+uint8_t g_ppu_wlog_src;
+
 uint8_t snes_read(Snes *snes, uint32_t adr) {
     (void)snes;
     return bus[adr & 0xffffffu];

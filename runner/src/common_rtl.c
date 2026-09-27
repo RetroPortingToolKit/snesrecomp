@@ -2622,7 +2622,9 @@ void SimpleHdma_DoLine(SimpleHdma *c) {
         c->table++;
       /* ppu_write takes the B-bus offset ($00-$3F), not a $21xx CPU address. */
       uint8 reg = (uint8)(c->ppu_addr + bAdrOffsets[c->mode & 7][j]);
+      g_ppu_wlog_src = kPpuWlogHdma;
       ppu_write(g_ppu, reg, v);
+      g_ppu_wlog_src = kPpuWlogCpu;
       debug_server_on_reg_write((uint16)(0x2100u + reg), v);
     }
   }

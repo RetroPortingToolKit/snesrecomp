@@ -322,11 +322,13 @@ def _autorecover_dp_table_count(rom: bytes, bank: int,
 def _autorecover_indirect_xtable(rom: bytes, bank: int, insn,
                                  data_regions=None,
                                  max_entries: int = 256,
-                                 func_start: Optional[int] = None) -> Optional[List[int]]:
+                                 func_start: Optional[int] = None
+                                 ) -> Optional[Tuple[List[int], int]]:
     """Walk the dispatch table for a `JMP (abs,X)` / `JML (abs,X)` /
-    `JSR (abs,X)` at `insn`. Returns a list of 24-bit target PCs, or
-    None if the very first entry already looks invalid (no table at
-    this site).
+    `JSR (abs,X)` at `insn`. Returns `(targets, index_bias)` — a list of
+    24-bit target PCs plus the byte distance from the instruction's
+    operand to entry 0 (0 for the ordinary layout) — or None if the very
+    first entry already looks invalid (no table at this site).
 
     Termination rules (in order):
       1. table address would cross the bank boundary ($FFFF)
@@ -356,8 +358,53 @@ def _autorecover_indirect_xtable(rom: bytes, bank: int, insn,
     """
     base = insn.operand & 0xFFFF
     entry_size = 3 if _dispatch_kind(insn) == 'long' else 2
+    # --- Where does the table actually START? ---------------------------
+    # The operand of `JSR/JMP ($base,X)` is the address the index is added
+    # to, NOT necessarily the address of entry 0. The walk below has always
+    # assumed the two coincide and that X is a multiple of entry_size; that
+    # assumption is a real ROM fact for most tables and a silent wrong
+    # answer for the rest.
+    #
+    # Yoshi's Island proves the difference. Two of its dispatchers name
+    # their own `RTL` opcode as the operand so the table begins one byte
+    # later, and index with a state variable that steps 1, 3, 5, ... :
+    #
+    #     CODE_01DE80: JSR ($DE84,x)   ; X = r_msg_box_state (1,3,5,...)
+    #                  PLB
+    #                  RTL             ; $01DE84 -- the operand byte
+    #     message_box_state_ptr:       ; $01DE85 -- entry 0 lives HERE
+    #                  dw $DE93 ...
+    #
+    # Walking from $DE84 at stride 2 reads every pointer one byte low
+    # ($6B93 -> $01936B, $DEA9 -> $01A9DE, ...). Those are addresses in the
+    # middle of unrelated routines; they compile, link and run, and the
+    # guest disappears into them. Nothing downstream can tell such a list
+    # from a real one -- the only authority that can is the cfg
+    # `data_region` overlay, which states outright which bytes are the
+    # table. Use it: align the walk to the region and bound it by the
+    # region's end (a table that runs past the end of a declared data span
+    # is reading code bytes as pointers, which is provably wrong).
+    #
+    # `index_bias` is the byte distance from the operand to entry 0; it is
+    # handed to codegen, which recovers the logical index as
+    # `(idx_reg - index_bias) / entry_size`. A selector that lands outside
+    # the table (e.g. an even X here) wraps out of range and takes the
+    # live-pointer interpreter path, which is faithful by construction.
+    index_bias = 0
+    region_end: Optional[int] = None
+    _region = _data_region_containing(data_regions, bank, base)
+    if _region is not None:
+        region_end = _region[2]
+    else:
+        for _delta in range(1, entry_size):
+            _region = _data_region_starting_at(data_regions, bank,
+                                               (base + _delta) & 0xFFFF)
+            if _region is not None:
+                index_bias = _delta
+                region_end = _region[2]
+                break
     entries: List[int] = []
-    tbl_pc = base
+    tbl_pc = (base + index_bias) & 0xFFFF
     nulls_in_a_row = 0
     # Hard code boundary for the table-precedes-dispatcher layout: the
     # table ends where the dispatcher's own function begins.
@@ -391,6 +438,12 @@ def _autorecover_indirect_xtable(rom: bytes, bank: int, insn,
         # Stop at the dispatcher's own function start (table-precedes-
         # dispatcher layout): no entry can begin at/after it.
         if code_boundary is not None and tbl_pc >= code_boundary:
+            break
+        # Stop at the end of the declared data span holding the table. An
+        # entry that reaches past it is composed of code bytes, which is a
+        # mis-decode however plausible the resulting address looks. This is
+        # the same authority that fixed the start, applied to the end.
+        if region_end is not None and tbl_pc + entry_size > region_end:
             break
         # Stop if the next entry's read range would overlap any already-
         # accepted in-bank handler at/above the table base. Equivalent
@@ -443,7 +496,9 @@ def _autorecover_indirect_xtable(rom: bytes, bank: int, insn,
         if eb == bank and base <= addr16 <= 0xFFFF:
             inbank_handler_pcs.append(addr16)
         tbl_pc += entry_size
-    return entries if entries else None
+    if not entries:
+        return None
+    return entries, index_bias
 
 
 def _autorecover_local_stride_runway(rom: bytes, bank: int, func_start: int,
@@ -564,6 +619,34 @@ def _autorecover_local_stride_runway(rom: bytes, bank: int, func_start: int,
     if len(entries) < 4:
         return None
     return entries
+
+
+def _data_region_containing(data_regions, bank: int, pc16: int
+                            ) -> Optional[Tuple[int, int, int]]:
+    """The cfg `data_region` tuple (bank, start, end_exclusive) covering
+    (bank, pc16), or None. Lets a caller use the region's own bounds, not
+    just the yes/no answer `_addr_in_data_regions` gives."""
+    if not data_regions:
+        return None
+    for region in data_regions:
+        b, start, end = region
+        if b == bank and start <= (pc16 & 0xFFFF) < end:
+            return region
+    return None
+
+
+def _data_region_starting_at(data_regions, bank: int, pc16: int
+                             ) -> Optional[Tuple[int, int, int]]:
+    """The cfg `data_region` tuple that STARTS exactly at (bank, pc16), or
+    None. Used to recognise a dispatch table whose first entry sits just
+    after the operand byte (see `_autorecover_indirect_xtable`)."""
+    if not data_regions:
+        return None
+    for region in data_regions:
+        b, start, _end = region
+        if b == bank and start == (pc16 & 0xFFFF):
+            return region
+    return None
 
 
 def _addr_in_data_regions(data_regions, bank: int, pc16: int) -> bool:
@@ -2381,10 +2464,11 @@ def _decode_function_uncached(rom: bytes, bank: int, start: int,
             # the site (cfg overrides — same count, but explicit beats
             # heuristic).
             if auth is None and insn.mode == INDIR_X:
-                entries = _autorecover_indirect_xtable(rom, bank, insn,
-                                                       data_regions,
-                                                       func_start=start)
-                if entries:
+                recovered = _autorecover_indirect_xtable(rom, bank, insn,
+                                                         data_regions,
+                                                         func_start=start)
+                if recovered:
+                    entries, index_bias = recovered
                     auth = {
                         'count': len(entries),
                         'idx_reg': 'X',
@@ -2392,6 +2476,7 @@ def _decode_function_uncached(rom: bytes, bank: int, start: int,
                         # Preserve tolerated null slots. Re-reading only the
                         # count turned a raw $0000 into bank:$0000.
                         'targets': tuple(entries),
+                        'index_bias': index_bias,
                         '_autorecovered': True,
                     }
             # Auto-recovery for (abs) / [abs] DP-built-pointer form:
@@ -2483,6 +2568,10 @@ def _decode_function_uncached(rom: bytes, bank: int, start: int,
                     insn.dispatch_kind = _dispatch_kind(
                         insn, auth.get('table_bases', ()))
                     insn.dispatch_idx_reg = auth['idx_reg']
+                    # Byte distance from the operand to entry 0 (see
+                    # `_autorecover_indirect_xtable`). codegen subtracts it
+                    # before dividing by the entry size.
+                    insn.dispatch_index_bias = int(auth.get('index_bias', 0) or 0)
                     insn.dispatch_local_goto = is_local_goto
                     insn.dispatch_pointer_match = is_pointer_match
                     insn.dispatch_popped_call_frame = bool(
@@ -2737,10 +2826,11 @@ def _decode_function_uncached(rom: bytes, bank: int, start: int,
             # cfg `indirect_dispatch` declarations. cfg still wins when
             # present (explicit beats heuristic).
             if ud_auth is None:
-                entries = _autorecover_indirect_xtable(rom, bank, insn,
-                                                       data_regions,
-                                                       func_start=start)
-                if entries:
+                recovered = _autorecover_indirect_xtable(rom, bank, insn,
+                                                         data_regions,
+                                                         func_start=start)
+                if recovered:
+                    entries, index_bias = recovered
                     ud_auth = {
                         'count': len(entries),
                         'idx_reg': 'X',
@@ -2748,6 +2838,7 @@ def _decode_function_uncached(rom: bytes, bank: int, start: int,
                         # Preserve tolerated null slots. Re-reading only the
                         # count turned a raw $0000 into bank:$0000.
                         'targets': tuple(entries),
+                        'index_bias': index_bias,
                         '_autorecovered': True,
                     }
             if ud_auth is not None:
@@ -2760,6 +2851,8 @@ def _decode_function_uncached(rom: bytes, bank: int, start: int,
                     insn.dispatch_entries = entries
                     insn.dispatch_kind = kind
                     insn.dispatch_idx_reg = ud_auth['idx_reg']
+                    insn.dispatch_index_bias = int(
+                        ud_auth.get('index_bias', 0) or 0)
                     # JSR (abs,X) is always a call dispatch. Candidate
                     # handlers are separate functions/demands; they are not
                     # jump successors inside the caller's CFG.

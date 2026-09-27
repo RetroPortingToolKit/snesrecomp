@@ -60,6 +60,7 @@ extern int snes_frame_counter;
 #include "snes/interp_bridge.h"
 #include "cpu_state.h"
 #include "cpu_trace.h"
+#include "ppu_dma_trace.h"
 #if SNESRECOMP_ENABLE_MODS
 #include "snes_text_xlate.h"
 #endif
@@ -4827,24 +4828,59 @@ static void cmd_ppu_lines(const char *args) {
     send_line(buf);
 }
 
+/* The last frame a title-owned presenter composed. See the declaration in
+ * debug_server.h: without it every capture of an enhanced render path shows
+ * the authentic 256-column raster instead of what the player is looking at. */
+static uint8_t s_composed_pixels[kPpuBufWidth * 4 * 240];
+static int s_composed_width, s_composed_height;
+static int s_composed_valid;
+
+void debug_server_note_composed_frame(const void *argb, unsigned pitch,
+                                      int width, int height) {
+    if (!argb || width <= 0 || width > kPpuBufWidth || height <= 0 ||
+        height > 240 || pitch < (unsigned)width * 4) {
+        s_composed_valid = 0;
+        return;
+    }
+    for (int y = 0; y < height; y++)
+        memcpy(s_composed_pixels + (size_t)y * (size_t)width * 4,
+               (const uint8_t *)argb + (size_t)y * pitch, (size_t)width * 4);
+    s_composed_width = width;
+    s_composed_height = height;
+    s_composed_valid = 1;
+}
+
 static void cmd_screenshot(const char *args) {
     if (!g_ppu) { send_fmt("{\"error\":\"ppu not available\"}"); return; }
 
-    // Copy the most recently presented PPU buffer. Re-rendering here loses
+    // Copy the most recently presented buffer. Re-rendering here loses
     // presentation-only layers (including widescreen coprocessor pixels) and
     // can observe forced blank after the frame has already been drawn.
     static uint8_t scr_pixels[kPpuBufWidth * 4 * 240];
-    uint8_t *saved_render_buffer = g_ppu->renderBuffer;
-    uint32_t saved_render_pitch  = g_ppu->renderPitch;
-    int w = 256 + 2 * g_ppu->extraLeftRight;
-    if (!saved_render_buffer || saved_render_pitch < (uint32_t)w * 4) {
-        send_fmt("{\"error\":\"render buffer unavailable\"}");
-        return;
+    int w, h;
+    const char *source;
+    if (s_composed_valid) {
+        // A title-owned compositor is running: ITS surface is what the player
+        // sees, and the PPU's render buffer is only the input it composed from.
+        w = s_composed_width;
+        h = s_composed_height;
+        source = "composed";
+        memcpy(scr_pixels, s_composed_pixels, (size_t)w * (size_t)h * 4);
+    } else {
+        uint8_t *saved_render_buffer = g_ppu->renderBuffer;
+        uint32_t saved_render_pitch  = g_ppu->renderPitch;
+        w = 256 + 2 * g_ppu->extraLeftRight;
+        h = 224;
+        source = "ppu";
+        if (!saved_render_buffer || saved_render_pitch < (uint32_t)w * 4) {
+            send_fmt("{\"error\":\"render buffer unavailable\"}");
+            return;
+        }
+        for (int y = 0; y < h; y++)
+            memcpy(scr_pixels + (size_t)y * w * 4,
+                   saved_render_buffer + (size_t)y * saved_render_pitch,
+                   (size_t)w * 4);
     }
-    for (int y = 0; y < 224; y++)
-        memcpy(scr_pixels + (size_t)y * w * 4,
-               saved_render_buffer + (size_t)y * saved_render_pitch,
-               (size_t)w * 4);
 
     // Determine output path
     const char *path = args[0] ? args : "debug_screenshot.bmp";
@@ -4853,7 +4889,6 @@ static void cmd_screenshot(const char *args) {
     FILE *f = fopen(path, "wb");
     if (!f) { send_fmt("{\"error\":\"cannot open file\",\"path\":\"%s\"}", path); return; }
 
-    int h = 224;
     int row_bytes = w * 3;
     int pad = (4 - (row_bytes % 4)) % 4;
     int stride = row_bytes + pad;
@@ -4890,9 +4925,12 @@ static void cmd_screenshot(const char *args) {
     }
     fclose(f);
 
+    /* `source` is not decoration: a caller that asked for the enhanced frame
+     * and silently got the 256-column raster would draw the wrong conclusion
+     * from a correct-looking image. */
     send_fmt("{\"ok\":true,\"path\":\"%s\",\"width\":%d,\"height\":%d,"
-             "\"ws_extra\":%d,\"frame\":%d}",
-             path, w, h, (int)g_ppu->extraLeftRight, snes_frame_counter);
+             "\"ws_extra\":%d,\"source\":\"%s\",\"frame\":%d}",
+             path, w, h, (int)g_ppu->extraLeftRight, source, snes_frame_counter);
 }
 
 /* raster_journal — the per-line register waveform the renderer will replay.
@@ -6001,18 +6039,148 @@ static void cmd_interp_stats(const char *args) {
      * put it a hair over the total, and a headline reading 100.4% invites a
      * bug hunt into what is a sub-percent accounting artifact. */
     if (icyc_pct > 100.0) icyc_pct = 100.0;
+    uint64_t nirq_runs = 0, nirq_miss = 0;
     send_fmt("{\"ok\":true,\"dispatch_total\":%u,"
              "\"found1\":%llu,\"found0\":%llu,\"found0_pct\":%.3f,"
              "\"tier_hits\":%ld,\"tier2_sites\":%d,"
              "\"tier2_clean\":%llu,\"tier2_bail\":%llu,"
+             "\"native_irq_runs\":%llu,\"native_irq_miss\":%llu,"
              "\"interp_insns\":%llu,\"interp_cycles\":%llu,"
              "\"cpu_cycles\":%llu,\"master_cycles\":%llu,"
              "\"interp_cycle_pct\":%.4f,\"aot_cycle_pct\":%.4f}",
              total, (unsigned long long)f1, (unsigned long long)f0, pct,
              interp_tier_hit_count(), sites, clean, bail,
+             (unsigned long long)nirq_runs, (unsigned long long)nirq_miss,
              (unsigned long long)iins, (unsigned long long)icyc,
              (unsigned long long)ccyc, (unsigned long long)mcyc,
              icyc_pct, 100.0 - icyc_pct);
+}
+
+/* interp_profile [top=N] [min_cycles=N]
+ *   WHERE the interpreted cycles went, by 256-byte guest page, from
+ *   instruction zero. interp_stats says how much is interpreted;
+ *   this says which code, which is what a coverage burndown has to
+ *   triage on. Always-on accumulator (interp816.c) -- nothing to arm,
+ *   no window to miss, and the numbers cover boot.
+ *
+ *   Each row: page base pc24, interpreted cycles and instructions on
+ *   that page, and the page's share of TOTAL guest CPU cycles
+ *   (g_cpu.cycles) -- the same denominator interp_stats uses, so the
+ *   rows sum to interp_cycle_pct and a row can be read directly as
+ *   "fixing this page is worth N% of the guest".
+ */
+extern uint64_t interp816_page_cycles(unsigned page);
+extern uint64_t interp816_page_insns(unsigned page);
+extern unsigned interp816_page_count(void);
+static void cmd_interp_profile(const char *args) {
+    int top = 32;
+    unsigned long long min_cycles = 0;
+    if (args) {
+        const char *p = strstr(args, "top=");
+        if (p) sscanf(p + 4, "%d", &top);
+        p = strstr(args, "min_cycles=");
+        if (p) sscanf(p + 11, "%llu", &min_cycles);
+    }
+    if (top < 1) top = 1;
+    if (top > 256) top = 256;
+
+    const unsigned n_pages = interp816_page_count();
+    /* Select the top N by a bounded insertion pass: no allocation, no sort of
+     * 64K rows, and deterministic ordering (cycles desc, then page asc). */
+    unsigned best_page[256];
+    unsigned long long best_cyc[256];
+    int n_best = 0;
+    unsigned long long interp_total = 0;
+    unsigned pages_touched = 0;
+    for (unsigned page = 0; page < n_pages; page++) {
+        unsigned long long c = interp816_page_cycles(page);
+        if (c == 0) continue;
+        pages_touched++;
+        interp_total += c;
+        if (c < min_cycles) continue;
+        if (n_best == top && c <= best_cyc[n_best - 1]) continue;
+        int slot = n_best < top ? n_best : top - 1;
+        while (slot > 0 && best_cyc[slot - 1] < c) {
+            best_cyc[slot] = best_cyc[slot - 1];
+            best_page[slot] = best_page[slot - 1];
+            slot--;
+        }
+        best_cyc[slot] = c;
+        best_page[slot] = page;
+        if (n_best < top) n_best++;
+    }
+
+    const unsigned long long cpu_cycles = (unsigned long long)g_cpu.cycles;
+    static char buf[16384];
+    int pos = snprintf(buf, sizeof(buf),
+        "{\"ok\":true,\"frame\":%d,\"cpu_cycles\":%llu,"
+        "\"interp_cycles\":%llu,\"pages_touched\":%u,\"shown\":%d,"
+        "\"pages\":[",
+        snes_frame_counter, cpu_cycles, interp_total, pages_touched, n_best);
+    for (int k = 0; k < n_best; k++) {
+        if (pos > (int)sizeof(buf) - 160) break;
+        unsigned page = best_page[k];
+        pos += snprintf(buf + pos, sizeof(buf) - pos,
+            "%s{\"pc24\":\"0x%06x\",\"cycles\":%llu,\"insns\":%llu,"
+            "\"pct_cpu\":%.4f}",
+            k ? "," : "", page << 8, best_cyc[k],
+            (unsigned long long)interp816_page_insns(page),
+            cpu_cycles ? 100.0 * (double)best_cyc[k] / (double)cpu_cycles
+                       : 0.0);
+    }
+    snprintf(buf + pos, sizeof(buf) - pos, "]}");
+    send_line(buf);
+}
+
+/* ppu_frames [count=N]
+ *   The last N per-frame PPU snapshots from the always-on ring, newest
+ *   first: INIDISP, the $212C/$212D screen designations, BG mode, CGRAM/VRAM
+ *   occupancy, A->B DMA count and the end-of-frame stack pointer.
+ *
+ *   This is the instrument for per-frame FLICKER. A layer that blinks is a
+ *   register that changes every frame, and the honest way to identify it is a
+ *   frame-indexed register history -- not two screenshots and an inference.
+ *   Nothing is armed: the ring has been recording since frame 0.
+ */
+static void cmd_ppu_frames(const char *args) {
+    int count = 64;
+    int skip = 0;   /* frames back from the newest to start at */
+    if (args) {
+        const char *p = strstr(args, "count=");
+        if (p) sscanf(p + 6, "%d", &count);
+        p = strstr(args, "skip=");
+        if (p) sscanf(p + 5, "%d", &skip);
+    }
+    if (count < 1) count = 1;
+    if (count > 512) count = 512;
+    if (skip < 0) skip = 0;
+    static char buf[131072];
+    int pos = snprintf(buf, sizeof(buf),
+        "{\"ok\":true,\"total\":%llu,\"frames\":[",
+        (unsigned long long)ppudma_frame_count());
+    int emitted = 0;
+    for (int k = 0; k < count; k++) {
+        PpuFrameInfo info;
+        if (!ppudma_frame_at((uint64_t)(skip + k), &info)) break;
+        if (pos > (int)sizeof(buf) - 256) break;
+        pos += snprintf(buf + pos, sizeof(buf) - pos,
+            "%s{\"frame\":%d,\"inidisp\":\"0x%02x\",\"blank\":%u,"
+            "\"bri\":%u,\"tm\":\"0x%02x\",\"ts\":\"0x%02x\",\"bgmode\":%u,"
+            "\"cgram_nz\":%u,\"vram_nz\":%u,\"dma_a2b\":%u,"
+            "\"s\":\"0x%04x\",\"game_mode\":\"0x%02x\","
+            "\"nmi\":%u,\"irq\":%u,\"irq_cpu\":%u,\"irq_raster\":%u}",
+            emitted ? "," : "", info.frame, info.inidisp,
+            (unsigned)((info.inidisp & 0x80) != 0),
+            (unsigned)(info.inidisp & 0x0F), info.tm, info.ts,
+            (unsigned)(info.bgmode & 7), info.cgram_nz, info.vram_nz,
+            info.dma_a2b, info.s_reg, info.game_mode,
+            (unsigned)info.nmi_count, (unsigned)info.irq_count,
+            (unsigned)info.irq_cpu, (unsigned)info.irq_raster);
+        emitted++;
+    }
+    snprintf(buf + pos, sizeof(buf) - pos,
+             "],\"skip\":%d,\"shown\":%d}", skip, emitted);
+    send_line(buf);
 }
 
 /* tier2_dump [path]
@@ -8187,6 +8355,8 @@ static const CmdEntry s_commands[] = {
     {"db_trip_get",    cmd_db_trip_get},
     {"dispatch_log_get", cmd_dispatch_log_get},
     {"interp_stats", cmd_interp_stats},
+    {"interp_profile", cmd_interp_profile},
+    {"ppu_frames",     cmd_ppu_frames},
     {"tier2_dump", cmd_tier2_dump},
     {"nlr_diag",       cmd_nlr_diag},
     {"stack_drift_get", cmd_stack_drift_get},

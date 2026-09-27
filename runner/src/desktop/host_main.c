@@ -55,6 +55,7 @@
 #include "cpu_trace.h"
 #include "common_cpu_infra.h"
 #include "framedump.h"
+#include "state_dump.h"
 #include "config.h"
 #include "display_aspect.h"
 #include "crc32.h"
@@ -553,7 +554,31 @@ typedef struct {
   uint32 poke_addr; // script-only WRAM write address
   uint8 *poke_bytes;
   int poke_count;
+  /* until/until16: WRAM condition, checked at each frame boundary. */
+  uint8 cond_width;   // 1 or 2 bytes
+  uint8 cond_ne;      // 0: ==, 1: !=
+  uint16 cond_value;
+  int cond_timeout;   // frames
+  int cond_waited;
+  char *dump_tag;     // dump <tag>
 } ScriptEntry;
+
+/* Entry kinds carried in the high bits of ScriptEntry.mask. The zero-frame
+ * kinds (until, dump, quit) run at the boundary where their wait ends and
+ * then fall straight through to the next command: they consume no frame of
+ * their own and leave no release frame behind. */
+enum {
+  kScriptLoadState = 0x80000000u,
+  kScriptPoke      = 0x40000000u,
+  kScriptForcePoke = 0x20000000u,
+  kScriptReset     = 0x10000000u,
+  kScriptUntil     = 0x08000000u,
+  kScriptDump      = 0x04000000u,
+  kScriptQuit      = 0x02000000u,
+  kScriptZeroFrame = kScriptUntil | kScriptDump | kScriptQuit,
+};
+static int g_script_quit;        // quit reached: the main loop exits
+static int g_script_failed;      // an until timed out: exit code 3
 
 typedef struct {
   uint32 addr;
@@ -673,7 +698,17 @@ static ScriptEntry *NewScriptEntry(int *cap) {
  *   reset                   the Reset hotkey's console reset
  *   poke <addr> <hex>       write WRAM bytes for one frame
  *   pokefor <addr> <hex> N  write WRAM bytes for N frames
- *   forcepoke <addr> <hex>  write WRAM bytes every frame from now on */
+ *   forcepoke <addr> <hex>  write WRAM bytes every frame from now on
+ *   until <addr> <op> <hex> [timeout]    block until the WRAM byte at <addr>
+ *   until16 <addr> <op> <hex> [timeout]  (or LE word) compares; op is == or
+ *                           !=; timeout in frames (default 36000) exits 3
+ *   dump <tag>              write the scene state dump (state_dump.h) for the
+ *                           frame just completed into $SNESRECOMP_DUMP_DIR
+ *   quit                    exit the process
+ *
+ * The same file drives the snesref oracle (tools/snesref/README.md), with
+ * the same per-frame meaning: every hold-type entry is followed by one idle
+ * frame, and until/dump/quit consume no frames. */
 static void LoadScript(const char *path) {
   FILE *f = fopen(path, "r");
   if (!f) { fprintf(stderr, "script: cannot open '%s'\n", path); return; }
@@ -698,13 +733,13 @@ static void LoadScript(const char *path) {
       int slot = 0;
       sscanf(line, "%*s %d", &slot);
       ScriptEntry *e = NewScriptEntry(&cap);
-      e->mask = 0x80000000 | (slot & 0xF);  // special flag: high bit = loadstate
+      e->mask = kScriptLoadState | (slot & 0xF);
       e->hold_frames = 1;
       e->wait_frames = pending_wait;
       pending_wait = 0;
     } else if (strcmp(cmd, "reset") == 0) {
       ScriptEntry *e = NewScriptEntry(&cap);
-      e->mask = 0x10000000;  // special flag: console reset
+      e->mask = kScriptReset;
       e->hold_frames = 1;
       e->wait_frames = pending_wait;
       pending_wait = 0;
@@ -718,7 +753,7 @@ static void LoadScript(const char *path) {
       if (!bytes)
         continue;
       ScriptEntry *e = NewScriptEntry(&cap);
-      e->mask = 0x20000000;  // special flag: persistent WRAM poke
+      e->mask = kScriptForcePoke;
       e->hold_frames = 1;
       e->wait_frames = pending_wait;
       e->poke_addr = addr;
@@ -741,12 +776,44 @@ static void LoadScript(const char *path) {
       if (!bytes)
         continue;
       ScriptEntry *e = NewScriptEntry(&cap);
-      e->mask = 0x40000000;  // special flag: WRAM poke
+      e->mask = kScriptPoke;
       e->hold_frames = hold;
       e->wait_frames = pending_wait;
       e->poke_addr = addr;
       e->poke_bytes = bytes;
       e->poke_count = byte_count;
+      pending_wait = 0;
+    } else if (strcmp(cmd, "until") == 0 || strcmp(cmd, "until16") == 0) {
+      unsigned addr = 0, value = 0;
+      char op[8] = {0};
+      int timeout = 36000;
+      int matched = sscanf(line, "%*s %x %7s %x %d", &addr, op, &value, &timeout);
+      int width = strcmp(cmd, "until16") == 0 ? 2 : 1;
+      if (matched < 3 || addr + (unsigned)width > 0x20000u ||
+          (strcmp(op, "==") != 0 && strcmp(op, "!=") != 0)) {
+        fprintf(stderr, "script: bad %s line: %s", cmd, line);
+        continue;
+      }
+      ScriptEntry *e = NewScriptEntry(&cap);
+      e->mask = kScriptUntil;
+      e->poke_addr = addr;
+      e->cond_width = (uint8)width;
+      e->cond_ne = op[0] == '!';
+      e->cond_value = (uint16)value;
+      e->cond_timeout = timeout;
+      e->wait_frames = pending_wait;
+      pending_wait = 0;
+    } else if (strcmp(cmd, "dump") == 0) {
+      if (sscanf(line, "%*s %63s", arg1) != 1) continue;
+      ScriptEntry *e = NewScriptEntry(&cap);
+      e->mask = kScriptDump;
+      e->dump_tag = strdup(arg1);
+      e->wait_frames = pending_wait;
+      pending_wait = 0;
+    } else if (strcmp(cmd, "quit") == 0) {
+      ScriptEntry *e = NewScriptEntry(&cap);
+      e->mask = kScriptQuit;
+      e->wait_frames = pending_wait;
       pending_wait = 0;
     } else if (strcmp(cmd, "press") == 0) {
       int hold = (sscanf(line, "%*s %*s %d", &n) == 1) ? n : 1;
@@ -769,9 +836,24 @@ static void LoadScript(const char *path) {
   }
 }
 
+static bool ScriptCondHolds(const ScriptEntry *e) {
+  uint16 v = g_ram[e->poke_addr];
+  if (e->cond_width == 2) v |= (uint16)(g_ram[e->poke_addr + 1] << 8);
+  return (v == e->cond_value) != (e->cond_ne != 0);
+}
+
+static void ScriptDump(const char *tag, unsigned frame) {
+  const char *dir = getenv("SNESRECOMP_DUMP_DIR");
+  const int pitch = (g_game->native_widescreen ? g_snes_width : 256) * 4;
+  int rc = snes_state_dump(dir ? dir : "", tag, g_my_pixels, pitch, g_ws_extra,
+                           g_snes_height, frame);
+  fprintf(stderr, "script f=%u dump %s %s\n", frame, tag, rc ? "partial" : "ok");
+}
+
 static uint32 TickScript(void) {
   ApplyScriptForcePokes();
 
+  for (;;) {
   if (!g_script_entries || g_script_index >= g_script_count)
     return 0;
 
@@ -785,25 +867,54 @@ static uint32 TickScript(void) {
     g_script_counter = e->hold_frames;
   }
 
+  if (g_script_phase == 0 && (e->mask & kScriptZeroFrame)) {
+    const unsigned frame = (unsigned)snes_frame_counter;
+    if (e->mask & kScriptUntil) {
+      if (!ScriptCondHolds(e)) {
+        if (++e->cond_waited > e->cond_timeout) {
+          fprintf(stderr, "script f=%u until %05X timed out after %d frames\n",
+                  frame, e->poke_addr, e->cond_timeout);
+          g_script_failed = 1;
+          g_script_quit = 1;
+        }
+        return 0;
+      }
+      fprintf(stderr, "script f=%u until %05X ok after %d frames\n", frame,
+              e->poke_addr, e->cond_waited);
+    } else if (e->mask & kScriptDump) {
+      ScriptDump(e->dump_tag, frame);
+    } else {
+      fprintf(stderr, "script f=%u quit\n", frame);
+      g_script_quit = 1;
+    }
+    g_script_index++;
+    if (g_script_index < g_script_count) {
+      g_script_phase = 1;
+      g_script_counter = g_script_entries[g_script_index].wait_frames;
+    }
+    if (g_script_quit) return 0;
+    continue;   // zero-frame: the next command starts at this boundary
+  }
+
   if (g_script_phase == 0) {
     if (g_script_counter > 0) {
       g_script_counter--;
-      if (e->mask & 0x80000000) {
+      if (e->mask & kScriptLoadState) {
         RtlSaveLoad(kSaveLoad_Load, e->mask & 0xF);
         GameReset();
         return 0;
       }
-      if (e->mask & 0x10000000) {
+      if (e->mask & kScriptReset) {
         ConsoleReset();
         return 0;
       }
-      if (e->mask & 0x40000000) {
+      if (e->mask & kScriptPoke) {
         if (e->poke_bytes && e->poke_count > 0 &&
             e->poke_addr + (uint32)e->poke_count <= 0x20000u)
           memcpy(g_ram + e->poke_addr, e->poke_bytes, (size_t)e->poke_count);
         return 0;
       }
-      if (e->mask & 0x20000000) {
+      if (e->mask & kScriptForcePoke) {
         if (e->poke_bytes && e->poke_count > 0)
           AddScriptForcePoke(e->poke_addr, e->poke_bytes, e->poke_count);
         return 0;
@@ -820,6 +931,7 @@ static uint32 TickScript(void) {
     return 0;
   }
   return 0;
+  }
 }
 
 void NORETURN Die(const char *error) {
@@ -951,8 +1063,17 @@ void RtlDrawPpuFrame(uint8 *pixel_buffer, size_t pitch, uint32 render_flags) {
   if (!pixel_buffer) return;
   if (g_game->draw_frame &&
       g_game->draw_frame(pixel_buffer, pitch, g_my_pixels, g_snes_width,
-                         g_snes_height, g_present_alpha))
+                         g_snes_height, g_present_alpha)) {
+    /* Publish what the title actually composed. The debug surface otherwise
+     * captures g_ppu->renderBuffer, which for a game-owned compositor is the
+     * authentic 256-column raster it composed FROM -- so a wide frame reads
+     * as correct in a capture while the player is looking at something the
+     * capture never saw. Trace builds only; a no-op stub otherwise. */
+    debug_server_note_composed_frame(pixel_buffer, (unsigned)pitch,
+                                     g_snes_width, g_snes_height);
     return;
+  }
+  debug_server_note_composed_frame(NULL, 0, 0, 0);
   RtlWidescreenPresent(pixel_buffer, pitch, g_my_pixels, g_snes_width, g_snes_height);
 }
 
@@ -3669,6 +3790,11 @@ error_reading:;
      * iteration that opened a panel consumed a script frame the guest never
      * saw, and every later scripted press landed a frame early. */
     inputs |= TickScript();
+    if (g_script_quit) {
+      running = false;
+      exit_reason = g_script_failed ? "script until timed out" : "script quit";
+      break;
+    }
     inputs |= debug_server_get_controller_inputs();
     g_profile_frame = frameCtr + 1;
     if (profile_requested && !g_profile && g_profile_frame >= profile_first) {
@@ -3837,7 +3963,7 @@ error_reading:;
     }
     host_report_breadcrumb("in-game launcher: restarted");
   }
-  return 0;
+  return g_script_failed ? 3 : 0;
 }
 
 /* ── Input plumbing ───────────────────────────────────────────────────────── */
