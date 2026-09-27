@@ -74,6 +74,8 @@ void RtlApuLock(void) {}
 void RtlApuUnlock(void) {}
 
 void snes_refresh_charge(void) {}
+/* Per-frame NMI/IRQ tally (ppu_dma_trace.c in the real runner). */
+void ppudma_note_interrupt(int is_nmi) { (void)is_nmi; }
 uint32_t cpu_region_speed(uint32_t addr24) {
     return (uint32_t)snes_region_speed(addr24, g_memsel);
 }
