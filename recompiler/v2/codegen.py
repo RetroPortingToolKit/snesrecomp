@@ -1760,9 +1760,10 @@ def _emit_indirect_dispatch(insn) -> List[str]:
         # `_idx >= _disp_n` guard below, and takes the live-pointer
         # interpreter path — which is what the hardware would have done with
         # whatever those bytes are.
+        biased = widths.masked(
+            f"(uint16)(cpu->{idx_field} - {index_bias})", 2)
         lines.append(
-            f"  uint16 _idx = (uint16)(((uint16)(cpu->{idx_field} - {index_bias}) "
-            f"& 0xFFFF) / {entry_size});"
+            f"  uint16 _idx = (uint16)({biased} / {entry_size});"
             f"  /* entry_size={entry_size} ({kind}); table starts {index_bias} "
             f"byte(s) past the operand, so {idx_field} is a biased byte offset */"
         )
