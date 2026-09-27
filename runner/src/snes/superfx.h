@@ -119,6 +119,22 @@ void superfx_saveload(SuperFx *fx, struct SaveLoadInfo *sli);
 
 /* Synchronize to the S-CPU's monotonically increasing SNES master clock. */
 void superfx_sync(SuperFx *fx, uint64_t master_clock);
+/* True while the GSU is executing (SFR.G). A frame-model host whose CPU has
+ * parked polling SFR uses this to decide whether advancing time can change
+ * what that poll reads. */
+bool superfx_is_running(const SuperFx *fx);
+
+/* Always-on ring of GSU jobs: one entry per start (the S-CPU's R15 high-byte
+ * write) with the master clock it started and stopped at (0 while still
+ * running). The GSU-side half of a timing comparison against an oracle: a
+ * job that runs longer here than on hardware is a GSU timing fault; a job of
+ * the same length that starts later is the S-CPU's. */
+typedef struct SuperFxJob {
+  uint64_t start_master, stop_master;
+  uint32_t pc24;     /* PBR:R15 the job was started at */
+} SuperFxJob;
+/* Copies up to `cap` most recent jobs, oldest first. */
+int superfx_job_log(SuperFxJob *out, int cap);
 
 uint8_t superfx_cpu_read_io(SuperFx *fx, uint16_t address);
 void superfx_cpu_write_io(SuperFx *fx, uint16_t address, uint8_t data);

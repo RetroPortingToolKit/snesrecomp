@@ -69,6 +69,8 @@ static void reset_prefix(SuperFx *f) {
 }
 
 static void step_clocks(SuperFx *f, unsigned clocks);
+static void job_start(SuperFx *f);
+static void job_stop(SuperFx *f);
 static uint8_t gsu_read(SuperFx *f, uint32_t address);
 static void gsu_write(SuperFx *f, uint32_t address, uint8_t data);
 
@@ -298,6 +300,7 @@ static void instruction(SuperFx *f, uint8_t op) {
         f->ws_replay_pending = true;
     }
     if (!(f->cfgr & 0x80)) { f->sfr |= SFR_IRQ; f->irq_pending = true; }
+    job_stop(f);
     f->sfr &= (uint16_t)~SFR_G; f->pipeline = 1; reset_prefix(f); return;
   }
   if (op == 0x01) { reset_prefix(f); return; }
@@ -564,6 +567,33 @@ void superfx_reset(SuperFx *f) {
   if (presentation) presentation->active=presentation->pending=false;
   f->vcr=4; f->pipeline=1; f->pixel[0].offset=f->pixel[1].offset=UINT16_MAX;
 }
+bool superfx_is_running(const SuperFx *f) { return f && (f->sfr & SFR_G) != 0; }
+
+#define SUPERFX_JOB_CAP 4096u
+static SuperFxJob s_jobs[SUPERFX_JOB_CAP];
+static uint32_t s_job_head;   /* total jobs ever started */
+
+static void job_start(SuperFx *f) {
+  SuperFxJob *j = &s_jobs[s_job_head++ & (SUPERFX_JOB_CAP - 1)];
+  j->start_master = f->master_clock;
+  j->stop_master = 0;
+  j->pc24 = ((uint32_t)f->pbr << 16) | rv(f, 15);
+}
+static void job_stop(SuperFx *f) {
+  if (!s_job_head) return;
+  SuperFxJob *j = &s_jobs[(s_job_head - 1) & (SUPERFX_JOB_CAP - 1)];
+  if (!j->stop_master)
+    j->stop_master = f->master_clock - (uint64_t)(f->clock_credit > 0 ? f->clock_credit : 0);
+}
+int superfx_job_log(SuperFxJob *out, int cap) {
+  uint32_t n = s_job_head < SUPERFX_JOB_CAP ? s_job_head : SUPERFX_JOB_CAP;
+  if (cap < 0) cap = 0;
+  if (n > (uint32_t)cap) n = (uint32_t)cap;
+  for (uint32_t i = 0; i < n; i++)
+    out[i] = s_jobs[(s_job_head - n + i) & (SUPERFX_JOB_CAP - 1)];
+  return (int)n;
+}
+
 void superfx_sync(SuperFx *f, uint64_t master) {
   if(!f) return;
   if(master < f->master_clock){ f->master_clock=master; f->clock_credit=0; return; }
@@ -596,6 +626,7 @@ void superfx_cpu_write_io(SuperFx *f, uint16_t a, uint8_t v) {
   if(a<=0x301f){unsigned n=(a>>1)&15;uint16_t q=rv(f,n);wr(f,n,(a&1)?((q&255)|(v<<8)):((q&0xff00)|v));if(n==14)update_rom_buffer(f);if(a==0x301f){
     f->ws_last_task=rv(f,15);
     f->sfr|=SFR_G;
+    job_start(f);
     SuperFxPresentationReplay *p = f->presentation;
     if (f->enhancement_mode == kSuperFxEnhancement_PresentationReplay && p &&
         p->prepare && p->bank == f->pbr && p->address == rv(f,15)) {
