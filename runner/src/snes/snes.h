@@ -147,6 +147,15 @@ void snes_set_master_clock_charge_hook(SnesMasterClockChargeHook hook);
 void snes_set_wram_write_log_hook(SnesWramWriteLogHook hook);
 /* Next comparator edge for hosts that deliver each raster IRQ separately. */
 void snes_set_hdma_beam_enabled(Snes *snes, bool enabled);
+/* Raster-IRQ ownership. A frame-model host that runs the CPU half of a frame
+ * first and then delivers every H/V IRQ from its own raster walk, at the line
+ * the comparator names, owns the comparator: the CPU-half beam must not ALSO
+ * latch it. Latched there, the IRQ has no deliverer inside the CPU half, and
+ * the bridge -- which yields to its scheduler whenever an IRQ is pending with
+ * I clear -- returns on every instruction from that line to the end of the
+ * frame, freezing the guest. Default: enabled (the beam latches). Host policy,
+ * not guest state: kept out of the Snes struct and so out of savestates. */
+void snes_set_raster_irq_beam_enabled(bool enabled);
 bool snes_next_irq_master(const Snes *snes, uint64_t now, uint64_t *out);
 
 /* Master clocks from the current beam position to the next programmed H/V IRQ
