@@ -2349,16 +2349,24 @@ static int _interp_run_core(CpuState *cpu, uint32_t entry_pc24,
                      (uint32_t)cpu_dispatch_inline_arg_bytes(target)) & 0xFFFFFF;
                 if (_air != RECOMP_RETURN_NORMAL) {
                     if (s_lle_unwind_active) {
-                        if (s_lle_unwind_owner_depth == s_interp_bridge_depth) {
-                            if (s_lle_unwind_is_deadline) {
+                        if (s_lle_unwind_is_deadline) {
+                            /* A deadline returns to the scheduler host, not
+                             * the immediate bounce owner. Clearing it in a
+                             * nested gap lets its compiled caller continue
+                             * with inner guest frames still on the stack.
+                             * Preserve the sentinel through every gap; only
+                             * the scheduler publishes the suspended PC. */
+                            if (yield_pc) {
                                 s_lle_resume_pc24 = s_lle_unwind_pc24;
                                 s_lle_unwind_active = 0;
                                 s_lle_unwind_owner_depth = 0;
                                 s_lle_unwind_is_deadline = 0;
-                                sync_interp_to_cpu(&in, cpu);
-                                bridge_apu_flush(cpu);
-                                return 1;
                             }
+                            sync_interp_to_cpu(&in, cpu);
+                            bridge_apu_flush(cpu);
+                            return 1;
+                        }
+                        if (s_lle_unwind_owner_depth == s_interp_bridge_depth) {
                             if (getenv("SNESRECOMP_YIELD_STACK_DIAG") &&
                                 snes_frame_counter >= 5390) {
                                 fprintf(stderr,

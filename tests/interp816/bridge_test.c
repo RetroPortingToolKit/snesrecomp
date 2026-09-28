@@ -40,6 +40,8 @@ static int      g_aot_double_rewrite;
 static int      g_aot_crosses_interp_owner;
 static int      g_aot_skips_interp_owner;
 static int      g_aot_deadline_unwind;
+static int      g_aot_nested_deadline;
+static int      g_after_nested_deadline;
 static int      g_aot_gap_walks_into_wait;
 static int      g_owner_target_result;
 static int      g_aot_tail_chain_probe;
@@ -165,7 +167,7 @@ int cpu_dispatch_has_entry(CpuState *cpu, uint32 pc24) {
     (void)cpu;
     pc24 &= 0xFFFFFF;
     return pc24 == FAKE_AOT ||
-           ((g_aot_double_rewrite || g_aot_crosses_interp_owner) &&
+           ((g_aot_double_rewrite || g_aot_crosses_interp_owner || g_aot_nested_deadline) &&
             pc24 == FAKE_AOT_2);
 }
 static int g_abandon_called;
@@ -192,6 +194,22 @@ RecompReturn cpu_dispatch_pc(CpuState *cpu, uint32 pc24, uint16 miss_restore) {
 RecompReturn cpu_dispatch_pc_paired(CpuState *cpu, uint32 pc24,
                                     uint8 frame_size) {
     cpu->host_return_valid = frame_size;
+    if (g_aot_nested_deadline && pc24 == FAKE_AOT) {
+        RecompReturn result = interp_tier_dispatch_balanced(
+            cpu, 0x008300, FAKE_AOT, cpu->S, frame_size, false);
+        if (result != RECOMP_RETURN_NORMAL) return result;
+        /* This continuation must never run after the inner deadline. */
+        ++g_after_nested_deadline;
+        cpu->A = 0xdead;
+        if (interp_bridge_lle_master_deadline_reached(cpu))
+            return interp_bridge_lle_yield_unwind(cpu, 0x008104);
+        return result;
+    }
+    if (g_aot_nested_deadline && pc24 == FAKE_AOT_2) {
+        cpu->master_cycles = 200;
+        if (interp_bridge_lle_master_deadline_reached(cpu))
+            return interp_bridge_lle_yield_unwind(cpu, FAKE_AOT_2);
+    }
     if (g_aot_skips_interp_owner && (pc24 & 0xFFFFFF) == FAKE_AOT) {
         /* Model interpreter outer -> interpreter inner -> compiled root ->
          * compiled child. The child manually discards the generated child and
@@ -852,6 +870,30 @@ int main(void) {
             (unsigned)interp_bridge_lle_resume_pc());
       interp_bridge_set_master_deadline(0);
       g_aot_deadline_unwind = 0; }
+
+    /* A deadline inside scheduler -> AOT -> gap -> AOT belongs to the host,
+     * not the nested gap's immediate bounce owner. Retain PHP/JSL and resume
+     * the exact inner PC before any outer compiled continuation executes. */
+    { memset(RAM, 0, MEMSZ); init_cpu();
+      g_aot_nested_deadline = 1; g_after_nested_deadline = 0;
+      uint8_t scheduler[] = {0x22,0x00,0x81,0x00,0xa9,0x5a,0xad,0x20,0x00,0xd0,0xfb};
+      uint8_t nested[] = {0x08,0x22,0x00,0x82,0x00,0x28,0x6b};
+      load(0x8000,scheduler,sizeof scheduler);load(0x8300,nested,sizeof nested);
+      RAM[FAKE_AOT_2]=0x6b;
+      interp_bridge_set_master_deadline(100);
+      int rc=interp_bridge_run_loop(&g_c,0x8000,0x8006,0x20,0);
+      uint32_t resume=interp_bridge_lle_resume_pc();
+      printf("S8g nested deadline preserves inner PC and guest stack\n");
+      CHECK(rc==1 && resume==FAKE_AOT_2,"rc=%d resume=%06X exp 1/008200",rc,resume);
+      CHECK(g_after_nested_deadline==0 && g_c.A==0,"outer continuation ran after deadline");
+      CHECK(g_c.S==0x1f8,"S=%04X exp 01F8 (both JSLs and PHP retained)",g_c.S);
+      interp_bridge_set_master_deadline(0);g_aot_nested_deadline=0;
+      if(resume==FAKE_AOT_2) {
+        rc=interp_bridge_run_loop(&g_c,resume,0x8006,0x20,0);
+        CHECK(rc==1 && g_c.S==0x1ff && (g_c.A&255)==0x5a,
+              "resumed RTL/PLP/RTL must restore stack and reach caller");
+      }
+    }
 
     /* S9: the same rewrite below the paired AOT root belongs to a compiled
      * ancestor, not directly to the scheduler interpreter.  Finish that
