@@ -274,10 +274,12 @@ void dma_doDma(Dma* dma) {
   }
 
   // do channel i
+  g_ppu_wlog_src = kPpuWlogDma;
   dma_transferByte(
     dma, dma->channel[i].aAdr, dma->channel[i].aBank,
     dma->channel[i].bAdr + bAdrOffsets[dma->channel[i].mode][dma->channel[i].offIndex++], dma->channel[i].fromB, i
   );
+  g_ppu_wlog_src = kPpuWlogCpu;
   dma->channel[i].offIndex &= 3;
   dma->dmaTimer += 6; // 8 cycles for each byte taken, -2 for this cycle
   if(!dma->channel[i].fixed) {
@@ -387,10 +389,12 @@ void dma_primeHdmaFirstLine(Dma* dma) {
     int len = transferLength[ch->mode & 7];
     for (int j = 0; j < len; j++) {
       uint8_t bAdr = (uint8_t)(ch->bAdr + bAdrOffsets[ch->mode & 7][j]);
+      g_ppu_wlog_src = kPpuWlogHdma;
       if (ch->indirect)
         dma_transferByte(dma, ch->size++, ch->indBank, bAdr, false, i);
       else
         dma_transferByte(dma, ch->tableAdr++, ch->aBank, bAdr, false, i);
+      g_ppu_wlog_src = kPpuWlogCpu;
     }
     *ch = save;
   }
@@ -417,10 +421,12 @@ void dma_doHdma(Dma* dma) {
       int len = transferLength[ch->mode & 7];
       for (int j = 0; j < len; j++) {
         uint8_t bAdr = (uint8_t)(ch->bAdr + bAdrOffsets[ch->mode & 7][j]);
+        g_ppu_wlog_src = kPpuWlogHdma;
         if (ch->indirect)
           dma_transferByte(dma, ch->size++, ch->indBank, bAdr, false, i);
         else
           dma_transferByte(dma, ch->tableAdr++, ch->aBank, bAdr, false, i);
+        g_ppu_wlog_src = kPpuWlogCpu;
       }
     }
 

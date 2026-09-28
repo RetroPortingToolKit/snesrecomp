@@ -131,6 +131,7 @@ pub struct ConstZFold {
 pub struct FunctionDecodeGraph {
     pub entry: Option<DecodeKey>,
     pub authority_conflict: bool,
+    pub rom_mapping: RomMapping,
     insns_vec: Vec<DecodedInsn>,
     index: HashMap<DecodeKey, usize>,
     pub suppressed_indirect_calls: Vec<SuppressedIndirectCall>,
@@ -707,6 +708,7 @@ fn labeled_successors(
     _rom: &[u8],
     unknown_callee_exit_sites: &mut Vec<(u32, u32, u8, u8)>,
 ) -> Vec<(DecodeKey, &'static str)> {
+    let mapping = env.rom_mapping;
     let (post_m, post_x, post_p_stack) = post_state(insn, key.m, key.x, &key.p_stack);
     let pc = insn.addr & 0xFFFF;
     let next_pc = (pc + insn.length as u32) & 0xFFFF;
@@ -769,7 +771,7 @@ fn labeled_successors(
             let mut skip = map.get(&tp).copied();
             if skip.is_none() {
                 let tbank = (tp >> 16) & 0xFF;
-                if tbank < 0x40 || (0x80..0xC0).contains(&tbank) {
+                if mapping != RomMapping::Sa1 && (tbank < 0x40 || (0x80..0xC0).contains(&tbank)) {
                     skip = map.get(&(tp ^ 0x800000)).copied();
                 }
             }
@@ -785,7 +787,7 @@ fn labeled_successors(
                 let mut hit = cem.get(&(tp, post_m, post_x)).copied();
                 if hit.is_none() {
                     let tbank = (tp >> 16) & 0xFF;
-                    if tbank < 0x40 || (0x80..0xC0).contains(&tbank) {
+                    if mapping != RomMapping::Sa1 && (tbank < 0x40 || (0x80..0xC0).contains(&tbank)) {
                         hit = cem.get(&(tp ^ 0x800000, post_m, post_x)).copied();
                     }
                 }
@@ -801,7 +803,7 @@ fn labeled_successors(
                 let mut mode_set: Option<Vec<(u8, u8)>> = cmm.get(&(tp, post_m, post_x)).cloned();
                 if mode_set.is_none() {
                     let tbank = (tp >> 16) & 0xFF;
-                    if tbank < 0x40 || (0x80..0xC0).contains(&tbank) {
+                    if mapping != RomMapping::Sa1 && (tbank < 0x40 || (0x80..0xC0).contains(&tbank)) {
                         mode_set = cmm.get(&(tp ^ 0x800000, post_m, post_x)).cloned();
                     }
                 }
@@ -876,6 +878,7 @@ pub fn decode_function(
     let entry_x = entry_x & 1;
     let entry_key = DecodeKey::new(addr24(bank, start), entry_m, entry_x);
     let mut graph = FunctionDecodeGraph::new(entry_key.clone());
+    graph.rom_mapping = mapping;
 
     let mut inline_loop_sites: HashSet<u32> = HashSet::new();
     if let Some(s) = env.inline_dispatch_loop_pcs {
@@ -1518,7 +1521,7 @@ pub fn decode_function(
                         } else {
                             addr24(bank, e & 0xFFFF)
                         };
-                        match lookup_exit_mx_modes(
+                        match lookup_exit_mx_modes(mapping,
                             env.callee_exit_mx,
                             env.callee_exit_mx_modes,
                             target_pc24,
@@ -2230,7 +2233,7 @@ pub fn function_exit_mx_equation(
     (local_modes, dependencies)
 }
 
-fn lookup_exit_mx(
+fn lookup_exit_mx(mapping: RomMapping,
     callee_exit_mx: Option<&HashMap<(u32, u8, u8), (u8, u8)>>,
     pc24: u32,
     m: u8,
@@ -2240,7 +2243,7 @@ fn lookup_exit_mx(
     let key = (pc24 & 0xFFFFFF, m & 1, x & 1);
     map.get(&key).copied().or_else(|| {
         let bank = (pc24 >> 16) & 0xFF;
-        if bank < 0x40 || (0x80..0xC0).contains(&bank) {
+        if mapping != RomMapping::Sa1 && (bank < 0x40 || (0x80..0xC0).contains(&bank)) {
             map.get(&((pc24 ^ 0x800000) & 0xFFFFFF, m & 1, x & 1))
                 .copied()
         } else {
@@ -2249,21 +2252,21 @@ fn lookup_exit_mx(
     })
 }
 
-fn lookup_exit_mx_modes(
+fn lookup_exit_mx_modes(mapping: RomMapping,
     callee_exit_mx: Option<&HashMap<(u32, u8, u8), (u8, u8)>>,
     callee_exit_mx_modes: Option<&HashMap<(u32, u8, u8), Vec<(u8, u8)>>>,
     pc24: u32,
     m: u8,
     x: u8,
 ) -> Option<Vec<(u8, u8)>> {
-    if let Some(exact) = lookup_exit_mx(callee_exit_mx, pc24, m, x) {
+    if let Some(exact) = lookup_exit_mx(mapping, callee_exit_mx, pc24, m, x) {
         return Some(vec![(exact.0 & 1, exact.1 & 1)]);
     }
     let map = callee_exit_mx_modes?;
     let key = (pc24 & 0xFFFFFF, m & 1, x & 1);
     let mut result = map.get(&key).cloned().or_else(|| {
         let bank = (pc24 >> 16) & 0xFF;
-        if bank < 0x40 || (0x80..0xC0).contains(&bank) {
+        if mapping != RomMapping::Sa1 && (bank < 0x40 || (0x80..0xC0).contains(&bank)) {
             map.get(&((pc24 ^ 0x800000) & 0xFFFFFF, m & 1, x & 1))
                 .cloned()
         } else {
@@ -2284,6 +2287,7 @@ pub fn analyze_function_exit_mx(
     graph: &FunctionDecodeGraph,
     callee_exit_mx: Option<&HashMap<(u32, u8, u8), (u8, u8)>>,
 ) -> (Option<u8>, Option<u8>) {
+    let mapping = graph.rom_mapping;
     fn accumulate(
         em: u8,
         ex: u8,
@@ -2338,7 +2342,7 @@ pub fn analyze_function_exit_mx(
         let tail_keys = direct_tail_exit_keys(graph, di);
         if !tail_keys.is_empty() {
             for (target, site_m, site_x) in tail_keys {
-                let Some((em, ex)) = lookup_exit_mx(callee_exit_mx, target, site_m, site_x) else {
+                let Some((em, ex)) = lookup_exit_mx(mapping, callee_exit_mx, target, site_m, site_x) else {
                     return (None, None);
                 };
                 accumulate(
@@ -2391,7 +2395,7 @@ pub fn analyze_function_exit_mx(
     }
 
     for (_, target) in &graph.boundary_exits {
-        let Some((em, ex)) = lookup_exit_mx(callee_exit_mx, target.pc, target.m, target.x) else {
+        let Some((em, ex)) = lookup_exit_mx(mapping, callee_exit_mx, target.pc, target.m, target.x) else {
             return (None, None);
         };
         accumulate(
@@ -2433,6 +2437,7 @@ pub fn analyze_function_exit_mx_modes_with_sets(
     callee_exit_mx: Option<&HashMap<(u32, u8, u8), (u8, u8)>>,
     callee_exit_mx_modes: Option<&HashMap<(u32, u8, u8), Vec<(u8, u8)>>>,
 ) -> Option<Vec<(u8, u8)>> {
+    let mapping = graph.rom_mapping;
     let return_states = return_stack_delta_states(graph);
     if has_unproven_nonlocal_return(graph, &return_states) {
         return None;
@@ -2450,7 +2455,7 @@ pub fn analyze_function_exit_mx_modes_with_sets(
         let tail_keys = direct_tail_exit_keys(graph, di);
         if !tail_keys.is_empty() {
             for (target, site_m, site_x) in tail_keys {
-                modes.extend(lookup_exit_mx_modes(
+                modes.extend(lookup_exit_mx_modes(mapping,
                     callee_exit_mx,
                     callee_exit_mx_modes,
                     target,
@@ -2477,7 +2482,7 @@ pub fn analyze_function_exit_mx_modes_with_sets(
                 } else {
                     (dispatcher_bank << 16) | (entry & 0xFFFF)
                 };
-                modes.extend(lookup_exit_mx_modes(
+                modes.extend(lookup_exit_mx_modes(mapping,
                     callee_exit_mx,
                     callee_exit_mx_modes,
                     tgt_pc24,
@@ -2489,7 +2494,7 @@ pub fn analyze_function_exit_mx_modes_with_sets(
     }
 
     for (_, target) in &graph.boundary_exits {
-        modes.extend(lookup_exit_mx_modes(
+        modes.extend(lookup_exit_mx_modes(mapping,
             callee_exit_mx,
             callee_exit_mx_modes,
             target.pc,
@@ -3198,14 +3203,14 @@ pub(crate) fn compute_deps(
         if let Some(tp) = tp {
             cem_keys.push((tp, ins.m_flag, ins.x_flag));
             let tbank = (tp >> 16) & 0xFF;
-            if tbank < 0x40 || (0x80..0xC0).contains(&tbank) {
+            if graph.rom_mapping != RomMapping::Sa1 && (tbank < 0x40 || (0x80..0xC0).contains(&tbank)) {
                 cem_keys.push((tp ^ 0x800000, ins.m_flag, ins.x_flag));
             }
         }
         for tp in dispatch_targets {
             cem_keys.push((tp, ins.m_flag, ins.x_flag));
             let tbank = (tp >> 16) & 0xFF;
-            if tbank < 0x40 || (0x80..0xC0).contains(&tbank) {
+            if graph.rom_mapping != RomMapping::Sa1 && (tbank < 0x40 || (0x80..0xC0).contains(&tbank)) {
                 cem_keys.push((tp ^ 0x800000, ins.m_flag, ins.x_flag));
             }
         }

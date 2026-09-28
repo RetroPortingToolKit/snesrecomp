@@ -195,8 +195,9 @@ _PROFILE_MX_RE = re.compile(r"M([01])X([01])$")
 
 
 def _lorom_mirror_pc24(pc24: int):
+    from snes65816 import rom_bank_mirror
     bank = (pc24 >> 16) & 0xFF
-    if bank < 0x40 or 0x80 <= bank < 0xC0:
+    if rom_bank_mirror(bank) is not None:
         return ((bank ^ 0x80) << 16) | (pc24 & 0xFFFF)
     return None
 
@@ -212,7 +213,9 @@ def _architectural_interrupt_pcs(rom: bytes) -> frozenset[int]:
         if pc in (0, 0xFFFF):
             continue
         result.add(pc)
-        result.add(0x800000 | pc)
+        mirror = _lorom_mirror_pc24(pc)
+        if mirror is not None:
+            result.add(mirror)
     return frozenset(result)
 
 
@@ -220,7 +223,8 @@ def _cfg_for_bank(cfg_by_bank, bank: int):
     cfg = cfg_by_bank.get(bank & 0xFF)
     if cfg is not None:
         return cfg
-    mirror = (bank & 0xFF) ^ 0x80
+    from snes65816 import rom_bank_mirror
+    mirror = rom_bank_mirror(bank & 0xFF)
     if (bank & 0xFF) < 0x40 or 0x80 <= (bank & 0xFF) < 0xC0:
         return cfg_by_bank.get(mirror)
     return None
@@ -456,6 +460,24 @@ def build_emission_entries(manifest: ProgramManifest, parsed,
      templates_any, cfg_by_bank) = _cfg_name_maps(parsed)
     entries_by_bank = defaultdict(list)
     emitted = defaultdict(set)
+    all_modes = ((0, 0), (0, 1), (1, 0), (1, 1))
+
+    def materialize(pc24, modes):
+        bank = (pc24 >> 16) & 0xFF
+        for m, x in modes:
+            if (m, x) in emitted[pc24]:
+                continue
+            template = templates_exact.get(
+                (pc24, m, x), templates_any.get(pc24))
+            mirror_pc24 = _lorom_mirror_pc24(pc24)
+            if template is None and mirror_pc24 is not None:
+                template = templates_exact.get(
+                    (mirror_pc24, m, x), templates_any.get(mirror_pc24))
+            name = name_for_pc.get(
+                pc24, f"bank_{bank:02X}_{pc24 & 0xFFFF:04X}")
+            entries_by_bank[bank].append(_copy_entry(
+                template, name=name, pc24=pc24, m=m, x=x))
+            emitted[pc24].add((m, x))
 
     for key, node in sorted(manifest.nodes.items()):
         bank = (key.pc24 >> 16) & 0xFF
@@ -473,36 +495,36 @@ def build_emission_entries(manifest: ProgramManifest, parsed,
         # for an absent exact slot would execute the ROM body instead of the
         # declared override.  Materialize the tiny HLE shim for every exact
         # M/X combination whenever any live manifest demand reaches it.
-        modes = ((0, 0), (0, 1), (1, 0), (1, 1)) if has_hle else (
-            (key.m, key.x),)
-        for m, x in modes:
-            if (m, x) in emitted[key.pc24]:
-                continue
-            template = templates_exact.get(
-                (key.pc24, m, x), templates_any.get(key.pc24))
-            mirror_pc24 = _lorom_mirror_pc24(key.pc24)
-            if template is None and mirror_pc24 is not None:
-                template = templates_exact.get(
-                    (mirror_pc24, m, x), templates_any.get(mirror_pc24))
-            name = name_for_pc.get(
-                key.pc24, f"bank_{bank:02X}_{pc16:04X}")
-            entries_by_bank[bank].append(_copy_entry(
-                template, name=name, pc24=key.pc24, m=m, x=x))
-            emitted[key.pc24].add((m, x))
+        materialize(key.pc24, all_modes if has_hle else ((key.m, key.x),))
+
+    # Declared overrides also cover boundaries only reached at runtime.
+    if enable_hle:
+        for bank, _path, cfg in parsed:
+            declared = set(getattr(cfg, "hle_func", {}))
+            declared.update(getattr(cfg, "hle_spc_upload", ()))
+            for pc16 in sorted(declared):
+                pc24 = ((bank & 0xFF) << 16) | (pc16 & 0xFFFF)
+                mirror_pc24 = _lorom_mirror_pc24(pc24)
+                if pc24 in emitted or (
+                        mirror_pc24 is not None and mirror_pc24 in emitted):
+                    continue
+                materialize(pc24, all_modes)
 
     # Every analyzed PC is a known executable entry even when it had no cfg
     # label.  Give it the same deterministic synthetic name used by emission
     # and the dispatch table so cross-boundary branches can resolve to an AOT
     # tail call (or exact LLE fallback) instead of an unresolved-goto trap.
-    for key in sorted(manifest.nodes):
+    for pc24 in sorted({key.pc24 for key in manifest.nodes} | set(emitted)):
         name_for_pc.setdefault(
-            key.pc24,
-            f"bank_{(key.pc24 >> 16) & 0xFF:02X}_{key.pc24 & 0xFFFF:04X}")
+            pc24, f"bank_{(pc24 >> 16) & 0xFF:02X}_{pc24 & 0xFFFF:04X}")
 
     # Keep each friendly alias bound to its cfg-canonical exact variant even
     # though other exact variants sort lexically before it.
     for bank, entries in entries_by_bank.items():
-        mirror_bank = bank ^ 0x80
+        from snes65816 import rom_bank_mirror
+        mirror_bank = rom_bank_mirror(bank)
+        if mirror_bank is None:
+            mirror_bank = bank
         entries.sort(key=lambda entry: (
             entry.start & 0xFFFF,
             0 if (entry.entry_m & 1, entry.entry_x & 1) ==
@@ -540,7 +562,9 @@ def emit_dispatch_table(manifest: ProgramManifest, emitted_variants: Mapping,
                         inline_arg_map: Mapping[int, int],
                         ram_routines=(),
                         module_prefix: str | None = None) -> str:
-    known_pcs = sorted({key.pc24 for key in manifest.nodes})
+    known_pcs = sorted({key.pc24 for key in manifest.nodes} |
+                       {pc24 for pc24, modes in emitted_variants.items()
+                        if modes})
 
     def base_name(pc24):
         return name_for_pc.get(
@@ -567,7 +591,7 @@ def emit_dispatch_table(manifest: ProgramManifest, emitted_variants: Mapping,
         for m, x in emitted_variants.get(pc24, ()):
             slots[(m << 1) | x] = f"{base}_M{m}X{x}"
         inline_n = inline_arg_map.get(
-            pc24, inline_arg_map.get(pc24 ^ 0x800000, 0))
+            pc24, inline_arg_map.get(_lorom_mirror_pc24(pc24), 0))
         lines.append(
             f"    {{ 0x{pc24:06X}u, {{ {', '.join(slots)} }}, "
             f"{inline_n} }},  /* {base} */")
@@ -628,7 +652,7 @@ def _stable_hash(value) -> str:
     return hashlib.sha256(data).hexdigest()
 
 
-def _bank_cache_key(bank: int, manifest: ProgramManifest,
+def _bank_cache_key(bank: int, manifest: ProgramManifest, rom_digest: str,
                     generator_digest: str, config_digest: str,
                     helpers: Mapping, inline_args: Mapping,
                     enable_hle: bool, host_alias_entries: Mapping,
@@ -642,6 +666,10 @@ def _bank_cache_key(bank: int, manifest: ProgramManifest,
     return _stable_hash({
         "format": CACHE_FORMAT_VERSION,
         "bank": bank,
+        # Emission reads the ROM bytes themselves. A change that leaves every
+        # node, demand and disposition in place (an operand, an opcode of the
+        # same length) is otherwise invisible to this key.
+        "rom": rom_digest,
         "nodes": nodes,
         "exit_modes": [
             (key.manifest_key, pair[0] & 1, pair[1] & 1)
@@ -705,6 +733,7 @@ def emit_program(*, rom: bytes, parsed, manifest: ProgramManifest,
         if pc24 in root_pcs
     }
 
+    rom_digest = hashlib.sha256(rom).hexdigest()
     live_cache_path = pathlib.Path(out_dir) / ".snesrecomp-cache.json"
     try:
         old_cache = json.loads(live_cache_path.read_text(encoding="utf-8"))
@@ -746,7 +775,7 @@ def emit_program(*, rom: bytes, parsed, manifest: ProgramManifest,
 
         for bank in all_banks:
             cache_key = _bank_cache_key(
-                bank, manifest, generator_digest, config_digest,
+                bank, manifest, rom_digest, generator_digest, config_digest,
                 dispatch_helpers, inline_arg_map, enable_hle,
                 host_alias_entries, shard_threshold_bytes, shard_pc_span,
                 module_prefix)
@@ -796,7 +825,7 @@ def emit_program(*, rom: bytes, parsed, manifest: ProgramManifest,
                 remapped_tables = dict(indirect_call_tables)
                 for site, value in indirect_call_tables.items():
                     site_bank = (site >> 16) & 0xFF
-                    if site_bank != bank and site_bank == (bank ^ 0x80):
+                    if site_bank != bank and _lorom_mirror_pc24(site) == ((bank << 16) | (site & 0xFFFF)):
                         remapped_tables[
                             (bank << 16) | (site & 0xFFFF)] = value
                 indirect_call_tables = remapped_tables
@@ -805,7 +834,7 @@ def emit_program(*, rom: bytes, parsed, manifest: ProgramManifest,
                 if cfg is not None else None)
             if data_regions:
                 for region_bank, start, end in tuple(data_regions):
-                    if region_bank != bank and region_bank == (bank ^ 0x80):
+                    if region_bank != bank and _lorom_mirror_pc24((region_bank << 16) | start) == ((bank << 16) | start):
                         data_regions.append((bank, start, end))
             source = emit_bank(
                 rom, bank, entries_by_bank.get(bank, []),

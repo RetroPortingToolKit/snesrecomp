@@ -173,6 +173,7 @@ set(SNESRECOMP_RUNNER_SOURCES
     ${SNESRECOMP_RUNNER_ROOT}/src/widescreen.c
     ${SNESRECOMP_RUNNER_ROOT}/src/recomp_hw.c
     ${SNESRECOMP_RUNNER_ROOT}/src/framedump.c
+    ${SNESRECOMP_RUNNER_ROOT}/src/state_dump.c
     ${SNESRECOMP_RUNNER_ROOT}/src/host_paths.c
     ${SNESRECOMP_RUNNER_ROOT}/src/host_args.c
     ${SNESRECOMP_RUNNER_ROOT}/src/launcher.c
@@ -345,6 +346,7 @@ endif()
 
 set(SNESRECOMP_RUNNER_LIBRARIES)
 include(${CMAKE_CURRENT_LIST_DIR}/lua.cmake)
+include(${CMAKE_CURRENT_LIST_DIR}/data_packs.cmake)
 if(NOT WIN32)
     # cx4.c synthesizes its internal data ROM with libm.
     list(APPEND SNESRECOMP_RUNNER_LIBRARIES m)
@@ -1185,7 +1187,8 @@ function(snesrecomp_target_desktop_host target)
     cmake_parse_arguments(DH "${options}" "" "" ${ARGN})
     target_sources(${target} PRIVATE
         ${SNESRECOMP_RUNNER_ROOT}/src/desktop/host_main.c
-        ${SNESRECOMP_RUNNER_ROOT}/src/desktop/host_clock.c)
+        ${SNESRECOMP_RUNNER_ROOT}/src/desktop/host_clock.c
+        ${SNESRECOMP_RUNNER_ROOT}/src/desktop/host_relaunch.c)
     target_include_directories(${target} PRIVATE
         ${SNESRECOMP_RUNNER_ROOT}/src/desktop)
     snesrecomp_target_mmx_config(${target})

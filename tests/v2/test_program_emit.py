@@ -13,6 +13,12 @@ from v2.program_emit import discover_host_roots
 REPO = pathlib.Path(__file__).resolve().parents[2]
 
 
+def _emit(*args):
+    return subprocess.run([
+        sys.executable, str(REPO / "tools" / "v2_emit.py"), *args,
+    ], text=True, capture_output=True)
+
+
 def _fixture(tmp_path, target_opcode=0x00):
     rom = bytearray([0xFF] * 0x8000)
     rom[0:4] = bytes([0x20, 0x10, 0x80, 0x60])  # JSR $8010; RTS
@@ -32,11 +38,34 @@ def _fixture(tmp_path, target_opcode=0x00):
 
 
 def _run(rom_path, cfg_dir, out_dir):
-    return subprocess.run([
-        sys.executable, str(REPO / "tools" / "v2_emit.py"),
+    return _emit(
         "--rom", str(rom_path), "--cfg-dir", str(cfg_dir),
-        "--out-dir", str(out_dir), "--no-host-root-scan",
-    ], text=True, capture_output=True)
+        "--out-dir", str(out_dir), "--no-host-root-scan")
+
+
+def _generated(out_dir):
+    return {path.name: path.read_bytes()
+            for path in sorted(out_dir.glob("*_v2.c"))}
+
+
+def test_rom_change_regenerates_banks_in_place(tmp_path):
+    # A byte change inside a body keeps every node, demand and disposition,
+    # so nothing in the manifest moves. Regenerating into the same directory
+    # must still produce what a fresh directory gets, not the old banks.
+    rom_path, cfg_dir, out_dir = _fixture(tmp_path, target_opcode=0xEA)
+    first = _run(rom_path, cfg_dir, out_dir)
+    assert first.returncode == 0, first.stdout + first.stderr
+    rom = bytearray(rom_path.read_bytes())
+    rom[0x10] = 0x18  # NOP -> CLC
+    rom_path.write_bytes(rom)
+
+    in_place = _run(rom_path, cfg_dir, out_dir)
+    fresh_dir = tmp_path / "fresh"
+    fresh = _run(rom_path, cfg_dir, fresh_dir)
+
+    assert in_place.returncode == 0, in_place.stdout + in_place.stderr
+    assert fresh.returncode == 0, fresh.stdout + fresh.stderr
+    assert _generated(out_dir) == _generated(fresh_dir)
 
 
 def test_manifest_emitter_keeps_structural_target_as_lle(tmp_path):
@@ -49,14 +78,14 @@ def test_manifest_emitter_keeps_structural_target_as_lle(tmp_path):
     manifest = json.loads(
         (out_dir / "program_manifest.json").read_text(encoding="utf-8"))
 
-    # A call whose return M/X cannot be proven tiers the caller to LLE too;
+    # A call with no proven continuation tiers the caller to LLE too;
     # preserving the caller width would be a speculative AOT decode.
     assert "I_RESET_M1X1" not in source
     assert "bank_00_8010_M1X1" not in source
     assert "0x008000u, { NULL, NULL, NULL, NULL }" in dispatch
     assert "0x008010u, { NULL, NULL, NULL, NULL }" in dispatch
     assert manifest["nodes"]["008000:M1X1"]["disposition"] == "lle_only"
-    assert "unproven_callee_exit" in \
+    assert "truncated_call_continuation" in \
         manifest["nodes"]["008000:M1X1"]["reasons"]
     assert manifest["nodes"]["008010:M1X1"]["disposition"] == "lle_only"
 
@@ -156,6 +185,59 @@ def test_hle_override_covers_all_mx_modes_at_lorom_mirror(tmp_path):
     assert source.count(
         "cpu_take_tailcall_return_context(NULL, NULL);") == 4
     assert "0x808099u, { NULL" not in dispatch
+
+
+def test_hle_override_without_static_demand_gets_dispatch_row(tmp_path):
+    rom_path, cfg_dir, out_dir = _fixture(tmp_path, target_opcode=0xEA)
+    rom = bytearray(rom_path.read_bytes())
+    # Only reached at runtime, e.g. through a RAM vector.
+    rom[0x50:0x52] = bytes([0x80, 0xFE])
+    rom_path.write_bytes(rom)
+    (cfg_dir / "bank00.cfg").write_text(
+        "bank = 00\n"
+        "func I_RESET 8000 end:8004 entry_mx:1,1\n"
+        "hle_func 8050 HleRuntimeOnly\n",
+        encoding="utf-8")
+
+    result = _run(rom_path, cfg_dir, out_dir)
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    source = (out_dir / "bank00_v2.c").read_text(encoding="utf-8")
+    dispatch = (out_dir / "dispatch_v2.c").read_text(encoding="utf-8")
+    manifest = json.loads(
+        (out_dir / "program_manifest.json").read_text(encoding="utf-8"))
+    assert not any(node.startswith("008050:") for node in manifest["nodes"])
+    slots = ", ".join(f"bank_00_8050_M{m}X{x}"
+                      for m in (0, 1) for x in (0, 1))
+    assert f"0x008050u, {{ {slots} }}" in dispatch
+    for m in (0, 1):
+        for x in (0, 1):
+            assert f"RecompReturn bank_00_8050_M{m}X{x}(CpuState *cpu)" \
+                in source
+    assert source.count("RecompReturn _r = HleRuntimeOnly(cpu);") == 4
+
+
+def test_hle_override_without_static_demand_keeps_analysis(tmp_path):
+    rom_path, cfg_dir, out_dir = _fixture(tmp_path, target_opcode=0xEA)
+    rom = bytearray(rom_path.read_bytes())
+    rom[0x50:0x52] = bytes([0x80, 0xFE])
+    rom_path.write_bytes(rom)
+    plain = _run(rom_path, cfg_dir, tmp_path / "plain")
+    assert plain.returncode == 0, plain.stdout + plain.stderr
+    (cfg_dir / "bank00.cfg").write_text(
+        "bank = 00\n"
+        "func I_RESET 8000 end:8004 entry_mx:1,1\n"
+        "hle_func 8050 HleRuntimeOnly\n",
+        encoding="utf-8")
+    result = _run(rom_path, cfg_dir, out_dir)
+    assert result.returncode == 0, result.stdout + result.stderr
+
+    def nodes(directory):
+        manifest = json.loads(
+            (directory / "program_manifest.json").read_text(encoding="utf-8"))
+        return manifest["nodes"]
+
+    assert nodes(out_dir) == nodes(tmp_path / "plain")
 
 
 def test_lle_only_declared_sibling_remains_an_emission_boundary(tmp_path):
@@ -292,11 +374,9 @@ def test_host_alias_dispatches_live_mx_and_missing_exact_slot_to_lle(tmp_path):
     source_dir.mkdir()
     (source_dir / "host.c").write_text(
         "void f(void) { I_RESET(&g_cpu); }\n", encoding="utf-8")
-    result = subprocess.run([
-        sys.executable, str(REPO / "tools" / "v2_emit.py"),
+    result = _emit(
         "--rom", str(rom_path), "--cfg-dir", str(cfg_dir),
-        "--out-dir", str(out_dir), "--source-root", str(source_dir),
-    ], text=True, capture_output=True)
+        "--out-dir", str(out_dir), "--source-root", str(source_dir))
     assert result.returncode == 0, result.stdout + result.stderr
 
     source = (out_dir / "bank00_v2.c").read_text(encoding="utf-8")
@@ -343,11 +423,9 @@ def test_cross_bank_name_promoted_when_unclaimed(tmp_path):
         "bank = 01\nname 008100 UniqueCrossBankName\n", encoding="utf-8")
     out_dir = tmp_path / "gen"
 
-    result = subprocess.run([
-        sys.executable, str(REPO / "tools" / "v2_emit.py"),
+    result = _emit(
         "--rom", str(rom_path), "--cfg-dir", str(cfg_dir),
-        "--out-dir", str(out_dir), "--no-host-root-scan",
-    ], text=True, capture_output=True)
+        "--out-dir", str(out_dir), "--no-host-root-scan")
     assert result.returncode == 0, result.stdout + result.stderr
 
     source = (out_dir / "bank00_v2.c").read_text(encoding="utf-8")
@@ -388,11 +466,9 @@ def test_cross_bank_name_collision_falls_back_to_synthetic_name(tmp_path):
         "bank = 01\nname 008100 Foo\n", encoding="utf-8")
     out_dir = tmp_path / "gen"
 
-    result = subprocess.run([
-        sys.executable, str(REPO / "tools" / "v2_emit.py"),
+    result = _emit(
         "--rom", str(rom_path), "--cfg-dir", str(cfg_dir),
-        "--out-dir", str(out_dir), "--no-host-root-scan",
-    ], text=True, capture_output=True)
+        "--out-dir", str(out_dir), "--no-host-root-scan")
     assert result.returncode == 0, result.stdout + result.stderr
 
     source = (out_dir / "bank00_v2.c").read_text(encoding="utf-8")

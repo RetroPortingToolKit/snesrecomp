@@ -15,6 +15,11 @@ struct RendererFuncs {
   void (*GetOutputSize)(int *width, int *height);
   void (*BeginDraw)(int width, int height, uint8 **pixels, int *pitch);
   void (*EndDraw)();
+  /* Optional. Re-apply presentation settings changed under a live window
+   * (vsync, filtering, shader) and make the presenter's context current again
+   * -- another window's GL context (the in-game launcher's) may have been
+   * current since the last frame. NULL for presenters that need neither. */
+  void (*Reconfigure)(void);
 };
 
 

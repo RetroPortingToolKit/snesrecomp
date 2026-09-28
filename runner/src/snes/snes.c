@@ -68,6 +68,28 @@ void snes_set_hdma_beam_enabled(Snes *snes, bool enabled) {
   snes->hdmaBeamOff = !enabled;
 }
 
+static bool s_raster_irq_beam_off;
+void snes_set_raster_irq_beam_enabled(bool enabled) {
+  s_raster_irq_beam_off = !enabled;
+}
+
+static SnesMasterClockChargeHook s_master_clock_charge_hook;
+static SnesWramWriteLogHook s_wram_write_log_hook;
+
+void snes_set_master_clock_charge_hook(SnesMasterClockChargeHook hook) {
+  s_master_clock_charge_hook = hook;
+}
+
+void snes_set_wram_write_log_hook(SnesWramWriteLogHook hook) {
+  s_wram_write_log_hook = hook;
+}
+
+static void snes_note_direct_wram_write(uint32_t ram_off, uint8_t value,
+                                        const char *via) {
+  if (s_wram_write_log_hook)
+    s_wram_write_log_hook(ram_off, value, via);
+}
+
 Snes* snes_init(uint8_t *ram) {
   Snes* snes = calloc(1, sizeof(Snes));  /* zero padding: saveload/co-sim hash determinism */
     snes->ram = ram;
@@ -324,6 +346,7 @@ void snes_writeBBus(Snes* snes, uint8_t adr, uint8_t val) {
       uint32_t wa = snes->ramAdr & 0x1ffffu;
       uint8_t old = snes->ram[wa];
       snes->ram[wa] = val;
+      snes_note_direct_wram_write(wa, val, "wmdata");
 #if SNESRECOMP_TRACE
       snes_trace_direct_wram_write(wa, old, val);
 #endif
@@ -401,7 +424,7 @@ static uint32_t snes_advance_beam(Snes *snes, uint32_t clocks, bool check_irq) {
                          ? 0 : (uint16_t)(snes->autoJoyTimer - span);
     }
 
-    if (check_irq &&
+    if (check_irq && !s_raster_irq_beam_off &&
         (snes->hIrqEnabled || snes->vIrqEnabled)) {
       bool line_matches = !snes->vIrqEnabled || v == snes->vTimer;
       uint32_t target = snes->hIrqEnabled ? (uint32_t)snes->hTimer * 4u : 0u;
@@ -815,7 +838,6 @@ void snes_writeReg(Snes* snes, uint16_t adr, uint8_t val) {
        * gundamwing-parity-root-cause. HDMA stays uncharged here (per-line,
        * far smaller; out of scope for this fix). */
       {
-        extern CpuState g_cpu;
         uint64_t dma_master = 12;
         for (int ch = 0; ch < 8; ch++) {
           if (val & (1 << ch)) {
@@ -824,8 +846,19 @@ void snes_writeReg(Snes* snes, uint16_t adr, uint8_t val) {
             dma_master += 8 + (uint64_t)n * 8;
           }
         }
-        g_cpu.master_cycles += dma_master;
-        snes_sync_master_clock(snes, g_cpu.master_cycles);
+        /* SnesInit installs the CpuState-clock charge; a host that drives
+         * the beam itself installs its own (see snes.h). With no hook the
+         * device layer advances its own beam, so snes.c needs no CpuState. */
+        if (s_master_clock_charge_hook) {
+          s_master_clock_charge_hook(snes, dma_master);
+        } else {
+          while (dma_master) {
+            uint32_t chunk = dma_master > 0xffffffffull
+                ? 0xffffffffu : (uint32_t)dma_master;
+            snes_advance_master_cycles(snes, chunk);
+            dma_master -= chunk;
+          }
+        }
       }
       dma_startDma(snes->dma, val, false);
       while (dma_cycle(snes->dma)) {}
@@ -836,6 +869,7 @@ void snes_writeReg(Snes* snes, uint16_t adr, uint8_t val) {
        * draws (SimpleHdma) re-arm from this latch — without it, LLE games keep
        * last_hdmaen at 0 and wipe channel hdmaActive before every present. */
       g_snesrecomp_last_hdmaen = val;
+      ppu_wlog_note_reg(0x420C, val);
       dma_startDma(snes->dma, val, true);
       break;
     }
@@ -878,6 +912,7 @@ void snes_write(Snes* snes, uint32_t adr, uint8_t val) {
     uint32_t addr = ((bank & 1) << 16) | adr;
     uint8_t old = snes->ram[addr];
     snes->ram[addr] = val; // ram
+    snes_note_direct_wram_write(addr, val, "snes_write");
 #if SNESRECOMP_TRACE
     snes_trace_direct_wram_write(addr, old, val);
 #endif
@@ -890,6 +925,7 @@ void snes_write(Snes* snes, uint32_t adr, uint8_t val) {
     if(adr < 0x2000) {
       uint8_t old = snes->ram[adr];
       snes->ram[adr] = val; // ram mirror
+      snes_note_direct_wram_write((uint32_t)adr, val, "snes_write_mirror");
 #if SNESRECOMP_TRACE
       snes_trace_direct_wram_write((uint32_t)adr, old, val);
 #endif

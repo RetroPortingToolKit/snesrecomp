@@ -104,7 +104,7 @@ def test_descriptor_rejects_short_digest():
 
 
 def test_dispatch_table_joins_the_module_namespace():
-    manifest = ProgramManifest()
+    manifest = ProgramManifest(roots=(), nodes={})
     plain = emit_dispatch_table(manifest, {}, {}, {})
     prefixed = emit_dispatch_table(manifest, {}, {}, {}, module_prefix="smas")
     assert MODULE_NAMESPACE_HEADER not in plain

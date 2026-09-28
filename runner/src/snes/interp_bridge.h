@@ -30,6 +30,9 @@
 
 #include <stdint.h>
 #include <stdio.h>
+/* Dump the last n entries of the always-on global interp step ring
+ * (pc/op/sp/frame per interpreted opcode) to `out` (NULL = stderr). */
+void interp_bridge_dump_recent_steps(int n, FILE *out);
 #include "cpu_state.h"
 
 /* Launch-time main-scheduler AOT policy: -1 default/environment, 0 floor,
@@ -153,6 +156,14 @@ int interp_bridge_resume_task(CpuState *cpu, uint32_t resume_pc24,
 
 /* Count of tier-downs taken this run (observability / tests / Phase-2
  * manifest). */
+/* Optional host coverage hooks; NULL by default. pc_hook fires once per
+ * INTERPRETED opcode (exact). bounce_hook fires once per compiled body
+ * ENTERED -- an entry, not an extent, since a compiled body runs an unknown
+ * number of opcodes without reporting them. Do not treat a bounce as coverage
+ * of the body interior. */
+extern void (*g_interp_bridge_pc_hook)(uint32_t pc24, int m_flag, int x_flag);
+extern void (*g_interp_bridge_bounce_hook)(uint32_t pc24, int m_flag, int x_flag);
+
 long interp_tier_hit_count(void);
 void interp_tier2_stats(int *sites, unsigned long long *clean,
                         unsigned long long *bail);

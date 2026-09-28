@@ -1,3 +1,8 @@
+#ifdef _WIN32
+#include <io.h>
+#else
+#include <unistd.h>
+#endif
 #include "common_rtl.h"
 #include "apu_frame_clock.h"
 #include "common_cpu_infra.h"
@@ -254,6 +259,7 @@ void rtl_apu_restore_pacing(uint64_t frame_start_master, uint8_t frame_time_vali
  * guest time and must not become permanent A/V latency. The short ramp joins
  * the last delivered sample to the first current sample without a hard edge. */
 #define RTL_AUDIO_RECOVERY_RAMP 128u
+#define RTL_AUDIO_TARGET_NATIVES 2136u /* 4 native blocks, ~67 ms cushion */
 static bool g_audio_fast_forward;
 static uint32_t g_audio_recovery_frames;
 static uint32_t g_audio_recovery_remaining;
@@ -465,6 +471,9 @@ void RtlReset(int mode) {
   g_audio_last_output_r = 0;
   g_spc_player->initialize(g_spc_player);
   RtlApuUnlock();
+  /* After the hardware, so the title reboots against the reset machine. */
+  if (g_rtl_game_info && g_rtl_game_info->hardware_reset)
+    g_rtl_game_info->hardware_reset();
 }
 
 /* Differential first-divergence trace (docs/MULTI_TIER.md §12a). Env-gated,
@@ -1573,6 +1582,7 @@ uint16 ReadRegWord(uint16 reg) {
 static void WriteVramWord(Ppu *ppu, uint16 value) {
   uint16_t adr = ppu->vramPointer;
   ppu->vram[adr & 0x7fff] = value;
+  ppu->vramWriteCount++;
   // Atomic 16-bit STA $2118 hits both VRAM bytes at this word; record
   // each as a byte event so the differ can compare against the
   // oracle's REGISTER_2118 + REGISTER_2119 byte sequence.
@@ -2072,10 +2082,12 @@ void RtlAudioSetFastForward(bool active) {
   if (!active && g_audio_recovery_frames != 0) {
     uint32_t available = g_snes->apu->dsp->sampleWrite -
                          g_snes->apu->dsp->sampleRead;
-    /* Keep two current blocks: one for the next callback and one scheduling
-     * cushion. Repeat at frame boundaries only while post-turbo CPU work is
-     * settling, then restore the ordinary FIFO unchanged. */
-    uint32_t discarded = dsp_trimSamples(g_snes->apu->dsp, 1068);
+    /* Preserve the consumer's startup cushion. A stage upload or starvation
+     * can re-enter priming during turbo; trimming below its threshold would
+     * prevent playback from ever restarting and perpetually renew recovery.
+     * Remove stale latency while allowing the same delivery gate to open. */
+    uint32_t discarded = dsp_trimSamples(g_snes->apu->dsp,
+                                          RTL_AUDIO_TARGET_NATIVES);
     if (discarded != 0) {
       audio_trace_on_fast_forward_discard(discarded,
                                            available - discarded);
@@ -2128,7 +2140,6 @@ void RtlAudioSetFastForward(bool active) {
  * half a percent cannot become a clock.
  */
 #define RTL_AUDIO_NATIVE_RATE    32040.0 /* SPC output rate: 1.024 MHz / 32   */
-#define RTL_AUDIO_TARGET_NATIVES 2136u /* 4 native blocks, ~67 ms cushion */
 #define RTL_AUDIO_SERVO_GAIN     0.05  /* gentle: full-scale error -> 5%, clamped */
 #define RTL_AUDIO_SERVO_MAX      0.005 /* +/-0.5% == ~8 cents, inaudible        */
 /* Occupancy is sampled at callback entry, but production arrives in 534-native
@@ -2438,13 +2449,7 @@ void RtlReadSram(void) {
   }
 }
 
-/* Battery file replacement is write-temp, flush, then rename: the previous
- * revision becomes save.srm.bak only once the new bytes are durably on disk,
- * so a crash at any point leaves either the old file or the new one in place,
- * never a truncated one and never a moment with no save.srm at all. Content
- * variants flush on every switch (RtlWriteSram then a new save root), which
- * is exactly when a torn write would destroy progress that was just made. */
-int RtlWriteSram(void) {
+int RtlTryWriteSram(void) {
   if (!g_sram || g_sram_size <= 0)
     return 1;
   char path[128], bak[140], tmp[140];
@@ -2491,6 +2496,8 @@ int RtlWriteSram(void) {
   }
   return 1;
 }
+
+int RtlWriteSram(void) { return RtlTryWriteSram(); }
 
 static const uint8 *SimpleHdma_GetPtr(uint32 p) {
   uint8 bank = (uint8)(p >> 16);
@@ -2605,7 +2612,9 @@ void SimpleHdma_DoLine(SimpleHdma *c) {
         c->table++;
       /* ppu_write takes the B-bus offset ($00-$3F), not a $21xx CPU address. */
       uint8 reg = (uint8)(c->ppu_addr + bAdrOffsets[c->mode & 7][j]);
+      g_ppu_wlog_src = kPpuWlogHdma;
       ppu_write(g_ppu, reg, v);
+      g_ppu_wlog_src = kPpuWlogCpu;
       debug_server_on_reg_write((uint16)(0x2100u + reg), v);
     }
   }

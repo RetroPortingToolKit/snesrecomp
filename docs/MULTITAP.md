@@ -109,9 +109,17 @@ Starting a session with more seats than the port configuration can route is
 five would desync on input and report nothing that names the cause
 (`recomp-ai-rules/NETPLAY.md` §4). Every peer must configure the same taps.
 
-Rollback is unaffected in shape — `snes_netplay_rb` loops over
-`slot_count` — but note that the multitap's shift state is now part of the
-digest; see §6.
+~~Rollback is unaffected in shape — `snes_netplay_rb` loops over
+`slot_count`~~ — **refuted 2026-09-24.** The seat loops did cover
+`slot_count`, but the rollback host filtered every episode message to one peer
+(`rnet_session_set_rb_peer_slot(local == 0 ? 1 : 0)`), arbitrated dual
+initiation as if that were the only other seat, packed epochs with `slot & 1`,
+and took the first BASELINE / POST to arrive as every peer's answer. With
+three or more peers, seats 2+ were never heard. The episode driver now in
+recomp-net tracks BASELINE, POST and COMMIT per peer and reads the initiator's
+seat from the epoch, but more than two peers is **built, not exercised**: no
+multi-peer harness exists. Note too that the multitap's shift state is now
+part of the digest; see §6.
 
 ## 5. What stays byte-identical with no tap
 

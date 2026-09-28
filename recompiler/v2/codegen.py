@@ -266,7 +266,7 @@ def resolve_variant_owner(addr_24: int) -> int:
     if _VALID_VARIANTS.get(a):
         return a
     bank = (a >> 16) & 0xFF
-    if bank < 0x40 or 0x80 <= bank < 0xC0:
+    if rom_bank_mirror(bank) is not None:
         mirror = a ^ 0x800000
         if _VALID_VARIANTS.get(mirror):
             return mirror
@@ -405,6 +405,8 @@ def get_emitted_name(pc24: int):
     return _EMITTED_NAMES.get(pc24 & 0xFFFFFF)
 
 
+from snes65816 import rom_bank_mirror
+
 def set_name_resolver(name_map: Dict[int, str]) -> None:
     """Replace the call-target name resolver. Pass an empty dict to clear.
 
@@ -429,7 +431,7 @@ def set_name_resolver(name_map: Dict[int, str]) -> None:
     for pc24, name in name_map.items():
         expanded[pc24] = name
         bank = (pc24 >> 16) & 0xFF
-        if bank < 0x40 or 0x80 <= bank < 0xC0:
+        if rom_bank_mirror(bank) is not None:
             mirror_bank = bank ^ 0x80
             mirror_pc24 = (mirror_bank << 16) | (pc24 & 0xFFFF)
             # Don't overwrite explicit entries for the mirror bank.
@@ -1503,6 +1505,10 @@ def _emit_indirect_dispatch(insn) -> List[str]:
     # register as-is to load one byte per parallel table.
     idx_field = 'X' if idx_reg == 'X' else 'Y'
     entry_size = 3 if kind == 'long' else 2
+    # Byte distance from the instruction's operand to entry 0 of the table.
+    # Normally 0; non-zero when the decoder proved (from the cfg data_region
+    # overlay) that the table begins after the operand byte.
+    index_bias = int(getattr(insn, 'dispatch_index_bias', 0) or 0)
     table_bases = tuple(getattr(insn, 'dispatch_table_bases', ()) or ())
     if getattr(insn, 'dispatch_local_goto', False):
         ptr = insn.operand & 0xFFFF
@@ -1746,6 +1752,22 @@ def _emit_indirect_dispatch(insn) -> List[str]:
         lines.append(
             f"  uint16 _idx = (uint16)(cpu->{idx_field} & 0xFFFF);"
             "  /* parallel byte tables: register already holds logical index */"
+        )
+    elif index_bias:
+        # The table does not start at the operand: entry 0 lives `index_bias`
+        # bytes further on, so the selector is biased by that much (Yoshi's
+        # Island names its own RTL byte as the operand and indexes with a
+        # state that steps 1, 3, 5, ...). Subtract before dividing. A
+        # selector below the bias wraps to a huge unsigned index, fails the
+        # `_idx >= _disp_n` guard below, and takes the live-pointer
+        # interpreter path — which is what the hardware would have done with
+        # whatever those bytes are.
+        biased = widths.masked(
+            f"(uint16)(cpu->{idx_field} - {index_bias})", 2)
+        lines.append(
+            f"  uint16 _idx = (uint16)({biased} / {entry_size});"
+            f"  /* entry_size={entry_size} ({kind}); table starts {index_bias} "
+            f"byte(s) past the operand, so {idx_field} is a biased byte offset */"
         )
     else:
         lines.append(

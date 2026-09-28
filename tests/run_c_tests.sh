@@ -30,6 +30,13 @@ echo "=== launcher ==="
     -o "$OUT/launcher_test"
 "$OUT/launcher_test"
 
+echo "=== MSU soundtrack routing ==="
+"$CC" -std=c11 -Wall -Wextra -O1 \
+    -D_POSIX_C_SOURCE=200809L -I "$ROOT/runner/src" \
+    "$ROOT/tests/audio/msu_track_resolver_test.c" \
+    "$ROOT/runner/src/snes/msu1.c" -lm -o "$OUT/msu_track_resolver_test"
+(cd "$OUT" && ./msu_track_resolver_test)
+
 echo "=== PPU sprite limits ==="
 "$CC" -std=c11 -Wall -Wextra -O1 \
     -DSNESRECOMP_REVERSE_DEBUG=0 \
@@ -319,18 +326,20 @@ for mode in 0 1 2 3; do
         "./audio_trace_clock_gate_test_$mode" open-fail)
 done
 
-echo "=== lobby mod plan (match_caps.mods wire shape) ==="
-# Includes snes_lobby_client.c directly to exercise the real codec, so it needs
-# the same guard define and include roots the runner build uses.
+echo "=== SNES lobby caps (widescreen keys over recomp-net's client) ==="
+# The lobby client moved to recomp-net (its codec/state-machine test is
+# lib/recomp-net tests/lobby_client_test.c). This compiles the SNES adapter
+# together with the real client to test the SNES keys end to end.
 "$CC" -std=c11 -Wall -Wextra -O1 \
-    -D_POSIX_C_SOURCE=200809L -DSNES_HAS_LOBBY_CLIENT=1 \
+    -D_POSIX_C_SOURCE=200809L -D_DEFAULT_SOURCE \
     -I "$ROOT/runner/src" -I "$ROOT/runner/src/lobby" \
-    -I "$ROOT/runner/src/lobby/ws" -I "$ROOT/lib/recomp-net/include" \
-    "$ROOT/tests/netplay/lobby_mod_plan_test.c" \
+    -I "$ROOT/lib/recomp-net/include" -I "$ROOT/lib/recomp-net/src" \
+    "$ROOT/tests/netplay/snes_lobby_caps_test.c" \
     "$ROOT/lib/recomp-net/src/chat/rnet_chat_filter.c" \
     "$ROOT/lib/recomp-net/src/chat/rnet_chat_report.c" \
-    -o "$OUT/lobby_mod_plan_test"
-"$OUT/lobby_mod_plan_test"
+    "$ROOT/lib/recomp-net/src/platform/rnet_platform.c" \
+    -o "$OUT/snes_lobby_caps_test"
+"$OUT/snes_lobby_caps_test"
 
 echo "=== keybinds: the runner-layout keyboard word ==="
 # Needs SDL headers for the scancode enum only (no window, no device). Skipped
@@ -424,6 +433,7 @@ echo "=== account secret path (rebuild must not sign you out) ==="
     -I "$ROOT/lib/recomp-net/include" -I "$ROOT/lib/recomp-net/src" \
     "$ROOT/tests/auth/secret_path_test.c" \
     "$ROOT/lib/recomp-net/src/auth/rnet_auth.c" \
+    "$ROOT/lib/recomp-net/src/auth/rnet_open_url.c" \
     "$ROOT/lib/recomp-net/src/auth/rnet_sha256.c" \
     -lpthread -o "$OUT/secret_path_test"
 "$OUT/secret_path_test"
@@ -479,3 +489,11 @@ echo "=== content variants + selector ==="
     "$ROOT/runner/src/snes_overlay_draw.c" \
     -o "$OUT/content_variant_test"
 (cd "$OUT" && "$OUT/content_variant_test")
+
+echo "=== Super FX PC hooks ==="
+"$CC" -std=c11 -Wall -Wextra -Werror -O1 \
+    -I "$ROOT/runner/src" \
+    "$ROOT/tests/superfx/pc_hook_test.c" \
+    "$ROOT/runner/src/snes/superfx.c" \
+    -o "$OUT/superfx_pc_hook_test"
+"$OUT/superfx_pc_hook_test"

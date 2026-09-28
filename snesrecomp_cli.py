@@ -84,23 +84,22 @@ def read_rom(path: pathlib.Path) -> bytes:
 
 
 def resolve_analyzer(backend: str) -> str:
-    """Point the emitter at the native analyzer when one is available.
+    """Point the emitter at the native analyzer, the only analyzer there is.
 
-    `auto` uses the native analyzer if it is built and the Python analyzer
-    otherwise; `native` insists and fails loudly when it is missing, because
-    silently dropping to a different analyzer would change what gets emitted.
+    Packaged builds ship the binary beside this file, so it is named here
+    rather than left to the emitter's repo-relative lookup. In a source
+    checkout without a built binary the emitter builds it. `auto` and
+    `native` both mean native; `python` names the retired analyzer.
     """
+    if backend == "python":
+        raise RuntimeError(
+            "the Python analyzer was retired; the native analyzer is the "
+            "only one (drop --analysis-backend python)")
     analyzer = ROOT / "recompiler-rs" / "target" / "release" / (
         "snesrecomp-analyze.exe" if os.name == "nt" else "snesrecomp-analyze")
     if analyzer.is_file():
         os.environ["SNESRECOMP_NATIVE_ANALYZER"] = str(analyzer)
-        return backend if backend != "auto" else "native"
-    if backend == "native":
-        raise RuntimeError(
-            "--analysis-backend native was requested but the analyzer is not "
-            f"built at {analyzer} (build it with "
-            "tools/build_native_analyzer.py)")
-    return "python" if backend == "auto" else backend
+    return "native"
 
 
 def run_emit(rom: pathlib.Path, cfg_dir: pathlib.Path, out_dir: pathlib.Path,

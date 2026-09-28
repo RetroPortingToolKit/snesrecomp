@@ -28,7 +28,7 @@ static char s_manifest[PATH_CAP], s_journal_path[PATH_CAP], s_capture_id[160];
 static char s_rom[65], s_module[128] = "main", s_program[65], s_mapper[32] = "unknown";
 static char s_build[65];
 static FILE *s_journal;
-static int s_paths_ready, s_close_registered, s_journal_failed;
+static int s_paths_ready, s_paths_disabled, s_close_registered, s_journal_failed;
 static int s_default_enabled, s_selection, s_config = -1, s_launch = -1;
 static int s_exposed = SNESRECOMP_EXPOSE_COVERAGE_MOD, s_initialized;
 static const char *s_source = "default";
@@ -74,6 +74,11 @@ static void refresh(void) {
         if (v && *v && strcmp(v, "0")) { enabled = 1; s_source = "journal environment"; }
     }
     if (s_launch >= 0) { enabled = s_launch; s_source = "launch"; }
+    /* The launcher may inspect the destination before capture is enabled.
+     * That inspection must not prevent creation of the directories later. */
+    if (enabled && s_paths_disabled) {
+        s_paths_ready = s_paths_disabled = 0;
+    }
     g_tier2_capture_active = enabled;
     s_initialized = 1;
 }
@@ -133,6 +138,7 @@ static void init_paths(const char *title) {
     if (s_paths_ready) return;
     int enabled = tier2_capture_enabled();
     s_paths_ready = 1;
+    s_paths_disabled = !enabled;
     s_journal_failed = 0;
     static unsigned session;
     char id[80];

@@ -104,6 +104,19 @@ int  snes_netplay_active(void);
  * rollback back into lockstep.
  */
 int  snes_netplay_rollback_active(void);
+/*
+ * 1 once a coordinated stop has finished and the process should exit.
+ *
+ * SIGUSR1 (POSIX) asks the rollback driver to drain: open no new episode,
+ * let open ones finish, tell the peer, and report DRAINED once neither side
+ * has anything in flight (lib/recomp-net/docs/rollback.md, "Coordinated
+ * stop"). tools/rb_loopback.sh stops both peers this way so its episode
+ * ledger balances by construction instead of racing a kill. Also 1 when the
+ * drain gave up on its bound -- the log says which. 0 when delay-sync.
+ */
+int  snes_netplay_quiesced(void);
+/* 1 while that stop is still in progress. */
+int  snes_netplay_draining(void);
 int  snes_netplay_is_running(void);
 /* "ice", "lan", or "none"; useful for user-facing connection diagnostics. */
 const char *snes_netplay_transport_name(void);
@@ -186,6 +199,16 @@ uint32_t snes_netplay_active_mask(void);
 void snes_netplay_request_return_to_lobby(void);
 int  snes_netplay_return_to_lobby_requested(void);
 void snes_netplay_clear_return_to_lobby(void);
+
+/*
+ * Why the match was REFUSED, NULL if it was not: the rollback driver's code
+ * (boot_digest_mismatch, mod_set_mismatch, mod_set_not_agreed). A refusal
+ * also raises the return-to-lobby request above while the session is still
+ * up; snes_host_barrier_admit() is where it is consumed, so every host that
+ * pumps admission through it leaves the match instead of playing it. Read it
+ * before snes_netplay_shutdown(), which ends the driver.
+ */
+const char *snes_netplay_refusal(void);
 
 /* Host-only savestate sync (chunked over recomp-net). Load uses hash-probe
  * first (skip transfer when guest already has the blob), then a short ready

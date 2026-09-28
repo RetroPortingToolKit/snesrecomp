@@ -2949,29 +2949,6 @@ extern "C" uint32_t snes_mod_runtime_synthetic_sram_size_c(void) {
     return SNESRecomp::synthetic_sram_size();
 }
 
-extern "C" int snes_mod_runtime_resource_path_c(const char* package_id,
-                                                const char* feature_id,
-                                                const char* resource_id,
-                                                char* out, uint32_t cap) {
-    if (out && cap) out[0] = '\0';
-    if (!package_id || !feature_id || !resource_id || !out || cap == 0) return 0;
-    SNESRecomp::Runtime& runtime = SNESRecomp::state();
-    if (!runtime.initialized) return 0;
-    const SNESRecomp::Package* package =
-        SNESRecomp::selected_package(runtime, package_id);
-    if (!package) return 0;
-    const SNESRecomp::Feature* feature =
-        SNESRecomp::find_feature(*package, feature_id);
-    const SNESRecomp::Resource* resource =
-        SNESRecomp::find_resource(*package, feature_id, resource_id);
-    if (!feature || !resource) return 0;
-    const std::string path =
-        SNESRecomp::resource_path(runtime, *package, *feature, *resource);
-    if (path.empty()) return 0;
-    std::snprintf(out, cap, "%s", path.c_str());
-    return 1;
-}
-
 extern "C" int snes_mod_runtime_initialize_c(
     const char* root, const char* game_id, const char* rom_sha256) {
     std::string error;
@@ -3809,4 +3786,27 @@ snes_mod_runtime_launcher_provider_c(void) {
 #else
     return nullptr;
 #endif
+}
+
+extern "C" int snes_mod_runtime_resource_path_c(const char* package_id,
+                                                const char* feature_id,
+                                                const char* resource_id,
+                                                char* out, uint32_t cap) {
+    if (out && cap) out[0] = '\0';
+    if (!package_id || !feature_id || !resource_id || !out || cap == 0) return 0;
+    SNESRecomp::Runtime& runtime = SNESRecomp::state();
+    if (!runtime.initialized) return 0;
+    const SNESRecomp::Package* package =
+        SNESRecomp::selected_package(runtime, package_id);
+    if (!package) return 0;
+    const SNESRecomp::Feature* feature =
+        SNESRecomp::find_feature(*package, feature_id);
+    const SNESRecomp::Resource* resource =
+        SNESRecomp::find_resource(*package, feature_id, resource_id);
+    if (!feature || !resource) return 0;
+    const std::string path =
+        SNESRecomp::resource_path(runtime, *package, *feature, *resource);
+    if (path.empty() || path.size() >= cap) return 0;
+    std::snprintf(out, cap, "%s", path.c_str());
+    return 1;
 }

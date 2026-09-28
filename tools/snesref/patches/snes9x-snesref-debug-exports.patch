@@ -1,0 +1,576 @@
+From 3eaec73d458b2d5d5e420029bad4d1de7dac9c3e Mon Sep 17 00:00:00 2001
+From: Matthew Stanley <1379tech@gmail.com>
+Date: Sat, 26 Sep 2026 23:46:05 -0700
+Subject: [PATCH] snesref debug exports: always-on PPU write journal,
+ CGRAM/OAM/regs readers
+
+Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>
+---
+ dma.cpp                    |  28 ++--
+ libretro/Makefile          |   4 +-
+ libretro/Makefile.common   |   3 +-
+ libretro/libretro.cpp      |   3 +
+ libretro/link.T            |   2 +-
+ libretro/snesref_debug.cpp | 281 +++++++++++++++++++++++++++++++++++++
+ libretro/snesref_debug.h   |  29 ++++
+ ppu.cpp                    |   9 ++
+ 8 files changed, 343 insertions(+), 16 deletions(-)
+ create mode 100644 libretro/snesref_debug.cpp
+ create mode 100644 libretro/snesref_debug.h
+
+diff --git a/dma.cpp b/dma.cpp
+index e1ad324..b7c9800 100644
+--- a/dma.cpp
++++ b/dma.cpp
+@@ -10,6 +10,7 @@
+ #include "apu/apu.h"
+ #include "sdd1emu.h"
+ #include "spc7110emu.h"
++#include "libretro/snesref_debug.h"
+ #ifdef DEBUGGER
+ #include "missing.h"
+ #endif
+@@ -563,7 +564,7 @@ bool8 S9xDoDMA (uint8 Channel)
+ 							do
+ 							{
+ 								Work = *(base + p);
+-								REGISTER_2104(Work);
++								SNESREF_PPUW(0x2104, Work); REGISTER_2104(Work);
+ 								UPDATE_COUNTERS;
+ 							} while (--count > 0);
+ 
+@@ -575,7 +576,7 @@ bool8 S9xDoDMA (uint8 Channel)
+ 								do
+ 								{
+ 									Work = *(base + p);
+-									REGISTER_2118_linear(Work);
++									SNESREF_PPUW(0x2118, Work); REGISTER_2118_linear(Work);
+ 									UPDATE_COUNTERS;
+ 								} while (--count > 0);
+ 							}
+@@ -584,7 +585,7 @@ bool8 S9xDoDMA (uint8 Channel)
+ 								do
+ 								{
+ 									Work = *(base + p);
+-									REGISTER_2118_tile(Work);
++									SNESREF_PPUW(0x2118, Work); REGISTER_2118_tile(Work);
+ 									UPDATE_COUNTERS;
+ 								} while (--count > 0);
+ 							}
+@@ -597,7 +598,7 @@ bool8 S9xDoDMA (uint8 Channel)
+ 								do
+ 								{
+ 									Work = *(base + p);
+-									REGISTER_2119_linear(Work);
++									SNESREF_PPUW(0x2119, Work); REGISTER_2119_linear(Work);
+ 									UPDATE_COUNTERS;
+ 								} while (--count > 0);
+ 							}
+@@ -606,7 +607,7 @@ bool8 S9xDoDMA (uint8 Channel)
+ 								do
+ 								{
+ 									Work = *(base + p);
+-									REGISTER_2119_tile(Work);
++									SNESREF_PPUW(0x2119, Work); REGISTER_2119_tile(Work);
+ 									UPDATE_COUNTERS;
+ 								} while (--count > 0);
+ 							}
+@@ -617,7 +618,7 @@ bool8 S9xDoDMA (uint8 Channel)
+ 							do
+ 							{
+ 								Work = *(base + p);
+-								REGISTER_2122(Work);
++								SNESREF_PPUW(0x2122, Work); REGISTER_2122(Work);
+ 								UPDATE_COUNTERS;
+ 							} while (--count > 0);
+ 
+@@ -668,13 +669,13 @@ bool8 S9xDoDMA (uint8 Channel)
+ 								while (count > 1)
+ 								{
+ 									Work = *(base + p);
+-									REGISTER_2118_linear(Work);
++									SNESREF_PPUW(0x2118, Work); REGISTER_2118_linear(Work);
+ 									UPDATE_COUNTERS;
+ 									count--;
+ 								// Fall through
+ 								case 1:
+ 									OpenBus = *(base + p);
+-									REGISTER_2119_linear(OpenBus);
++									SNESREF_PPUW(0x2119, OpenBus); REGISTER_2119_linear(OpenBus);
+ 									UPDATE_COUNTERS;
+ 									count--;
+ 								}
+@@ -683,7 +684,7 @@ bool8 S9xDoDMA (uint8 Channel)
+ 							if (count == 1)
+ 							{
+ 								Work = *(base + p);
+-								REGISTER_2118_linear(Work);
++								SNESREF_PPUW(0x2118, Work); REGISTER_2118_linear(Work);
+ 								UPDATE_COUNTERS;
+ 								b = 1;
+ 							}
+@@ -698,13 +699,13 @@ bool8 S9xDoDMA (uint8 Channel)
+ 								while (count > 1)
+ 								{
+ 									Work = *(base + p);
+-									REGISTER_2118_tile(Work);
++									SNESREF_PPUW(0x2118, Work); REGISTER_2118_tile(Work);
+ 									UPDATE_COUNTERS;
+ 									count--;
+ 								// Fall through
+ 								case 1:
+ 									Work = *(base + p);
+-									REGISTER_2119_tile(Work);
++									SNESREF_PPUW(0x2119, Work); REGISTER_2119_tile(Work);
+ 									UPDATE_COUNTERS;
+ 									count--;
+ 								}
+@@ -713,7 +714,7 @@ bool8 S9xDoDMA (uint8 Channel)
+ 							if (count == 1)
+ 							{
+ 								Work = *(base + p);
+-								REGISTER_2118_tile(Work);
++								SNESREF_PPUW(0x2118, Work); REGISTER_2118_tile(Work);
+ 								UPDATE_COUNTERS;
+ 								b = 1;
+ 							}
+@@ -1191,6 +1192,9 @@ static inline bool8 HDMAReadLineCount (int d)
+ 
+ void S9xStartHDMA (void)
+ {
++#ifdef __LIBRETRO__
++	snesref_hdma_init_snapshot();
++#endif
+ 	PPU.HDMA = Memory.FillRAM[0x420c];
+ 
+ #ifdef DEBUGGER
+diff --git a/libretro/Makefile b/libretro/Makefile
+index ba52864..b69fd3a 100644
+--- a/libretro/Makefile
++++ b/libretro/Makefile
+@@ -104,7 +104,7 @@ else ifeq ($(platform), libnx)
+    STATIC_LINKING = 1
+ 
+ # Classic Platforms ####################
+-# Platform affix = classic_<ISA>_<µARCH>
++# Platform affix = classic_<ISA>_<ÂµARCH>
+ # Help at https://modmyclassic.com/comp
+ 
+ # (armv7 a7, hard point, neon based) ### 
+@@ -551,7 +551,7 @@ else
+    TARGET := $(TARGET_NAME)_libretro.dll
+    CC ?= gcc
+    CXX ?= g++
+-   SHARED := -shared -static-libgcc -static-libstdc++ -s -Wl,--version-script=link.T
++   SHARED := -shared -static -static-libgcc -static-libstdc++ -s -Wl,--version-script=link.T
+    CXXFLAGS += -D__WIN32__
+ endif
+ 
+diff --git a/libretro/Makefile.common b/libretro/Makefile.common
+index ccb29c3..75d9e9b 100644
+--- a/libretro/Makefile.common
++++ b/libretro/Makefile.common
+@@ -61,4 +61,5 @@ SOURCES_CXX := $(CORE_DIR)/apu/apu.cpp \
+ 				 $(CORE_DIR)/bml.cpp \
+ 				 $(CORE_DIR)/movie.cpp \
+ 				 $(CORE_DIR)/fscompat.cpp \
+-				 $(CORE_DIR)/libretro/libretro.cpp
++				 $(CORE_DIR)/libretro/libretro.cpp \
++				 $(CORE_DIR)/libretro/snesref_debug.cpp
+diff --git a/libretro/libretro.cpp b/libretro/libretro.cpp
+index 6060767..9eb35f0 100644
+--- a/libretro/libretro.cpp
++++ b/libretro/libretro.cpp
+@@ -14,6 +14,7 @@
+ #include "display.h"
+ #include "conffile.h"
+ #include "crosshairs.h"
++#include "snesref_debug.h"
+ #include <stdio.h>
+ #include <vector>
+ #include <string>
+@@ -1098,6 +1099,7 @@ static bool8 is_SufamiTurbo_Cart (const uint8 *data, uint32 size)
+ 
+ bool retro_load_game(const struct retro_game_info *game)
+ {
++    snesref_reset_journal();
+     init_descriptors();
+ 
+     update_variables();
+@@ -1819,6 +1821,7 @@ static void report_buttons()
+ 
+ void retro_run()
+ {
++    snesref_on_retro_run();
+     static uint16 height = PPU.ScreenHeight;
+     bool updated = false;
+     if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE_UPDATE, &updated) && updated)
+diff --git a/libretro/link.T b/libretro/link.T
+index 9e82b5d..052c852 100644
+--- a/libretro/link.T
++++ b/libretro/link.T
+@@ -1,4 +1,4 @@
+ {
+-   global: retro_*;
++   global: retro_*; snesref_dbg_*;
+    local: *;
+ };
+diff --git a/libretro/snesref_debug.cpp b/libretro/snesref_debug.cpp
+new file mode 100644
+index 0000000..48eebf3
+--- /dev/null
++++ b/libretro/snesref_debug.cpp
+@@ -0,0 +1,281 @@
++/* snesref debug exports for the snesref differential oracle.
++ *
++ * 1. ALWAYS-ON PPU register-write journal: every write to $2100-$2133 and to
++ *    $420C (HDMAEN) lands in a fixed ring (SNESREF_PPUW_CAP entries) tagged
++ *    with the frame tag, V counter, H counter (dots) and source (cpu/dma/hdma).
++ *    Nothing is armed: a consumer queries [head - n, head) at any time.
++ * 2. State readers: CGRAM words, OAM bytes, and a JSON register/PPU-internal
++ *    snapshot (including DMA[] captured at this frame's HDMA init).
++ *
++ * The frame tag advances by one at the top of every retro_run (so writes that
++ * happen inside the Nth retro_run carry tag N), unless the frontend pins it
++ * with snesref_dbg_set_frame() before each retro_run.
++ */
++#include "snes9x.h"
++#include "memmap.h"
++#include "ppu.h"
++#include "dma.h"
++#include "snesref_debug.h"
++
++#include <stdio.h>
++#include <string.h>
++#include <stdarg.h>
++
++#if defined(_WIN32)
++#define SNESREF_EXPORT extern "C" __declspec(dllexport)
++#else
++#define SNESREF_EXPORT extern "C" __attribute__((visibility("default")))
++#endif
++
++#define SNESREF_DBG_VERSION 1u
++#define SNESREF_PPUW_CAP (1u << 20) /* 1M entries * 12 B = 12 MiB */
++
++struct snesref_ppuw_entry
++{
++	uint32_t frame;
++	uint16_t vcounter;
++	uint16_t hcounter; /* dots, 0..339 (same conversion as S9xLatchCounters) */
++	uint16_t addr;
++	uint8_t  value;
++	uint8_t  source; /* SNESREF_SRC_* */
++};
++
++static snesref_ppuw_entry g_ring[SNESREF_PPUW_CAP];
++static uint64_t g_head;          /* total entries ever written */
++static uint32_t g_frame_tag;     /* tag applied to new entries */
++static bool     g_frame_pinned;  /* frontend drives the tag */
++
++static struct
++{
++	uint32_t frame;
++	uint8_t  hdmaen;
++	uint16_t v, h;
++	SDMA     dma[8];
++	bool     valid;
++} g_hdma_init;
++
++static inline uint16_t current_hdot(void)
++{
++	int32 hc = CPU.Cycles;
++	if (Timings.H_Max == Timings.H_Max_Master)
++	{
++		if (hc >= 1292) hc -= (ONE_DOT_CYCLE / 2);
++		if (hc >= 1308) hc -= (ONE_DOT_CYCLE / 2);
++	}
++	if (hc < 0) hc = 0;
++	return (uint16_t)(hc / ONE_DOT_CYCLE);
++}
++
++void snesref_ppuw_log(uint16_t addr, uint8_t value)
++{
++	snesref_ppuw_entry &e = g_ring[g_head & (SNESREF_PPUW_CAP - 1)];
++	e.frame    = g_frame_tag;
++	e.vcounter = (uint16_t)CPU.V_Counter;
++	e.hcounter = current_hdot();
++	e.addr     = addr;
++	e.value    = value;
++	e.source   = CPU.InHDMA ? SNESREF_SRC_HDMA : (CPU.InDMA ? SNESREF_SRC_DMA : SNESREF_SRC_CPU);
++	g_head++;
++}
++
++void snesref_hdma_init_snapshot(void)
++{
++	g_hdma_init.frame  = g_frame_tag;
++	g_hdma_init.hdmaen = Memory.FillRAM[0x420c];
++	g_hdma_init.v      = (uint16_t)CPU.V_Counter;
++	g_hdma_init.h      = current_hdot();
++	memcpy(g_hdma_init.dma, DMA, sizeof(g_hdma_init.dma));
++	g_hdma_init.valid  = true;
++}
++
++void snesref_on_retro_run(void)
++{
++	if (!g_frame_pinned)
++		g_frame_tag++;
++}
++
++void snesref_reset_journal(void)
++{
++	g_head = 0;
++	g_hdma_init.valid = false;
++	if (!g_frame_pinned)
++		g_frame_tag = 0;
++}
++
++/* ---------------- exports ---------------- */
++
++SNESREF_EXPORT unsigned snesref_dbg_version(void) { return SNESREF_DBG_VERSION; }
++
++SNESREF_EXPORT void snesref_dbg_set_frame(uint32_t frame)
++{
++	g_frame_pinned = true;
++	g_frame_tag = frame;
++}
++
++SNESREF_EXPORT size_t snesref_dbg_cgram(uint8_t *out, size_t cap)
++{
++	if (!out || cap < 512) return 512;
++	for (int i = 0; i < 256; i++)
++	{
++		out[i * 2 + 0] = (uint8_t)(PPU.CGDATA[i] & 0xff);
++		out[i * 2 + 1] = (uint8_t)(PPU.CGDATA[i] >> 8);
++	}
++	return 512;
++}
++
++SNESREF_EXPORT size_t snesref_dbg_oam(uint8_t *out, size_t cap)
++{
++	if (!out || cap < sizeof(PPU.OAMData)) return sizeof(PPU.OAMData);
++	memcpy(out, PPU.OAMData, sizeof(PPU.OAMData));
++	return sizeof(PPU.OAMData);
++}
++
++SNESREF_EXPORT size_t snesref_dbg_ppuw_entry_size(void) { return sizeof(snesref_ppuw_entry); }
++SNESREF_EXPORT size_t snesref_dbg_ppuw_capacity(void) { return SNESREF_PPUW_CAP; }
++SNESREF_EXPORT uint64_t snesref_dbg_ppuw_head(void) { return g_head; }
++
++/* Copy entries [start, start+count) (absolute indices). Indices older than
++ * head - capacity have been evicted; the copy is clipped to what is retained.
++ * Returns the number copied; *first_out receives the first index copied. */
++SNESREF_EXPORT size_t snesref_dbg_ppuw_read(uint64_t start, size_t count, void *out, uint64_t *first_out)
++{
++	uint64_t oldest = g_head > SNESREF_PPUW_CAP ? g_head - SNESREF_PPUW_CAP : 0;
++	if (start < oldest)
++	{
++		uint64_t skip = oldest - start;
++		count = skip >= count ? 0 : (size_t)(count - skip);
++		start = oldest;
++	}
++	if (start >= g_head) count = 0;
++	else if (start + count > g_head) count = (size_t)(g_head - start);
++	if (first_out) *first_out = start;
++	snesref_ppuw_entry *dst = (snesref_ppuw_entry *)out;
++	for (size_t i = 0; i < count; i++)
++		dst[i] = g_ring[(start + i) & (SNESREF_PPUW_CAP - 1)];
++	return count;
++}
++
++/* ---- JSON snapshot ---- */
++struct jbuf
++{
++	char *p; size_t cap; size_t len; bool overflow;
++	void f(const char *fmt, ...)
++	{
++		va_list ap; va_start(ap, fmt);
++		char tmp[2048];
++		int n = vsnprintf(tmp, sizeof tmp, fmt, ap);
++		va_end(ap);
++		if (n < 0) return;
++		if ((size_t)n >= sizeof tmp) n = (int)sizeof tmp - 1;
++		if (p && !overflow && len + (size_t)n < cap) memcpy(p + len, tmp, (size_t)n + 1);
++		else overflow = true;
++		len += (size_t)n;
++	}
++};
++
++static uint8_t nltr_byte(const SDMA &d)
++{
++	/* Inverse of S9xSetCPU($43xA) / HDMAReadLineCount's LineCount/Repeat. */
++	if (d.LineCount == 128) return d.Repeat ? 0x80 : 0x00;
++	return (uint8_t)((d.LineCount & 0x7f) | (d.Repeat ? 0x00 : 0x80));
++}
++
++static void dma_json(jbuf &j, const SDMA *dma)
++{
++	j.f("[");
++	for (int c = 0; c < 8; c++)
++	{
++		const SDMA &d = dma[c];
++		uint8_t dmap = (uint8_t)((d.ReverseTransfer ? 0x80 : 0) | (d.HDMAIndirectAddressing ? 0x40 : 0) |
++			(d.UnusedBit43x0 ? 0x20 : 0) | (d.AAddressDecrement ? 0x10 : 0) | (d.AAddressFixed ? 0x08 : 0) |
++			(d.TransferMode & 7));
++		j.f("%s{\"ch\":%d,\"43x0\":\"%02X\",\"43x1\":\"%02X\",\"43x2\":\"%02X\",\"43x3\":\"%02X\",\"43x4\":\"%02X\","
++			"\"43x5\":\"%02X\",\"43x6\":\"%02X\",\"43x7\":\"%02X\",\"43x8\":\"%02X\",\"43x9\":\"%02X\",\"43xA\":\"%02X\","
++			"\"mode\":%u,\"indirect\":%u,\"bbad\":\"21%02X\",\"a1\":\"%02X:%04X\",\"das_or_indirect\":\"%04X\","
++			"\"indirect_bank\":\"%02X\",\"a2\":\"%04X\",\"line_count\":%u,\"repeat\":%u,\"do_transfer\":%u}",
++			c ? "," : "", c, dmap, d.BAddress, d.AAddress & 0xff, d.AAddress >> 8, d.ABank,
++			d.DMACount_Or_HDMAIndirectAddress & 0xff, d.DMACount_Or_HDMAIndirectAddress >> 8, d.IndirectBank,
++			d.Address & 0xff, d.Address >> 8, nltr_byte(d),
++			d.TransferMode, d.HDMAIndirectAddressing ? 1 : 0, d.BAddress, d.ABank, d.AAddress,
++			d.DMACount_Or_HDMAIndirectAddress, d.IndirectBank, d.Address, d.LineCount, d.Repeat ? 1 : 0,
++			d.DoTransfer ? 1 : 0);
++	}
++	j.f("]");
++}
++
++SNESREF_EXPORT size_t snesref_dbg_regs_json(char *out, size_t cap)
++{
++	jbuf j = { out, cap, 0, false };
++	const uint8 *F = Memory.FillRAM;
++	j.f("{\n\"snesref_dbg_version\":%u,\n\"frame_tag\":%u,\n\"total_emulated_frames\":%u,\n",
++		SNESREF_DBG_VERSION, g_frame_tag, IPPU.TotalEmulatedFrames);
++	j.f("\"v_counter\":%d,\n\"h_cycles\":%d,\n", CPU.V_Counter, CPU.Cycles);
++
++	j.f("\"fillram_note\":\"last CPU/DMA-written byte per register (Memory.FillRAM); write-twice regs keep only the last byte\",\n");
++	j.f("\"fillram\":{");
++	int first = 1;
++	for (int a = 0x2100; a <= 0x2133; a++) { j.f("%s\"%04X\":\"%02X\"", first ? "" : ",", a, F[a]); first = 0; }
++	for (int a = 0x4200; a <= 0x420d; a++) j.f(",\"%04X\":\"%02X\"", a, F[a]);
++	j.f("},\n");
++
++	j.f("\"ppu\":{\n");
++	j.f(" \"inidisp\":{\"forced_blank\":%u,\"brightness\":%u},\n", PPU.ForcedBlanking ? 1 : 0, PPU.Brightness);
++	j.f(" \"bgmode\":%u,\"bg3_priority\":%u,\n", PPU.BGMode, PPU.BG3Priority ? 1 : 0);
++	j.f(" \"bg\":[");
++	for (int i = 0; i < 4; i++)
++		j.f("%s{\"hofs\":%u,\"vofs\":%u,\"scbase\":\"%04X\",\"scsize\":%u,\"namebase\":\"%04X\",\"tile16\":%u,\"mosaic\":%u}",
++			i ? "," : "", PPU.BG[i].HOffset, PPU.BG[i].VOffset, PPU.BG[i].SCBase, PPU.BG[i].SCSize,
++			PPU.BG[i].NameBase, PPU.BG[i].BGSize, PPU.BGMosaic[i] ? 1 : 0);
++	j.f("],\n");
++	j.f(" \"mosaic_size\":%u,\n", PPU.Mosaic);
++	j.f(" \"tm\":\"%02X\",\"ts\":\"%02X\",\"tmw\":\"%02X\",\"tsw\":\"%02X\",\n", F[0x212c], F[0x212d], F[0x212e], F[0x212f]);
++	j.f(" \"cgwsel\":\"%02X\",\"cgadsub\":\"%02X\",\n", F[0x2130], F[0x2131]);
++	j.f(" \"fixed_color\":{\"r\":%u,\"g\":%u,\"b\":%u},\n", PPU.FixedColourRed, PPU.FixedColourGreen, PPU.FixedColourBlue);
++	j.f(" \"window\":{\"w1_left\":%u,\"w1_right\":%u,\"w2_left\":%u,\"w2_right\":%u,"
++		"\"w12sel\":\"%02X\",\"w34sel\":\"%02X\",\"wobjsel\":\"%02X\",\"wbglog\":\"%02X\",\"wobjlog\":\"%02X\",",
++		PPU.Window1Left, PPU.Window1Right, PPU.Window2Left, PPU.Window2Right,
++		F[0x2123], F[0x2124], F[0x2125], F[0x212a], F[0x212b]);
++	j.f("\"layers\":[");
++	for (int i = 0; i < 6; i++)
++		j.f("%s{\"w1_enable\":%u,\"w1_inside\":%u,\"w2_enable\":%u,\"w2_inside\":%u,\"logic\":%u}", i ? "," : "",
++			PPU.ClipWindow1Enable[i], PPU.ClipWindow1Inside[i] ? 1 : 0, PPU.ClipWindow2Enable[i],
++			PPU.ClipWindow2Inside[i] ? 1 : 0, PPU.ClipWindowOverlapLogic[i]);
++	j.f("],\"layers_order\":\"BG1,BG2,BG3,BG4,OBJ,COL\"},\n");
++	j.f(" \"mode7\":{\"a\":%d,\"b\":%d,\"c\":%d,\"d\":%d,\"x\":%d,\"y\":%d,\"hofs\":%d,\"vofs\":%d,"
++		"\"m7sel\":\"%02X\",\"repeat\":%u,\"hflip\":%u,\"vflip\":%u},\n",
++		PPU.MatrixA, PPU.MatrixB, PPU.MatrixC, PPU.MatrixD, PPU.CentreX, PPU.CentreY, PPU.M7HOFS, PPU.M7VOFS,
++		F[0x211a], PPU.Mode7Repeat, PPU.Mode7HFlip ? 1 : 0, PPU.Mode7VFlip ? 1 : 0);
++	j.f(" \"obj\":{\"obsel\":\"%02X\",\"size_select\":%u,\"name_base\":\"%04X\",\"name_select\":\"%04X\","
++		"\"oam_addr\":\"%04X\",\"oam_priority_rotation\":%u,\"first_sprite\":%u},\n",
++		F[0x2101], PPU.OBJSizeSelect, PPU.OBJNameBase, PPU.OBJNameSelect, PPU.OAMAddr,
++		PPU.OAMPriorityRotation, PPU.FirstSprite);
++	j.f(" \"vram\":{\"addr\":\"%04X\",\"increment\":%u,\"high\":%u,\"full_graphic_count\":%u},\n",
++		PPU.VMA.Address, PPU.VMA.Increment, PPU.VMA.High ? 1 : 0, PPU.VMA.FullGraphicCount);
++	j.f(" \"cgadd\":%u,\n", PPU.CGADD);
++	j.f(" \"setini\":\"%02X\",\"interlace\":%u,\"pseudo_hires\":%u,\"screen_height\":%u\n",
++		F[0x2133], IPPU.Interlace ? 1 : 0, IPPU.PseudoHires ? 1 : 0, PPU.ScreenHeight);
++	j.f("},\n");
++
++	j.f("\"cpu\":{\"nmitimen\":\"%02X\",\"htime\":%u,\"vtime\":%u,\"hdmaen_written\":\"%02X\","
++		"\"hdma_active\":\"%02X\",\"hdma_ended\":\"%02X\",\"memsel\":\"%02X\"},\n",
++		F[0x4200], PPU.IRQHBeamPos, PPU.IRQVBeamPos, F[0x420c], PPU.HDMA, PPU.HDMAEnded, F[0x420d]);
++
++	j.f("\"dma_live_note\":\"DMA[] at dump time (A2A/NLTR/indirect advance during HDMA)\",\n");
++	j.f("\"dma_live\":");
++	dma_json(j, DMA);
++	j.f(",\n");
++	if (g_hdma_init.valid)
++	{
++		j.f("\"hdma_init\":{\"frame_tag\":%u,\"v\":%u,\"h\":%u,\"hdmaen\":\"%02X\",\"dma\":",
++			g_hdma_init.frame, g_hdma_init.v, g_hdma_init.h, g_hdma_init.hdmaen);
++		dma_json(j, g_hdma_init.dma);
++		j.f("},\n");
++	}
++	else
++		j.f("\"hdma_init\":null,\n");
++	j.f("\"ppuw_head\":%llu\n}\n", (unsigned long long)g_head);
++	/* Returns the size needed (including NUL); out is complete only when the
++	 * return value <= cap. */
++	if (out && cap && j.overflow) out[0] = 0;
++	return j.len + 1;
++}
+diff --git a/libretro/snesref_debug.h b/libretro/snesref_debug.h
+new file mode 100644
+index 0000000..ca17d36
+--- /dev/null
++++ b/libretro/snesref_debug.h
+@@ -0,0 +1,29 @@
++/* snesref debug exports: always-on PPU register-write journal + state readers
++ * for the snesref differential oracle (tools/snesref in snesrecomp).
++ *
++ * Hooks are compiled only into the libretro port (__LIBRETRO__). */
++#ifndef SNESREF_DEBUG_H
++#define SNESREF_DEBUG_H
++
++#include <stdint.h>
++
++#define SNESREF_SRC_CPU  0
++#define SNESREF_SRC_DMA  1
++#define SNESREF_SRC_HDMA 2
++
++#ifdef __LIBRETRO__
++/* Record a write to a PPU/CPU register (caller filters the address range). */
++void snesref_ppuw_log(uint16_t addr, uint8_t value);
++/* Snapshot DMA[]/HDMAEN at HDMA init (V=0) of the current frame. */
++void snesref_hdma_init_snapshot(void);
++/* Called at the top of retro_run (advances the auto frame tag). */
++void snesref_on_retro_run(void);
++/* Called from retro_load_game / retro_reset: clears the journal. */
++void snesref_reset_journal(void);
++
++#define SNESREF_PPUW(addr, value) snesref_ppuw_log((uint16_t)(addr), (uint8_t)(value))
++#else
++#define SNESREF_PPUW(addr, value) ((void)0)
++#endif
++
++#endif
+diff --git a/ppu.cpp b/ppu.cpp
+index 3ba341e..c2a1474 100644
+--- a/ppu.cpp
++++ b/ppu.cpp
+@@ -14,6 +14,7 @@
+ #include "controls.h"
+ #include "movie.h"
+ #include "display.h"
++#include "libretro/snesref_debug.h"
+ #ifdef NETPLAY_SUPPORT
+ #include "netplay.h"
+ #endif
+@@ -237,6 +238,10 @@ void S9xSetPPU (uint8 Byte, uint16 Address)
+ 		}
+ 	}
+ 
++	// snesref: always-on PPU register-write journal (cpu / dma / hdma).
++	if (Address >= 0x2100 && Address <= 0x2133)
++		SNESREF_PPUW(Address, Byte);
++
+ #ifdef DEBUGGER
+ 	if (CPU.InHDMA)
+ 		S9xTraceFormattedMessage("--- HDMA PPU %04X -> %02X", Address, Byte);
+@@ -1238,6 +1243,10 @@ uint8 S9xGetPPU (uint16 Address)
+ 
+ void S9xSetCPU (uint8 Byte, uint16 Address)
+ {
++	// snesref: HDMAEN writes go into the PPU write journal too.
++	if (Address == 0x420c)
++		SNESREF_PPUW(Address, Byte);
++
+ 	if (Address < 0x4200)
+ 	{
+ 		switch (Address)
+-- 
+2.49.0
+

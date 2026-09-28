@@ -9,6 +9,7 @@ void RtlApuLock(void) {}
 void RtlApuUnlock(void) {}
 
 static Dsp queue;
+Snes *g_snes;
 static int16_t output[1600];
 static void produce(unsigned count) {
   assert(dsp_available(&queue)+count <= DSP_SAMPLE_RING);
@@ -85,8 +86,34 @@ static void short_callback_recovery(void) {
   assert(previous==10000 && stats().output_underflows==underflows+1);
   assert(stats().output_priming>0);
 }
+static void turbo_stage_entry_recovery(void) {
+  static Snes machine;
+  static Apu apu;
+  machine.apu=&apu;apu.dsp=&queue;g_snes=&machine;
+  const int rates[]={32040,44100,48000};
+  for(unsigned rate=0;rate<3;++rate) {
+    start();RtlSetAudioOutputRate(rates[rate]);
+    g_audio_fast_forward=false;g_audio_recovery_frames=0;
+    int block=rates[rate]/60;
+    produce(2136);render(block);
+    RtlAudioSetFastForward(true);
+    /* A stage upload or callback starvation puts delivery back into priming
+     * while turbo has accumulated audio. Recovery must leave enough samples
+     * for the real consumer to start, rather than repeatedly trimming them. */
+    rtl_reset_audio_delivery();produce(4000);
+    RtlAudioSetFastForward(false);render(block);
+    for(int frame=0;frame<60;++frame) {
+      produce(534);RtlAudioSetFastForward(false);render(block);
+      if(frame>=8) {
+        assert(!s_render_priming);
+        assert(output[(block-1)*2]==10000);
+      }
+    }
+    assert(g_audio_recovery_frames==0);
+  }
+}
 int main(void) {
-  reset_and_rates();short_callback_recovery();
-  puts("audio delivery: reset/start priming, rates, bounded starvation ramps and producer isolation passed");
+  reset_and_rates();short_callback_recovery();turbo_stage_entry_recovery();
+  puts("audio delivery: reset/start priming, rates, starvation ramps, turbo recovery and producer isolation passed");
   return 0;
 }

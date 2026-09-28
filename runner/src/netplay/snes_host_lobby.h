@@ -1,11 +1,15 @@
 /*
- * Engine-owned MotK + LAN file-registry lobby adapter for recomp-ui.
+ * The SNES host's lobby: identity, match-caps and rematch policy over
+ * recomp-ui's shared netplay backend (recomp_netplay_host.h), which speaks
+ * recomp-net's lobby protocol and LAN modules.
  *
  * Games register identity + optional match_caps / rematch policy, then wire
  * snes_host_lobby_callbacks() into RecompLauncherCGameInfo.netplay. Do not
- * copy create/join/fill_launch glue into each title.
+ * copy create/join/fill_launch glue into each title -- and do not copy it
+ * into an engine either: that is what recomp_netplay_host is for.
  *
- * Requires RECOMP_LAUNCHER (recomp-ui include path on the game target).
+ * Requires RECOMP_LAUNCHER (recomp-ui include path on the game target) and a
+ * recomp-ui new enough to carry recomp_target_launcher_netplay().
  */
 #ifndef SNES_HOST_LOBBY_H
 #define SNES_HOST_LOBBY_H

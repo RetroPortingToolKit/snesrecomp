@@ -1,0 +1,6 @@
+cmake_minimum_required(VERSION 3.16)
+project(no_pack_opt_in C)
+include(../../../runner/data_packs.cmake)
+if(TARGET snesrecomp_data_packs OR CMAKE_CXX_COMPILER_LOADED OR DEFINED LibArchive_FOUND)
+    message(FATAL_ERROR "Including the helper enabled pack dependencies without opt-in")
+endif()

@@ -153,7 +153,8 @@ def load_profiles(paths, *, expected_rom=None, expected_module=None,
                 elif seq == old[0] and row != old[1]:
                     raise ValueError(f"conflicting coverage row at sequence {seq}: {path}")
             for row in record.get("ram_routines", []):
-                ram[(capture, pc(row["entry_pc24"]), row.get("hash"))] = row
+                ram[(capture, pc(row["entry_pc24"]), row.get("hash"),
+                     row.get("entry_mx"), row.get("emulation"))] = row
     merged = {}
     for _seq, row in latest.values():
         key = row_key(row)
@@ -169,6 +170,7 @@ def load_profiles(paths, *, expected_rom=None, expected_module=None,
                           if r.get("record_kind", "transfer") == "transfer"]
     result.costs = [r for r in merged.values() if r.get("record_kind") == "instruction"]
     result.ram_routines = list(ram.values())
+    result.warnings = list(dict.fromkeys(result.warnings))
     return result
 
 

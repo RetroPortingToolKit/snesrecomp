@@ -62,7 +62,7 @@ def generate(
     no_host_root_scan: bool = False,
     source_roots: Optional[Sequence[pathlib.Path]] = None,
     profile_manifests: Optional[Sequence[pathlib.Path]] = None,
-    analysis_backend: str = "auto",
+    analysis_backend: str = "native",
     expected_crc32: Optional[str] = None,
     expected_sha256: Optional[str] = None,
     progress: Optional[ProgressReporter] = None,
@@ -310,9 +310,10 @@ def add_generate_parser(subparsers) -> None:
     )
     generate_parser.add_argument(
         "--analysis-backend",
-        choices=("auto", "python", "native"),
-        default="auto",
-        help="whole-program analyzer (default: auto)",
+        choices=("auto", "native", "python"),
+        default="native",
+        help="accepted for compatibility: the native analyzer is the only "
+             "one (auto means native; python is an error)",
     )
     add_identity_args(generate_parser)
     generate_parser.add_argument(

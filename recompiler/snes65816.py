@@ -164,6 +164,13 @@ def is_rom_address(bank: int, addr: int) -> bool:
     return addr >= 0x8000 and ((bank & 0xFF) < 0x40 or bank >= 0x80)
 
 
+def rom_bank_mirror(bank: int):
+    """Only the active mapper's proven reset-map bank aliases."""
+    if _active_rom_mapping != ROM_MAP_SA1 and (bank < 0x40 or 0x80 <= bank < 0xC0):
+        return bank ^ 0x80
+    return None
+
+
 def vector_table_offset(data: bytes) -> int:
     """Return the physical offset of the $FFE0-$FFFF vector table."""
     mapping = detect_rom_mapping(data)
@@ -193,7 +200,8 @@ MODE_STR = {
 class Insn:
     __slots__ = ('addr', 'opcode', 'mnem', 'mode', 'operand', 'length',
                  'dispatch_entries', 'dispatch_kind', 'dispatch_idx_reg',
-                 'dispatch_table_bases', 'm_flag', 'x_flag', 'dispatch_terminal',
+                 'dispatch_table_bases', 'dispatch_index_bias',
+                 'm_flag', 'x_flag', 'dispatch_terminal',
                  'dispatch_call', 'dispatch_pushed_call',
                  'dispatch_pushed_call_frame_size',
                  'dispatch_return_pc', 'dispatch_return_m', 'dispatch_return_x',
@@ -222,6 +230,11 @@ class Insn:
         # came from static table base(s). len >= 2 means parallel byte tables,
         # where the index register is already a logical entry index.
         self.dispatch_table_bases = ()
+        # Byte distance from this instruction's operand to entry 0 of the
+        # dispatch table. Normally 0 (`JSR ($tbl,X)` with the table at $tbl);
+        # non-zero where the cfg data_region overlay proves the table starts
+        # after the operand byte, so the selector is a biased byte offset.
+        self.dispatch_index_bias = 0
         self.dispatch_terminal = False
         # Pointer-sourced CALL idiom (PEA <ret>; JMP (ptr)): non-terminal
         # indirect call that falls through to the next block. See cfg_loader

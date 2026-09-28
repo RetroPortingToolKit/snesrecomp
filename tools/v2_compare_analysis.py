@@ -20,7 +20,7 @@ def _semantic_node(node: dict) -> dict:
 
 def main() -> int:
     parser = argparse.ArgumentParser(
-        description="compare Python/native LLE-first analysis manifests")
+        description="compare two LLE-first analysis manifests (baseline vs change)")
     parser.add_argument("--expected", required=True)
     parser.add_argument("--actual", required=True)
     parser.add_argument(

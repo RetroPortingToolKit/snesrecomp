@@ -44,6 +44,7 @@ from snes_cycles import (  # noqa: E402
 )
 from snes65816 import (  # noqa: E402
     ABS_X as _MODE_ABS_X, ABS_Y as _MODE_ABS_Y, IMM as _MODE_IMM,
+    get_rom_mapping, ROM_MAP_SA1, rom_offset,
 )
 from v2.ir import (  # noqa: E402
     IROp, IRBlock, Value,
@@ -295,7 +296,7 @@ def scan_tail_call_stack_delta(
     except Exception:
         return {}
 
-    cfg = build_cfg(graph)
+    cfg = build_cfg(graph, instruction_blocks=get_rom_mapping() == ROM_MAP_SA1)
     if cfg.entry not in cfg.blocks:
         return {}
 
@@ -402,7 +403,7 @@ def scan_rts_stack_deltas(
     except Exception:
         return None
 
-    cfg = build_cfg(graph)
+    cfg = build_cfg(graph, instruction_blocks=get_rom_mapping() == ROM_MAP_SA1)
     if cfg.entry not in cfg.blocks:
         return None
 
@@ -620,7 +621,7 @@ def emit_function(rom: bytes, bank: int, start: int,
     # cfg directive, no auto-recovery). v2_regen hard-fails on any.
     if unresolved_indirect_collector is not None:
         unresolved_indirect_collector.extend(graph.unresolved_indirects)
-    cfg = build_cfg(graph)
+    cfg = build_cfg(graph, instruction_blocks=get_rom_mapping() == ROM_MAP_SA1)
 
     # A tight, side-effect-free memory poll cannot execute atomically under
     # the LLE frame scheduler: the value it observes is commonly changed by
@@ -1834,7 +1835,7 @@ def emit_function(rom: bytes, bank: int, start: int,
                                         f"(void)cpu_trace_dispatch_oob(cpu, "
                                         f"0x{site_pc24:06x}, 0xFFFF);")
                                     lines.append(
-                                        f"{{ RecompReturn _r = interp_tier_dispatch_balanced(cpu, "
+                                        f"{{ RecompReturn _r = interp_tier_dispatch_tail(cpu, "
                                         f"0x{site_pc24:06x}u, 0x{site_pc24:06x}u, "
                                         f"_entry_s, _hrv); RecompStackPop(); return _r; }} "
                                         f"/* balanced_interp_dispatch */")
@@ -2126,6 +2127,18 @@ def emit_function(rom: bytes, bank: int, start: int,
         # Cheap (counter bump + branch); v1 emitted at loop headers, v2
         # gets it at every block since we don't yet identify back-edges.
         src.append(f'    WatchdogCheck();')
+        # SA-1 MMC registers can remap code while a routine is live. Each
+        # instruction is a block, so a mapper write cannot leave a stale
+        # compiled continuation executing the previous ROM bytes. Check
+        # before charging cycles; the interpreter owns a rejected fetch.
+        if get_rom_mapping() == ROM_MAP_SA1:
+            insn = cfg.blocks[key].insns[0].insn
+            offset = rom_offset(bank, key.pc & 0xFFFF)
+            src.append(
+                f'    if (!cpu_aot_rom_mapping_matches(0x{block_pc24:06X}u, '
+                f'0x{offset:X}u, {insn.length}u)) {{ RecompStackPop(); '
+                f'return interp_tier_dispatch_balanced(cpu, 0x{block_pc24:06X}u, '
+                f'0x{block_pc24:06X}u, _entry_s, _hrv); }}')
         # Profile-guided AOT may keep the CPU inside one generated function
         # across a frame boundary. Every CFG block starts at an architectural
         # instruction boundary, so it is safe to unwind here and resume this

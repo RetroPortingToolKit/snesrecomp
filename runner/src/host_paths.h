@@ -22,6 +22,13 @@ int snesrecomp_abspath(const char *path, char *out, size_t max_len);
 int snesrecomp_exe_dir_path(const char *leaf, char *out, size_t max_len);
 
 /*
+ * Full path of the running executable -- inside an AppImage, the .AppImage
+ * file itself, which is what a relaunch must start. Returns 0 when the
+ * platform has no way to ask.
+ */
+int snesrecomp_exe_path(char *out, size_t max_len);
+
+/*
  * Basename of the running executable, without directory and without a
  * trailing ".exe". This is the name CMake built the target under, so it is
  * what a self-rebuild needs for both `cmake --build --target` and for finding

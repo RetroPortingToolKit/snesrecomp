@@ -23,4 +23,4 @@ def test_counter_loop_stays_compiled():
     src = emit_function(_rom(code), bank=0, start=0x8000,
                         entry_m=1, entry_x=1, end=0x8006)
 
-    assert "interp_bridge_lle_yield_unwind" not in src
+    assert "interp_bridge_in_lle_scheduler()" not in src

@@ -1552,6 +1552,20 @@ def main() -> int:
                 modes = analyze_function_exit_mx_modes(graph2, callee_map)
                 if modes and len(modes) > 1:
                     mode_map[key] = frozenset((m & 1, x & 1) for (m, x) in modes)
+        # cfg `exit_mx_set` directives are authoritative and are applied last,
+        # so they win over whatever the fixed point managed to derive. They
+        # exist for exactly the callees it could not: a routine returning in
+        # two widths from one entry variant, which `exit_mx_at` cannot express
+        # at all. Same standing as hand-written `exit_mx_at` -- an assertion,
+        # to be checked against a recording rather than trusted.
+        cfg_sets = 0
+        for _b, _p, cfg3 in parsed:
+            for (b_id, addr16, em, ex, exits) in getattr(cfg3, 'exit_mx_set', ()):
+                key = (((b_id & 0xFF) << 16) | (addr16 & 0xFFFF), em & 1, ex & 1)
+                mode_map[key] = frozenset((m & 1, x & 1) for (m, x) in exits)
+                cfg_sets += 1
+        if cfg_sets:
+            print(f"  applied {cfg_sets} cfg exit_mx_set directive(s)")
         if mode_map:
             print(f"  collected {len(mode_map)} ambiguous callee exit-mode sets")
         return mode_map

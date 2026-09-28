@@ -121,3 +121,11 @@ def test_instruction_costs_never_mix_processors(tmp_path):
     document["costs"] = [cost, dict(cost, processor="sa1")]
     profile = load_profiles([write(tmp_path / "capture.json", document)])
     assert len(profile.costs) == 2
+
+
+def test_ram_snapshots_preserve_cpu_mode_variants(tmp_path):
+    document = capture([])
+    snapshot = dict(entry_pc24="0x7E8000", hash="01234567", entry_mx="M0X1", emulation=0)
+    document["ram_routines"] = [snapshot, dict(snapshot, entry_mx="M1X1"),
+                                dict(snapshot, emulation=1)]
+    assert len(load_profiles([write(tmp_path / "capture.json", document)]).ram_routines) == 3
