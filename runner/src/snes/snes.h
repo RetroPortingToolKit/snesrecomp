@@ -39,6 +39,10 @@ struct Snes {
   uint32_t ramAdr;
   uint8_t *ram;
 
+  // Guest-visible RDNMI latch. Serialized explicitly in RTLS v10, outside
+  // the frozen hPos..divideResult blob so older snapshots keep their layout.
+  bool rdnmiPending;
+
   // Host timing anchor; excluded from savestates and reconciled after load.
   uint64_t beamMasterLast;
 

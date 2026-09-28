@@ -115,10 +115,10 @@ void snes_free(Snes* snes) {
 
 /* RTLS v5 and earlier serialized beamMasterLast between vPos and
  * apuCatchupCycles (+8 bytes). v6+ keeps it host-only (before hPos). */
-static uint32_t s_saveload_version = 7;
+static uint32_t s_saveload_version = 10;
 
 void snes_saveload_set_version(uint32_t version) {
-  s_saveload_version = version ? version : 7;
+  s_saveload_version = version ? version : 10;
 }
 
 uint32_t snes_saveload_get_version(void) { return s_saveload_version; }
@@ -212,6 +212,11 @@ void snes_saveload(Snes *snes, SaveLoadInfo *sli) {
   if (s_saveload_version >= 8)
     joypad_saveload(sli);
 
+  if (s_saveload_version >= 10)
+    sli->func(sli, &snes->rdnmiPending, sizeof(snes->rdnmiPending));
+  else
+    snes->rdnmiPending = false; // old states had only the inNmi host flag
+
   snes->cpu->e = 0;
 }
 
@@ -233,6 +238,7 @@ void snes_reset(Snes* snes, bool hard) {
   snes->hTimer = 0x1ff;
   snes->vTimer = 0x1ff;
   snes->inNmi = false;
+  snes->rdnmiPending = false;
   snes->inIrq = false;
   snes->inVblank = false;
   snes->autoJoyRead = false;
@@ -452,7 +458,11 @@ static uint32_t snes_advance_beam(Snes *snes, uint32_t clocks, bool check_irq) {
         snes->dbgLatchedThisField = 1;
         h += upto;
         consumed += upto;
-        if (h >= 1364u) { h = 0; v++; if (v >= 262u) v = 0; }
+        if (h >= 1364u) {
+          h = 0; v++; if (v >= 262u) v = 0;
+          if (v == 225u) snes->rdnmiPending = true;
+          if (v == 0u) snes->rdnmiPending = false;
+        }
         snes->hPos = (uint16_t)h;
         snes->vPos = (uint16_t)v;
         snes->inVblank = v >= 225u;
@@ -482,8 +492,10 @@ static uint32_t snes_advance_beam(Snes *snes, uint32_t clocks, bool check_irq) {
     if (h >= 1364u) {
       h = 0;
       v++;
+      if (v == 225u) snes->rdnmiPending = true;
       if (v >= 262u) {
         v = 0;
+        snes->rdnmiPending = false;
         if (check_irq && !snes->hdmaBeamOff)
           dma_initHdma(snes->dma);
         /* End of field. Armed the whole way round and nothing latched means
@@ -609,7 +621,9 @@ uint8_t snes_readReg(Snes* snes, uint16_t adr) {
   switch(adr) {
     case 0x4210: {
       uint8_t val = 0x2; // CPU version (4 bit)
-      val |= snes->inNmi << 7;
+      // Beam-driven hosts latch independently of NMITIMEN. Keep accepting
+      // inNmi for existing frame hosts which explicitly deliver each NMI.
+      val |= (snes->rdnmiPending || snes->inNmi) << 7;
       // Real hardware clears the NMI-pending latch on read. Without this
       // a stale `inNmi=true` would persist across NMI handler exit and
       // produce a spurious second-read=true if anything re-reads $4210
@@ -617,6 +631,7 @@ uint8_t snes_readReg(Snes* snes, uint16_t adr) {
       // value, but a hardware-correct read-clear costs one store and
       // is the right contract for game #2.)
       snes->inNmi = false;
+      snes->rdnmiPending = false;
       return val;
     }
     case 0x4211: {
