@@ -32,7 +32,9 @@ def test_host_args_contract():
         build = subprocess.run(
             [cc, '-std=gnu11', '-O1', '-UNDEBUG', '-Wall', '-Wextra', '-Werror',
              '-I', str(SRC), str(TEST),
-             str(SRC / 'host_args.c'), str(SRC / 'host_paths.c'), '-o', str(exe)],
+             str(SRC / 'host_args.c'), str(SRC / 'host_paths.c'),
+             str(SRC / 'snes' / 'tier2_capture.c'), str(SRC / 'sha256.c'),
+             '-o', str(exe)],
             capture_output=True, text=True, timeout=300)
         if build.returncode != 0:
             raise AssertionError(f"host_args_test failed to build:\n{build.stderr[-2000:]}")
