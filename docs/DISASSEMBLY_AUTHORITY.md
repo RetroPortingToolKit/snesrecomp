@@ -89,6 +89,23 @@ outside tracked source. The JSON authority contains instruction bytes.
    A finite normal exit flushes checkpoint costs. Never pause or step either
    runtime to obtain comparison evidence.
 
+## Installing an approved title's authority
+
+After validating a candidate, export a distributable instruction layout:
+
+```text
+python tools/disassembly_layout.py --authority <validated-authority.json>
+  --out <title/recomp/disassembly-layout.json>
+```
+
+The layout contains addresses, lengths, code/data boundaries and source hashes;
+it contains no ROM instruction bytes. Commit it alongside the title's cfgs.
+Both `v2_emit.py` and the launcher/CLI generation path automatically materialize
+the validated authority overlay from the owner's hash-matched ROM and probe the
+approved M/X entry modes. Copier headers are accepted; different ROM revisions
+are rejected. The original cfg files and host-source root remain unchanged.
+Complete regeneration is required when adopting the current fallback ABI.
+
 ## Findings that distinguish failure classes
 
 - **Discovery:** wrong-width instructions, operand entries, and data-as-code are

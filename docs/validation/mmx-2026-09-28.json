@@ -4,7 +4,7 @@
   "title": "Mega Man X USA v1.1",
   "title_base": "b3210a6",
   "title_branch": "feat/coverage-correctness",
-  "status": "automated qualification passed; owner playtest pending; no merge/release",
+  "status": "automated qualification and extended owner stage playtest passed; integration in progress",
   "static": {
     "roots_before": 243,
     "roots_after": 247,

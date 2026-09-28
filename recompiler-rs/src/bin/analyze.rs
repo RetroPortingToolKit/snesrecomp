@@ -163,7 +163,9 @@ fn filename_bank(path: &Path) -> Option<u32> {
 }
 
 fn mirror_bank(mapping: RomMapping, bank: u32) -> Option<u32> {
-    if mapping == RomMapping::Sa1 { return None; }
+    if mapping == RomMapping::Sa1 {
+        return None;
+    }
     let bank = bank & 0xFF;
     if bank < 0x40 || (0x80..0xC0).contains(&bank) {
         Some(bank ^ 0x80)
@@ -305,10 +307,14 @@ fn load_inputs(cfg_dir: &Path, rom: &mut Vec<u8>, all_cfg_roots: bool) -> Result
         for &(start, end) in &cfg.authority_data {
             let mut banks = vec![bank];
             if start >= 0x8000 {
-                if let Some(mirror) = mirror_bank(mapping, bank) { banks.push(mirror); }
+                if let Some(mirror) = mirror_bank(mapping, bank) {
+                    banks.push(mirror);
+                }
             }
             for mapped_bank in banks {
-                let mask = authority_data.entry(mapped_bank).or_insert_with(|| vec![false; 0x10000]);
+                let mask = authority_data
+                    .entry(mapped_bank)
+                    .or_insert_with(|| vec![false; 0x10000]);
                 mask[start as usize..end as usize].fill(true);
             }
         }
@@ -379,7 +385,10 @@ fn load_inputs(cfg_dir: &Path, rom: &mut Vec<u8>, all_cfg_roots: bool) -> Result
         }
         for &(exit_bank, pc, exit_m, exit_x) in &cfg.exit_mx_at {
             let target = ((exit_bank as u32) << 16) | (pc & 0xFFFF);
-            for resolved in [Some(target), mirror_pc24(mapping, target)].into_iter().flatten() {
+            for resolved in [Some(target), mirror_pc24(mapping, target)]
+                .into_iter()
+                .flatten()
+            {
                 for m in 0..=1 {
                     for x in 0..=1 {
                         declared_exit_modes.insert((resolved, m, x), (exit_m & 1, exit_x & 1));
@@ -389,7 +398,10 @@ fn load_inputs(cfg_dir: &Path, rom: &mut Vec<u8>, all_cfg_roots: bool) -> Result
         }
         for &(exit_bank, pc, m, x, exit_m, exit_x) in &cfg.exit_mx_at_per_variant {
             let target = ((exit_bank as u32) << 16) | (pc & 0xFFFF);
-            for resolved in [Some(target), mirror_pc24(mapping, target)].into_iter().flatten() {
+            for resolved in [Some(target), mirror_pc24(mapping, target)]
+                .into_iter()
+                .flatten()
+            {
                 declared_exit_modes.insert((resolved, m & 1, x & 1), (exit_m & 1, exit_x & 1));
             }
         }
@@ -400,7 +412,10 @@ fn load_inputs(cfg_dir: &Path, rom: &mut Vec<u8>, all_cfg_roots: bool) -> Result
         for (exit_bank, pc, m, x, exits) in &cfg.exit_mx_set {
             let target = ((*exit_bank as u32) << 16) | (pc & 0xFFFF);
             let modes: Vec<(u8, u8)> = exits.iter().map(|&(em, ex)| (em & 1, ex & 1)).collect();
-            for resolved in [Some(target), mirror_pc24(mapping, target)].into_iter().flatten() {
+            for resolved in [Some(target), mirror_pc24(mapping, target)]
+                .into_iter()
+                .flatten()
+            {
                 declared_exit_sets.insert((resolved, m & 1, x & 1), modes.clone());
             }
         }
@@ -408,7 +423,10 @@ fn load_inputs(cfg_dir: &Path, rom: &mut Vec<u8>, all_cfg_roots: bool) -> Result
         hle_entries.extend(cfg.hle_spc_upload.iter().copied());
         for pc in hle_entries {
             let target = (bank << 16) | (pc & 0xFFFF);
-            for resolved in [Some(target), mirror_pc24(mapping, target)].into_iter().flatten() {
+            for resolved in [Some(target), mirror_pc24(mapping, target)]
+                .into_iter()
+                .flatten()
+            {
                 for m in 0..=1 {
                     for x in 0..=1 {
                         declared_exit_modes
@@ -686,7 +704,10 @@ fn summarize(
     }
 
     if graph.authority_conflict {
-        reasons.extend(["authority_conflict".to_string(), "structural_poison".to_string()]);
+        reasons.extend([
+            "authority_conflict".to_string(),
+            "structural_poison".to_string(),
+        ]);
     }
     if graph.is_empty() {
         reasons.extend(["empty_decode".to_string(), "structural_poison".to_string()]);
@@ -827,7 +848,8 @@ struct ExitEquation {
     assumptions: BTreeSet<ExitAssumption>,
 }
 
-fn equation_target(mapping: RomMapping,
+fn equation_target(
+    mapping: RomMapping,
     dependency: ExitDependency,
     tuple_to_key: &HashMap<ExitDependency, VariantKey>,
 ) -> Option<VariantKey> {
@@ -840,7 +862,8 @@ fn equation_target(mapping: RomMapping,
     })
 }
 
-fn known_equation_modes(mapping: RomMapping,
+fn known_equation_modes(
+    mapping: RomMapping,
     dependency: ExitDependency,
     exact: &HashMap<ExitDependency, (u8, u8)>,
     sets: &HashMap<ExitDependency, Vec<(u8, u8)>>,
@@ -860,10 +883,12 @@ fn known_equation_modes(mapping: RomMapping,
     {
         return Some(modes.iter().map(|&(m, x)| (m & 1, x & 1)).collect());
     }
-    equation_target(mapping, dependency, tuple_to_key).and_then(|target| solved.get(&target).cloned())
+    equation_target(mapping, dependency, tuple_to_key)
+        .and_then(|target| solved.get(&target).cloned())
 }
 
-fn solve_exit_equation_sccs(mapping: RomMapping,
+fn solve_exit_equation_sccs(
+    mapping: RomMapping,
     equations: &BTreeMap<VariantKey, ExitEquation>,
     exact: &HashMap<ExitDependency, (u8, u8)>,
     sets: &HashMap<ExitDependency, Vec<(u8, u8)>>,
@@ -981,9 +1006,14 @@ fn solve_exit_equation_sccs(mapping: RomMapping,
                     {
                         continue;
                     }
-                    let Some(modes) =
-                        known_equation_modes(mapping, dependency, exact, sets, &tuple_to_key, &solved)
-                    else {
+                    let Some(modes) = known_equation_modes(
+                        mapping,
+                        dependency,
+                        exact,
+                        sets,
+                        &tuple_to_key,
+                        &solved,
+                    ) else {
                         complete = false;
                         break;
                     };
@@ -998,8 +1028,15 @@ fn solve_exit_equation_sccs(mapping: RomMapping,
                     {
                         continue;
                     }
-                    if known_equation_modes(mapping, dependency, exact, sets, &tuple_to_key, &solved)
-                        .is_none()
+                    if known_equation_modes(
+                        mapping,
+                        dependency,
+                        exact,
+                        sets,
+                        &tuple_to_key,
+                        &solved,
+                    )
+                    .is_none()
                     {
                         complete = false;
                         break;
@@ -1043,7 +1080,8 @@ fn solve_exit_equation_sccs(mapping: RomMapping,
                             .filter(|target| component.contains(target))
                             .and_then(|target| values.get(&target).cloned())
                             .or_else(|| {
-                                known_equation_modes(mapping,
+                                known_equation_modes(
+                                    mapping,
                                     dependency,
                                     exact,
                                     sets,
@@ -1102,7 +1140,8 @@ fn analyze(
             NodeSummary,
         ),
     > = HashMap::new();
-    let mut round_log = std::env::var("SNESRECOMP_NATIVE_ROUND_LOG").ok()
+    let mut round_log = std::env::var("SNESRECOMP_NATIVE_ROUND_LOG")
+        .ok()
         .map(|path| fs::File::create(path).expect("create analysis round log"));
     for _round in 1..=128 {
         let mut pending = inputs.roots.clone();
@@ -1532,8 +1571,13 @@ fn analyze(
             && before_helpers == helpers
             && before_inline_args == inline_args;
         if let Some(log) = round_log.as_mut() {
-            let keys: BTreeSet<_> = active_exact.keys().chain(next_exact.keys())
-                .chain(active_sets.keys()).chain(next_sets.keys()).copied().collect();
+            let keys: BTreeSet<_> = active_exact
+                .keys()
+                .chain(next_exact.keys())
+                .chain(active_sets.keys())
+                .chain(next_sets.keys())
+                .copied()
+                .collect();
             let changes: Vec<_> = keys.into_iter().filter(|key|
                 active_exact.get(key) != next_exact.get(key) || active_sets.get(key) != next_sets.get(key))
                 .map(|key| {
@@ -1545,9 +1589,14 @@ fn analyze(
                             "local_modes": e.local_modes, "dependencies": e.dependencies,
                             "assumptions": e.assumptions}))})
                 }).collect();
-            writeln!(log, "{}", json!({"round": _round, "stable": stable,
+            writeln!(
+                log,
+                "{}",
+                json!({"round": _round, "stable": stable,
                 "nodes": nodes.len(), "poisoned": poisoned.len(), "helpers": helpers.len(),
-                "inline_args": inline_args.len(), "changes": changes})).expect("write analysis round log");
+                "inline_args": inline_args.len(), "changes": changes})
+            )
+            .expect("write analysis round log");
         }
         active_exact = next_exact;
         active_sets = next_sets;
@@ -1557,8 +1606,12 @@ fn analyze(
                 std::env::var("SNESRECOMP_NATIVE_ANALYSIS_SNAPSHOT_TARGET"),
             ) {
                 if let Ok(target) = parse_root(&target_text) {
-                    let solved =
-                        solve_exit_equation_sccs(mapping, &round_equations, &active_exact, &active_sets);
+                    let solved = solve_exit_equation_sccs(
+                        mapping,
+                        &round_equations,
+                        &active_exact,
+                        &active_sets,
+                    );
                     let equation = round_equations.get(&target);
                     let dependencies = equation
                         .map(|equation| {
@@ -1810,7 +1863,12 @@ mod tests {
         equations: Vec<(VariantKey, ExitEquation)>,
     ) -> BTreeMap<VariantKey, BTreeSet<(u8, u8)>> {
         let equations: BTreeMap<_, _> = equations.into_iter().collect();
-        solve_exit_equation_sccs(RomMapping::LoRom, &equations, &HashMap::new(), &HashMap::new())
+        solve_exit_equation_sccs(
+            RomMapping::LoRom,
+            &equations,
+            &HashMap::new(),
+            &HashMap::new(),
+        )
     }
 
     #[test]

@@ -93,9 +93,16 @@ pub fn rom_offset(mapping: RomMapping, bank: u32, addr: u32) -> usize {
     );
     match mapping {
         RomMapping::Sa1 => {
-            if bank >= 0xc0 { return (((bank - 0xc0) << 16) | addr) as usize; }
-            assert!((bank & 0x7f) < 0x40 && addr >= 0x8000, "not a SA-1 ROM window");
-            ((if bank & 0x80 != 0 { 0x200000 } else { 0 }) | ((bank & 0x3f) << 15) | (addr & 0x7fff)) as usize
+            if bank >= 0xc0 {
+                return (((bank - 0xc0) << 16) | addr) as usize;
+            }
+            assert!(
+                (bank & 0x7f) < 0x40 && addr >= 0x8000,
+                "not a SA-1 ROM window"
+            );
+            ((if bank & 0x80 != 0 { 0x200000 } else { 0 })
+                | ((bank & 0x3f) << 15)
+                | (addr & 0x7fff)) as usize
         }
         RomMapping::Sdd1ExLoRom if (0xC0..=0xFF).contains(&bank) => {
             let page = SDD1_MMC_DEFAULT_PAGES[((bank >> 4) & 3) as usize];

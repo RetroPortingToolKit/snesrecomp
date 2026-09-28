@@ -226812,6 +226812,6 @@
         "previous_exit": "closed gracefully by agent after preserving owner-reported hang; replaced for authorized retest"
       }
     },
-    "owner_review": "passed corrected executable; sound timing follow-up remains open"
+    "owner_review": "passed corrected executable and audio listening check; owner accepted release without further audio investigation"
   }
 }

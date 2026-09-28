@@ -789,7 +789,8 @@ fn labeled_successors(
                 let mut hit = cem.get(&(tp, post_m, post_x)).copied();
                 if hit.is_none() {
                     let tbank = (tp >> 16) & 0xFF;
-                    if mapping != RomMapping::Sa1 && (tbank < 0x40 || (0x80..0xC0).contains(&tbank)) {
+                    if mapping != RomMapping::Sa1 && (tbank < 0x40 || (0x80..0xC0).contains(&tbank))
+                    {
                         hit = cem.get(&(tp ^ 0x800000, post_m, post_x)).copied();
                     }
                 }
@@ -805,7 +806,8 @@ fn labeled_successors(
                 let mut mode_set: Option<Vec<(u8, u8)>> = cmm.get(&(tp, post_m, post_x)).cloned();
                 if mode_set.is_none() {
                     let tbank = (tp >> 16) & 0xFF;
-                    if mapping != RomMapping::Sa1 && (tbank < 0x40 || (0x80..0xC0).contains(&tbank)) {
+                    if mapping != RomMapping::Sa1 && (tbank < 0x40 || (0x80..0xC0).contains(&tbank))
+                    {
                         mode_set = cmm.get(&(tp ^ 0x800000, post_m, post_x)).cloned();
                     }
                 }
@@ -939,7 +941,9 @@ pub fn decode_function(
             Some(o) => o,
             None => continue,
         };
-        if offset >= rom.len() || (!in_reloc && env.rom_image_size.is_some_and(|size| offset >= size)) {
+        if offset >= rom.len()
+            || (!in_reloc && env.rom_image_size.is_some_and(|size| offset >= size))
+        {
             continue;
         }
         if addr_in_data_regions(data_regions, bank, pc) {
@@ -948,15 +952,25 @@ pub fn decode_function(
 
         let mut insn = decode_insn(rom, offset, pc, bank, key.m, key.x)
             .unwrap_or_else(|| panic!("v2 decoder: unknown opcode at ${bank:02X}:{pc:04X}"));
-        if env.authority_data.and_then(|data| data.get(&bank)).is_some_and(|mask|
-            (pc..(pc + insn.length as u32).min(0x10000)).any(|p| mask[p as usize])) {
+        if env
+            .authority_data
+            .and_then(|data| data.get(&bank))
+            .is_some_and(|mask| {
+                (pc..(pc + insn.length as u32).min(0x10000)).any(|p| mask[p as usize])
+            })
+        {
             graph.authority_conflict = true;
             continue;
         }
         if let Some(authority) = env.authority_bytes {
             let size = insn.length as usize;
-            if authority.get(&key.pc).is_some_and(|raw| raw.len() != size || rom.get(offset..offset+size) != Some(raw.as_slice()))
-                || (1..size).any(|n| authority.get(&(key.pc + n as u32)).is_some_and(|r| !r.is_empty())) {
+            if authority.get(&key.pc).is_some_and(|raw| {
+                raw.len() != size || rom.get(offset..offset + size) != Some(raw.as_slice())
+            }) || (1..size).any(|n| {
+                authority
+                    .get(&(key.pc + n as u32))
+                    .is_some_and(|r| !r.is_empty())
+            }) {
                 graph.authority_conflict = true;
                 continue;
             }
@@ -1132,14 +1146,26 @@ pub fn decode_function(
                 let dp_op = insn.operand & 0xFFFF;
                 if dp_op <= 0x00FF {
                     if let Some(targets) = pointer_recovery::recover(
-                        rom, mapping, &graph, &key, dp_op, insn.opcode == 0xDC,
-                        data_regions, reloc,
+                        rom,
+                        mapping,
+                        &graph,
+                        &key,
+                        dp_op,
+                        insn.opcode == 0xDC,
+                        data_regions,
+                        reloc,
                     ) {
                         auth = Some(Auth {
-                            count: targets.len() as u32, idx_reg: 'X', table_bases: vec![],
-                            ptr_call: false, return_pc: None, frame_size: None,
-                            pointer_match: true, popped_call_frame: false,
-                            targets, local_goto: false,
+                            count: targets.len() as u32,
+                            idx_reg: 'X',
+                            table_bases: vec![],
+                            ptr_call: false,
+                            return_pc: None,
+                            frame_size: None,
+                            pointer_match: true,
+                            popped_call_frame: false,
+                            targets,
+                            local_goto: false,
                         });
                     }
                 }
@@ -1528,7 +1554,8 @@ pub fn decode_function(
                         } else {
                             addr24(bank, e & 0xFFFF)
                         };
-                        match lookup_exit_mx_modes(mapping,
+                        match lookup_exit_mx_modes(
+                            mapping,
                             env.callee_exit_mx,
                             env.callee_exit_mx_modes,
                             target_pc24,
@@ -2240,7 +2267,8 @@ pub fn function_exit_mx_equation(
     (local_modes, dependencies)
 }
 
-fn lookup_exit_mx(mapping: RomMapping,
+fn lookup_exit_mx(
+    mapping: RomMapping,
     callee_exit_mx: Option<&HashMap<(u32, u8, u8), (u8, u8)>>,
     pc24: u32,
     m: u8,
@@ -2259,7 +2287,8 @@ fn lookup_exit_mx(mapping: RomMapping,
     })
 }
 
-fn lookup_exit_mx_modes(mapping: RomMapping,
+fn lookup_exit_mx_modes(
+    mapping: RomMapping,
     callee_exit_mx: Option<&HashMap<(u32, u8, u8), (u8, u8)>>,
     callee_exit_mx_modes: Option<&HashMap<(u32, u8, u8), Vec<(u8, u8)>>>,
     pc24: u32,
@@ -2349,7 +2378,9 @@ pub fn analyze_function_exit_mx(
         let tail_keys = direct_tail_exit_keys(graph, di);
         if !tail_keys.is_empty() {
             for (target, site_m, site_x) in tail_keys {
-                let Some((em, ex)) = lookup_exit_mx(mapping, callee_exit_mx, target, site_m, site_x) else {
+                let Some((em, ex)) =
+                    lookup_exit_mx(mapping, callee_exit_mx, target, site_m, site_x)
+                else {
                     return (None, None);
                 };
                 accumulate(
@@ -2402,7 +2433,8 @@ pub fn analyze_function_exit_mx(
     }
 
     for (_, target) in &graph.boundary_exits {
-        let Some((em, ex)) = lookup_exit_mx(mapping, callee_exit_mx, target.pc, target.m, target.x) else {
+        let Some((em, ex)) = lookup_exit_mx(mapping, callee_exit_mx, target.pc, target.m, target.x)
+        else {
             return (None, None);
         };
         accumulate(
@@ -2462,7 +2494,8 @@ pub fn analyze_function_exit_mx_modes_with_sets(
         let tail_keys = direct_tail_exit_keys(graph, di);
         if !tail_keys.is_empty() {
             for (target, site_m, site_x) in tail_keys {
-                modes.extend(lookup_exit_mx_modes(mapping,
+                modes.extend(lookup_exit_mx_modes(
+                    mapping,
                     callee_exit_mx,
                     callee_exit_mx_modes,
                     target,
@@ -2489,7 +2522,8 @@ pub fn analyze_function_exit_mx_modes_with_sets(
                 } else {
                     (dispatcher_bank << 16) | (entry & 0xFFFF)
                 };
-                modes.extend(lookup_exit_mx_modes(mapping,
+                modes.extend(lookup_exit_mx_modes(
+                    mapping,
                     callee_exit_mx,
                     callee_exit_mx_modes,
                     tgt_pc24,
@@ -2501,7 +2535,8 @@ pub fn analyze_function_exit_mx_modes_with_sets(
     }
 
     for (_, target) in &graph.boundary_exits {
-        modes.extend(lookup_exit_mx_modes(mapping,
+        modes.extend(lookup_exit_mx_modes(
+            mapping,
             callee_exit_mx,
             callee_exit_mx_modes,
             target.pc,
@@ -3210,14 +3245,18 @@ pub(crate) fn compute_deps(
         if let Some(tp) = tp {
             cem_keys.push((tp, ins.m_flag, ins.x_flag));
             let tbank = (tp >> 16) & 0xFF;
-            if graph.rom_mapping != RomMapping::Sa1 && (tbank < 0x40 || (0x80..0xC0).contains(&tbank)) {
+            if graph.rom_mapping != RomMapping::Sa1
+                && (tbank < 0x40 || (0x80..0xC0).contains(&tbank))
+            {
                 cem_keys.push((tp ^ 0x800000, ins.m_flag, ins.x_flag));
             }
         }
         for tp in dispatch_targets {
             cem_keys.push((tp, ins.m_flag, ins.x_flag));
             let tbank = (tp >> 16) & 0xFF;
-            if graph.rom_mapping != RomMapping::Sa1 && (tbank < 0x40 || (0x80..0xC0).contains(&tbank)) {
+            if graph.rom_mapping != RomMapping::Sa1
+                && (tbank < 0x40 || (0x80..0xC0).contains(&tbank))
+            {
                 cem_keys.push((tp ^ 0x800000, ins.m_flag, ins.x_flag));
             }
         }

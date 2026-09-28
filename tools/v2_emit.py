@@ -39,6 +39,7 @@ from v2_analyze import (  # noqa: E402
     build_manifest_native,
     ensure_native_analyzer,
 )
+from disassembly_layout import configured_authority  # noqa: E402
 
 
 def _tree_digest(paths) -> str:
@@ -233,11 +234,19 @@ def main() -> int:
     if args.analysis_backend == "python":
         parser.error("the Python analyzer was retired; the native analyzer "
                      "is the only one (drop --analysis-backend python)")
+    try:
+        with configured_authority(args.rom, args.cfg_dir) as (cfg_dir, probe_modes):
+            args.disassembly_entry_modes |= probe_modes
+            return _generate(args, parser, cfg_dir)
+    except (ValueError, KeyError, OSError) as exc:
+        parser.error(str(exc))
+
+
+def _generate(args, parser, cfg_dir):
     shard_threshold_bytes = max(0, args.bank_shard_threshold_kib) * 1024
     shard_pc_span = max(0, args.bank_shard_pc_span)
 
     started = time.perf_counter()
-    cfg_dir = pathlib.Path(args.cfg_dir).resolve()
     out_dir = pathlib.Path(args.out_dir).resolve()
     rom = load_rom(args.rom)
     try:
@@ -262,7 +271,7 @@ def main() -> int:
     analysis_backend = "native"
     source_roots = [pathlib.Path(p).resolve() for p in args.source_root]
     if not source_roots and not args.no_host_root_scan:
-        conventional = cfg_dir.parent / "src"
+        conventional = pathlib.Path(args.cfg_dir).resolve().parent / "src"
         if conventional.exists():
             source_roots.append(conventional)
     host_roots = () if args.no_host_root_scan else discover_host_roots(
@@ -294,6 +303,8 @@ def main() -> int:
             REPO / "recompiler" / "v2", pathlib.Path(__file__).resolve(),
             REPO / "recompiler" / "snes65816.py",
             REPO / "tools" / "v2_analyze.py",
+            REPO / "tools" / "disassembly_layout.py",
+            REPO / "tools" / "ingest_disassembly_authority.py",
             REPO / "recompiler-rs" / "src",
             REPO / "recompiler-rs" / "Cargo.toml",
             REPO / "recompiler-rs" / "Cargo.lock",

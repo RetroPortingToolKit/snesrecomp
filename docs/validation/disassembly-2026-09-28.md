@@ -139,6 +139,13 @@ good and authorized committing the engine and three title worktrees. The frozen
 process was closed gracefully after preserving its evidence. No merge or release
 has been performed.
 
+The owner separately listened to the same corrected Super Metroid executable
+on 2026-09-28 and reported that it sounds fine, approving release acceptance.
+This completes the requested audio check and closes beads-8wg.2.88 on that
+basis. The measured handshake differences and intro APU warning above remain
+documented; no waveform-equivalence claim or additional audio investigation is
+part of this release.
+
 Title worktrees are `_wt-authority-smw`, `_wt-authority-zelda`, and
 `_wt-authority-sm` on `feat/authority-correctness`; engine changes are in
 `_wt-coverage-feedback` on `feat/coverage-feedback`. Generated control and

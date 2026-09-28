@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import pathlib
 import subprocess
@@ -73,6 +74,14 @@ def main() -> int:
         # packaged binary answers that contract: a package that ships the CLI
         # without the SDK modules it dispatches through, or without
         # v2_sync_funcs_h, fails here instead of in a player's rebuild.
+        # Qualified titles also ship byte-free disassembly layouts. Exercise
+        # their automatic materialization in the frozen CLI, not just Python.
+        (output / "config" / "disassembly-layout.json").write_text(json.dumps({
+            "schema": "snesrecomp disassembly layout v1",
+            "rom_sha256": hashlib.sha256(rom).hexdigest(),
+            "probe_entry_modes": True,
+            "instructions": [["0x008000", 1]],
+        }), encoding="utf-8")
         generate = subprocess.run([
             str(executable), "generate",
             "--rom", str(rom_path),
