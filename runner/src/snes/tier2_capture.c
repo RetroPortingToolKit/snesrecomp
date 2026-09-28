@@ -142,7 +142,7 @@ static void identify_executable(void) {
     if (_NSGetExecutablePath(path, &count)) return;
 #else
     ssize_t count = readlink("/proc/self/exe", path, sizeof path - 1);
-    if (count <= 0 || count >= sizeof path - 1) return;
+    if (count <= 0 || (size_t)count >= sizeof path - 1) return;
     path[count] = 0;
 #endif
     FILE *f = fopen(path, "rb");
