@@ -70,6 +70,7 @@
 #endif
 
 #include "mod_runtime.h"
+#include "content_variant.h"
 
 #define PKG "test.presentation"
 #define SHA "0000000000000000000000000000000000000000000000000000000000000000"
@@ -83,6 +84,17 @@ static void check(const char *what, int ok)
 {
     printf("  %-56s %s\n", what, ok ? "ok" : "FAIL");
     if (!ok) ++fails;
+}
+
+/* This fixture exercises mod comparison/adoption and declares no variants.
+ * Keep the independent variant subsystem outside the harness, but fail if a
+ * parser change unexpectedly turns a presentation feature into a variant. */
+void snes_variant_clear_declared(void) {}
+const SnesContentVariant *snes_variant_register_declared(const SnesVariantDecl *decl)
+{
+    (void)decl;
+    check("presentation fixture must not publish content variants", 0);
+    return NULL;
 }
 
 static void make_dirs(const char *path)

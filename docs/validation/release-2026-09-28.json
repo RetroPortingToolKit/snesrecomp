@@ -10,6 +10,8 @@
   },
   "sm_audio_acceptance": "Owner listening check passed; deeper investigation waived. Timing differences remain documented.",
   "tests": {
+    "python_linux": {"passed": 646},
+    "c_runtime_linux": "passed; optional DSP-1 firmware test skipped without firmware",
     "python_windows": {
       "passed": 642,
       "skipped": 2,
