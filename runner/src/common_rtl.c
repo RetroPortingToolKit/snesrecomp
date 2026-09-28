@@ -6,6 +6,7 @@
 #include "common_rtl.h"
 #include "apu_frame_clock.h"
 #include "common_cpu_infra.h"
+#include "snes/interp_bridge.h"
 #include <setjmp.h>
 #include <time.h>
 #include <stdlib.h>
@@ -13,8 +14,10 @@
 #include <limits.h>
 #ifdef _WIN32
 #include <direct.h>
+#include <io.h>
 #else
 #include <sys/stat.h>
+#include <unistd.h>
 #endif
 #include "recomp_hw.h"
 #include "framedump.h"
@@ -814,6 +817,7 @@ bool RtlRunFrame(uint32 inputs) {
 #endif
 
   snes_frame_counter++;
+  Tier2CoverageTick(snes_frame_counter);
   /* Every runner client gets the same guest-frame/APU coupling. Presentation
    * code may opt into fast-forward PCM recovery separately, but cannot omit
    * the emulation clock.
@@ -2493,22 +2497,7 @@ int RtlTryWriteSram(void) {
   return 1;
 }
 
-void RtlWriteSram(void) {
-  if (!g_sram || g_sram_size <= 0)
-    return;
-  char path[128], bak[140];
-  RtlEnsureSaveDir();
-  RtlSramFilePath(path, sizeof(path));
-  snprintf(bak, sizeof(bak), "%s.bak", path);
-  rename(path, bak);
-  FILE *f = fopen(path, "wb");
-  if (f) {
-    fwrite(g_sram, 1, g_sram_size, f);
-    fclose(f);
-  } else {
-    fprintf(stderr, "Unable to write %s\n", path);
-  }
-}
+int RtlWriteSram(void) { return RtlTryWriteSram(); }
 
 static const uint8 *SimpleHdma_GetPtr(uint32 p) {
   uint8 bank = (uint8)(p >> 16);

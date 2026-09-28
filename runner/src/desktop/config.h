@@ -92,6 +92,8 @@ typedef struct Config {
   // Set from the launcher's dashboard checkbox. Force the launcher back with the
   // --launcher argument or by setting SkipLauncher = 0 in config.ini.
   bool skip_launcher;
+  bool expose_coverage_mod;
+  int coverage_capture; /* -1 absent: use Mods selection */
 
   /* Netplay display name, persisted so the lobby does not prompt on every
    * launch. Framework-owned (config.ini [Netplay] PlayerName) so every SNES

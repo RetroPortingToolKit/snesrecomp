@@ -1,3 +1,6 @@
+option(SNESRECOMP_EXPOSE_COVERAGE_MOD "Show the default-off Coverage Capture mod" OFF)
+add_compile_definitions(SNESRECOMP_EXPOSE_COVERAGE_MOD=$<BOOL:${SNESRECOMP_EXPOSE_COVERAGE_MOD}>)
+
 # runner.cmake — shared source list for snesrecomp game projects.
 #
 # Usage from a game project's CMakeLists.txt:
@@ -186,6 +189,11 @@ set(SNESRECOMP_RUNNER_SOURCES
     ${SNESRECOMP_RUNNER_ROOT}/src/snes_osd.c
     ${SNESRECOMP_RUNNER_ROOT}/src/snes_rewind.c
     ${SNESRECOMP_RUNNER_ROOT}/src/cpu_state.c
+    ${SNESRECOMP_RUNNER_ROOT}/src/program_module.c
+    ${SNESRECOMP_RUNNER_ROOT}/src/rom_patch.c
+    ${SNESRECOMP_RUNNER_ROOT}/src/generic_frame_driver.c
+    ${SNESRECOMP_RUNNER_ROOT}/src/content_variant.c
+    ${SNESRECOMP_RUNNER_ROOT}/src/variant_selector.c
     ${SNESRECOMP_RUNNER_ROOT}/src/cpu_trace.c
     ${SNESRECOMP_RUNNER_ROOT}/src/audio_trace.c
     ${SNESRECOMP_RUNNER_ROOT}/src/ppu_dma_trace.c
@@ -901,6 +909,45 @@ function(snesrecomp_target_generated_code target gen_dir)
     message(STATUS
         "${target}: SETUP HOST -- no recompiled code; the launcher's Generate & "
         "rebuild wizard is the only path forward in this binary")
+endfunction()
+
+# An ADDITIONAL recompiled program module linked beside the title's own
+# generated code: a content variant's tree (v2_emit --module-prefix <p>),
+# e.g. Super Mario All-Stars inside the SMW executable, or F-Zero's BS Deluxe.
+#
+#     snesrecomp_target_program_module(<target> <gen_dir> [OPTIONAL])
+#
+# The tree must have been generated WITH a prefix (it carries its own
+# module_namespace.h and funcs.h), or its symbols collide with the stock module
+# at link time. Without OPTIONAL an empty directory fails the configure, the
+# same contract as snesrecomp_target_generated_code: a variant the build was
+# asked for and could not include must never ship silently missing. With
+# OPTIONAL the target builds without it and the variant simply is not linked
+# (the runtime then reports "module '<id>' is not part of this build").
+function(snesrecomp_target_program_module target gen_dir)
+    cmake_parse_arguments(_pm "OPTIONAL" "" "" ${ARGN})
+    file(GLOB _pm_sources CONFIGURE_DEPENDS "${gen_dir}/*.c")
+    if(NOT _pm_sources)
+        if(_pm_OPTIONAL)
+            message(STATUS "${target}: program module ${gen_dir} not generated; skipped")
+            return()
+        endif()
+        message(FATAL_ERROR
+            "${gen_dir} is empty -- generate this program module (v2_emit "
+            "--module-prefix) before building, or pass OPTIONAL.")
+    endif()
+    if(NOT EXISTS "${gen_dir}/module_namespace.h")
+        message(FATAL_ERROR
+            "${gen_dir} was generated without --module-prefix: it has no "
+            "module_namespace.h and would collide with the title's own "
+            "generated symbols. Regenerate it with a prefix.")
+    endif()
+    target_sources(${target} PRIVATE ${_pm_sources})
+    if(NOT MSVC)
+        set_source_files_properties(${_pm_sources} PROPERTIES COMPILE_OPTIONS "-w")
+    endif()
+    list(LENGTH _pm_sources _pm_n)
+    message(STATUS "${target}: program module ${_pm_n} translation unit(s) from ${gen_dir}")
 endfunction()
 
 # Opt-in, shared CC0 shader catalog for hosts exposing shader_supported.

@@ -185,6 +185,8 @@ void interp_tier2_stats(int *sites, unsigned long long *clean,
  * dump_*_json sections. Tier2CoverageWriteManifest writes the slim standalone
  * manifest (schema "snesrecomp tier2 coverage v1") that the ingest tool reads. */
 void Tier2CoverageDumpJson(FILE *f);
+void Tier2CoverageReset(void);
+void Tier2CoverageTick(int frame);
 void Tier2CoverageWriteManifest(const char *path, const char *rom_title);
 void Tier2CoverageWriteDefaultManifest(const char *rom_title);
 #ifdef SNESRECOMP_TIER2_TEST

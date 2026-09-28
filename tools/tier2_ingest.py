@@ -1,255 +1,111 @@
 #!/usr/bin/env python3
-"""
-tier2_ingest.py -- audit an interpreter-tier coverage manifest.
-
-Phase 3 of the interpreter-fallback tier (see docs/MULTI_TIER.md). Reads a
-Tier-2 coverage manifest (default: build/tier2_coverage.json, schema
-"snesrecomp tier2 coverage v1") that the runner writes on exit. The
-manifest-driven emitter consumes clean targets directly with
-`v2_emit.py --profile-manifest`; profile roots select optional AOT work while
-LLE remains authoritative. This audit also proposes optional function
-boundaries for unnamed targets and flags sites that need human inspection.
-
-Human-in-the-loop BY DESIGN -- like the existing cfg_override_* proposers, it
-PRINTS paste-ready directives; it does not edit cfgs. A human stays between
-"observed at runtime" and "trusted as code," which is the project discipline
-(no laundering a runtime mis-execution into a static translation).
-
-Discoveries split into two buckets:
-
-  BOUNDARY     The interpreter ran the gap and returned cleanly (clean_hits>0,
-               bail_hits==0): a genuine coverage gap, safe to profile.
-                 * target has no existing `func`  -> emit
-                   an optional `func bank_BB_AAAA <addr16> entry_mx:M,X`
-                   boundary. A `func` declaration becomes a reachability root
-                   only when generation runs with --cfg-roots; without it the
-                   declaration names the address but does not grow coverage.
-                 * target IS already a `func`     -> the gap is the dispatch
-                   SITE; it needs an `indirect_dispatch` authorization.
-                   Flagged (NOT auto-written -- the index register and table
-                   layout aren't in a runtime tier-down).
-                   NOTE: `indirect_call_table` is NOT a cfg directive. It is a
-                   decoder parameter name; no cfg parser implements it, so a
-                   pasted `indirect_call_table` line is silently ignored.
-
-  INVESTIGATE  The interpreter BAILED (bail_hits>0): it could not run the
-               target -- e.g. a garbage indirect target from upstream recomp-
-               state corruption (SM's JMP ($0012)=$FFFF is the canonical case).
-               These are BUG LEADS, never promotion candidates. Ranked by bail
-               count, then earliest frame.
-
-Site kinds (2026-07-02 additions): besides the tier-down kinds
-(indirect_dispatch / indirect_goto / bank_miss), the bridge now records
-in-bridge sightings -- `call_gap` (an interpreted JSR/JSL whose target has no
-compiled variant) and `goto_gap` (an indirect JMP/JML landing with none).
-Both are always clean (observations, not bounded runs) and flow through the
-profile. Caveat for goto_gap: a landing can be a mid-function label
-(intra-function jump table) rather than a subroutine entry -- eyeball the
-disassembly before pasting, as always. Addresses are LoROM-canonicalized
-(exec mirrors $80-$BF recorded as $00-$3F).
-
-Usage:
-  python tools/tier2_ingest.py [manifest.json] [--cfg-dir recomp]
-"""
-
+"""Audit/merge coverage captures; observations do not authorize AOT execution."""
 import argparse
+import hashlib
 import json
-import os
+import pathlib
 import re
 import sys
-from collections import defaultdict
 
-FUNC_RE = re.compile(r'^\s*func\s+(\S+)\s+([0-9A-Fa-f]+)')
-BANK_FILE_RE = re.compile(r'bank([0-9A-Fa-f]{2})\.cfg$')
-
-
-
-# "M0X0" -> ("0", "0"): the entry width a discovery was observed at.
-MX_RE = re.compile(r"M([01])X([01])")
-
-def load_manifest(path):
-    with open(path, 'r', encoding='utf-8') as f:
-        m = json.load(f)
-    schema = m.get('schema', '')
-    if not schema.startswith('snesrecomp tier2 coverage'):
-        sys.stderr.write(f"warning: unexpected schema {schema!r}\n")
-    return m
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1] / "recompiler"))
+from v2.ram_coverage import describe_snapshot
+from v2.coverage_profile import load_profiles, promotion_reason, canonical_pc, pc
 
 
-def parse_pc24(s):
-    """'0x0FE8B7' / '0FE8B7' / 1042103 -> int."""
-    if isinstance(s, int):
-        return s & 0xFFFFFF
-    return int(str(s), 16) & 0xFFFFFF
-
-
-def scan_cfg_funcs(cfg_dir):
-    """Return (func_addrs, bank_files):
-       func_addrs[bank] = set of in-bank 16-bit func addresses already declared;
-       bank_files[bank] = path to that bank's cfg (for the paste hint)."""
-    func_addrs = defaultdict(set)
-    bank_files = {}
-    if not os.path.isdir(cfg_dir):
-        sys.stderr.write(f"warning: cfg dir {cfg_dir!r} not found -- "
-                         f"can't dedup against existing funcs\n")
-        return func_addrs, bank_files
-    for name in sorted(os.listdir(cfg_dir)):
-        mb = BANK_FILE_RE.search(name)
-        if not mb:
-            continue
-        bank = int(mb.group(1), 16)
-        bank_files[bank] = os.path.join(cfg_dir, name)
-        with open(os.path.join(cfg_dir, name), 'r', encoding='utf-8',
-                  errors='replace') as f:
-            for line in f:
-                mf = FUNC_RE.match(line)
-                if mf:
-                    func_addrs[bank].add(int(mf.group(2), 16) & 0xFFFF)
-    return func_addrs, bank_files
-
-
-def main():
-    ap = argparse.ArgumentParser(description=__doc__,
-                                 formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument('manifest', nargs='?', default='build/tier2_coverage.json',
-                    help='Tier-2 coverage manifest (default: %(default)s)')
-    ap.add_argument('--cfg-dir', default='recomp',
-                    help='cfg directory to dedup against (default: %(default)s)')
-    ap.add_argument('--min-hits', type=int, default=1,
-                    help='ignore discoveries below this total hit count')
-    args = ap.parse_args()
-
-    if not os.path.isfile(args.manifest):
-        sys.stderr.write(f"error: manifest {args.manifest!r} not found. Run the "
-                         f"game once (it writes the manifest on exit), then "
-                         f"re-run this tool.\n")
-        return 2
-
-    m = load_manifest(args.manifest)
-    func_addrs, bank_files = scan_cfg_funcs(args.cfg_dir)
-    discoveries = m.get('discoveries', [])
-
-    promote_func = defaultdict(list)   # bank -> [(addr16, disc)]
-    site_needs_auth = []               # (disc) target already a func
-    investigate = []                   # (disc) bailed
-    seen_promote = set()               # (bank, addr16) dedup
-
-    for d in discoveries:
-        clean = int(d.get('clean_hits', 0))
-        bail = int(d.get('bail_hits', 0))
-        if clean + bail < args.min_hits:
-            continue
-        target = parse_pc24(d['target_pc24'])
-        bank, addr16 = target >> 16, target & 0xFFFF
-        if bail > 0:
-            investigate.append(d)
-            continue
-        # clean-only -> promotable
-        if addr16 in func_addrs.get(bank, ()):
-            site_needs_auth.append(d)
+def audit(profile, declared=(), program=None):
+    nodes = (program or {}).get("nodes", {})
+    rows = []
+    for observed in profile.discoveries:
+        row = dict(observed)
+        target = canonical_pc(row["target_pc24"], profile.identity.get("mapper"))
+        key = f"{target:06X}:{row.get('entry_mx', 'unknown')}"
+        node = nodes.get(key) or nodes.get(
+            f"{pc(row['target_pc24']):06X}:{row.get('entry_mx', 'unknown')}")
+        if node:
+            row["analysis_disposition"] = node.get("disposition")
+            row["analysis_reasons"] = node.get("reasons", [])
+            row["explanation"] = (
+                "Analyzed AOT entry: check runtime policy, byte guards, and linked build"
+                if node.get("disposition") == "aot_eligible"
+                else "Analysis rejected this exact variant")
         else:
-            key = (bank, addr16)
-            if key not in seen_promote:
-                seen_promote.add(key)
-                promote_func[bank].append((addr16, d))
+            row["explanation"] = "Exact variant absent from supplied analysis" if program else "No program manifest supplied"
+        row["candidate_status"] = promotion_reason(row, declared, profile.identity)
+        row["variant"] = key
+        rows.append(row)
+    return {
+        "identity": profile.identity,
+        "capture_count": len(profile.captures),
+        "warnings": sorted(set(profile.warnings)),
+        "interpreted_instructions": sum(r["interpreted_instructions"] for r in profile.costs),
+        "interpreted_guest_cycles": sum(r["guest_cycles"] for r in profile.costs),
+        "processors": {processor: {
+            "instructions": sum(r["interpreted_instructions"] for r in profile.costs if r.get("processor", "snes_cpu") == processor),
+            "guest_cycles": sum(r["guest_cycles"] for r in profile.costs if r.get("processor", "snes_cpu") == processor),
+        } for processor in sorted({r.get("processor", "snes_cpu") for r in profile.costs})},
+        "cost_attribution": "exclusive instruction PC, entry M/X and E; never inferred function ownership",
+        "discoveries": rows,
+        "hot_instructions": sorted(profile.costs, key=lambda r: -r["guest_cycles"]),
+        "ram_routines": [describe_snapshot(r) for r in profile.ram_routines],
+    }
 
-    # -- report ------------------------------------------------------------
-    out = sys.stdout.write
-    out("=" * 72 + "\n")
-    out(f"Tier-2 gap manifest ingest -- {m.get('rom_title', '?')}\n")
-    out(f"  manifest: {args.manifest}\n")
-    out(f"  total tier hits: {m.get('total_tier_hits', '?')}   "
-        f"distinct (site,target,mx): {m.get('distinct_sites', len(discoveries))}"
-        f"   overflowed tuples: {m.get('overflowed_tuples', 0)}\n")
-    out("=" * 72 + "\n\n")
 
-    if not discoveries:
-        out("No discoveries -- the interpreter tier never fired this run.\n"
-            "(For a fully-covered game that's the expected dormant state.)\n")
+def main(argv=None):
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("manifest", nargs="+", help="v2 JSON checkpoints/JSONL journals or legacy v1 JSON")
+    parser.add_argument("--cfg-dir", default="recomp")
+    parser.add_argument("--program-manifest", type=pathlib.Path)
+    parser.add_argument("--rom-sha256")
+    parser.add_argument("--legacy-profile-rom-sha256")
+    parser.add_argument("--min-hits", type=int, default=1)
+    parser.add_argument("--json", action="store_true")
+    args = parser.parse_args(argv)
+    declared = set()
+    for path in pathlib.Path(args.cfg_dir).glob("bank*.cfg"):
+        bank = re.fullmatch(r"bank([0-9a-fA-F]{2})", path.stem)
+        if not bank:
+            continue
+        for line in path.read_text(encoding="utf-8").splitlines():
+            match = re.match(r"\s*func\s+\S+\s+([0-9a-fA-F]+)", line)
+            if match:
+                declared.add((int(bank[1], 16) << 16) | int(match[1], 16))
+    try:
+        profile = load_profiles(args.manifest, expected_rom=args.rom_sha256,
+                                legacy_rom=args.legacy_profile_rom_sha256)
+        program = None
+        if args.program_manifest:
+            raw = args.program_manifest.read_bytes()
+            expected = profile.identity.get("program_digest")
+            if expected and hashlib.sha256(raw).hexdigest() != expected:
+                raise ValueError("program manifest differs from captured build; supply the original generated manifest")
+            program = json.loads(raw)
+        report = audit(profile, declared, program)
+    except (ValueError, OSError, KeyError) as exc:
+        parser.error(str(exc))
+    if args.json:
+        print(json.dumps(report, indent=2))
         return 0
-
-    # Optional boundaries: func declarations name/slice code but do not root it.
-    n_promote = sum(len(v) for v in promote_func.values())
-    out("AOT optimization: pass this file to v2_emit.py with "
-        "`--profile-manifest`.\n"
-        "Clean target/MX observations become optional AOT roots; bails are "
-        "excluded.\n\n")
-    out(f"-- OPTIONAL BOUNDARIES: {n_promote} unnamed clean target(s) --\n")
-    if not n_promote:
-        out("  (none)\n")
-    for bank in sorted(promote_func):
-        cfg = bank_files.get(bank)
-        hint = cfg if cfg else f"bank{bank:02x}.cfg  (NOT FOUND -- create it)"
-        out(f"\n  # -> {hint}\n")
-        for addr16, d in sorted(promote_func[bank]):
-            kind = d.get('site_kind', '?')
-            site = parse_pc24(d['site_pc24'])
-            # entry_mx is REQUIRED on the emitted line. The `func` directive
-            # defaults to entry_mx:1,1 (cfg_loader.py), and these observations
-            # are overwhelmingly M0X0, so a line pasted without it silently
-            # seeds the WRONG variant: the declared boundary is analyzed at a
-            # width the guest never enters it at, and the variant that actually
-            # runs stays interpreted. Emit the observed mode explicitly.
-            mx = str(d.get('entry_mx', ''))
-            m_ = MX_RE.fullmatch(mx)
-            if m_:
-                mx_tok = f" entry_mx:{m_.group(1)},{m_.group(2)}"
-                mx_note = ""
-            else:
-                mx_tok = ""
-                mx_note = "  << NO entry_mx OBSERVED: defaults to 1,1 -- CHECK"
-            out(f"  func bank_{bank:02X}_{addr16:04X} {addr16:04x}{mx_tok}"
-                f"    # {mx or '?'} {kind}, "
-                f"{int(d.get('clean_hits',0))} clean hit(s), "
-                f"from site $%06X, first frame {d.get('first_frame','?')}"
-                f"{mx_note}\n"
-                % site)
-
-    # SITE NEEDS AUTHORIZATION: target is already a func, the dispatch site isn't.
-    out(f"\n-- SITE NEEDS DISPATCH AUTHORIZATION: {len(site_needs_auth)} "
-        f"site(s) --\n")
-    out("  (target already has a `func`; the indirect SITE needs an\n"
-        "   `indirect_dispatch` directive -- NOT `indirect_call_table`, which\n"
-        "   no cfg parser implements and which is silently ignored if pasted.\n"
-        "   The index reg +\n"
-        "   table layout aren't in the runtime manifest, so verify against the\n"
-        "   disassembly before authorizing -- not auto-generated.)\n")
-    if not site_needs_auth:
-        out("  (none)\n")
-    for d in sorted(site_needs_auth,
-                    key=lambda d: -int(d.get('clean_hits', 0))):
-        site = parse_pc24(d['site_pc24'])
-        target = parse_pc24(d['target_pc24'])
-        out(f"  site $%06X -> target $%06X  (%s %s, %d clean hit(s))\n"
-            % (site, target, d.get('entry_mx', '?'), d.get('site_kind', '?'),
-               int(d.get('clean_hits', 0))))
-
-    # INVESTIGATE: bailed sites are bug leads, not promotion candidates.
-    out(f"\n-- INVESTIGATE: {len(investigate)} bailed site(s) "
-        f"(bug leads, NOT promoted) --\n")
-    out("  (the interpreter could not run the target -- likely an upstream\n"
-        "   recomp-state bug, e.g. a garbage indirect target. Do NOT promote;\n"
-        "   chase who corrupts the state that feeds this site.)\n")
-    if not investigate:
-        out("  (none)\n")
-    for d in sorted(investigate,
-                    key=lambda d: (-int(d.get('bail_hits', 0)),
-                                   int(d.get('first_frame', 1 << 30)))):
-        site = parse_pc24(d['site_pc24'])
-        target = parse_pc24(d['target_pc24'])
-        out(f"  site $%06X -> target $%06X  (%s %s, %d bail(s)/%d clean, "
-            "first frame %s)\n"
-            % (site, target, d.get('entry_mx', '?'), d.get('site_kind', '?'),
-               int(d.get('bail_hits', 0)), int(d.get('clean_hits', 0)),
-               d.get('first_frame', '?')))
-
-    out("\n" + "=" * 72 + "\n")
-    out("Regenerate with `--profile-manifest` and rebuild. Add a printed func\n"
-        "only when its boundary improves naming/slicing; func is deliberately\n"
-        "not a reachability root. LLE remains the fallback for every absent or\n"
-        "rejected exact variant (see MULTI_TIER.md sec 3a).\n")
+    print(f"Coverage: {report['capture_count']} capture(s), {len(report['discoveries'])} transfer tuples")
+    print(f"Interpreted work: {report['interpreted_instructions']:,} instructions, "
+          f"{report['interpreted_guest_cycles']:,} guest cycles")
+    for warning in report["warnings"]:
+        print(f"Warning: {warning}")
+    for row in report["discoveries"]:
+        hits = sum(row.get(k, 0) for k in ("observed_hits", "completed_hits", "yielded_hits", "bail_hits"))
+        if hits < args.min_hits:
+            continue
+        print(f"{row['variant']} E={row.get('emulation', '?')} "
+              f"from 0x{pc(row.get('site_pc24', 0)):06X}: {row['candidate_status']}")
+        print(f"  observed={row['observed_hits']} completed={row['completed_hits']} "
+              f"yielded={row['yielded_hits']} bailed={row['bail_hits']} pending={row['pending_hits']}")
+        print(f"  {row['explanation']}; reasons={','.join(row.get('analysis_reasons', [])) or 'unknown'}")
+    print("Hottest interpreted instructions (exclusive guest cycles):")
+    for row in report["hot_instructions"][:20]:
+        print(f"  {row.get('processor', 'snes_cpu')} 0x{pc(row['target_pc24']):06X} {row['entry_mx']} E={row.get('emulation')} "
+              f"{row['guest_cycles']:,} cycles / {row['interpreted_instructions']:,} instructions")
+    print("Candidates seed --profile-manifest analysis; qualify generated changes with replay before release.")
     return 0
 
 
-if __name__ == '__main__':
-    sys.exit(main())
+if __name__ == "__main__":
+    raise SystemExit(main())

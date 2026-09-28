@@ -156,6 +156,8 @@ def _load_cfgs(cfg_dir: pathlib.Path):
                            load_bank_cfg(str(path))))
     if not parsed:
         raise ValueError(f"no bank*.cfg under {cfg_dir}")
+    from v2.decoder import set_instruction_authority
+    set_instruction_authority(parsed)
     return parsed
 
 

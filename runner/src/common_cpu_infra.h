@@ -57,6 +57,9 @@ void snes_refresh_state_get(uint64_t *phase, uint64_t *charged_upto);
 void snes_refresh_state_set(uint64_t phase, uint64_t charged_upto);
 void WatchdogFrameStart(void);
 void RecompStackPush(const char *name);
+/* Attribution only: an interpreter run is not a compiled guest caller and
+ * cannot be selected as a SKIP_N return target. */
+void RecompStackPushInterpreter(const char *name);
 void RecompStackPop(void);
 /* Pop for an LLE yield unwind: the frame is unfinished, so no balance figure
  * is recorded. See common_cpu_infra.c. */

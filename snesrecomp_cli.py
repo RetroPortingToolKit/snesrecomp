@@ -106,7 +106,8 @@ def run_emit(rom: pathlib.Path, cfg_dir: pathlib.Path, out_dir: pathlib.Path,
              *, backend: str = "auto", cfg_roots: bool = False,
              no_host_root_scan: bool = False,
              source_roots: list[str] | None = None,
-             profile_manifests: list[str] | None = None) -> None:
+             profile_manifests: list[str] | None = None,
+             legacy_profile_rom_sha256: str | None = None) -> None:
     """Generate C from a ROM plus its bank configs. Raises on failure."""
     resolved = resolve_analyzer(backend)
     arguments = [
@@ -131,6 +132,8 @@ def run_emit(rom: pathlib.Path, cfg_dir: pathlib.Path, out_dir: pathlib.Path,
     # its profile and changed the emitted C.
     for manifest in profile_manifests or []:
         arguments.extend(["--profile-manifest", manifest])
+    if legacy_profile_rom_sha256:
+        arguments.extend(["--legacy-profile-rom-sha256", legacy_profile_rom_sha256])
     if run_tool(v2_emit, arguments):
         raise RuntimeError("source generation failed")
 

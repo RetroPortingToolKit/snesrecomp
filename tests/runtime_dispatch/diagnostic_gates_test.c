@@ -1,11 +1,15 @@
 #include <stdint.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 #include "common_cpu_infra.h"
 #include "cpu_state.h"
 #include "snes/cart.h"
 #include "snes/snes.h"
+#include "program_module.h"
+#include "sha256.h"
+#include "snes/tier2_capture.h"
 
 typedef struct recomp_snap_entry recomp_snap_entry;
 typedef struct Ppu Ppu;
@@ -65,6 +69,33 @@ void cpu_state_init(CpuState *cpu, uint8_t *ram) {
 }
 void rtl_reset_host_pacing(void) {}
 
+/* PE linkers can retain SnesInit even with section GC. This harness exercises
+ * stack diagnostics only; fail loudly if an initialization dependency runs. */
+void snes_sync_master_clock(Snes *snes, uint64_t clock) {
+  (void)snes; (void)clock; abort();
+}
+void snes_set_master_clock_charge_hook(SnesMasterClockChargeHook hook) { (void)hook; abort(); }
+void snes_set_wram_write_log_hook(SnesWramWriteLogHook hook) { (void)hook; abort(); }
+void wlog_addr_note_direct(uint32_t wa, uint8_t v, const char *via) {
+  (void)wa; (void)v; (void)via; abort();
+}
+const char *cpu_dispatch_entry_reason(uint32_t pc, uint8_t mx) {
+  (void)pc; (void)mx; abort();
+}
+void tier2_capture_set_entry_probe(const char *(*probe)(uint32_t, uint8_t)) { (void)probe; abort(); }
+void tier2_capture_set_checkpoint_hook(void (*hook)(void)) { (void)hook; abort(); }
+void Tier2CoverageReset(void) { abort(); }
+void sha256_compute(const uint8_t *data, size_t len, uint8_t out[32]) {
+  (void)data; (void)len; (void)out; abort();
+}
+const SnesProgramModule *snes_program_module_active(void) { abort(); }
+const SnesProgramModule *snes_program_module_find(const char *id) { (void)id; abort(); }
+void tier2_capture_set_identity(const char *rom, const char *module,
+                               const char *program, const char *mapper) {
+  (void)rom; (void)module; (void)program; (void)mapper; abort();
+}
+void tier2_capture_set_build_digest(const char *digest) { (void)digest; abort(); }
+
 static int check(int condition, const char *message) {
   if (!condition)
     fprintf(stderr, "FAIL: %s\n", message);
@@ -92,6 +123,37 @@ static int hle_entry_s_frames_do_not_resolve_returns(void) {
   failures += check(cpu_resolve_post_return_skip(entry_s) == -1,
                     "HLE entry-S is excluded from post-return resolution");
 
+  RecompStackPop();
+  RecompStackPop();
+  return failures;
+}
+
+static int interpreter_scope_does_not_resolve_returns(void) {
+  int failures = 0;
+  g_recomp_stack_top = 0;
+  g_cpu.host_return_valid = 2;
+  g_cpu.S = 0x1fef;
+  RecompStackPush("compiled_tail_root");
+  /* PHB + PEA precede a fallback. A later PLA; RTS returns to the manual
+   * PEA continuation while leaving PHB on the stack for its real PLB. */
+  g_cpu.S = 0x1fec;
+  RecompStackPushInterpreter("interp@$A6CBE5");
+  g_cpu.S = 0x1fea;
+  RecompStackPush("compiled_nonlocal_return");
+  failures += check(cpu_resolve_ancestor_skip(0x1fec) == -1,
+                    "interpreter attribution is not a compiled ancestor");
+  failures += check(cpu_resolve_post_return_skip(0x1fee) == -1,
+                    "interpreter attribution cannot consume a post-return skip");
+  RecompStackPop();
+  RecompStackPop();
+  /* Reusing the observer's slot for a real compiled frame must restore it. */
+  g_cpu.S = 0x1fec;
+  RecompStackPush("compiled_parent");
+  g_cpu.S = 0x1fea;
+  RecompStackPush("compiled_child");
+  failures += check(cpu_resolve_ancestor_skip(0x1fec) == 1,
+                    "reused interpreter slot accepts a real compiled ancestor");
+  RecompStackPop();
   RecompStackPop();
   RecompStackPop();
   return failures;
@@ -160,6 +222,7 @@ int main(void) {
   failures += generated_entry_s_frames_still_resolve_returns();
   failures += check(json_matches_stack_balance_mode(),
                     "stack-balance dump matches diagnostic mode");
+  failures += interpreter_scope_does_not_resolve_returns();
 
   g_recomp_snap_on_func = "diagnostic_gates_test";
   g_recomp_snap_count = 7;

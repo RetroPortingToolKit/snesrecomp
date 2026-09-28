@@ -3,6 +3,7 @@
  * usage errors, and --resume-state, which the in-game launcher's restart
  * depends on. */
 #include "host_args.h"
+#include "snes/tier2_capture.h"
 
 #include <stdio.h>
 #include <string.h>
@@ -62,6 +63,37 @@ int main(void) {
     char **av = argv;
     check(!snesrecomp_host_args_parse(&argc, &av, &a),
           "--launcher with --no-launcher is a usage error");
+  }
+  {
+    char *argv[] = { "game", "--expose-coverage-mod", NULL };
+    int argc = 2;
+    char **av = argv;
+    check(snesrecomp_host_args_parse(&argc, &av, &a), "coverage exposure parses");
+    check(a.expose_coverage_mod && tier2_capture_exposed(), "coverage mod is exposed");
+    check(a.coverage_capture == -1 && !tier2_capture_enabled(),
+          "exposing coverage does not enable capture");
+  }
+  {
+    char *argv[] = { "game", "--coverage-capture=on", NULL };
+    int argc = 2;
+    char **av = argv;
+    check(snesrecomp_host_args_parse(&argc, &av, &a), "capture on parses");
+    check(a.coverage_capture == 1 && tier2_capture_enabled(), "capture on reaches runtime");
+    check(strcmp(tier2_capture_setting_source(), "launch") == 0, "launch override attribution");
+  }
+  {
+    char *argv[] = { "game", "--coverage-capture=off", NULL };
+    int argc = 2;
+    char **av = argv;
+    check(snesrecomp_host_args_parse(&argc, &av, &a), "capture off parses");
+    check(a.coverage_capture == 0 && !tier2_capture_enabled(), "capture off reaches runtime");
+  }
+  {
+    char *argv[] = { "game", "--coverage-capture=maybe", NULL };
+    int argc = 2;
+    char **av = argv;
+    check(!snesrecomp_host_args_parse(&argc, &av, &a), "invalid capture value is rejected");
+    check(!tier2_capture_enabled(), "invalid capture value preserves runtime state");
   }
 
   if (fails) return 1;

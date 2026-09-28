@@ -1061,6 +1061,51 @@ static const DispatchEntry *_cpu_dispatch_find(uint32 pc24) {
     return NULL;
 }
 
+/* Cartridge mappings can make numerically similar banks refer to different
+ * bytes (SA-1, and banked S-DD1 windows). Probe pointers without bus effects. */
+int cpu_aot_rom_mapping_matches(uint32 pc24, uint32 offset, unsigned length) {
+    if (!g_snes || !g_snes->cart || !length || length > 4) return 0;
+    Cart *cart = g_snes->cart;
+    if (!cart->rom || offset >= (uint32)cart->romSize ||
+        length > (uint32)cart->romSize - offset) return 0;
+    for (unsigned i = 0; i < length; ++i) {
+        if (cart_getRomPtr(cart, (uint8)(pc24 >> 16), (uint16)(pc24 + i)) !=
+            cart->rom + offset + i) return 0;
+    }
+    return 1;
+}
+
+static int dispatch_has_rom_mirror(uint32 pc24) {
+    unsigned bank = pc24 >> 16;
+    if (!((bank < 0x40 || (bank >= 0x80 && bank < 0xC0)) && (pc24 & 0xFFFF) >= 0x8000)) return 0;
+    if (!g_snes || !g_snes->cart) return 1; /* isolated dispatch fixtures */
+    uint8 *a = cart_getRomPtr(g_snes->cart, bank, (uint16)pc24);
+    uint8 *b = cart_getRomPtr(g_snes->cart, bank ^ 0x80, (uint16)pc24);
+    return a && a == b;
+}
+
+const char *cpu_dispatch_entry_reason(uint32_t pc24, uint8_t mx) {
+    const DispatchEntry *row = _cpu_dispatch_find(pc24);
+    if (!row) {
+        if (dispatch_has_rom_mirror(pc24))
+            row = _cpu_dispatch_find(pc24 ^ 0x800000u);
+    }
+    if (!row) return "missing_entry";
+    if (!row->variant[mx & 3]) return "missing_exact_variant";
+    unsigned bank = pc24 >> 16;
+    if (bank == 0x7E || bank == 0x7F) {
+        const RamRoutineGuard *guard = _ram_guard_find(pc24);
+        if (!guard) return "ram_guard_missing";
+        uint32_t h = 2166136261u;
+        for (uint32_t i = 0; i < guard->len; ++i) {
+            h ^= g_ram[((bank - 0x7E) << 16) | ((pc24 + i) & 0xFFFF)];
+            h *= 16777619u;
+        }
+        if (h != guard->hash) return "ram_guard_mismatch";
+    }
+    return "compiled_entry_available_check_policy";
+}
+
 static RecompReturn (*_cpu_dispatch_lookup(CpuState *cpu, uint32 pc24))(CpuState *) {
     const DispatchEntry *row = _cpu_dispatch_find(pc24);
     if (row != NULL) {
@@ -1096,8 +1141,7 @@ RecompReturn cpu_dispatch_pc_from(CpuState *cpu, uint32 pc24,
          * Cfg may declare a function in one bank while the trampoline
          * popped (PB:PC) lands on the mirror. Try the other bank
          * before giving up — matches set_name_resolver's alias. */
-        uint8 bank = (uint8)((pc24 >> 16) & 0xFF);
-        if (bank < 0x40 || (bank >= 0x80 && bank < 0xC0)) {
+        if (dispatch_has_rom_mirror(pc24)) {
             const DispatchEntry *mirror_row = _cpu_dispatch_find(pc24 ^ 0x800000u);
             if (mirror_row != NULL) {
                 known_entry = 1;
@@ -1181,8 +1225,7 @@ RecompReturn cpu_dispatch_call_pc(CpuState *cpu, uint32 pc24,
     int via_mirror = 0;
     RecompReturn (*fp)(CpuState *) = _cpu_dispatch_lookup(cpu, pc24);
     if (fp == NULL) {
-        uint8 bank = (uint8)((pc24 >> 16) & 0xFF);
-        if (bank < 0x40 || (bank >= 0x80 && bank < 0xC0)) {
+        if (dispatch_has_rom_mirror(pc24)) {
             fp = _cpu_dispatch_lookup(cpu, pc24 ^ 0x800000u);
             if (fp != NULL) via_mirror = 1;
         }
@@ -1207,8 +1250,7 @@ RecompReturn cpu_dispatch_call_pc_pushed(CpuState *cpu, uint32 pc24,
     int via_mirror = 0;
     RecompReturn (*fp)(CpuState *) = _cpu_dispatch_lookup(cpu, pc24);
     if (fp == NULL) {
-        uint8 bank = (uint8)((pc24 >> 16) & 0xFF);
-        if (bank < 0x40 || (bank >= 0x80 && bank < 0xC0)) {
+        if (dispatch_has_rom_mirror(pc24)) {
             fp = _cpu_dispatch_lookup(cpu, pc24 ^ 0x800000u);
             if (fp != NULL) via_mirror = 1;
         }
@@ -1245,8 +1287,7 @@ RecompReturn cpu_dispatch_pc_paired(CpuState *cpu, uint32 pc24, uint8 frame_size
     int via_mirror = 0;
     RecompReturn (*fp)(CpuState *) = _cpu_dispatch_lookup(cpu, pc24);
     if (fp == NULL) {
-        uint8 bank = (uint8)((pc24 >> 16) & 0xFF);
-        if (bank < 0x40 || (bank >= 0x80 && bank < 0xC0)) {
+        if (dispatch_has_rom_mirror(pc24)) {
             fp = _cpu_dispatch_lookup(cpu, pc24 ^ 0x800000u);
             if (fp != NULL) via_mirror = 1;
         }
@@ -1263,8 +1304,7 @@ RecompReturn cpu_dispatch_pc_paired(CpuState *cpu, uint32 pc24, uint8 frame_size
 int cpu_dispatch_has_entry(CpuState *cpu, uint32 pc24) {
     pc24 &= 0xFFFFFFu;
     if (_cpu_dispatch_lookup(cpu, pc24) != NULL) return 1;
-    uint8 bank = (uint8)((pc24 >> 16) & 0xFF);
-    if (bank < 0x40 || (bank >= 0x80 && bank < 0xC0))
+    if (dispatch_has_rom_mirror(pc24))
         if (_cpu_dispatch_lookup(cpu, pc24 ^ 0x800000u) != NULL) return 1;
     return 0;
 }
@@ -1280,8 +1320,7 @@ uint8 cpu_dispatch_inline_arg_bytes(uint32 pc24) {
             else if (mid_pc > pc24) hi = mid;
             else return ACTIVE_DISPATCH[mid].inline_arg_bytes;
         }
-        uint8 bank = (uint8)(pc24 >> 16);
-        if (pass || !((bank < 0x40) || (bank >= 0x80 && bank < 0xC0)))
+        if (pass || !dispatch_has_rom_mirror(pc24))
             break;
         pc24 ^= 0x800000u;
     }

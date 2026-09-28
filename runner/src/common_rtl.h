@@ -308,8 +308,9 @@ bool RtlUploadSpcImageFromDp(CpuState *cpu);
 bool RtlUploadSpcImageFromDpLive(CpuState *cpu);
 bool RtlRunFrame(uint32 inputs);
 void RtlReadSram();
-void RtlWriteSram(void);
-/* Durable save with failure reporting before a host changes save namespace. */
+/* Returns 1 when the battery file was durably replaced, 0 on any failure
+ * (the previous file is left in place). */
+int RtlWriteSram(void);
 int RtlTryWriteSram(void);
 /* Save-directory root for SRAM + savestate slots. Default "saves". Netplay
  * guests use "saves/netplay" so host-driven sync cannot clobber personal files.

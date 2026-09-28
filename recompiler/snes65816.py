@@ -13,6 +13,7 @@ from typing import Optional, List
 
 ROM_MAP_LOROM = 'lorom'
 ROM_MAP_HIROM = 'hirom'
+ROM_MAP_SA1 = 'sa1'
 ROM_MAP_SDD1_EXLOROM = 'sdd1_exlorom'
 SDD1_MMC_DEFAULT_PAGES = (0, 1, 2, 3)
 _active_rom_mapping = ROM_MAP_LOROM
@@ -24,6 +25,18 @@ _active_rom_mapping = ROM_MAP_LOROM
 # RelocRegion + reintroduces the v1 process-global registry (v2 dropped it).
 # Each tuple: (ram_bank, ram_addr, length, rom_off_base).
 _reloc_regions: List[tuple] = []
+_rom_image_size: Optional[int] = None
+
+
+def set_rom_image_size(size: Optional[int]) -> None:
+    """Keep appended RAM captures out of the cartridge address space."""
+    global _rom_image_size
+    _rom_image_size = size
+
+
+def is_materialized_rom_address(bank: int, pc: int, offset: int) -> bool:
+    return (_rom_image_size is None or offset < _rom_image_size
+            or _reloc_lookup(bank, pc) is not None)
 
 
 def register_reloc_region(ram_bank: int, ram_addr: int, length: int,
@@ -34,6 +47,7 @@ def register_reloc_region(ram_bank: int, ram_addr: int, length: int,
 
 def clear_reloc_regions() -> None:
     _reloc_regions.clear()
+    set_rom_image_size(None)
 
 
 def _reloc_lookup(bank: int, addr: int) -> Optional[int]:
@@ -77,6 +91,8 @@ def detect_rom_mapping(data: bytes) -> str:
     LoROM. Star Ocean is a 6 MiB S-DD1 ExLoROM cart whose banks $C0-$FF are
     exposed by the S-DD1 MMC using reset pages 0, 1, 2, 3.
     """
+    if len(data) >= 0x8000 and data[0x7FD5] == 0x23 and data[0x7FD6] in (0x34, 0x35):
+        return ROM_MAP_SA1
     lorom_score = _header_score(data, 0x7FC0, 0)
     hirom_score = _header_score(data, 0xFFC0, 1)
     if hirom_score > lorom_score:
@@ -88,7 +104,7 @@ def detect_rom_mapping(data: bytes) -> str:
 
 def set_rom_mapping(mapping: str) -> None:
     global _active_rom_mapping
-    if mapping not in (ROM_MAP_LOROM, ROM_MAP_HIROM, ROM_MAP_SDD1_EXLOROM):
+    if mapping not in (ROM_MAP_LOROM, ROM_MAP_HIROM, ROM_MAP_SDD1_EXLOROM, ROM_MAP_SA1):
         raise ValueError(f"unsupported ROM mapping: {mapping}")
     _active_rom_mapping = mapping
 
@@ -122,6 +138,11 @@ def rom_offset(bank: int, addr: int) -> int:
         return reloc
     assert bank not in (0x7E, 0x7F), (
         f"address ${bank:02X}:{addr:04X} is WRAM, not ROM")
+    if _active_rom_mapping == ROM_MAP_SA1:
+        if bank >= 0xC0:
+            return ((bank - 0xC0) << 16) | addr
+        assert bank & 0x7F < 0x40 and addr >= 0x8000, "not a SA-1 ROM window"
+        return (0x200000 if bank & 0x80 else 0) | ((bank & 0x3F) << 15) | (addr & 0x7FFF)
     if _active_rom_mapping == ROM_MAP_SDD1_EXLOROM:
         if 0xC0 <= bank <= 0xFF:
             page = SDD1_MMC_DEFAULT_PAGES[(bank >> 4) & 3]
@@ -144,6 +165,8 @@ def is_rom_address(bank: int, addr: int) -> bool:
         return True
     if bank in (0x7E, 0x7F):
         return False
+    if _active_rom_mapping == ROM_MAP_SA1:
+        return bank >= 0xC0 or ((bank & 0x7F) < 0x40 and addr >= 0x8000)
     if _active_rom_mapping == ROM_MAP_SDD1_EXLOROM:
         if 0xC0 <= bank <= 0xFF:
             return True
@@ -152,6 +175,13 @@ def is_rom_address(bank: int, addr: int) -> bool:
         canonical_bank = bank & 0x7F
         return canonical_bank >= 0x40 or addr >= 0x8000
     return addr >= 0x8000 and ((bank & 0xFF) < 0x40 or bank >= 0x80)
+
+
+def rom_bank_mirror(bank: int):
+    """Only the active mapper's proven reset-map bank aliases."""
+    if _active_rom_mapping != ROM_MAP_SA1 and (bank < 0x40 or 0x80 <= bank < 0xC0):
+        return bank ^ 0x80
+    return None
 
 
 def vector_table_offset(data: bytes) -> int:

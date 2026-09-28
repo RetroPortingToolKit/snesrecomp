@@ -25,9 +25,11 @@ int main(void) {
   expect("sram-test/save.srm",2);expect("sram-test/save.srm.bak",1);
   MKDIR("sram-test/save.srm.tmp");memset(bytes,3,4);
   assert(!RtlTryWriteSram());expect("sram-test/save.srm",2);expect("sram-test/save.srm.bak",1);
-  /* Existing callers retain the direct-write path and ignore the opt-in temp. */
-  RtlWriteSram();expect("sram-test/save.srm",3);
+  /* The public writer must report failure and preserve the last good save,
+   * never bypass failed atomic publication with a direct overwrite. */
+  assert(!RtlWriteSram());expect("sram-test/save.srm",2);expect("sram-test/save.srm.bak",1);
   RMDIR("sram-test/save.srm.tmp");
+  assert(RtlWriteSram());expect("sram-test/save.srm",3);expect("sram-test/save.srm.bak",2);
   remove("sram-test/save.srm");remove("sram-test/save.srm.bak");RMDIR("sram-test");
   puts("SRAM publication, backup and failed-write preservation passed");return 0;
 }

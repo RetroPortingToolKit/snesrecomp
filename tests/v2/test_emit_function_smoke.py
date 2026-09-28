@@ -156,7 +156,7 @@ def test_wai_bounce_unwind_pops_generated_diagnostic_frame():
     rom = make_lorom_bank0({0x8000: bytes([0xCB])})
     src = emit_function(rom, bank=0, start=0x8000,
                         entry_m=1, entry_x=1)
-    needle = "return interp_bridge_lle_yield_unwind(cpu, 0x008001u);"
+    needle = "return interp_bridge_lle_yield_unwind(cpu, (((uint32)cpu->PB << 16) | 0x8001u));"
     assert needle in src, src
     before = src[:src.index(needle)]
     assert before.rstrip().endswith("RecompStackPopYield();"), src
@@ -168,7 +168,7 @@ def test_function_entry_yields_when_lle_frame_deadline_is_reached():
     src = emit_function(rom, bank=0, start=0x8000,
                         entry_m=1, entry_x=1)
     check = "if (interp_bridge_lle_master_deadline_reached(cpu)) {"
-    unwind = "return interp_bridge_lle_yield_unwind(cpu, 0x008000u);"
+    unwind = "return interp_bridge_lle_yield_unwind(cpu, (((uint32)cpu->PB << 16) | 0x8000u));"
     assert check in src, src
     assert unwind in src, src
     before = src[:src.index(unwind)]
@@ -188,7 +188,7 @@ def test_cfg_block_yields_at_an_architectural_resume_pc():
     })
     src = emit_function(rom, bank=0, start=0x8000,
                         entry_m=1, entry_x=1)
-    unwind = "return interp_bridge_lle_yield_unwind(cpu, 0x008004u);"
+    unwind = "return interp_bridge_lle_yield_unwind(cpu, (((uint32)cpu->PB << 16) | 0x8004u));"
     assert unwind in src, src
     before = src[:src.index(unwind)]
     assert before.rstrip().endswith("RecompStackPopYield();"), src

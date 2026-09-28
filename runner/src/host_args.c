@@ -2,6 +2,7 @@
 #include "host_args.h"
 
 #include "host_paths.h"
+#include "snes/tier2_capture.h"
 
 #include <stdio.h>
 #include <string.h>
@@ -27,6 +28,8 @@ void snesrecomp_host_args_usage(const char *program, const char *extra) {
           "  --launcher            force the launcher even with a ROM given.\n"
           "  --config <path>       use this config.ini instead of anchoring to\n"
           "                        the executable's directory.\n"
+          "  --expose-coverage-mod show the optional Coverage Capture mod.\n"
+          "  --coverage-capture=on|off override capture for this run.\n"
           "  --paused              start paused.\n"
           "  --script <path>       run an input script.\n"
           "  --framedump <dir>     write frames to this directory.\n"
@@ -52,6 +55,7 @@ int snesrecomp_host_args_parse(int *argc_io, char ***argv_io,
                                SnesrecompHostArgs *out) {
   if (!argc_io || !argv_io || !out) return 0;
   memset(out, 0, sizeof(*out));
+  out->coverage_capture = -1;
 
   int argc = *argc_io;
   char **argv = *argv_io;
@@ -78,6 +82,17 @@ int snesrecomp_host_args_parse(int *argc_io, char ***argv_io,
     if (strcmp(a, "--no-launcher") == 0) { out->no_launcher = 1; continue; }
     if (strcmp(a, "--launcher") == 0) { out->force_launcher = 1; continue; }
     if (strcmp(a, "--paused") == 0) { out->start_paused = 1; continue; }
+
+    if (!strcmp(a, "--expose-coverage-mod")) {
+      out->expose_coverage_mod = 1; continue;
+    }
+    if (!strncmp(a, "--coverage-capture=", 19)) {
+      const char *value = a + 19;
+      if (!strcmp(value, "on")) out->coverage_capture = 1;
+      else if (!strcmp(value, "off")) out->coverage_capture = 0;
+      else { fprintf(stderr, "--coverage-capture requires on or off\n"); return 0; }
+      continue;
+    }
 
     /* Flags taking a value. A missing value is a usage error rather than a
      * silently dropped flag, which is how `--script` with nothing after it
@@ -132,5 +147,6 @@ int snesrecomp_host_args_parse(int *argc_io, char ***argv_io,
                                   sizeof(out->framedump_buf));
   out->resume_state = absolutize(resume_raw, out->resume_buf,
                                  sizeof(out->resume_buf));
+  tier2_capture_configure(out->expose_coverage_mod, -1, out->coverage_capture);
   return 1;
 }

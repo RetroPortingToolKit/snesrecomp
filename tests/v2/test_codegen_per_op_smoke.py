@@ -368,9 +368,9 @@ def test_blockmove_mvn_increments():
     assert "do {" in s
     assert "while (cpu->A != 0xFFFF)" in s
     assert "cpu->cycles += 7" in s
-    assert "cpu->master_cycles += 7 * (g_memsel ? 6 : 8)" in s
+    assert "cpu->master_cycles += 7 * ((g_memsel && (cpu->PB & 0x80)) ? 6 : 8)" in s
     assert "interp_bridge_lle_master_deadline_reached(cpu)" in s
-    assert "interp_bridge_lle_yield_unwind(cpu, 0x808e7au)" in s
+    assert "interp_bridge_lle_yield_unwind(cpu, (((uint32)cpu->PB << 16) | 0x8e7au))" in s
     assert "cpu->X &= 0x00FFu" in s
 
 
@@ -396,7 +396,7 @@ def test_wai_unwinds_to_owning_lle_scheduler_at_architectural_pc():
     """A bounced compiled WAI is a scheduler boundary, not a guest return."""
     s = _joined(emit_op(Stop(wait=True), source_pc24=0x808652))
     assert "interp_bridge_in_lle_scheduler()" in s
-    assert "interp_bridge_lle_yield_unwind(cpu, 0x808653u)" in s
+    assert "interp_bridge_lle_yield_unwind(cpu, (((uint32)cpu->PB << 16) | 0x8653u))" in s
 
 
 def test_stp_does_not_arm_the_wai_scheduler_resume_contract():

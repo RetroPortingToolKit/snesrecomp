@@ -13,6 +13,7 @@
 #include "sa1.h"
 
 #include "interp816.h"
+#include "tier2_capture.h"
 
 #include <limits.h>
 #include <stdlib.h>
@@ -954,8 +955,13 @@ void sa1_sync(Sa1 *sa1, uint64_t master_clock) {
     sa1_request_interrupt(sa1);
     sa1->extra_cycles = 0;
     if (sa1->observer) observe_instruction(sa1);
+    uint32_t capture_pc = ((uint32_t)sa1->cpu->k << 16) | sa1->cpu->pc;
+    uint8_t capture_mx = ((uint8_t)sa1->cpu->mf << 1) | (uint8_t)sa1->cpu->xf;
+    uint8_t capture_e = sa1->cpu->e;
     int cycles = interp816_runOpcode(sa1->cpu);
     if (cycles < 1) cycles = 1;
+    if (g_tier2_capture_active)
+      tier2_capture_cpu_instruction(1, capture_pc, capture_mx, capture_e, (unsigned)cycles);
     uint32_t clocks =
         ((uint32_t)cycles + sa1->extra_cycles) *
         SA1_MASTER_CLOCKS_PER_CPU_CYCLE;
