@@ -84,6 +84,7 @@ void cart_load(Cart* cart, int type, uint8_t* rom, int romSize, int ramSize) {
   if(cart->ram != NULL) free(cart->ram);
   cart->rom = malloc(romSize);
   cart->romSize = romSize;
+  cart->romImageSize = romSize;
   if(ramSize > 0) {
     cart->ram = malloc(ramSize);
     memset(cart->ram, 0, ramSize);

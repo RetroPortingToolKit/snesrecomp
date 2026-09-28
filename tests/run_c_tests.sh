@@ -136,6 +136,13 @@ echo "=== interpreter and bridge ==="
 echo "=== DSP-1 bus/core shell ==="
 "$CC" -std=c11 -Wall -Wextra -Werror -O1 \
     -I "$ROOT/runner/src" -I "$ROOT/runner/src/snes" \
+    "$ROOT/tests/runtime_dispatch/rom_image_identity_test.c" \
+    "$ROOT/runner/src/snes/snes_other.c" "$ROOT/runner/src/sha256.c" \
+    -o "$OUT/rom_image_identity_test"
+"$OUT/rom_image_identity_test"
+
+"$CC" -std=c11 -Wall -Wextra -Werror -O1 \
+    -I "$ROOT/runner/src" -I "$ROOT/runner/src/snes" \
     "$ROOT/tests/dsp1/dsp1_header_test.c" \
     "$ROOT/runner/src/snes/snes_other.c" \
     -o "$OUT/dsp1_header_test"

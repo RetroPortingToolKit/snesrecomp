@@ -121,8 +121,8 @@ int g_recomp_stack_top = 0;
  * decrement contract. See ISSUES.md "shared-tail multi-level non-local
  * return" (the fish-explosion OAM wipe). */
 uint16_t g_cpu_entry_s[RECOMP_STACK_DEPTH];
-/* A forwarding HLE stub has a recomp-stack frame but no generated prologue,
- * so its entry-S must never take part in a return-to-ancestor lookup. */
+/* HLE forwarding and interpreter attribution scopes are not generated guest
+ * callers, so their entry-S must not take part in return-to-ancestor lookup. */
 static uint8_t g_cpu_entry_s_valid[RECOMP_STACK_DEPTH];
 /* Expected positive S delta when a generated callee consumes the hardware
  * return frame that its generated caller pushed. */
@@ -576,6 +576,18 @@ void aot_prof_frame_end(int frame) {
   }
 }
 #endif /* SNESRECOMP_INTERP_PROFILE */
+
+void RecompStackPushInterpreter(const char *name) {
+  const int slot = g_recomp_stack_top;
+  RecompStackPush(name);
+  /* The diagnostic scope can start below its enclosing function's entry S
+   * (PHB; PEA; JMP is one example). An AOT helper's non-local RTS can land
+   * exactly at this seed while still inside the interpreted continuation.
+   * Treating it as a compiled ancestor loses the popped return PC and resumes
+   * after the wrong JSR. The bridge owns that continuation, not SKIP_N. */
+  if (slot < RECOMP_STACK_DEPTH)
+    g_cpu_entry_s_valid[slot] = 0;
+}
 
 void RecompStackPush(const char *name) {
 #ifdef SNESRECOMP_INTERP_PROFILE
@@ -1081,7 +1093,9 @@ Snes *SnesInit(const uint8 *data, int data_size) {
       Tier2CoverageReset(); /* seal the previous image before replacing identity */
       uint8_t digest[32];
       char hex[65];
-      sha256_compute(g_rom, g_snes->cart->romSize, digest);
+      /* Coverage is keyed to the generator's headerless input image, not
+       * the bus allocation (e.g. a 3 MiB ROM mirrored to 4 MiB). */
+      sha256_compute(g_rom, g_snes->cart->romImageSize, digest);
       for (unsigned i = 0; i < 32; ++i) snprintf(hex + 2*i, 3, "%02x", digest[i]);
       const SnesProgramModule *module = snes_program_module_active();
       if (!module) module = snes_program_module_find("main");

@@ -22,6 +22,8 @@ struct Cart {
 
   uint8_t* rom;
   uint32_t romSize;
+  /* Headerless source bytes, before power-of-two bus mirroring. Host metadata. */
+  uint32_t romImageSize;
   uint8_t* ram;
   uint32_t ramSize;
   const uint64_t* masterClock;

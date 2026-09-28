@@ -21,12 +21,14 @@ from snes65816 import (  # noqa: E402
     clear_reloc_regions,
     load_rom,
     register_reloc_region,
+    set_rom_image_size,
 )
 from v2.link_closure import assert_closed  # noqa: E402
 from v2.program_analysis import VariantKey  # noqa: E402
 from v2.program_emit import (  # noqa: E402
     CACHE_FORMAT_VERSION,
     discover_host_roots,
+    discover_authority_roots,
     discover_profile_roots,
     emit_program,
     validate_module_identity,
@@ -149,6 +151,7 @@ def _install_ram_routines(rom: bytes, parsed):
     native analyzer, which does the same against the ROM file). Returns
     (extended_rom, tuple_of_VariantKey_roots)."""
     clear_reloc_regions()
+    set_rom_image_size(len(rom))
     buf = bytearray(rom)
     roots = []
     for _bank, _path, cfg in parsed:
@@ -194,6 +197,9 @@ def main() -> int:
              "beside another generated module (content variants). Requires "
              "a funcs.h beside the cfg files; default: no prefix")
     parser.add_argument("--no-host-root-scan", action="store_true")
+    parser.add_argument("--disassembly-entry-modes", action="store_true",
+                        help="probe all M/X modes at byte-authoritative declared entries; "
+                             "contradictory paths remain LLE (requires gameplay qualification)")
     parser.add_argument("--no-hle", action="store_true")
     parser.add_argument("--max-insns", type=int, default=4096)
     parser.add_argument("--max-nodes", type=int, default=100_000)
@@ -275,7 +281,8 @@ def main() -> int:
         # explicitly qualified targets reach AOT eligibility.
         parsed[0][2].force_lle.update(profile_force_lle)
     additional_roots = tuple(sorted(
-        set(host_roots) | set(profile_roots) | set(ram_routine_roots)))
+        set(host_roots) | set(profile_roots) | set(ram_routine_roots)
+        | (set(discover_authority_roots(parsed)) if args.disassembly_entry_modes else set())))
 
     def generator_digest_for():
         tree_digest = _tree_digest((

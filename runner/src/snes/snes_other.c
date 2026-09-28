@@ -145,6 +145,7 @@ if (headers[used].coprocessor == 0xf && headers[used].exCoprocessor != 0x10) {
           headers[used].name,
           headers[used].coprocessor, headers[used].chips,
           headers[used].maker, headers[used].cartType);
+  const int imageLength = length;
   // expand to a power of 2
   int newLength = 0x8000;
   while(true) {
@@ -210,6 +211,7 @@ else if (headers[used].cartType == CART_SA1)
     newData, newLength,
     cart_ram_size
   );
+  snes->cart->romImageSize = imageLength;
   
   free(newData);
   return true;

@@ -174,3 +174,15 @@ Use state traces plus image/audio evidence when the host provides them: one
 final screenshot cannot prove the whole route. Basic fuzzing supplements an
 attract route; inspect images to confirm the inputs reached meaningful play.
 Passing these routes is limited evidence, not proof of every game state.
+
+The shared desktop host accepts `turbo on` and `turbo off` in input scripts.
+They change the same held-Turbo state as the keyboard at the current frame
+boundary, without adding a guest frame. This exercises turbo's presentation
+skipping as well as its pacing; `DisableFrameDelay=1` alone does not. Interpreter
+caps, scheduler bailouts and APU guest-clock synchronization timeouts disqualify
+a replay even when the host exits successfully.
+
+The [disassembly authority workflow](DISASSEMBLY_AUTHORITY.md) adds byte-verified
+discovery constraints and audits the actual emitted instruction boundaries.
+Capture identity uses the normalized source image before power-of-two bus
+mirroring, so a 3 MiB ROM's logs can be ingested against that same 3 MiB ROM.

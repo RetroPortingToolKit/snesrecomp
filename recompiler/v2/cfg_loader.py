@@ -91,6 +91,7 @@ class BankCfg:
     force_lle: set = field(default_factory=set)
     exclude_ranges: List[Tuple[int, int]] = field(default_factory=list)
     authority_insns: dict[int, bytes] = field(default_factory=dict)
+    authority_data: List[Tuple[int, int]] = field(default_factory=list)
     data_regions: List[Tuple[int, int, int]] = field(default_factory=list)  # (bank, start, end)
     # exit_mx_at directives: list of (bank, addr16, m, x) — annotates the
     # exit (m, x) state of a function at that PC. Decoder uses this to
@@ -310,6 +311,14 @@ def load_bank_cfg(path: str) -> BankCfg:
             # entry_mx_at <pc16> <m> <x> — override a cfg entry's
             # canonical decode width without modifying auto-ingested
             # `func` lines.
+            if head == 'authority_data':
+                if len(tokens) != 3:
+                    raise ValueError(f"{path}: authority_data needs <start> <end_exclusive>")
+                start, end = map(_parse_hex, tokens[1:])
+                if not 0 <= start < end <= 0x10000:
+                    raise ValueError(f"{path}: invalid authority_data interval")
+                cfg.authority_data.append((start, end))
+                continue
             if head == 'authority_insn':
                 if len(tokens) != 3:
                     raise ValueError(f"{path}: authority_insn needs <pc16> <hexbytes>")

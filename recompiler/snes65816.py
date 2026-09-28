@@ -25,6 +25,18 @@ _active_rom_mapping = ROM_MAP_LOROM
 # RelocRegion + reintroduces the v1 process-global registry (v2 dropped it).
 # Each tuple: (ram_bank, ram_addr, length, rom_off_base).
 _reloc_regions: List[tuple] = []
+_rom_image_size: Optional[int] = None
+
+
+def set_rom_image_size(size: Optional[int]) -> None:
+    """Keep appended RAM captures out of the cartridge address space."""
+    global _rom_image_size
+    _rom_image_size = size
+
+
+def is_materialized_rom_address(bank: int, pc: int, offset: int) -> bool:
+    return (_rom_image_size is None or offset < _rom_image_size
+            or _reloc_lookup(bank, pc) is not None)
 
 
 def register_reloc_region(ram_bank: int, ram_addr: int, length: int,
@@ -35,6 +47,7 @@ def register_reloc_region(ram_bank: int, ram_addr: int, length: int,
 
 def clear_reloc_regions() -> None:
     _reloc_regions.clear()
+    set_rom_image_size(None)
 
 
 def _reloc_lookup(bank: int, addr: int) -> Optional[int]:

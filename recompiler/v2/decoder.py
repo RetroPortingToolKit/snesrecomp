@@ -41,7 +41,7 @@ if str(_RECOMPILER_DIR) not in sys.path:
     sys.path.insert(0, str(_RECOMPILER_DIR))
 
 from snes65816 import (  # noqa: E402
-    decode_insn, lorom_offset, rom_bank_mirror, Insn,
+    decode_insn, lorom_offset, rom_bank_mirror, is_materialized_rom_address, Insn,
     ABS, INDIR, INDIR_X, LONG, IMM,
 )
 
@@ -1776,21 +1776,40 @@ def set_decode_cache_enabled(enabled: bool) -> None:
 
 
 _INSTRUCTION_AUTHORITY = {}
+_AUTHORITY_DATA = {}
 
 
 def set_instruction_authority(parsed):
     """Install byte/boundary constraints for one analysis and emission run."""
-    global _INSTRUCTION_AUTHORITY
+    global _INSTRUCTION_AUTHORITY, _AUTHORITY_DATA
     authority = {}
+    data = {}
     for bank, _path, cfg in parsed:
+        for start, end in cfg.authority_data:
+            banks = [bank]
+            mirror = rom_bank_mirror(bank)
+            if mirror is not None and start >= 0x8000:
+                banks.append(mirror)
+            for mapped_bank in banks:
+                mask = data.setdefault(mapped_bank, bytearray(0x10000))
+                mask[start:end] = b'\x01' * (end-start)
         for start, raw in cfg.authority_insns.items():
-            for n in range(len(raw)):
-                pc = (bank << 16) | (start + n)
-                value = raw if n == 0 else b""
-                if pc in authority and authority[pc] != value:
-                    raise ValueError(f"overlapping instruction authority at {pc:06X}")
-                authority[pc] = value
+            banks = [bank]
+            mirror = rom_bank_mirror(bank)
+            if mirror is not None and start >= 0x8000:
+                banks.append(mirror)
+            for mapped_bank in banks:
+                for n in range(len(raw)):
+                    pc = (mapped_bank << 16) | (start + n)
+                    value = raw if n == 0 else b""
+                    if pc in authority and authority[pc] != value:
+                        raise ValueError(f"overlapping instruction authority at {pc:06X}")
+                    authority[pc] = value
+    if any(data.get(pc >> 16, b'')[pc & 0xFFFF: (pc & 0xFFFF)+1] == b'\x01'
+           for pc in authority):
+        raise ValueError("instruction authority overlaps authoritative data")
     _INSTRUCTION_AUTHORITY = authority
+    _AUTHORITY_DATA = data
     clear_decode_cache()
 
 
@@ -2098,7 +2117,7 @@ def _decode_function_uncached(rom: bytes, bank: int, start: int,
             offset = lorom_offset(bank, pc)
         except AssertionError:
             continue
-        if offset >= len(rom):
+        if offset >= len(rom) or not is_materialized_rom_address(bank, pc, offset):
             continue
 
         insn = decode_insn(rom, offset, pc, bank, m=key.m, x=key.x)
@@ -2109,7 +2128,8 @@ def _decode_function_uncached(rom: bytes, bank: int, start: int,
             )
 
         expected = _INSTRUCTION_AUTHORITY.get(key.pc)
-        if ((expected is not None and
+        if (any(_AUTHORITY_DATA.get(bank, b'')[pc:pc+insn.length])
+                or (expected is not None and
              (len(expected) != insn.length or rom[offset:offset + insn.length] != expected))
                 or any(_INSTRUCTION_AUTHORITY.get(key.pc + n)
                        for n in range(1, insn.length))):

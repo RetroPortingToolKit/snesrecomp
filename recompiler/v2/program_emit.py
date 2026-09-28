@@ -322,6 +322,29 @@ def _cfg_name_maps(parsed):
             templates_any, cfg_by_bank)
 
 
+def discover_authority_roots(parsed) -> tuple[VariantKey, ...]:
+    """Try every width only at declared entries backed by instruction authority.
+
+    This is a discovery probe, not an assertion of valid entry widths. The
+    native decoder must reject any path contradicting the assembly boundaries;
+    ordinary structural and exit-mode proof requirements still apply.
+    """
+    from snes65816 import rom_bank_mirror
+    starts = set()
+    for bank, _path, cfg in parsed:
+        for start in cfg.authority_insns:
+            starts.add((bank << 16) | start)
+            mirror = rom_bank_mirror(bank)
+            if start >= 0x8000 and mirror is not None:
+                starts.add((mirror << 16) | start)
+    return tuple(sorted({
+        VariantKey((bank << 16) | entry.start, m, x)
+        for bank, _path, cfg in parsed for entry in cfg.entries
+        if (bank << 16) | entry.start in starts
+        for m in (0, 1) for x in (0, 1)
+    }))
+
+
 def discover_host_roots(parsed, source_roots: Iterable[pathlib.Path],
                         *, excluded_roots=()) -> tuple[VariantKey, ...]:
     """Infer the ROM entry variants called by handwritten host C.
@@ -353,10 +376,14 @@ def discover_host_roots(parsed, source_roots: Iterable[pathlib.Path],
             pass
 
     roots = set()
+    generated_trees = {}
     for source_root in source_roots:
         source_root = pathlib.Path(source_root)
         if not source_root.exists():
             continue
+        scan_base = source_root.resolve()
+        if source_root.is_file():
+            scan_base = scan_base.parent
         paths = [source_root] if source_root.is_file() else source_root.rglob("*.c")
         for path in paths:
             try:
@@ -368,6 +395,16 @@ def discover_host_roots(parsed, source_roots: Iterable[pathlib.Path],
                 continue
             if any(part.lower() in {"build", ".git", "generated", "gen"}
                    for part in resolved.parts):
+                continue
+            # Renaming an output tree does not make its calls host inputs.
+            generated = False
+            for parent in resolved.parents:
+                if parent != scan_base and scan_base not in parent.parents:
+                    break
+                if parent not in generated_trees:
+                    generated_trees[parent] = (parent / "program_manifest.json").is_file()
+                generated |= generated_trees[parent]
+            if generated:
                 continue
             try:
                 source = path.read_text(encoding="utf-8", errors="replace")

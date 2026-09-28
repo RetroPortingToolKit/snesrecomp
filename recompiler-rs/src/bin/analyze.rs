@@ -8,6 +8,7 @@
 
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::fs;
+use std::io::Write;
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -103,12 +104,14 @@ impl NodeSummary {
 }
 
 struct Inputs {
+    rom_image_size: usize,
     cfgs: Vec<BankCfg>,
     roots: BTreeSet<VariantKey>,
     entries: HashMap<u32, BankEntry>,
     sibling_entries: HashMap<u32, BTreeSet<u32>>,
     cfg_index: HashMap<u32, usize>,
     authority_bytes: HashMap<u32, Vec<u8>>,
+    authority_data: HashMap<u32, Vec<bool>>,
     data_regions: Vec<(u32, u32, u32)>,
     exclude_ranges: HashMap<u32, Vec<(u32, u32)>>,
     force_lle: BTreeSet<u32>,
@@ -227,6 +230,7 @@ fn architectural_roots(rom: &[u8]) -> BTreeSet<VariantKey> {
 }
 
 fn load_inputs(cfg_dir: &Path, rom: &mut Vec<u8>, all_cfg_roots: bool) -> Result<Inputs, String> {
+    let rom_image_size = rom.len();
     let mapping = detect_rom_mapping(rom);
     let mut paths: Vec<PathBuf> = fs::read_dir(cfg_dir)
         .map_err(|e| format!("{}: {e}", cfg_dir.display()))?
@@ -252,6 +256,7 @@ fn load_inputs(cfg_dir: &Path, rom: &mut Vec<u8>, all_cfg_roots: bool) -> Result
     let mut sibling_entries: HashMap<u32, BTreeSet<u32>> = HashMap::new();
     let mut cfg_index = HashMap::new();
     let mut authority_bytes = HashMap::new();
+    let mut authority_data = HashMap::new();
     let mut data_regions = Vec::new();
     let mut exclude_ranges = HashMap::new();
     let mut force_lle = BTreeSet::new();
@@ -280,19 +285,37 @@ fn load_inputs(cfg_dir: &Path, rom: &mut Vec<u8>, all_cfg_roots: bool) -> Result
             }
         }
         for (&start, raw) in &cfg.authority_insns {
-            for n in 0..raw.len() {
-                let pc = (bank << 16) | (start + n as u32);
-                let value = if n == 0 { raw.clone() } else { Vec::new() };
-                if authority_bytes.get(&pc).is_some_and(|old| old != &value) {
-                    return Err(format!("overlapping instruction authority at {pc:06X}"));
+            let mut banks = vec![bank];
+            if start >= 0x8000 {
+                if let Some(mirror) = mirror_bank(mapping, bank) {
+                    banks.push(mirror);
                 }
-                authority_bytes.insert(pc, value);
+            }
+            for mapped_bank in banks {
+                for n in 0..raw.len() {
+                    let pc = (mapped_bank << 16) | (start + n as u32);
+                    let value = if n == 0 { raw.clone() } else { Vec::new() };
+                    if authority_bytes.get(&pc).is_some_and(|old| old != &value) {
+                        return Err(format!("overlapping instruction authority at {pc:06X}"));
+                    }
+                    authority_bytes.insert(pc, value);
+                }
+            }
+        }
+        for &(start, end) in &cfg.authority_data {
+            let mut banks = vec![bank];
+            if start >= 0x8000 {
+                if let Some(mirror) = mirror_bank(mapping, bank) { banks.push(mirror); }
+            }
+            for mapped_bank in banks {
+                let mask = authority_data.entry(mapped_bank).or_insert_with(|| vec![false; 0x10000]);
+                mask[start as usize..end as usize].fill(true);
             }
         }
         for &(region_bank, start, end) in &cfg.data_regions {
-            data_regions.push((region_bank & 0xFF, start & 0xFFFF, end & 0xFFFF));
+            data_regions.push((region_bank & 0xFF, start & 0xFFFF, end));
             if let Some(mirror) = mirror_bank(mapping, region_bank) {
-                data_regions.push((mirror, start & 0xFFFF, end & 0xFFFF));
+                data_regions.push((mirror, start & 0xFFFF, end));
             }
         }
         for entry in &cfg.entries {
@@ -437,12 +460,14 @@ fn load_inputs(cfg_dir: &Path, rom: &mut Vec<u8>, all_cfg_roots: bool) -> Result
     }
 
     Ok(Inputs {
+        rom_image_size,
         cfgs,
         roots,
         entries,
         sibling_entries,
         cfg_index,
         authority_bytes,
+        authority_data,
         data_regions,
         exclude_ranges,
         force_lle,
@@ -466,7 +491,7 @@ fn target_is_code(key: VariantKey, inputs: &Inputs, rom: &[u8], mapping: RomMapp
         return false;
     }
     let offset = addr_to_rom_offset(mapping, bank, pc, &[]);
-    if offset >= rom.len() {
+    if offset >= rom.len() || offset >= inputs.rom_image_size {
         return false;
     }
     if inputs
@@ -1077,6 +1102,8 @@ fn analyze(
             NodeSummary,
         ),
     > = HashMap::new();
+    let mut round_log = std::env::var("SNESRECOMP_NATIVE_ROUND_LOG").ok()
+        .map(|path| fs::File::create(path).expect("create analysis round log"));
     for _round in 1..=128 {
         let mut pending = inputs.roots.clone();
         let mut nodes = BTreeMap::new();
@@ -1117,11 +1144,13 @@ fn analyze(
             let inline_loops = cfg.map(|cfg| &cfg.inline_dispatch_loops);
             let env = DecodeEnv {
                 rom_mapping: mapping,
+                rom_image_size: Some(inputs.rom_image_size),
                 max_insns: Some(max_insns),
                 dispatch_helpers: Some(&helpers),
                 indirect_dispatch: Some(&inputs.indirect_dispatch),
                 hle_dispatch: Some(&inputs.hle_dispatch),
                 authority_bytes: Some(&inputs.authority_bytes),
+                authority_data: Some(&inputs.authority_data),
                 data_regions: Some(&inputs.data_regions),
                 callee_exit_mx: Some(&active_exact),
                 callee_exit_mx_modes: Some(&active_sets),
@@ -1315,7 +1344,7 @@ fn analyze(
                                     .data_region_exec_pcs
                                     .contains(&(decoded.insn.addr & 0xFFFFFF))
                         });
-                        if !probe_has_poison {
+                        if !probe_has_poison && !probe.authority_conflict {
                             let (local_modes, dependencies) = function_exit_mx_equation(&probe);
                             let assumptions = graph
                                 .unknown_callee_exit_sites
@@ -1398,6 +1427,7 @@ fn analyze(
         }
 
         let mut next_exact = active_exact.clone();
+        let mut next_sets = active_sets.clone();
         for (key, pair) in round_exact {
             if unstable_exact.contains(&key) {
                 continue;
@@ -1411,7 +1441,7 @@ fn analyze(
                         continue;
                     }
                     next_exact.insert(key, pair);
-                    active_sets.remove(&key);
+                    next_sets.remove(&key);
                 }
                 Some(old) if old != pair => {
                     unstable_exact.insert(key);
@@ -1420,7 +1450,6 @@ fn analyze(
                 _ => {}
             }
         }
-        let mut next_sets = active_sets.clone();
         for (key, modes) in round_sets {
             if unstable_sets.contains(&key)
                 || inputs.declared_exit_modes.contains_key(&key)
@@ -1502,6 +1531,24 @@ fn analyze(
             && before_poisoned == poisoned
             && before_helpers == helpers
             && before_inline_args == inline_args;
+        if let Some(log) = round_log.as_mut() {
+            let keys: BTreeSet<_> = active_exact.keys().chain(next_exact.keys())
+                .chain(active_sets.keys()).chain(next_sets.keys()).copied().collect();
+            let changes: Vec<_> = keys.into_iter().filter(|key|
+                active_exact.get(key) != next_exact.get(key) || active_sets.get(key) != next_sets.get(key))
+                .map(|key| {
+                    let variant = VariantKey::new(key.0, key.1, key.2);
+                    json!({"key": variant.manifest_key(), "old_exact": active_exact.get(&key),
+                        "new_exact": next_exact.get(&key), "old_set": active_sets.get(&key),
+                        "new_set": next_sets.get(&key), "node": nodes.get(&variant).map(NodeSummary::json),
+                        "equation": round_equations.get(&variant).map(|e| json!({
+                            "local_modes": e.local_modes, "dependencies": e.dependencies,
+                            "assumptions": e.assumptions}))})
+                }).collect();
+            writeln!(log, "{}", json!({"round": _round, "stable": stable,
+                "nodes": nodes.len(), "poisoned": poisoned.len(), "helpers": helpers.len(),
+                "inline_args": inline_args.len(), "changes": changes})).expect("write analysis round log");
+        }
         active_exact = next_exact;
         active_sets = next_sets;
         if stable {

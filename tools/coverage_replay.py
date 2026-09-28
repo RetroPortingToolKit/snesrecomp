@@ -49,7 +49,7 @@ def compare(reference, candidate):
     if not a or a != b or any(value is None for value in b.values()):
         reasons.append("missing or different replay evidence")
     if reference.get("warnings") or candidate.get("warnings"):
-        reasons.append("capture warnings require review")
+        reasons.append("capture or runtime warnings require review")
     if reference.get("activity", {}) != candidate.get("activity", {}):
         reasons.append("different replay activity counters")
     reductions = {}
@@ -101,6 +101,18 @@ def run_case(case, directory):
     log_text = (directory / "run.log").read_text(encoding="utf-8", errors="replace")
     if "script: unknown" in log_text or "invalid SNESRECOMP_INPUT_SCRIPT" in log_text:
         report["warnings"].append("input script was rejected; this is not a valid fuzz replay")
+    # A host can continue presenting frozen frames and exit successfully after
+    # its guest scheduler has bailed. Identical frozen dumps do not qualify.
+    report["runtime_failures"] = {
+        name: len(re.findall(pattern, log_text)) for name, pattern in (
+            ("interpreter_step_cap", r"\[interp_cap\]"),
+            ("scheduler_bail", r"LLE loop bailed|yield-mode NLR exit"),
+            ("apu_sync_timeout", r"\[apu\] (?:CPU-port|frame-boundary) guest-clock sync timed out"),
+        )
+    }
+    for name, count in report["runtime_failures"].items():
+        if count:
+            report["warnings"].append(f"guest execution failed: {name} ({count} occurrences)")
     report["activity"] = {}
     for name, minimum in case.get("activity_minimums", {}).items():
         matches = re.findall(r"\b" + re.escape(name) + r"=(\d+)\b", log_text)
@@ -154,7 +166,10 @@ def main():
         result["comparison"] = compare(json.loads(args.reference.read_text(encoding="utf-8")), result)
         (args.output / "comparison.json").write_text(json.dumps(result["comparison"], indent=2), encoding="utf-8")
     print(json.dumps(result, indent=2))
-    return 0 if result["returncode"] == 0 else 1
+    healthy = result["returncode"] == 0 and not result["warnings"]
+    if args.reference:
+        healthy = healthy and result["comparison"]["replay_matches"]
+    return 0 if healthy else 1
 
 
 if __name__ == "__main__":

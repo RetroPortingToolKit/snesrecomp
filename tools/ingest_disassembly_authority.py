@@ -9,6 +9,7 @@ Generate with v2_emit --cfg-dir <output> --cfg-roots. Evidence constrains
 decoding; it never bypasses structural analysis or runtime pointer checks.
 """
 import argparse
+from bisect import bisect_left
 import hashlib
 import json
 from pathlib import Path
@@ -16,7 +17,7 @@ import shutil
 import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "recompiler"))
-from snes65816 import lorom_offset, detect_rom_mapping, set_rom_mapping
+from snes65816 import lorom_offset, detect_rom_mapping, set_rom_mapping, rom_bank_mirror
 from v2.coverage_profile import pc
 from v2.cfg_loader import load_bank_cfg
 
@@ -29,9 +30,26 @@ def ingest(rom_path, authority_path, cfg_dir, out_dir):
     if authority.get("rom_sha256") != hashlib.sha256(rom).hexdigest():
         raise ValueError("disassembly ROM identity mismatch")
     set_rom_mapping(detect_rom_mapping(rom))
+    cfg_dir, out_dir = Path(cfg_dir).resolve(), Path(out_dir).resolve()
+    if out_dir == cfg_dir or cfg_dir in out_dir.parents or out_dir.exists():
+        raise ValueError("output must be a new directory outside the source cfg directory")
+    known = {}
+    for path in cfg_dir.glob("bank*.cfg"):
+        cfg = load_bank_cfg(str(path))
+        known[cfg.bank] = {e.start for e in cfg.entries}
+
+    def owner_bank(address):
+        bank = address >> 16
+        mirror = rom_bank_mirror(bank)
+        # Keep evidence beside the existing execution contracts. Creating an
+        # otherwise empty mirror cfg would shadow its HLE hooks/boundaries.
+        if bank not in known and (address & 0xFFFF) >= 0x8000 and mirror in known:
+            return mirror
+        return bank
+
     lines, occupied, starts = {}, {}, set()
     def add(address, line):
-        lines.setdefault(address >> 16, []).append(line)
+        lines.setdefault(owner_bank(address), []).append(line)
     for insn in authority.get("instructions", []):
         address, raw = pc(insn["pc24"]), bytes.fromhex(insn["bytes"])
         if not 1 <= len(raw) <= 4 or (address & 0xFFFF) + len(raw) > 0x10000:
@@ -45,13 +63,6 @@ def ingest(rom_path, authority_path, cfg_dir, out_dir):
             occupied[address+n] = address
         starts.add(address)
         add(address, f"authority_insn {address & 0xFFFF:04X} {raw.hex()}")
-    cfg_dir, out_dir = Path(cfg_dir).resolve(), Path(out_dir).resolve()
-    if out_dir == cfg_dir or cfg_dir in out_dir.parents or out_dir.exists():
-        raise ValueError("output must be a new directory outside the source cfg directory")
-    known = {}
-    for path in cfg_dir.glob("bank*.cfg"):
-        cfg = load_bank_cfg(str(path))
-        known[cfg.bank] = {e.start for e in cfg.entries}
     variants = set()
     for entry in authority.get("entries", []):
         address, m, x = pc(entry["pc24"]), entry["m"], entry["x"]
@@ -60,14 +71,18 @@ def ingest(rom_path, authority_path, cfg_dir, out_dir):
         if address in variants:
             raise ValueError("multiple entry modes require separate authority inputs")
         variants.add(address)
-        if address & 0xFFFF not in known.get(address >> 16, set()):
+        if address & 0xFFFF not in known.get(owner_bank(address), set()):
             add(address, f"func authority_{address:06X} {address & 0xFFFF:04X} entry_mx:{m},{x}")
         add(address, f"entry_mx_at {address & 0xFFFF:04X} {m} {x}")
+    occupied_addresses = sorted(occupied)
     for region in authority.get("data_regions", []):
         start, end = pc(region["start_pc24"]), pc(region["end_pc24"])
-        if end <= start or start >> 16 != (end - 1) >> 16 or any(start <= a < end for a in occupied):
+        index = bisect_left(occupied_addresses, start)
+        overlaps = index < len(occupied_addresses) and occupied_addresses[index] < end
+        if end <= start or start >> 16 != (end - 1) >> 16 or overlaps:
             raise ValueError("data region overlaps code or crosses a bank")
-        add(start, f"data_region {start >> 16:02X} {start & 0xFFFF:04X} {end-start+(start & 0xFFFF):04X}")
+        add(start, f"data_region {owner_bank(start):02X} {start & 0xFFFF:04X} {end-start+(start & 0xFFFF):04X}")
+        add(start, f"authority_data {start & 0xFFFF:04X} {end-start+(start & 0xFFFF):04X}")
     for dispatch in authority.get("dispatches", []):
         site, kind = pc(dispatch["site_pc24"]), dispatch["kind"]
         targets = sorted({pc(v) for v in dispatch["targets"]})

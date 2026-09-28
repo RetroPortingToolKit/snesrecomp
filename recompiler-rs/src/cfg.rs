@@ -112,6 +112,7 @@ pub struct BankCfg {
     pub force_lle: BTreeSet<u32>,
     pub exclude_ranges: Vec<(u32, u32)>,
     pub authority_insns: BTreeMap<u32, Vec<u8>>,
+    pub authority_data: Vec<(u32, u32)>,
     pub data_regions: Vec<(u32, u32, u32)>, // (bank, start, end)
     pub reloc_regions: Vec<RelocRegion>,
     pub ram_routines: Vec<RamRoutine>,
@@ -249,6 +250,14 @@ pub fn parse_bank_cfg(text: &str, path: &str) -> Result<BankCfg, String> {
         }
         if head == "auto_vectors" {
             cfg.auto_vectors = true;
+            continue;
+        }
+        if head == "authority_data" {
+            if tokens.len() != 3 { return Err(format!("{path}: authority_data needs <start> <end_exclusive>")); }
+            let start = parse_hex(tokens[1])?;
+            let end = parse_hex(tokens[2])?;
+            if start >= end || end > 0x10000 { return Err(format!("{path}: invalid authority_data interval")); }
+            cfg.authority_data.push((start, end));
             continue;
         }
         if head == "authority_insn" {

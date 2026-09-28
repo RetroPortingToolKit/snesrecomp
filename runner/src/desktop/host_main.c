@@ -576,7 +576,8 @@ enum {
   kScriptUntil     = 0x08000000u,
   kScriptDump      = 0x04000000u,
   kScriptQuit      = 0x02000000u,
-  kScriptZeroFrame = kScriptUntil | kScriptDump | kScriptQuit,
+  kScriptTurbo     = 0x01000000u,
+  kScriptZeroFrame = kScriptUntil | kScriptDump | kScriptQuit | kScriptTurbo,
 };
 static int g_script_quit;        // quit reached: the main loop exits
 static int g_script_failed;      // an until timed out: exit code 3
@@ -697,6 +698,7 @@ static ScriptEntry *NewScriptEntry(int *cap) {
  *   press <buttons> [N]     hold a+b+... for N frames (default 1)
  *   loadstate N             load save-state slot N
  *   reset                   the Reset hotkey's console reset
+ *   turbo on|off            change the held-Turbo state at this frame boundary
  *   poke <addr> <hex>       write WRAM bytes for one frame
  *   pokefor <addr> <hex> N  write WRAM bytes for N frames
  *   forcepoke <addr> <hex>  write WRAM bytes every frame from now on
@@ -730,6 +732,17 @@ static void LoadScript(const char *path) {
     if (strcmp(cmd, "wait") == 0) {
       int frames = (sscanf(line, "%*s %d", &n) == 1) ? n : 0;
       pending_wait += frames;
+    } else if (strcmp(cmd, "turbo") == 0) {
+      if (sscanf(line, "%*s %63s", arg1) != 1 ||
+          (strcmp(arg1, "on") != 0 && strcmp(arg1, "off") != 0)) {
+        fprintf(stderr, "script: expected 'turbo on' or 'turbo off': %s", line);
+        g_script_failed = g_script_quit = 1;
+        continue;
+      }
+      ScriptEntry *e = NewScriptEntry(&cap);
+      e->mask = kScriptTurbo | (strcmp(arg1, "on") == 0 ? 1u : 0u);
+      e->wait_frames = pending_wait;
+      pending_wait = 0;
     } else if (strcmp(cmd, "loadstate") == 0) {
       int slot = 0;
       sscanf(line, "%*s %d", &slot);
@@ -884,6 +897,9 @@ static uint32 TickScript(void) {
               e->poke_addr, e->cond_waited);
     } else if (e->mask & kScriptDump) {
       ScriptDump(e->dump_tag, frame);
+    } else if (e->mask & kScriptTurbo) {
+      g_turbo = (e->mask & 1u) != 0;
+      fprintf(stderr, "script f=%u turbo %s\n", frame, g_turbo ? "on" : "off");
     } else {
       fprintf(stderr, "script f=%u quit\n", frame);
       g_script_quit = 1;
@@ -1240,6 +1256,11 @@ static void DrawPpuFrameWithPerf(void) {
   }
   ComposeOsd(pixel_buffer, pitch, g_snes_width * render_scale,
              g_snes_height * render_scale, 2);
+  /* Use the same completed simulation index as the common WRAM dumper. */
+  const uint32 dump_frame = snes_frame_counter ? snes_frame_counter - 1 : 0;
+  FrameDump_Present(dump_frame, pixel_buffer, pitch,
+                    g_snes_width * render_scale, g_snes_height * render_scale);
+  FrameDump_Ppu(dump_frame, g_ppu);
   /* SNESRECOMP_SCREENSHOT=<path.ppm> [SNESRECOMP_SCREENSHOT_FRAME=<n>]: write
    * the frame presented at simulated frame n (default: the first) as a PPM,
    * OSD included: it is what the player sees, not the bare field.

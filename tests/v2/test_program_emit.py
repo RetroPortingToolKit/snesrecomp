@@ -145,7 +145,7 @@ def test_aot_interrupt_tail_to_lle_preserves_rti_boundary(tmp_path):
     assert result.returncode == 0, result.stdout + result.stderr
     source = (out_dir / "bank00_v2.c").read_text(encoding="utf-8")
     assert "RecompReturn Interrupt_NMI_M1X1" in source
-    assert "interp_tier_dispatch_tail(cpu, 0x808010u" in source
+    assert "interp_tier_dispatch_tail(cpu, (((uint32)cpu->PB << 16) | 0x8010u)" in source
     assert "uint8 _interrupted_hrv = cpu->host_return_valid;" in source
     assert "cpu->host_return_valid = 0;" in source
     assert "cpu_interrupt_context_enter();" in source
@@ -259,7 +259,7 @@ def test_lle_only_declared_sibling_remains_an_emission_boundary(tmp_path):
         (out_dir / "program_manifest.json").read_text(encoding="utf-8"))
     assert manifest["nodes"]["008010:M1X1"]["disposition"] == "lle_only"
     assert "RecompReturn Poison_M1X1" not in source
-    assert "interp_tier_dispatch_tail(cpu, 0x008010u" in source
+    assert "interp_tier_dispatch_tail(cpu, (((uint32)cpu->PB << 16) | 0x8010u)" in source
     assert "tail-call past end: missing exact M1X1 body" in source
 
 
@@ -340,6 +340,21 @@ def test_host_call_roots_are_inferred_from_handwritten_source(tmp_path):
     }.issubset(roots)
     assert VariantKey(0x008456, 0, 1) in roots
     assert VariantKey(0x008456, 1, 1) not in roots
+
+
+def test_archived_generated_tree_does_not_seed_host_roots(tmp_path):
+    cfg = tmp_path / "bank00.cfg"
+    cfg.write_text("bank = 00\nfunc Guest 8123 entry_mx:1,1\n", encoding="utf-8")
+    parsed = [(0, cfg, load_bank_cfg(str(cfg)))]
+    source = tmp_path / "src"
+    source.mkdir()
+    (source / "host.c").write_text("void f(void) { Guest_M1X1(&g_cpu); }\n")
+    archive = source / "old-output" / "nested"
+    archive.mkdir(parents=True)
+    (archive.parent / "program_manifest.json").write_text("{}")
+    (archive / "bank00_v2.c").write_text(
+        "void g(void) { Guest_M0X0(&g_cpu); cpu_dispatch_pc(cpu, 0x009000); }\n")
+    assert set(discover_host_roots(parsed, (source,))) == {VariantKey(0x008123, 1, 1)}
 
 
 def test_constant_runtime_dispatch_targets_are_host_roots(tmp_path):

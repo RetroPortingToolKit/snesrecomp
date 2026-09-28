@@ -93,6 +93,7 @@ uint8_t sdd1_read(Sdd1 *sdd1, uint16_t addr) {
 const char *g_last_recomp_func = "(none)";
 static const char *g_push_log[16];
 static int g_push_count = 0;
+static int g_interp_push_count = 0;
 static int g_push_depth = 0;
 static int g_pop_underflow = 0;
 /* Model the real push/pop on g_recomp_stack_top too (common_cpu_infra.c
@@ -114,6 +115,10 @@ void RecompStackPush(const char *name) {
         g_cpu_entry_s[g_recomp_stack_top] = g_c.S;
         g_recomp_stack_top++;
     }
+}
+void RecompStackPushInterpreter(const char *name) {
+    ++g_interp_push_count;
+    RecompStackPush(name);
 }
 void RecompStackPop(void) {
     if (g_push_depth <= 0) g_pop_underflow = 1;
@@ -423,6 +428,7 @@ int main(void) {
       load(0x8000, c, sizeof c);
       cpu_push_jsr_return_frame(&g_c);
       g_push_count = 0; g_push_depth = 0; g_pop_underflow = 0;
+      g_interp_push_count = 0;
       const char *func_before = g_last_recomp_func;
       int rc = interp_bridge_run(&g_c, 0x008000);
       printf("S2 pure interp routine\n");
@@ -434,6 +440,8 @@ int main(void) {
        * on exit, and restored g_last_recomp_func. */
       CHECK(g_push_count >= 1, "push_count=%d exp >=1 (interp scope pushed)",
             g_push_count);
+      CHECK(g_interp_push_count == g_push_count,
+            "interpreter attribution must use observer scopes");
       CHECK(g_push_count >= 1 && g_push_log[0] &&
             strcmp(g_push_log[0], "interp@$008000") == 0,
             "pushed name '%s' exp 'interp@$008000'",
@@ -749,6 +757,49 @@ int main(void) {
             "resume=$%06X exp $008006 (wait loop owns the block point)",
             (unsigned)interp_bridge_lle_resume_pc());
       g_aot_gap_walks_into_wait = 0; }
+
+    /* S8f: a secondary counter wait inside nested fallback must unwind just
+     * like the primary scheduler wait. Model SM's PHP; SEP; LDA counter;
+     * CMP counter; BEQ; PLP, with both operand widths. Resume after a host
+     * counter update and prove the real epilogue and caller execute once. */
+    for (int wide = 0; wide < 2; ++wide) {
+      memset(RAM, 0, MEMSZ); init_cpu(); g_aot_called = 0; g_abandon_called = 0;
+      g_c.emulation = 0;
+      g_aot_gap_walks_into_wait = 1;
+      uint8_t scheduler[] = {
+          0x22,0x00,0x81,0x00,                 /* JSL fake compiled root */
+          0xA9,0x5A, 0x85,0x21,               /* observable continuation */
+          0xAD,0x20,0x00, 0xD0,0xFB            /* primary wait */
+      };
+      uint8_t gap[] = {
+          0x08, 0xE2,0x20,                    /* PHP; SEP #$20 */
+          0xAD,0x10,0x00,                    /* LDA counter */
+          0xCD,0x10,0x00, 0xF0,0xFB,         /* CMP counter; BEQ CMP */
+          0x28, 0x6B                         /* PLP; RTL */
+      };
+      if (wide) gap[1] = 0xC2;                /* REP #$20 */
+      load(0x8000, scheduler, sizeof scheduler);
+      load(0x8300, gap, sizeof gap);
+      RAM[0x10] = 0x34; RAM[0x11] = 0x12;
+      const uint8_t original_p = g_c.P;
+      int rc = interp_bridge_run_loop(&g_c, 0x008000, 0x008008, 0x20, 0);
+      printf("S8f nested %d-bit counter wait preserves guest continuation\n", wide ? 16 : 8);
+      CHECK(rc == 1 && !g_abandon_called, "counter wait must yield without abandon");
+      CHECK(interp_bridge_lle_resume_pc() == 0x008306,
+            "resume=$%06X exp $008306", (unsigned)interp_bridge_lle_resume_pc());
+      CHECK(g_c.S == 0x01FB && RAM[0x21] == 0,
+            "guest JSL/PHP retained, caller not yet executed: S=%04X", g_c.S);
+      CHECK(RAM[0x01FC] == original_p, "PHP must retain original status");
+      RAM[wide ? 0x11 : 0x10]++;              /* asynchronous counter change */
+      rc = interp_bridge_run_loop(&g_c, interp_bridge_lle_resume_pc(),
+                                   0x008008, 0x20, 0);
+      CHECK(rc == 1 && g_c.S == 0x01FF && RAM[0x21] == 0x5A,
+            "counter change must resume real PLP/RTL and caller: S=%04X", g_c.S);
+      CHECK((g_c.P & 0x30) == (original_p & 0x30), "PLP restores widths");
+      CHECK(g_aot_called == 1 && g_abandon_called == 0,
+            "nested AOT body must not be re-entered or abandoned");
+      g_aot_gap_walks_into_wait = 0;
+    }
 
     /* S8b: an AOT root reached from the LLE scheduler can non-locally return
      * through its own compiled host frame while still landing normally in the

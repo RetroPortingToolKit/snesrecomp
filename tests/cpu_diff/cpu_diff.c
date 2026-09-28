@@ -79,6 +79,7 @@ int snes_frame_counter = 0;
 int g_recomp_stack_top = 0;
 uint16_t g_cpu_entry_s[256];
 void RecompStackPush(const char *n) { (void)n; if (g_recomp_stack_top < 255) g_recomp_stack_top++; }
+void RecompStackPushInterpreter(const char *n) { RecompStackPush(n); }
 void RecompStackPop(void) { if (g_recomp_stack_top > 0) g_recomp_stack_top--; }
 void WatchdogCheck(void) {}
 int  cpu_resolve_ancestor_skip(uint16_t ret_s) { (void)ret_s; return -1; }

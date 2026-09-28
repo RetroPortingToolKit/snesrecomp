@@ -620,6 +620,23 @@ int rtl_aot_node_denied(uint32 pc24) {
 }
 
 int interp_bridge_in_lle_scheduler(void) { return s_lle_sched_depth > 0; }
+/* A hardware wait can be reached inside an AOT body's nested fallback, not
+ * just in the outer scheduler. Preserve the guest continuation and hand it
+ * outward through the existing paired-call unwind until the host can run. */
+static int bridge_cooperative_yield(CpuState *cpu, const Interp816 *in,
+                                    uint32_t pc24, uint32_t yield_pc) {
+    if (yield_pc) {
+        s_lle_resume_pc24 = pc24;
+    } else {
+        s_lle_unwind_active = 1;
+        s_lle_unwind_pc24 = pc24;
+        s_lle_unwind_owner_depth = s_interp_bridge_depth - 1;
+        s_lle_unwind_is_deadline = 0;
+    }
+    sync_interp_to_cpu(in, cpu);
+    bridge_apu_flush(cpu);
+    return 1;
+}
 uint32 interp_bridge_lle_resume_pc(void) { return s_lle_resume_pc24; }
 void interp_bridge_set_lle_resume_pc(uint32_t pc) { s_lle_resume_pc24 = pc; }
 
@@ -1227,13 +1244,11 @@ static int _interp_run_core(CpuState *cpu, uint32_t entry_pc24,
     long steps = 0;
     uint64_t progress_write_epoch=g_interp_bridge_write_epoch;
     uint64_t progress_dynamic_epoch=s_interp_dynamic_progress_epoch;
-    /* The pre-opcode poll-shape recognition below reads the instruction bytes
-     * (pc_before, pc_before+3) on every interpreted opcode.  All three checks
-     * that consume them require yield_pc && !auto_quiescent, which is never
-     * true in a whole-program auto-quiescent run — those two ROM reads (and
-     * their S-DD1 dynamic-read epoch bumps) were pure per-opcode overhead
-     * there.  Skip them in that mode; SNESRECOMP_NO_POLLGATE=1 restores the
-     * old always-read behavior for A/B validation.  The reads happen outside
+    /* The pre-opcode poll-shape recognition below reads instruction bytes
+     * only under an explicit cooperative scheduler, including its nested
+     * fallbacks. Auto-quiescent schedulers use their own state-cycle detector.
+     * SNESRECOMP_NO_POLLGATE=1 disables the shape recognizers for diagnostics.
+     * The reads happen outside
      * the bus-timing window (s_interp_bus_timing_active), so they never
      * contributed to master_cycles. */
     static int s_poll_gate = -1;
@@ -1701,18 +1716,23 @@ static int _interp_run_core(CpuState *cpu, uint32_t entry_pc24,
          *   LDA abs; BMI/BPL -5
          *   BIT abs; BMI/BPL -5
          * while NMI/IRQ asynchronously changes bit 15. */
+        const int _cooperative_poll = s_poll_gate &&
+            ((yield_pc && !auto_quiescent) ||
+             (!yield_pc && s_lle_sched_depth > 0 &&
+              s_sched_yield_pc && s_sched_yield_pc != 0xFFFFFFFEu &&
+              s_interp_bridge_depth > 1));
         const uint8_t _poll_op =
-            (yield_pc && !auto_quiescent && s_poll_gate)
+            _cooperative_poll
                 ? bridge_bus_read(cpu, pc_before) : 0;
         const uint8_t _poll_branch =
-            (yield_pc && !auto_quiescent && s_poll_gate)
+            _cooperative_poll
                 ? bridge_bus_read(cpu, pc_before + 3) : 0;
         const uint16_t _poll_pc16 = (uint16_t)pc_before;
         const int _secondary_poll_pc =
             _poll_pc16 == 0xE02C || _poll_pc16 == 0xE06B ||
             _poll_pc16 == 0xE50D || _poll_pc16 == 0xE609 ||
             _poll_pc16 == 0xE526;
-        if (yield_pc && !auto_quiescent && _secondary_poll_pc &&
+        if (_cooperative_poll && _secondary_poll_pc &&
             (_poll_op == 0xAD || _poll_op == 0x2C) &&
             (_poll_branch == 0x30 || _poll_branch == 0x10) &&
             bridge_bus_read(cpu, pc_before + 4) == 0xFB) {
@@ -1724,10 +1744,7 @@ static int _interp_run_core(CpuState *cpu, uint32_t entry_pc24,
             const int _branch_taken =
                 _poll_branch == 0x30 ? _negative : !_negative;
             if (_branch_taken) {
-                s_lle_resume_pc24 = pc_before;
-                sync_interp_to_cpu(&in, cpu);
-                bridge_apu_flush(cpu);
-                return 1;
+                return bridge_cooperative_yield(cpu, &in, pc_before, yield_pc);
             }
         }
         /* Canonical stable-value poll:
@@ -1749,7 +1766,7 @@ static int _interp_run_core(CpuState *cpu, uint32_t entry_pc24,
          * M controls both A and the memory operand width.  Direct-page and
          * indexed variants can be added when observed; absolute CMP is the
          * canonical 65816 form used for interrupt-owned WRAM counters. */
-        if (yield_pc && !auto_quiescent && _poll_op == 0xCD &&
+        if (_cooperative_poll && _poll_op == 0xCD &&
             bridge_bus_read(cpu, pc_before + 3) == 0xF0 &&
             bridge_bus_read(cpu, pc_before + 4) == 0xFB) {
             const uint16_t _wait_addr = (uint16_t)(
@@ -1759,10 +1776,7 @@ static int _interp_run_core(CpuState *cpu, uint32_t entry_pc24,
                 ? ((uint8_t)in.a == cpu_read8(cpu, in.db, _wait_addr))
                 : (in.a == cpu_read16(cpu, in.db, _wait_addr));
             if (_equal) {
-                s_lle_resume_pc24 = pc_before;
-                sync_interp_to_cpu(&in, cpu);
-                bridge_apu_flush(cpu);
-                return 1;
+                return bridge_cooperative_yield(cpu, &in, pc_before, yield_pc);
             }
         }
         /* Canonical automatic-joypad wait used by synchronous message boxes:
@@ -1781,7 +1795,7 @@ static int _interp_run_core(CpuState *cpu, uint32_t entry_pc24,
          * can change.  Recognise the register/opcode shape (not a game PC) at
          * the final taken BEQ, yield to the owning LLE scheduler, and resume at
          * the backward target so $4212/$4218/$4219 are sampled again. */
-        if (yield_pc && !auto_quiescent && _poll_op == 0xF0 && in.z &&
+        if (_cooperative_poll && _poll_op == 0xF0 && in.z &&
             bridge_bus_read(cpu, pc_before - 8) == 0xAD &&
             bridge_bus_read(cpu, pc_before - 7) == 0x18 &&
             bridge_bus_read(cpu, pc_before - 6) == 0x42 &&
@@ -1792,10 +1806,9 @@ static int _interp_run_core(CpuState *cpu, uint32_t entry_pc24,
             bridge_bus_read(cpu, pc_before - 1) == 0x42) {
             const int8_t _rel = (int8_t)bridge_bus_read(cpu, pc_before + 1);
             if (_rel < 0) {
-                s_lle_resume_pc24 = (pc_before + 2 + _rel) & 0xFFFFFFu;
-                sync_interp_to_cpu(&in, cpu);
-                bridge_apu_flush(cpu);
-                return 1;
+                const uint32_t resume = (pc_before & 0xFF0000u) |
+                    (uint16_t)(pc_before + 2 + _rel);
+                return bridge_cooperative_yield(cpu, &in, resume, yield_pc);
             }
         }
         /* A NESTED frame (yield_pc == 0) standing on the active scheduler's
@@ -2562,8 +2575,9 @@ static int _interp_run_core(CpuState *cpu, uint32_t entry_pc24,
  * OamWriteEntry.func) copy those at write time, so without this an
  * interpreted write is attributed to the stale enclosing AOT frame — or, in
  * a whole-program-LLE port, to nothing at all. The entry PC is the useful
- * identity: it is a real guest function entry, the exact address a
- * symbols.toml [[func]] would name. Nested calls that bounce to compiled
+ * identity: it is the exact guest continuation being interpreted, which may
+ * be inside a function. This scope is not a compiled return target. Nested
+ * calls that bounce to compiled
  * bodies push their own names over this one, so only still-interpreted
  * depth stays attributed to the bridge entry.
  *
@@ -2638,7 +2652,7 @@ static int interp_bridge_run_ex2(CpuState *cpu, uint32_t entry_pc24,
     const char *_saved_func = g_last_recomp_func;
     const char *_scope_name = interp_scope_name(entry_pc24);
     g_last_recomp_func = _scope_name;
-    RecompStackPush(_scope_name);
+    RecompStackPushInterpreter(_scope_name);
     int _r = _interp_run_core(cpu, entry_pc24, s_exit, out_landing,
                               out_return_pc, yield_pc,
                               yield_flag_addr, yield_flag_value,

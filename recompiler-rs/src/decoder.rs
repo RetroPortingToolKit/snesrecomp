@@ -209,6 +209,7 @@ impl FunctionDecodeGraph {
 #[derive(Debug, Clone, Default)]
 pub struct DecodeEnv<'a> {
     pub rom_mapping: RomMapping,
+    pub rom_image_size: Option<usize>,
     /// Per-function decode budget. `None` preserves the public default.
     pub max_insns: Option<usize>,
     pub dispatch_helpers: Option<&'a HashMap<u32, String>>, // target_pc24 -> 'short'|'long'
@@ -216,6 +217,7 @@ pub struct DecodeEnv<'a> {
     pub indirect_dispatch: Option<&'a HashMap<u32, IndirectDispatchSite>>,
     pub hle_dispatch: Option<&'a HashMap<u32, String>>,
     pub authority_bytes: Option<&'a HashMap<u32, Vec<u8>>>,
+    pub authority_data: Option<&'a HashMap<u32, Vec<bool>>>,
     pub data_regions: Option<&'a [(u32, u32, u32)]>, // (bank, start, end_excl)
     pub callee_exit_mx: Option<&'a HashMap<(u32, u8, u8), (u8, u8)>>,
     pub callee_exit_mx_modes: Option<&'a HashMap<(u32, u8, u8), Vec<(u8, u8)>>>,
@@ -937,7 +939,7 @@ pub fn decode_function(
             Some(o) => o,
             None => continue,
         };
-        if offset >= rom.len() {
+        if offset >= rom.len() || (!in_reloc && env.rom_image_size.is_some_and(|size| offset >= size)) {
             continue;
         }
         if addr_in_data_regions(data_regions, bank, pc) {
@@ -946,6 +948,11 @@ pub fn decode_function(
 
         let mut insn = decode_insn(rom, offset, pc, bank, key.m, key.x)
             .unwrap_or_else(|| panic!("v2 decoder: unknown opcode at ${bank:02X}:{pc:04X}"));
+        if env.authority_data.and_then(|data| data.get(&bank)).is_some_and(|mask|
+            (pc..(pc + insn.length as u32).min(0x10000)).any(|p| mask[p as usize])) {
+            graph.authority_conflict = true;
+            continue;
+        }
         if let Some(authority) = env.authority_bytes {
             let size = insn.length as usize;
             if authority.get(&key.pc).is_some_and(|raw| raw.len() != size || rom.get(offset..offset+size) != Some(raw.as_slice()))
