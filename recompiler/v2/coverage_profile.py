@@ -55,19 +55,32 @@ class CoverageProfile:
     qualified_targets: set | None = None
 
 
+def unpack_records(record, depth=0):
+    if depth > 8:
+        raise ValueError("coverage bundle nesting exceeds 8 levels")
+    if isinstance(record, dict) and record.get("schema") == "snesrecomp tier2 bundle v2":
+        records = record.get("records")
+        if not isinstance(records, list) or not records:
+            raise ValueError("coverage bundle needs a nonempty records array")
+        for child in records:
+            yield from unpack_records(child, depth + 1)
+    else:
+        yield record
+
+
 def _records(path):
     raw = Path(path).read_text(encoding="utf-8")
     if str(path).endswith(".jsonl"):
         lines = raw.splitlines(keepends=True)
         for index, line in enumerate(lines):
             try:
-                yield json.loads(line)
+                yield from unpack_records(json.loads(line))
             except json.JSONDecodeError:
                 if index == len(lines) - 1 and not line.endswith("\n"):
                     return
                 raise ValueError(f"invalid journal record {path}:{index + 1}")
     else:
-        yield json.loads(raw)
+        yield from unpack_records(json.loads(raw))
 
 
 def load_profiles(paths, *, expected_rom=None, expected_module=None,
@@ -76,6 +89,7 @@ def load_profiles(paths, *, expected_rom=None, expected_module=None,
     latest = {}
     ram = {}
     identities = set()
+    checkpoints, journals = {}, {}
     for path in paths:
         for record in _records(path):
             if not isinstance(record, dict):
@@ -86,6 +100,8 @@ def load_profiles(paths, *, expected_rom=None, expected_module=None,
                                               "snesrecomp tier2 discovery v2"):
                 raise ValueError(f"unsupported coverage schema {schema!r} in {path}")
             identity = record.get("identity", {})
+            if not isinstance(identity, dict):
+                raise ValueError(f"coverage identity must be an object: {path}")
             if legacy:
                 if expected_rom and legacy_rom != expected_rom:
                     raise ValueError("legacy profile has no ROM identity; supply "
@@ -100,8 +116,10 @@ def load_profiles(paths, *, expected_rom=None, expected_module=None,
                     value = identity.get(name)
                     if value and not re.fullmatch("[0-9a-f]{64}", str(value)):
                         raise ValueError(f"invalid {name} in {path}")
-                if not identity.get("program_digest") or not identity.get("build_digest"):
-                    result.warnings.append(f"{path}: build identity incomplete; regenerate the module descriptor")
+                if not identity.get("program_digest") and record.get("capture_scope") != "instruction_costs_only":
+                    result.warnings.append(f"{path}: generated program identity missing; regenerate the module descriptor")
+                if not identity.get("build_digest"):
+                    result.warnings.append(f"{path}: executable build identity unavailable")
             if expected_rom and identity.get("rom_sha256") != expected_rom:
                 raise ValueError(f"coverage ROM does not match generation ROM: {path}")
             if expected_module and not legacy and identity.get("module_id") != expected_module:
@@ -114,6 +132,13 @@ def load_profiles(paths, *, expected_rom=None, expected_module=None,
             result.identity = identity
             capture = record.get("capture_id", f"legacy:{Path(path).resolve()}")
             result.captures.add(capture)
+            sequence = int(record.get("sequence", 0))
+            if sequence < 0:
+                raise ValueError(f"negative sequence in {path}")
+            if schema == "snesrecomp tier2 discovery v2":
+                journals[capture] = max(sequence, journals.get(capture, -1))
+            elif not legacy and record.get("checkpoint_complete"):
+                checkpoints[capture] = max(sequence, checkpoints.get(capture, -1))
             result.unsafe_targets.update(pc(v) for v in record.get("unsafe_aot_targets", []))
             if "qualified_aot_targets" in record:
                 if result.qualified_targets is None:
@@ -125,6 +150,8 @@ def load_profiles(paths, *, expected_rom=None, expected_module=None,
                 result.warnings.append(f"{capture}: bounded capture dropped observations")
             if record.get("journal_write_failures", 0):
                 result.warnings.append(f"{capture}: journal writes failed")
+            if record.get("ram_routines_overflow", 0):
+                result.warnings.append(f"{capture}: bounded RAM capture dropped snapshots")
             for name in ("discoveries", "costs", "ram_routines"):
                 if not isinstance(record.get(name, []), list):
                     raise ValueError(f"{name} must be an array: {path}")
@@ -147,14 +174,26 @@ def load_profiles(paths, *, expected_rom=None, expected_module=None,
                         raise ValueError(f"negative {name} in {path}")
                 key = capture, row_key(row)
                 seq = int(row.get("sequence", record.get("sequence", 0)))
+                if seq < 0:
+                    raise ValueError(f"negative sequence in {path}")
                 old = latest.get(key)
                 if old is None or seq > old[0]:
                     latest[key] = (seq, row)
                 elif seq == old[0] and row != old[1]:
                     raise ValueError(f"conflicting coverage row at sequence {seq}: {path}")
             for row in record.get("ram_routines", []):
-                ram[(capture, pc(row["entry_pc24"]), row.get("hash"),
-                     row.get("entry_mx"), row.get("emulation"))] = row
+                if not isinstance(row, dict):
+                    raise ValueError(f"RAM snapshot must be an object: {path}")
+                key = (capture, pc(row["entry_pc24"]), row.get("hash"),
+                       row.get("entry_mx"), row.get("emulation"))
+                previous = ram.get(key)
+                if previous is None or sequence > previous[0]:
+                    ram[key] = (sequence, row)
+                elif sequence == previous[0] and row != previous[1]:
+                    raise ValueError(f"conflicting RAM snapshot at sequence {sequence}: {path}")
+    for capture, sequence in journals.items():
+        if sequence > checkpoints.get(capture, -1):
+            result.warnings.append(f"{capture}: journal extends beyond the last complete checkpoint; costs may be incomplete")
     merged = {}
     for _seq, row in latest.values():
         key = row_key(row)
@@ -169,7 +208,7 @@ def load_profiles(paths, *, expected_rom=None, expected_module=None,
     result.discoveries = [r for k, r in sorted(merged.items(), key=lambda kv: str(kv[0]))
                           if r.get("record_kind", "transfer") == "transfer"]
     result.costs = [r for r in merged.values() if r.get("record_kind") == "instruction"]
-    result.ram_routines = list(ram.values())
+    result.ram_routines = [row for _seq, row in ram.values()]
     result.warnings = list(dict.fromkeys(result.warnings))
     return result
 

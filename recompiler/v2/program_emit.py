@@ -417,6 +417,14 @@ def discover_profile_roots(manifest_paths: Iterable[pathlib.Path],
         (canonical(row["target_pc24"]), row.get("entry_mx"))
         for row in profile.discoveries if row.get("bail_hits")
     }
+    # A rejected seed can also be reached through a cfg root or another
+    # function's static call edge. Excluding it only from this root list
+    # does not keep that unsafe body out of the generated closure.
+    if force_lle_out is not None:
+        for target in unsafe | {target for target, _mx in failed_variants}:
+            force_lle_out.add(target)
+            if mapper in ("lorom", "superfx", "cx4", "dsp1") and target >> 16 < 0x40 and target & 0xFFFF >= 0x8000:
+                force_lle_out.add(target ^ 0x800000)
     qualified = profile.qualified_targets
     if qualified is not None:
         qualified = {canonical(v) for v in qualified}

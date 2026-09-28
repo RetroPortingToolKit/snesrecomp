@@ -3445,7 +3445,7 @@ void Tier2CoverageTick(int frame) {
 }
 
 void Tier2CoverageReset(void) {
-    if (g_tier2_cov_count) Tier2CoverageWriteDefaultManifest(rtl_game_title());
+    if (tier2_capture_has_identity()) Tier2CoverageWriteDefaultManifest(rtl_game_title());
     free(g_tier2_cov);
     free(g_tier2_lookup); g_tier2_lookup = NULL;
     g_tier2_cov = NULL;
@@ -3457,7 +3457,7 @@ void Tier2CoverageReset(void) {
 }
 
 void Tier2CoverageWriteDefaultManifest(const char *rom_title) {
-    if (!tier2_capture_enabled()) return;
+    if (!tier2_capture_enabled() || !tier2_capture_has_identity()) return;
     const char *path = tier2_capture_manifest_path(rom_title);
     Tier2CoverageWriteManifest(path, rom_title);
     if (tier2_verbose())

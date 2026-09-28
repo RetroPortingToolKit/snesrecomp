@@ -24,6 +24,9 @@ uint64_t tier2_capture_next_sequence(void);
 void tier2_capture_instruction(uint32_t pc, uint8_t mx, uint8_t emulation,
                               unsigned guest_cycles);
 void tier2_capture_write_costs(FILE *f);
+/* Standalone interpreter hosts without the AOT bridge: costs only, no
+ * implied function boundaries or promotable transfers. */
+int tier2_capture_write_cost_checkpoint(const char *title);
 /* processor: 0 = host 65816, 1 = SA-1 (costs only, separate execution ABI). */
 void tier2_capture_cpu_instruction(uint8_t processor, uint32_t pc, uint8_t mx,
                                   uint8_t emulation, unsigned guest_cycles);
@@ -31,12 +34,15 @@ uint64_t tier2_capture_dropped_costs(void);
 int tier2_capture_journal_failed(void);
 void tier2_capture_set_build_digest(const char *digest);
 void tier2_capture_set_entry_probe(const char *(*probe)(uint32_t, uint8_t));
+/* Seal a session's last observations before an enabled -> disabled change. */
+void tier2_capture_set_checkpoint_hook(void (*hook)(void));
 const char *tier2_capture_entry_reason(uint32_t pc, uint8_t mx);
 
 const char *tier2_capture_manifest_path(const char *rom_title);
 const char *tier2_capture_journal_path(const char *rom_title);
 void tier2_capture_set_default_enabled(int enabled);
 int tier2_capture_enabled(void);
+int tier2_capture_has_identity(void);
 
 /* Compatibility observation API. Buffered writes are flushed by the frame hook. */
 int tier2_capture_append_discovery(const char *rom_title,

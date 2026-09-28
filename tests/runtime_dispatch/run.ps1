@@ -12,6 +12,7 @@ $args = @(
     "$root\runner\src\snes\dsp1.c",
     "$root\runner\src\snes\dsp1_hle.c",
     "$root\runner\src\snes\sa1.c",
+    "$root\runner\src\sha256.c",
     "$root\runner\src\snes\tier2_capture.c",
     "$root\runner\src\snes\sdd1.c",
     "$root\runner\src\snes\interp816.c",

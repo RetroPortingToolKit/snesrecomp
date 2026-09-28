@@ -15,6 +15,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import re
 import shutil
 import subprocess
 import sys
@@ -49,13 +50,16 @@ def compare(reference, candidate):
         reasons.append("missing or different replay evidence")
     if reference.get("warnings") or candidate.get("warnings"):
         reasons.append("capture warnings require review")
+    if reference.get("activity", {}) != candidate.get("activity", {}):
+        reasons.append("different replay activity counters")
     reductions = {}
     for processor in set(reference.get("instructions", {})) | set(candidate.get("instructions", {})):
         before = reference.get("instructions", {}).get(processor, 0)
         after = candidate.get("instructions", {}).get(processor, 0)
+        qualified = not reasons and reference.get("cost_accounting", True) and candidate.get("cost_accounting", True)
         reductions[processor] = {"before": before, "after": after,
-                                 "reduction": before - after,
-                                 "percent": (100 * (before - after) / before) if before else None}
+                                 "reduction": before - after if qualified else None,
+                                 "percent": (100 * (before - after) / before) if qualified and before else None}
     return {"replay_matches": not reasons, "reasons": reasons,
             "interpreted_work": reductions,
             "scope": "Only the recorded route and evidence; manual playtest still required"}
@@ -75,7 +79,8 @@ def run_case(case, directory):
         out.write_text(expand(content), encoding="utf-8")
     env = {k: v for k, v in os.environ.items() if not k.startswith("SNESRECOMP_")}
     env.update({k: expand(v) for k, v in case.get("env", {}).items()})
-    env.update(SNESRECOMP_TIER2_CAPTURE="1",
+    capture_enabled = case.get("capture", True)
+    env.update(SNESRECOMP_TIER2_CAPTURE="1" if capture_enabled else "0",
                SNESRECOMP_TIER2_MANIFEST=str(directory / "coverage.json"),
                SNESRECOMP_TIER2_JOURNAL=str(directory / "coverage.jsonl"))
     command = [expand(v) for v in case["command"]]
@@ -89,26 +94,38 @@ def run_case(case, directory):
         except subprocess.TimeoutExpired:
             rc = "timeout"
     report = {"command": command, "returncode": rc, "seconds": time.monotonic() - started,
+              "cost_accounting": False, "rom_sha256": case.get("rom_sha256"),
               "evidence": {name: digest(local_path(directory, name))
                            if local_path(directory, name).is_file() else None
                            for name in case.get("evidence", [])}, "warnings": [], "instructions": {}}
     log_text = (directory / "run.log").read_text(encoding="utf-8", errors="replace")
     if "script: unknown" in log_text or "invalid SNESRECOMP_INPUT_SCRIPT" in log_text:
         report["warnings"].append("input script was rejected; this is not a valid fuzz replay")
+    report["activity"] = {}
+    for name, minimum in case.get("activity_minimums", {}).items():
+        matches = re.findall(r"\b" + re.escape(name) + r"=(\d+)\b", log_text)
+        value = int(matches[-1]) if matches else None
+        report["activity"][name] = value
+        if value is None or value < minimum:
+            report["warnings"].append(f"activity check failed: {name}={value}, expected at least {minimum}")
     # The replay identity excludes build paths; use a caller-supplied stable
     # route identity AND hashes of all scripts/saves so build comparisons
     # cannot accidentally compare different input or SRAM bytes.
     route = {"route": case.get("route"), "files": case.get("files", {}),
+             "activity_minimums": case.get("activity_minimums", {}),
              "input_env": {k: v for k, v in case.get("env", {}).items()
                            if "INPUT" in k or k.endswith("FRAMES")},
              "inputs": {name: digest(Path(source)) for source, name in case.get("copies", {}).items()
                         if not name.lower().endswith((".exe", ".dll"))}}
     report["case_digest"] = hashlib.sha256(json.dumps(route, sort_keys=True).encode()).hexdigest()
     paths = [directory / "coverage.json", directory / "coverage.jsonl"]
+    if not capture_enabled:
+        (directory / "result.json").write_text(json.dumps(report, indent=2), encoding="utf-8")
+        return report
     if not paths[0].is_file():
         report["warnings"].append("missing checkpoint (no complete cost accounting)")
     try:
-        profile = load_profiles([p for p in paths if p.is_file()])
+        profile = load_profiles([p for p in paths if p.is_file()], expected_rom=case.get("rom_sha256"))
         details = audit(profile)
         (directory / "audit.json").write_text(json.dumps(details, indent=2), encoding="utf-8")
         report["warnings"].extend(profile.warnings)
@@ -116,6 +133,7 @@ def run_case(case, directory):
         report["identity"] = profile.identity
         report["transfer_tuples"] = len(profile.discoveries)
         report["bail_hits"] = sum(r["bail_hits"] for r in profile.discoveries)
+        report["cost_accounting"] = paths[0].is_file() and not profile.warnings
         for row in profile.costs:
             processor = row.get("processor", "snes_cpu")
             report["instructions"][processor] = report["instructions"].get(processor, 0) + row["interpreted_instructions"]

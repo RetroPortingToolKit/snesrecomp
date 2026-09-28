@@ -47,11 +47,62 @@ static int run_disabled_case(void) {
     return 0;
 }
 
+static int checkpoint_calls;
+static void checkpoint(void) {
+    checkpoint_calls++;
+    tier2_capture_write_cost_checkpoint("Lifecycle");
+}
+
+static int run_lifecycle_case(void) {
+    const char *path = "tier2_lifecycle.json";
+    const char *rom = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+    remove(path);
+    set_env_value("SNESRECOMP_TIER2_MANIFEST", path);
+    set_env_value("SNESRECOMP_TIER2_JOURNAL", NULL);
+    set_env_value("SNESRECOMP_TIER2_CAPTURE", NULL);
+    set_env_value("SNESRECOMP_TIER2", NULL);
+    tier2_capture_set_identity(rom, "main", rom, "sa1");
+    tier2_capture_set_checkpoint_hook(checkpoint);
+    tier2_capture_manifest_path("Lifecycle"); /* inspect while disabled */
+    tier2_capture_set_selection(1);
+    tier2_capture_instruction(0xc08000, 1, 0, 3);
+    tier2_capture_cpu_instruction(1, 0xc08000, 1, 0, 5);
+    tier2_capture_set_selection(0);
+    CHECK(checkpoint_calls == 1, "turning capture off must seal its last costs");
+    FILE *f = fopen(path, "rb");
+    CHECK(f != NULL, "disable did not write the checkpoint");
+    char data[4096]; size_t count = fread(data, 1, sizeof data - 1, f);
+    data[count] = 0; fclose(f);
+    CHECK(strstr(data, "\"processor\":\"sa1\"") && strstr(data, "\"processor\":\"snes_cpu\""),
+          "processors lost their separate instruction costs");
+    CHECK(!strstr(data, "\"build_digest\":\"\""), "executable digest was not captured");
+    char capture_id[160], archive[512];
+    char *id = strstr(data, "\"capture_id\":\"");
+    CHECK(id && sscanf(id, "\"capture_id\":\"%159[^\"]", capture_id) == 1,
+          "missing session id");
+    tier2_capture_set_identity(rom, "main", rom, "sa1");
+    snprintf(archive, sizeof archive, "%s.%s.previous.json", path, capture_id);
+    f = fopen(archive, "rb");
+    CHECK(f != NULL, "same-ROM reset lost the old checkpoint");
+    fclose(f);
+    tier2_capture_set_selection(1);
+    tier2_capture_instruction(0xc09000, 3, 0, 2);
+    tier2_capture_set_selection(0);
+    f = fopen(path, "rb"); CHECK(f != NULL, "second session checkpoint missing");
+    count = fread(data, 1, sizeof data - 1, f); data[count] = 0; fclose(f);
+    CHECK(!strstr(data, "\"processor\":\"sa1\""), "old costs leaked into new session");
+    remove(path); remove(archive);
+    puts("tier2_capture_test lifecycle: PASS");
+    return 0;
+}
+
 int main(int argc, char **argv) {
     const char *manifest = "tier2_capture_contract.json";
     const char *journal = "tier2_capture_contract.jsonl";
     if (argc == 2 && strcmp(argv[1], "disabled") == 0)
         return run_disabled_case();
+    if (argc == 2 && strcmp(argv[1], "lifecycle") == 0)
+        return run_lifecycle_case();
     CHECK(argc == 1, "usage: tier2_capture_test [disabled]");
     remove(manifest);
     remove(journal);

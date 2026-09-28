@@ -1075,6 +1075,7 @@ Snes *SnesInit(const uint8 *data, int data_size) {
     g_rom = g_snes->cart->rom;
     {
       tier2_capture_set_entry_probe(cpu_dispatch_entry_reason);
+      tier2_capture_set_checkpoint_hook(rtl_write_tier2_coverage_manifest);
       static int capture_exit_registered;
       if (!capture_exit_registered) { atexit(rtl_write_tier2_coverage_manifest); capture_exit_registered = 1; }
       Tier2CoverageReset(); /* seal the previous image before replacing identity */

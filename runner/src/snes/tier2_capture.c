@@ -1,4 +1,5 @@
 #include "tier2_capture.h"
+#include "../sha256.h"
 
 #include <stdlib.h>
 #include <string.h>
@@ -15,6 +16,9 @@
 #else
 #include <unistd.h>
 #include <sys/stat.h>
+#ifdef __APPLE__
+#include <mach-o/dyld.h>
+#endif
 #define capture_pid getpid
 #define capture_mkdir(p) mkdir(p, 0700)
 #endif
@@ -23,12 +27,16 @@
 #define SNESRECOMP_EXPOSE_COVERAGE_MOD 0
 #endif
 #define PATH_CAP 1024
-#define COST_CAP 65536u
+#define COST_CAP 131072u
 static char s_manifest[PATH_CAP], s_journal_path[PATH_CAP], s_capture_id[160];
 static char s_rom[65], s_module[128] = "main", s_program[65], s_mapper[32] = "unknown";
 static char s_build[65];
+static char s_executable_digest[65];
 static FILE *s_journal;
 static int s_paths_ready, s_paths_disabled, s_close_registered, s_journal_failed;
+static int s_preserve_explicit;
+static void (*s_checkpoint_hook)(void);
+void tier2_capture_set_checkpoint_hook(void (*hook)(void)) { s_checkpoint_hook = hook; }
 static int s_default_enabled, s_selection, s_config = -1, s_launch = -1;
 static int s_exposed = SNESRECOMP_EXPOSE_COVERAGE_MOD, s_initialized;
 static const char *s_source = "default";
@@ -74,6 +82,10 @@ static void refresh(void) {
         if (v && *v && strcmp(v, "0")) { enabled = 1; s_source = "journal environment"; }
     }
     if (s_launch >= 0) { enabled = s_launch; s_source = "launch"; }
+    if (g_tier2_capture_active && !enabled) {
+        if (s_checkpoint_hook) s_checkpoint_hook();
+        tier2_capture_flush();
+    }
     /* The launcher may inspect the destination before capture is enabled.
      * That inspection must not prevent creation of the directories later. */
     if (enabled && s_paths_disabled) {
@@ -96,6 +108,7 @@ void tier2_capture_configure(int exposed, int config_enabled, int launch_enabled
 void tier2_capture_set_selection(int enabled) { s_selection = !!enabled; refresh(); }
 int tier2_capture_exposed(void) { return s_exposed; }
 int tier2_capture_enabled(void) { if (!s_initialized) refresh(); return g_tier2_capture_active; }
+int tier2_capture_has_identity(void) { return s_rom[0] != 0; }
 const char *tier2_capture_setting_source(void) { return s_source; }
 uint64_t tier2_capture_next_sequence(void) { return ++s_sequence; }
 uint64_t tier2_capture_dropped_costs(void) { return s_dropped_costs; }
@@ -118,12 +131,61 @@ void tier2_capture_set_build_digest(const char *digest) {
     safe_text(digest, s_build, sizeof s_build, 0);
 }
 
+static void identify_executable(void) {
+    if (s_executable_digest[0]) return;
+    char path[PATH_CAP];
+#ifdef _WIN32
+    DWORD count = GetModuleFileNameA(NULL, path, sizeof path);
+    if (!count || count >= sizeof path) return;
+#elif defined(__APPLE__)
+    uint32_t count = sizeof path;
+    if (_NSGetExecutablePath(path, &count)) return;
+#else
+    ssize_t count = readlink("/proc/self/exe", path, sizeof path - 1);
+    if (count <= 0 || count >= sizeof path - 1) return;
+    path[count] = 0;
+#endif
+    FILE *f = fopen(path, "rb");
+    if (!f) return;
+    if (fseek(f, 0, SEEK_END)) { fclose(f); return; }
+    long size = ftell(f);
+    if (size <= 0 || size > 256 * 1024 * 1024 || fseek(f, 0, SEEK_SET)) {
+        fclose(f); return;
+    }
+    uint8_t *bytes = (uint8_t *)malloc((size_t)size);
+    if (!bytes) { fclose(f); return; }
+    if (fread(bytes, 1, (size_t)size, f) == (size_t)size) {
+        uint8_t digest[32];
+        sha256_compute(bytes, (size_t)size, digest);
+        for (unsigned i = 0; i < 32; ++i)
+            snprintf(s_executable_digest + 2*i, 3, "%02x", digest[i]);
+    }
+    free(bytes);
+    fclose(f);
+}
+
 void tier2_capture_set_identity(const char *rom, const char *module,
                                const char *program, const char *mapper) {
     /* A session must never contain observations for two images. The caller
      * seals/reset its tables before changing an already established identity. */
     { /* A new machine is a new capture even when the image is unchanged. */
         tier2_capture_close();
+        /* Explicit output names otherwise overwrite the last session's
+         * exclusive costs on reset/rematch. Journals alone cannot restore
+         * those costs. Default paths are already unique per session. */
+        const char *explicit_path = getenv("SNESRECOMP_TIER2_MANIFEST");
+        if (s_rom[0] && s_paths_ready && s_manifest[0] && explicit_path && *explicit_path) {
+            FILE *previous = fopen(s_manifest, "rb");
+            if (previous) {
+                char archive[PATH_CAP];
+                fclose(previous);
+                if (snprintf(archive, sizeof archive, "%s.%s.previous.json", s_manifest, s_capture_id) >= (int)sizeof archive ||
+                    rename(s_manifest, archive)) {
+                    fprintf(stderr, "[coverage] could not archive prior checkpoint: %s\n", s_manifest);
+                    s_preserve_explicit = 1;
+                }
+            }
+        }
         s_paths_ready = 0;
         s_manifest[0] = s_journal_path[0] = 0;
         free(s_costs); s_costs = NULL; s_dropped_costs = 0;
@@ -139,6 +201,7 @@ static void init_paths(const char *title) {
     int enabled = tier2_capture_enabled();
     s_paths_ready = 1;
     s_paths_disabled = !enabled;
+    if (enabled) identify_executable();
     s_journal_failed = 0;
     static unsigned session;
     char id[80];
@@ -147,8 +210,13 @@ static void init_paths(const char *title) {
              id, (long long)time(NULL), (long)capture_pid(), ++session);
     const char *path = getenv("SNESRECOMP_TIER2_MANIFEST");
     if (path && *path) {
-        if (strlen(path) >= sizeof s_manifest) goto bad_path;
-        strcpy(s_manifest, path);
+        if (s_preserve_explicit) {
+            if (snprintf(s_manifest, sizeof s_manifest, "%s.%s.json", path, s_capture_id) >= (int)sizeof s_manifest) goto bad_path;
+            s_preserve_explicit = 0;
+        } else {
+            if (strlen(path) >= sizeof s_manifest) goto bad_path;
+            strcpy(s_manifest, path);
+        }
     } else {
         char root[PATH_CAP], dir[PATH_CAP];
         const char *base = getenv("SNESRECOMP_COVERAGE_DIR");
@@ -202,9 +270,11 @@ void tier2_capture_write_header(FILE *f, const char *title, int journal) {
     fprintf(f, "{\"schema\":\"snesrecomp tier2 %s v2\",\"capture_id\":\"%s\","
                "\"rom_title\":\"%s\",\"sequence\":%llu,\"identity\":{"
                "\"rom_sha256\":\"%s\",\"module_id\":\"%s\","
-               "\"program_digest\":\"%s\",\"build_digest\":\"%s\",\"mapper\":\"%s\"},",
+               "\"program_digest\":\"%s\",\"build_digest\":\"%s\","
+               "\"generation_digest\":\"%s\",\"mapper\":\"%s\"},",
             journal ? "discovery" : "coverage", s_capture_id, safe,
-            (unsigned long long)s_sequence, s_rom, s_module, s_program, s_build, s_mapper);
+            (unsigned long long)s_sequence, s_rom, s_module, s_program,
+            s_executable_digest, s_build, s_mapper);
 }
 FILE *tier2_capture_journal(const char *title) {
     if (!tier2_capture_enabled()) return NULL;
@@ -277,6 +347,27 @@ void tier2_capture_write_costs(FILE *f) {
                 (unsigned long long)c->instructions, (unsigned long long)c->cycles);
     }
     fprintf(f, "],");
+}
+
+int tier2_capture_write_cost_checkpoint(const char *title) {
+    if (!tier2_capture_enabled()) return 1;
+    const char *path = tier2_capture_manifest_path(title);
+    char temp[PATH_CAP];
+    if (!*path || snprintf(temp, sizeof temp, "%s.tmp", path) >= (int)sizeof temp) return 0;
+    FILE *f = fopen(temp, "w");
+    if (!f) return 0;
+    tier2_capture_next_sequence();
+    tier2_capture_write_header(f, title, 0);
+    tier2_capture_write_costs(f);
+    fputs("\"capture_scope\":\"instruction_costs_only\",\"discoveries\":[],"
+          "\"checkpoint_complete\":true}\n", f);
+    int failed = ferror(f);
+    if (fclose(f)) failed = 1;
+    if (failed || !tier2_capture_replace(temp, path)) {
+        ++s_journal_failed;
+        return 0;
+    }
+    return 1;
 }
 
 /* Legacy entry point retained for third-party hosts. These are observations,

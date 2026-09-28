@@ -129,3 +129,56 @@ def test_ram_snapshots_preserve_cpu_mode_variants(tmp_path):
     document["ram_routines"] = [snapshot, dict(snapshot, entry_mx="M1X1"),
                                 dict(snapshot, emulation=1)]
     assert len(load_profiles([write(tmp_path / "capture.json", document)]).ram_routines) == 3
+
+
+def test_bundle_roundtrip_preserves_session_identity_and_costs(tmp_path):
+    checkpoint = capture([row(completed_hits=9)], seq=3)
+    checkpoint["costs"] = [dict(row(), record_kind="instruction", interpreted_instructions=17)]
+    journal = dict(capture([], seq=1), schema="snesrecomp tier2 discovery v2", row=row(pending_hits=1))
+    bundle = write(tmp_path / "bundle.json", {"schema": "snesrecomp tier2 bundle v2",
+                                            "records": [journal, checkpoint, checkpoint]})
+    original = write(tmp_path / "original.json", checkpoint)
+    profile = load_profiles([bundle, original])
+    assert len(profile.captures) == 1
+    assert profile.discoveries[0]["completed_hits"] == 9
+    assert profile.discoveries[0]["pending_hits"] == 0
+    assert profile.costs[0]["interpreted_instructions"] == 17
+
+
+def test_blacklist_applies_even_when_cfg_already_reaches_target(tmp_path):
+    document = capture([row()])
+    document["unsafe_aot_targets"] = ["0x008100"]
+    denied = set()
+    assert not discover_profile_roots([write(tmp_path / "profile.json", document)], (), denied)
+    assert denied == {0x008100, 0x808100}
+
+
+def test_recovered_journal_cannot_claim_complete_instruction_costs(tmp_path):
+    checkpoint = dict(capture([row()], seq=3), checkpoint_complete=True)
+    journal = dict(capture([], seq=4), schema="snesrecomp tier2 discovery v2", row=row())
+    cp = write(tmp_path / "checkpoint.json", checkpoint)
+    tail = write(tmp_path / "tail.json", journal)
+    assert any("costs may be incomplete" in w for w in load_profiles([cp, tail]).warnings)
+    checkpoint["sequence"] = 5
+    write(cp, checkpoint)
+    assert not any("costs may be incomplete" in w for w in load_profiles([tail, cp]).warnings)
+
+
+def test_ram_snapshot_import_order_does_not_lose_recent_hits(tmp_path):
+    old, new = capture([], seq=1), capture([], seq=4)
+    snap = dict(entry_pc24="0x7E8000", hash="12345678", entry_mx="M0X1", emulation=0, hits=1)
+    old["ram_routines"] = [snap]
+    new["ram_routines"] = [dict(snap, hits=9)]
+    a = write(tmp_path / "old.json", old)
+    b = write(tmp_path / "new.json", new)
+    assert load_profiles([b, a, b]).ram_routines[0]["hits"] == 9
+
+
+def test_standalone_cost_only_capture_does_not_require_generated_code(tmp_path):
+    document = dict(capture([]), capture_scope="instruction_costs_only", checkpoint_complete=True)
+    document["identity"].update(program_digest="", build_digest="c" * 64)
+    document["costs"] = [dict(row(), record_kind="instruction", interpreted_instructions=17)]
+    profile = load_profiles([write(tmp_path / "costs.json", document)])
+    assert not profile.warnings
+    assert not profile.discoveries
+    assert profile.costs[0]["interpreted_instructions"] == 17

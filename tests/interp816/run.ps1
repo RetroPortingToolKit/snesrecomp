@@ -30,12 +30,15 @@ Build-BelowNormal @(
     "-std=c11", "-Wall", "-Wextra", "-Werror", "-O1",
     "-D_POSIX_C_SOURCE=200809L", "-I$root\runner\src\snes",
     "$root\tests\interp816\tier2_capture_test.c",
+    "$root\runner\src\sha256.c",
     "$root\runner\src\snes\tier2_capture.c", "-o", $tier2Out
 ) $tier2Out
 Push-Location $outDir
 try {
     & $tier2Out disabled
     if ($LASTEXITCODE -ne 0) { throw "tier2 capture disabled test failed" }
+    & $tier2Out lifecycle
+    if ($LASTEXITCODE -ne 0) { throw "tier2 capture lifecycle test failed" }
     & $tier2Out
     if ($LASTEXITCODE -ne 0) { throw "tier2 capture test failed" }
 } finally {
@@ -49,6 +52,7 @@ Build-BelowNormal @(
     "-I$root\runner\src", "-I$root\runner\src\snes",
     "$root\tests\interp816\bridge_test.c",
     "$root\runner\src\snes\interp816.c",
+    "$root\runner\src\sha256.c",
     "$root\runner\src\snes\tier2_capture.c",
     "$root\runner\src\snes\interp_bridge.c",
     "$root\runner\src\snes\cx4.c",
