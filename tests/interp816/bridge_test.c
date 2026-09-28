@@ -219,7 +219,7 @@ RecompReturn cpu_dispatch_pc_paired(CpuState *cpu, uint32 pc24,
          * into the program's cooperative wait primitive. */
         g_aot_called++;
         return interp_tier_dispatch_balanced(cpu, 0x008300, 0x008000,
-                                             cpu->S, frame_size);
+                                             cpu->S, frame_size, false);
     }
     if (g_aot_deadline_unwind && (pc24 & 0xFFFFFF) == FAKE_AOT) {
         g_aot_called++;
@@ -491,7 +491,7 @@ int main(void) {
       cpu_push_jsr_return_frame(&g_c);       /* inherited caller frame (hrv=2) */
       uint16 entry_s = g_c.S;                /* function entry S = after caller's push */
       RecompReturn r = interp_tier_dispatch_balanced(&g_c, 0x008000, 0x00C0DE,
-                                                     entry_s, 2);
+                                                     entry_s, 2, false);
       printf("S5 interp_tier_dispatch_balanced (clean -> interpret, no abandon)\n");
       CHECK(r == RECOMP_RETURN_NORMAL, "r=%d exp NORMAL", (int)r);
       CHECK((g_c.A & 0xFF) == 0x0C, "A.lo=%02X exp 0C (interpreted)", g_c.A & 0xFF);
@@ -510,7 +510,7 @@ int main(void) {
       cpu_push_jsr_return_frame(&g_c);       /* current function's frame */
       uint16 entry_s = g_c.S;
       RecompReturn r = interp_tier_dispatch_balanced(&g_c, 0x008000, 0x00C0DE,
-                                                     entry_s, 2);
+                                                     entry_s, 2, false);
       printf("S5b balanced tail propagates interpreted non-local return\n");
       CHECK(r == RECOMP_RETURN_SKIP_1, "r=%d exp SKIP_1", (int)r);
       CHECK(g_abandon_called == 0, "abandon_called=%d exp 0 (clean interp)", g_abandon_called);
@@ -1012,7 +1012,7 @@ int main(void) {
       cpu_push_jsr_return_frame(&g_c);
       RecompReturn r = tail
           ? interp_tier_dispatch_tail_ex(&g_c, 0xA69000, 0x269000, g_c.S, 2, true)
-          : interp_tier_dispatch_balanced_ex(&g_c, 0xA69000, 0x269000, g_c.S, 2, true);
+          : interp_tier_dispatch_balanced(&g_c, 0xA69000, 0x269000, g_c.S, 2, true);
       CHECK(r == RECOMP_RETURN_NORMAL && g_c.S == 0x01FF && g_c.A == 7,
             "mirrored indirect tail=%u r=%d S=%04X A=%04X", tail, r, g_c.S, g_c.A);
     }
@@ -1020,7 +1020,7 @@ int main(void) {
       g_c.emulation = 0; g_c.PB = 0xA6; cpu_mirrors_to_p(&g_c);
       uint8_t body[] = {0xA9,0x07,0x60};
       load(0xA69200, body, sizeof body); cpu_push_jsr_return_frame(&g_c);
-      RecompReturn r = interp_tier_dispatch_balanced_ex(
+      RecompReturn r = interp_tier_dispatch_balanced(
           &g_c, 0xA69200, 0xA69200, g_c.S, 2, false);
       CHECK(r == RECOMP_RETURN_NORMAL && g_c.S == 0x01FF && g_c.A == 7,
             "ordinary continuation r=%d S=%04X A=%04X", r, g_c.S, g_c.A);

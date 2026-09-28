@@ -178,6 +178,10 @@ def main() -> int:
              "AOT roots (repeatable)")
     parser.add_argument("--legacy-profile-rom-sha256", help="Explicitly associate legacy profiles with this ROM digest")
     parser.add_argument(
+        "--historical-profile-manifest", action="append", default=[],
+        help="Retain seeds from a separate historical checkpoint/bundle; "
+             "validate each identity independently, never merge its costs")
+    parser.add_argument(
         "--cfg-roots", action="store_true",
         help="treat every cfg `func` declaration as an analysis root in "
              "addition to the architectural vectors. This is the static-"
@@ -272,7 +276,8 @@ def main() -> int:
         profile_roots = discover_profile_roots(
             args.profile_manifest, declared_entry_pcs, profile_force_lle,
             expected_rom=rom_sha256_hex, expected_module=args.module_id,
-            legacy_rom=args.legacy_profile_rom_sha256)
+            legacy_rom=args.legacy_profile_rom_sha256,
+            historical_paths=args.historical_profile_manifest)
     except ValueError as exc:
         parser.error(str(exc))
     if profile_force_lle and parsed:

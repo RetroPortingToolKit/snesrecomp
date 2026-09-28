@@ -3075,7 +3075,7 @@ RecompReturn interp_tier_dispatch_tail_ex(CpuState *cpu, uint32_t target_pc24,
      * AOT tail fallbacks retain the balanced nested-interpreter path below. */
     if (s_interp_bounce_owner_depth > 0)
         return interp_bridge_lle_yield_unwind(cpu, target_pc24);
-    return interp_tier_dispatch_balanced_ex(cpu, target_pc24, site_pc24,
+    return interp_tier_dispatch_balanced(cpu, target_pc24, site_pc24,
                                             entry_s, hrv, from_indirect);
 }
 
@@ -3084,16 +3084,6 @@ RecompReturn interp_tier_dispatch_tail_ex(CpuState *cpu, uint32_t target_pc24,
  * a clean return the routine's RTS/RTL has balanced the stack; on a bail fall
  * back to the stack-safe abandon so we are never worse than the drop path. */
 RecompReturn interp_tier_dispatch_balanced(CpuState *cpu, uint32_t target_pc24,
-                                           uint32_t site_pc24, uint16_t entry_s,
-                                           uint8_t hrv) {
-    /* Compatibility for previously emitted trees. New output supplies the
-     * semantic flag, since address equality cannot identify a mirrored jump
-     * or distinguish a truncated continuation from an indirect instruction. */
-    return interp_tier_dispatch_balanced_ex(cpu, target_pc24, site_pc24,
-        entry_s, hrv, target_pc24 == site_pc24);
-}
-
-RecompReturn interp_tier_dispatch_balanced_ex(CpuState *cpu, uint32_t target_pc24,
     uint32_t site_pc24, uint16_t entry_s, uint8_t hrv, bool from_indirect) {
     interp_tier_note(target_pc24);
     const uint8_t mx = tier2_entry_mx(cpu);

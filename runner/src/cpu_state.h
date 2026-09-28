@@ -684,13 +684,10 @@ int rtl_aot_node_denied(uint32 pc24);
  * cpu_push_interrupt_frame() frame, then return to the host scheduler. */
 RecompReturn interp_tier_dispatch_interrupt(CpuState *cpu,
                                             uint32 target_pc24);
-RecompReturn interp_tier_dispatch_balanced(CpuState *cpu, uint32 target_pc24,
-                                           uint32 site_pc24, uint16 entry_s,
-                                           uint8 hrv);
 /* Explicit entry semantics for new generated code. from_indirect means the
  * entry is the JMP/JML instruction itself, whose first landing is the target.
  * Ordinary continuations must record their entry, even when target == site. */
-RecompReturn interp_tier_dispatch_balanced_ex(CpuState *cpu, uint32 target_pc24,
+RecompReturn interp_tier_dispatch_balanced(CpuState *cpu, uint32 target_pc24,
     uint32 site_pc24, uint16 entry_s, uint8 hrv, bool from_indirect);
 /* Tail transfer that preserves the enclosing architectural boundary.  Normal
  * subroutines stop past entry_s; an interrupt handler stops at its RTI. */

@@ -1,0 +1,570 @@
+{
+  "schema": "snesrecomp coverage validation report v1",
+  "date": "2026-09-28",
+  "title": "Mega Man X USA v1.1",
+  "title_base": "b3210a6",
+  "title_branch": "feat/coverage-correctness",
+  "status": "automated qualification passed; owner playtest pending; no merge/release",
+  "static": {
+    "roots_before": 243,
+    "roots_after": 247,
+    "emitted_aot_before": 4708,
+    "emitted_aot_after": 4708,
+    "canonical_aot_entry_modes_before": 4354,
+    "canonical_aot_entry_modes_after": 4354,
+    "lle_variants_before": 78,
+    "lle_variants_after": 78,
+    "independent_disassembly_authority": false
+  },
+  "routes": {
+    "attract": {
+      "frames": 12000,
+      "comparison": {
+        "replay_matches": true,
+        "reasons": [],
+        "interpreted_work": {
+          "snes_cpu": {
+            "before": 10985081,
+            "after": 10985081,
+            "reduction": 0,
+            "percent": 0.0
+          }
+        },
+        "scope": "Only the recorded route and evidence; manual playtest still required"
+      },
+      "runs": {
+        "control": {
+          "result": {
+            "command": [
+              "F:\\Projects\\snesrecomp\\_wt-coverage-feedback\\build\\authority-study\\mmx\\current-attract-control/MegaManXSNESRecomp.exe",
+              "F:\\Projects\\snesrecomp\\MegamanXRecomp\\mmx.sfc",
+              "--no-launcher",
+              "--config",
+              "F:\\Projects\\snesrecomp\\_wt-coverage-feedback\\build\\authority-study\\mmx\\current-attract-control/config.ini",
+              "--script",
+              "F:\\Projects\\snesrecomp\\_wt-coverage-feedback\\build\\authority-study\\mmx\\current-attract-control/input.txt",
+              "--framedump",
+              "F:\\Projects\\snesrecomp\\_wt-coverage-feedback\\build\\authority-study\\mmx\\current-attract-control/frames"
+            ],
+            "returncode": 0,
+            "seconds": 41.235000000015134,
+            "cost_accounting": true,
+            "rom_sha256": "b8f70a6e7fb93819f79693578887e2c11e196bdf1ac6ddc7cb924b1ad0be2d32",
+            "evidence": {
+              "trace.jsonl": "cbc83de87d7d4cc8f0964a8be3266662ff979aef02eb5aaa8f04860da9e9ea29",
+              "cpu.csv": "3b739ac50c7b87c6442e266f0fa81499961b2fa0f5d2ecf047f28b98e5df4877",
+              "frames/frame_011997_wram.bin": "aed180960ec08b11d139c1d7345d28c550ac044a4c4a91174d82c45059e2c6ed",
+              "frames/frame_011997.bmp": "3ae979b228c2fc9e6b31959a3775fec6fff3b958746a50d0cb1f76a35394bce3",
+              "frames/frame_011997_vram.bin": "3d91e714f66c64199722ab9192c7e74ae1d823da1ad6e2eff5600033ad9c3cb3",
+              "frames/frame_011997_cgram.bin": "90e7068c820027e63ceb0642c4c9efa0005d3a8e76373831d421b4af7bc5d43c",
+              "frames/frame_011997_ppu.json": "b50e3776b949616ba9df91a9cfc1f6ece3364597d928bc9850650eaf24a906c8",
+              "frames/frame_011998_wram.bin": "81d4aaf503d933b0e7a9f8402bf6ff4dcf9fdb188d05dd85dbd4f553b8cf3a0b",
+              "frames/frame_011998.bmp": "c80745b388e5ff0ecffbf1bce6f0bea20073156cfbc2dcff42a90f7fb04cdc83",
+              "frames/frame_011998_vram.bin": "3d91e714f66c64199722ab9192c7e74ae1d823da1ad6e2eff5600033ad9c3cb3",
+              "frames/frame_011998_cgram.bin": "90e7068c820027e63ceb0642c4c9efa0005d3a8e76373831d421b4af7bc5d43c",
+              "frames/frame_011998_ppu.json": "06544870574856818c383475de8dc234137393f11adbd3d0f43bca971e0a92ad",
+              "frames/frame_011999_wram.bin": "9f741d74a162eadac39065a97919560d0f0f350a729d26cbafe2950d488e1fde",
+              "frames/frame_011999.bmp": "feedc01e6e91e03da56bdd78f9f63e8f666ea5e43994a06cb8b4462f487fe22b",
+              "frames/frame_011999_vram.bin": "3d91e714f66c64199722ab9192c7e74ae1d823da1ad6e2eff5600033ad9c3cb3",
+              "frames/frame_011999_cgram.bin": "336080565abf6d127e25ce99c7d38ff56c474a6933dff572b4ecff2adc5d505d",
+              "frames/frame_011999_ppu.json": "7db46b2b1381f0530814c00b7ceb538e3b1bbb3b1ec26d92449ea3e4a76d0416"
+            },
+            "warnings": [],
+            "instructions": {
+              "snes_cpu": 10985081
+            },
+            "runtime_failures": {
+              "interpreter_step_cap": 0,
+              "scheduler_bail": 0,
+              "apu_sync_timeout": 0
+            },
+            "activity": {},
+            "case_digest": "5f7b96bb50fb68eaa8768507d5472ca64b07cf37ab7b6561cc272e500637af71",
+            "identity": {
+              "rom_sha256": "b8f70a6e7fb93819f79693578887e2c11e196bdf1ac6ddc7cb924b1ad0be2d32",
+              "module_id": "main",
+              "program_digest": "16b3b768480c56cfcdb3ddfc2dbb797dd1f091b7d9a7ec68ca1cc15f503a9f2a",
+              "build_digest": "e2dac119cc5eed268b87e258e89967ddec2345a0a0b5f390c8e9df53c4d7166f",
+              "generation_digest": "8a3c833c844eb097bbac01d1869e4636684b20e8245a0093c53a0fbf78204552",
+              "mapper": "lorom"
+            },
+            "transfer_tuples": 28,
+            "bail_hits": 0
+          },
+          "case": {
+            "route": {
+              "title": "mmx",
+              "route": "attract",
+              "frames": 12000,
+              "stage": "current"
+            },
+            "rom_sha256": "b8f70a6e7fb93819f79693578887e2c11e196bdf1ac6ddc7cb924b1ad0be2d32",
+            "timeout": 240,
+            "copies": {
+              "F:\\Projects\\snesrecomp\\_wt-coverage-mmx\\build-control\\MegaManXSNESRecomp.exe": "MegaManXSNESRecomp.exe",
+              "F:\\Projects\\snesrecomp\\_wt-coverage-mmx\\build-control\\SDL3.dll": "SDL3.dll"
+            },
+            "files": {
+              "input.txt": "wait 12000\n",
+              "config.ini": "[Graphics]\nOutputMethod=SDL-Software\nWindowScale=1\nNewRenderer=1\nNoSpriteLimits=1\nWidescreen=0\n[General]\nDisableFrameDelay=1\nAutosave=0\nSkipLauncher=1\n[Sound]\nEnableAudio=1\n"
+            },
+            "env": {
+              "PATH": "C:/msys64/mingw64/bin;C:\\Users\\Matthew\\.codex\\tmp\\arg0\\codex-arg0k1LPZ7;C:\\Users\\Matthew\\AppData\\Roaming\\nvm\\v24.12.0\\node_modules\\@openai\\codex\\node_modules\\@openai\\codex-win32-x64\\vendor\\x86_64-pc-windows-msvc\\codex-path;C:\\Program Files\\Eclipse Adoptium\\jdk-17.0.19.10-hotspot\\bin;C:\\VulkanSDK\\1.4.341.1\\Bin;c:\\devkitPro\\msys2\\usr\\bin;C:\\Program Files\\Eclipse Adoptium\\jdk-21.0.10.7-hotspot\\bin;C:\\Program Files\\NVIDIA GPU Computing Toolkit\\CUDA\\v12.8\\bin;C:\\Program Files\\NVIDIA GPU Computing Toolkit\\CUDA\\v12.8\\libnvvp;C:\\Program Files\\Oculus\\Support\\oculus-runtime;C:\\Program Files\\NVIDIA\\CUDNN\\v9.5\\bin;C:\\Program Files\\NVIDIA GPU Computing Toolkit\\CUDA\\v12.6\\bin;C:\\Program Files\\NVIDIA GPU Computing Toolkit\\CUDA\\v12.6\\libnvvp;C:\\Program Files\\ImageMagick-7.1.1-Q16-HDRI;C:\\Windows\\system32;C:\\Windows;C:\\Windows\\System32\\Wbem;C:\\Windows\\System32\\WindowsPowerShell\\v1.0;C:\\Windows\\System32\\OpenSSH;C:\\Program Files\\dotnet;C:\\Users\\Matthew\\AppData\\Roaming\\nvm;C:\\Program Files\\nodejs;C:\\Program Files\\PuTTY;C:\\ffmpeg\\bin;C:\\Program Files\\eSpeak NG;C:\\Program Files\\Calibre2;C:\\Program Files\\Git\\cmd;C:\\Program Files\\NVIDIA Corporation\\Nsight Compute 2024.3.2;C:\\Program Files\\dotnet\\;C:\\Program Files\\NVIDIA Corporation\\Nsight Compute 2025.1.0\\;C:\\Program Files\\NVIDIA Corporation\\NVIDIA App\\NvDLISR;C:\\Program Files (x86)\\cloudflared\\;C:\\Program Files\\Docker\\Docker\\resources\\bin;C:\\Program Files (x86)\\Windows Kits\\10\\Windows Performance Toolkit\\;C:\\Program Files\\WezTerm;C:\\Program Files\\Go\\bin;C:\\Users\\Matthew\\.local\\bin;C:\\Users\\Matthew\\.pyenv\\pyenv-win\\bin;C:\\Users\\Matthew\\.pyenv\\pyenv-win\\shims;C:\\Users\\Matthew\\AppData\\Local\\Microsoft\\WindowsApps;C:\\Users\\Matthew\\AppData\\Local\\Programs\\Microsoft VS Code\\bin;C:\\Users\\Matthew\\.dotnet\\tools;C:\\Users\\Matthew\\AppData\\Local\\Muse Hub\\lib;C:\\Program Files\\smartmontools\\bin;C:\\Users\\Matthew\\AppData\\Local\\Microsoft\\WinGet\\Packages\\Gyan.FFmpeg_Microsoft.Winget.Source_8wekyb3d8bbwe\\ffmpeg-7.1-full_build\\bin;C:\\Users\\Matthew\\AppData\\Local\\Programs\\Ollama;C:\\Users\\Matthew\\AppData\\Local\\particle\\bin;C:\\Program Files (x86)\\Nmap;C:\\Program Files\\mitmproxy\\bin;C:\\Users\\Matthew\\go\\bin;C:\\msys64\\mingw64\\bin;C:\\Program Files\\PuTTY\\;C:\\Program Files\\GitHub CLI\\;C:\\WINDOWS\\system32;C:\\WINDOWS;C:\\WINDOWS\\System32\\Wbem;C:\\WINDOWS\\System32\\WindowsPowerShell\\v1.0\\;C:\\WINDOWS\\System32\\OpenSSH\\;C:\\Program Files\\CMake\\bin;C:\\Users\\Matthew\\.cargo\\bin;C:\\Users\\Matthew\\AppData\\Local\\Programs\\Python\\Python312\\Scripts;C:\\Users\\Matthew\\AppData\\Local\\Programs\\Python\\Python312;C:\\Users\\Matthew\\AppData\\Local\\Programs\\Python\\Launcher;C:\\Users\\Matthew\\.local\\bin;C:\\Users\\Matthew\\.pyenv\\pyenv-win\\bin;C:\\Users\\Matthew\\.pyenv\\pyenv-win\\shims;C:\\Users\\Matthew\\AppData\\Local\\Microsoft\\WindowsApps;C:\\Users\\Matthew\\AppData\\Roaming\\nvm;C:\\Program Files\\nodejs;C:\\Users\\Matthew\\AppData\\Local\\Programs\\Microsoft VS Code\\bin;C:\\Users\\Matthew\\.dotnet\\tools;C:\\Users\\Matthew\\AppData\\Local\\Muse Hub\\lib;C:\\Program Files\\smartmontools\\bin;C:\\Users\\Matthew\\AppData\\Local\\Microsoft\\WinGet\\Packages\\Gyan.FFmpeg_Microsoft.Winget.Source_8wekyb3d8bbwe\\ffmpeg-7.1-full_build\\bin;C:\\Users\\Matthew\\AppData\\Local\\Programs\\Ollama;C:\\Users\\Matthew\\AppData\\Local\\particle\\bin;C:\\Program Files (x86)\\Nmap;C:\\Program Files\\mitmproxy\\bin;C:\\Users\\Matthew\\go\\bin;C:\\Users\\Matthew\\AppData\\Local\\PowerToys\\DSCModules;C:\\Users\\Matthew\\AppData\\Local\\Microsoft\\WinGet\\Packages\\int128.kubelogin_Microsoft.Winget.Source_8wekyb3d8bbwe;C:\\Godot;C:\\Android\\Sdk\\platform-tools;C:\\Android\\Sdk\\emulator;C:\\Users\\Matthew\\.local\\share\\retcomm\\toolchains\\cmake-clang-v1\\latest\\bin;C:\\Users\\Matthew\\AppData\\Local\\retcomm\\toolchains\\cmake-clang-v1\\1.0.9\\bin;C:\\Users\\Matthew\\AppData\\Local\\retcomm\\toolchains\\cmake-clang-v1\\latest\\bin;C:\\Users\\Matthew\\AppData\\Local\\Microsoft\\WindowsApps;C:\\Users\\Matthew\\AppData\\Local\\Microsoft\\WinGet\\Packages\\Ninja-build.Ninja_Microsoft.Winget.Source_8wekyb3d8bbwe;",
+              "SDL_VIDEODRIVER": "dummy",
+              "SDL_AUDIODRIVER": "dummy",
+              "SNESRECOMP_RUN_FRAMES": "12000",
+              "SNESRECOMP_WRAM_TRACE_FILE": "{run}/trace.jsonl",
+              "SNESRECOMP_STATE_TRACE": "{run}/cpu.csv",
+              "SNESRECOMP_SAVE_ROOT": "saves",
+              "SNESRECOMP_FRAMEDUMP_START": "11997",
+              "SNESRECOMP_FRAMEDUMP_END": "11999",
+              "SNESRECOMP_FRAMEDUMP_PIXELS": "1",
+              "SNESRECOMP_FRAMEDUMP_VIDEO": "1"
+            },
+            "command": [
+              "{run}/MegaManXSNESRecomp.exe",
+              "F:\\Projects\\snesrecomp\\MegamanXRecomp\\mmx.sfc",
+              "--no-launcher",
+              "--config",
+              "{run}/config.ini",
+              "--script",
+              "{run}/input.txt",
+              "--framedump",
+              "{run}/frames"
+            ],
+            "evidence": [
+              "trace.jsonl",
+              "cpu.csv",
+              "frames/frame_011997_wram.bin",
+              "frames/frame_011997.bmp",
+              "frames/frame_011997_vram.bin",
+              "frames/frame_011997_cgram.bin",
+              "frames/frame_011997_ppu.json",
+              "frames/frame_011998_wram.bin",
+              "frames/frame_011998.bmp",
+              "frames/frame_011998_vram.bin",
+              "frames/frame_011998_cgram.bin",
+              "frames/frame_011998_ppu.json",
+              "frames/frame_011999_wram.bin",
+              "frames/frame_011999.bmp",
+              "frames/frame_011999_vram.bin",
+              "frames/frame_011999_cgram.bin",
+              "frames/frame_011999_ppu.json"
+            ]
+          },
+          "checkpoint_sha256": "0c1f5b1f5f9331c9fbd2c4a8718e43c3d9c96fa3ef29fd42a0ee9a6c2e07df6e",
+          "journal_sha256": "5d58280d5cad6a2fd77358f2c27215719068c6ae68c24a8678cac7c875a11746",
+          "duplicate_ingest_identical": true,
+          "program_and_executable_identity_match": true
+        },
+        "canonical": {
+          "result": {
+            "command": [
+              "F:\\Projects\\snesrecomp\\_wt-coverage-feedback\\build\\authority-study\\mmx\\current-attract-canonical/MegaManXSNESRecomp.exe",
+              "F:\\Projects\\snesrecomp\\MegamanXRecomp\\mmx.sfc",
+              "--no-launcher",
+              "--config",
+              "F:\\Projects\\snesrecomp\\_wt-coverage-feedback\\build\\authority-study\\mmx\\current-attract-canonical/config.ini",
+              "--script",
+              "F:\\Projects\\snesrecomp\\_wt-coverage-feedback\\build\\authority-study\\mmx\\current-attract-canonical/input.txt",
+              "--framedump",
+              "F:\\Projects\\snesrecomp\\_wt-coverage-feedback\\build\\authority-study\\mmx\\current-attract-canonical/frames"
+            ],
+            "returncode": 0,
+            "seconds": 43.375,
+            "cost_accounting": true,
+            "rom_sha256": "b8f70a6e7fb93819f79693578887e2c11e196bdf1ac6ddc7cb924b1ad0be2d32",
+            "evidence": {
+              "trace.jsonl": "cbc83de87d7d4cc8f0964a8be3266662ff979aef02eb5aaa8f04860da9e9ea29",
+              "cpu.csv": "3b739ac50c7b87c6442e266f0fa81499961b2fa0f5d2ecf047f28b98e5df4877",
+              "frames/frame_011997_wram.bin": "aed180960ec08b11d139c1d7345d28c550ac044a4c4a91174d82c45059e2c6ed",
+              "frames/frame_011997.bmp": "3ae979b228c2fc9e6b31959a3775fec6fff3b958746a50d0cb1f76a35394bce3",
+              "frames/frame_011997_vram.bin": "3d91e714f66c64199722ab9192c7e74ae1d823da1ad6e2eff5600033ad9c3cb3",
+              "frames/frame_011997_cgram.bin": "90e7068c820027e63ceb0642c4c9efa0005d3a8e76373831d421b4af7bc5d43c",
+              "frames/frame_011997_ppu.json": "b50e3776b949616ba9df91a9cfc1f6ece3364597d928bc9850650eaf24a906c8",
+              "frames/frame_011998_wram.bin": "81d4aaf503d933b0e7a9f8402bf6ff4dcf9fdb188d05dd85dbd4f553b8cf3a0b",
+              "frames/frame_011998.bmp": "c80745b388e5ff0ecffbf1bce6f0bea20073156cfbc2dcff42a90f7fb04cdc83",
+              "frames/frame_011998_vram.bin": "3d91e714f66c64199722ab9192c7e74ae1d823da1ad6e2eff5600033ad9c3cb3",
+              "frames/frame_011998_cgram.bin": "90e7068c820027e63ceb0642c4c9efa0005d3a8e76373831d421b4af7bc5d43c",
+              "frames/frame_011998_ppu.json": "06544870574856818c383475de8dc234137393f11adbd3d0f43bca971e0a92ad",
+              "frames/frame_011999_wram.bin": "9f741d74a162eadac39065a97919560d0f0f350a729d26cbafe2950d488e1fde",
+              "frames/frame_011999.bmp": "feedc01e6e91e03da56bdd78f9f63e8f666ea5e43994a06cb8b4462f487fe22b",
+              "frames/frame_011999_vram.bin": "3d91e714f66c64199722ab9192c7e74ae1d823da1ad6e2eff5600033ad9c3cb3",
+              "frames/frame_011999_cgram.bin": "336080565abf6d127e25ce99c7d38ff56c474a6933dff572b4ecff2adc5d505d",
+              "frames/frame_011999_ppu.json": "7db46b2b1381f0530814c00b7ceb538e3b1bbb3b1ec26d92449ea3e4a76d0416"
+            },
+            "warnings": [],
+            "instructions": {
+              "snes_cpu": 10985081
+            },
+            "runtime_failures": {
+              "interpreter_step_cap": 0,
+              "scheduler_bail": 0,
+              "apu_sync_timeout": 0
+            },
+            "activity": {},
+            "case_digest": "5f7b96bb50fb68eaa8768507d5472ca64b07cf37ab7b6561cc272e500637af71",
+            "identity": {
+              "rom_sha256": "b8f70a6e7fb93819f79693578887e2c11e196bdf1ac6ddc7cb924b1ad0be2d32",
+              "module_id": "main",
+              "program_digest": "6d52cf56b4809036931e5beab5201a6643025730d64fcf62b6c2db836653a383",
+              "build_digest": "203b037a1aec90d93b52a2c1d09bc7b418df0af6caaa250cd8e46e351c083a5a",
+              "generation_digest": "f514c5036b61ec11f1dab8682fdf2a3f2747b4581d850286da612aec2aa686fd",
+              "mapper": "lorom"
+            },
+            "transfer_tuples": 28,
+            "bail_hits": 0
+          },
+          "case": {
+            "route": {
+              "title": "mmx",
+              "route": "attract",
+              "frames": 12000,
+              "stage": "current"
+            },
+            "rom_sha256": "b8f70a6e7fb93819f79693578887e2c11e196bdf1ac6ddc7cb924b1ad0be2d32",
+            "timeout": 240,
+            "copies": {
+              "F:\\Projects\\snesrecomp\\_wt-coverage-mmx\\build-canonical\\MegaManXSNESRecomp.exe": "MegaManXSNESRecomp.exe",
+              "F:\\Projects\\snesrecomp\\_wt-coverage-mmx\\build-canonical\\SDL3.dll": "SDL3.dll"
+            },
+            "files": {
+              "input.txt": "wait 12000\n",
+              "config.ini": "[Graphics]\nOutputMethod=SDL-Software\nWindowScale=1\nNewRenderer=1\nNoSpriteLimits=1\nWidescreen=0\n[General]\nDisableFrameDelay=1\nAutosave=0\nSkipLauncher=1\n[Sound]\nEnableAudio=1\n"
+            },
+            "env": {
+              "PATH": "C:/msys64/mingw64/bin;C:\\Users\\Matthew\\.codex\\tmp\\arg0\\codex-arg0k1LPZ7;C:\\Users\\Matthew\\AppData\\Roaming\\nvm\\v24.12.0\\node_modules\\@openai\\codex\\node_modules\\@openai\\codex-win32-x64\\vendor\\x86_64-pc-windows-msvc\\codex-path;C:\\Program Files\\Eclipse Adoptium\\jdk-17.0.19.10-hotspot\\bin;C:\\VulkanSDK\\1.4.341.1\\Bin;c:\\devkitPro\\msys2\\usr\\bin;C:\\Program Files\\Eclipse Adoptium\\jdk-21.0.10.7-hotspot\\bin;C:\\Program Files\\NVIDIA GPU Computing Toolkit\\CUDA\\v12.8\\bin;C:\\Program Files\\NVIDIA GPU Computing Toolkit\\CUDA\\v12.8\\libnvvp;C:\\Program Files\\Oculus\\Support\\oculus-runtime;C:\\Program Files\\NVIDIA\\CUDNN\\v9.5\\bin;C:\\Program Files\\NVIDIA GPU Computing Toolkit\\CUDA\\v12.6\\bin;C:\\Program Files\\NVIDIA GPU Computing Toolkit\\CUDA\\v12.6\\libnvvp;C:\\Program Files\\ImageMagick-7.1.1-Q16-HDRI;C:\\Windows\\system32;C:\\Windows;C:\\Windows\\System32\\Wbem;C:\\Windows\\System32\\WindowsPowerShell\\v1.0;C:\\Windows\\System32\\OpenSSH;C:\\Program Files\\dotnet;C:\\Users\\Matthew\\AppData\\Roaming\\nvm;C:\\Program Files\\nodejs;C:\\Program Files\\PuTTY;C:\\ffmpeg\\bin;C:\\Program Files\\eSpeak NG;C:\\Program Files\\Calibre2;C:\\Program Files\\Git\\cmd;C:\\Program Files\\NVIDIA Corporation\\Nsight Compute 2024.3.2;C:\\Program Files\\dotnet\\;C:\\Program Files\\NVIDIA Corporation\\Nsight Compute 2025.1.0\\;C:\\Program Files\\NVIDIA Corporation\\NVIDIA App\\NvDLISR;C:\\Program Files (x86)\\cloudflared\\;C:\\Program Files\\Docker\\Docker\\resources\\bin;C:\\Program Files (x86)\\Windows Kits\\10\\Windows Performance Toolkit\\;C:\\Program Files\\WezTerm;C:\\Program Files\\Go\\bin;C:\\Users\\Matthew\\.local\\bin;C:\\Users\\Matthew\\.pyenv\\pyenv-win\\bin;C:\\Users\\Matthew\\.pyenv\\pyenv-win\\shims;C:\\Users\\Matthew\\AppData\\Local\\Microsoft\\WindowsApps;C:\\Users\\Matthew\\AppData\\Local\\Programs\\Microsoft VS Code\\bin;C:\\Users\\Matthew\\.dotnet\\tools;C:\\Users\\Matthew\\AppData\\Local\\Muse Hub\\lib;C:\\Program Files\\smartmontools\\bin;C:\\Users\\Matthew\\AppData\\Local\\Microsoft\\WinGet\\Packages\\Gyan.FFmpeg_Microsoft.Winget.Source_8wekyb3d8bbwe\\ffmpeg-7.1-full_build\\bin;C:\\Users\\Matthew\\AppData\\Local\\Programs\\Ollama;C:\\Users\\Matthew\\AppData\\Local\\particle\\bin;C:\\Program Files (x86)\\Nmap;C:\\Program Files\\mitmproxy\\bin;C:\\Users\\Matthew\\go\\bin;C:\\msys64\\mingw64\\bin;C:\\Program Files\\PuTTY\\;C:\\Program Files\\GitHub CLI\\;C:\\WINDOWS\\system32;C:\\WINDOWS;C:\\WINDOWS\\System32\\Wbem;C:\\WINDOWS\\System32\\WindowsPowerShell\\v1.0\\;C:\\WINDOWS\\System32\\OpenSSH\\;C:\\Program Files\\CMake\\bin;C:\\Users\\Matthew\\.cargo\\bin;C:\\Users\\Matthew\\AppData\\Local\\Programs\\Python\\Python312\\Scripts;C:\\Users\\Matthew\\AppData\\Local\\Programs\\Python\\Python312;C:\\Users\\Matthew\\AppData\\Local\\Programs\\Python\\Launcher;C:\\Users\\Matthew\\.local\\bin;C:\\Users\\Matthew\\.pyenv\\pyenv-win\\bin;C:\\Users\\Matthew\\.pyenv\\pyenv-win\\shims;C:\\Users\\Matthew\\AppData\\Local\\Microsoft\\WindowsApps;C:\\Users\\Matthew\\AppData\\Roaming\\nvm;C:\\Program Files\\nodejs;C:\\Users\\Matthew\\AppData\\Local\\Programs\\Microsoft VS Code\\bin;C:\\Users\\Matthew\\.dotnet\\tools;C:\\Users\\Matthew\\AppData\\Local\\Muse Hub\\lib;C:\\Program Files\\smartmontools\\bin;C:\\Users\\Matthew\\AppData\\Local\\Microsoft\\WinGet\\Packages\\Gyan.FFmpeg_Microsoft.Winget.Source_8wekyb3d8bbwe\\ffmpeg-7.1-full_build\\bin;C:\\Users\\Matthew\\AppData\\Local\\Programs\\Ollama;C:\\Users\\Matthew\\AppData\\Local\\particle\\bin;C:\\Program Files (x86)\\Nmap;C:\\Program Files\\mitmproxy\\bin;C:\\Users\\Matthew\\go\\bin;C:\\Users\\Matthew\\AppData\\Local\\PowerToys\\DSCModules;C:\\Users\\Matthew\\AppData\\Local\\Microsoft\\WinGet\\Packages\\int128.kubelogin_Microsoft.Winget.Source_8wekyb3d8bbwe;C:\\Godot;C:\\Android\\Sdk\\platform-tools;C:\\Android\\Sdk\\emulator;C:\\Users\\Matthew\\.local\\share\\retcomm\\toolchains\\cmake-clang-v1\\latest\\bin;C:\\Users\\Matthew\\AppData\\Local\\retcomm\\toolchains\\cmake-clang-v1\\1.0.9\\bin;C:\\Users\\Matthew\\AppData\\Local\\retcomm\\toolchains\\cmake-clang-v1\\latest\\bin;C:\\Users\\Matthew\\AppData\\Local\\Microsoft\\WindowsApps;C:\\Users\\Matthew\\AppData\\Local\\Microsoft\\WinGet\\Packages\\Ninja-build.Ninja_Microsoft.Winget.Source_8wekyb3d8bbwe;",
+              "SDL_VIDEODRIVER": "dummy",
+              "SDL_AUDIODRIVER": "dummy",
+              "SNESRECOMP_RUN_FRAMES": "12000",
+              "SNESRECOMP_WRAM_TRACE_FILE": "{run}/trace.jsonl",
+              "SNESRECOMP_STATE_TRACE": "{run}/cpu.csv",
+              "SNESRECOMP_SAVE_ROOT": "saves",
+              "SNESRECOMP_FRAMEDUMP_START": "11997",
+              "SNESRECOMP_FRAMEDUMP_END": "11999",
+              "SNESRECOMP_FRAMEDUMP_PIXELS": "1",
+              "SNESRECOMP_FRAMEDUMP_VIDEO": "1"
+            },
+            "command": [
+              "{run}/MegaManXSNESRecomp.exe",
+              "F:\\Projects\\snesrecomp\\MegamanXRecomp\\mmx.sfc",
+              "--no-launcher",
+              "--config",
+              "{run}/config.ini",
+              "--script",
+              "{run}/input.txt",
+              "--framedump",
+              "{run}/frames"
+            ],
+            "evidence": [
+              "trace.jsonl",
+              "cpu.csv",
+              "frames/frame_011997_wram.bin",
+              "frames/frame_011997.bmp",
+              "frames/frame_011997_vram.bin",
+              "frames/frame_011997_cgram.bin",
+              "frames/frame_011997_ppu.json",
+              "frames/frame_011998_wram.bin",
+              "frames/frame_011998.bmp",
+              "frames/frame_011998_vram.bin",
+              "frames/frame_011998_cgram.bin",
+              "frames/frame_011998_ppu.json",
+              "frames/frame_011999_wram.bin",
+              "frames/frame_011999.bmp",
+              "frames/frame_011999_vram.bin",
+              "frames/frame_011999_cgram.bin",
+              "frames/frame_011999_ppu.json"
+            ]
+          },
+          "checkpoint_sha256": "bef2361fe68a6b6fed1d6fd695ab4481bf366d405ada67d38c4590e4bb146bb6",
+          "journal_sha256": "51ab01c2c41f5a53e4da915bda34f6316dd05a56967db8d9dd50ccb50b0bdc9a",
+          "duplicate_ingest_identical": true,
+          "program_and_executable_identity_match": true
+        }
+      }
+    },
+    "highway": {
+      "frames": 12000,
+      "comparison": {
+        "replay_matches": true,
+        "reasons": [],
+        "interpreted_work": {
+          "snes_cpu": {
+            "before": 13985348,
+            "after": 13985348,
+            "reduction": 0,
+            "percent": 0.0
+          }
+        },
+        "scope": "Only the recorded route and evidence; manual playtest still required"
+      },
+      "runs": {
+        "control": {
+          "result": {
+            "command": [
+              "F:\\Projects\\snesrecomp\\_wt-coverage-feedback\\build\\authority-study\\mmx\\current-highway-control/MegaManXSNESRecomp.exe",
+              "F:\\Projects\\snesrecomp\\MegamanXRecomp\\mmx.sfc",
+              "--no-launcher",
+              "--config",
+              "F:\\Projects\\snesrecomp\\_wt-coverage-feedback\\build\\authority-study\\mmx\\current-highway-control/config.ini",
+              "--script",
+              "F:\\Projects\\snesrecomp\\_wt-coverage-feedback\\build\\authority-study\\mmx\\current-highway-control/input.txt",
+              "--framedump",
+              "F:\\Projects\\snesrecomp\\_wt-coverage-feedback\\build\\authority-study\\mmx\\current-highway-control/frames"
+            ],
+            "returncode": 0,
+            "seconds": 37.84299999999348,
+            "cost_accounting": true,
+            "rom_sha256": "b8f70a6e7fb93819f79693578887e2c11e196bdf1ac6ddc7cb924b1ad0be2d32",
+            "evidence": {
+              "trace.jsonl": "18007a3419ed6d49ad3c0f62004907308c48ba77d2c744daf5f7ab1fb08a2042",
+              "cpu.csv": "465caae9ae57e34ef97553cb0564274f6ac5cd8169578d0af2b6e20ddb58cc73",
+              "frames/frame_011997_wram.bin": "191d3198fd9616c68db029a0109cebcda57e148e5ca4ec78120e45c6be3c1196",
+              "frames/frame_011997.bmp": "5ba705b333d16b10da11a14f5685c3279aa85f2a64d968582d63cb1f3a39022c",
+              "frames/frame_011997_vram.bin": "a37a1fedc547f5ed6856ad4f7b2b948e617e7f711b1829b9b6027c4b9adcdb9e",
+              "frames/frame_011997_cgram.bin": "75025f9d1c126bf04d3ee46e97fe2512f695eb35a071438119384eb2bf99d647",
+              "frames/frame_011997_ppu.json": "5f2fedd51de971f38d945ab03a14be2745fdf7d5d4baa61f64e1aad636e54b85",
+              "frames/frame_011998_wram.bin": "0657dae12dbc3cbaf86c6db1de0d71ac5762ad7ceb728f45d218983497dfaf73",
+              "frames/frame_011998.bmp": "5ba705b333d16b10da11a14f5685c3279aa85f2a64d968582d63cb1f3a39022c",
+              "frames/frame_011998_vram.bin": "a37a1fedc547f5ed6856ad4f7b2b948e617e7f711b1829b9b6027c4b9adcdb9e",
+              "frames/frame_011998_cgram.bin": "75025f9d1c126bf04d3ee46e97fe2512f695eb35a071438119384eb2bf99d647",
+              "frames/frame_011998_ppu.json": "fc4f34b998f981f002d0af9283bdc2527970aabd19b8fe4237d5220541d5e31a",
+              "frames/frame_011999_wram.bin": "269432b459ad724fe8e84fb10f706169b3db67fb78c5c8201c41d38479966899",
+              "frames/frame_011999.bmp": "5ba705b333d16b10da11a14f5685c3279aa85f2a64d968582d63cb1f3a39022c",
+              "frames/frame_011999_vram.bin": "a37a1fedc547f5ed6856ad4f7b2b948e617e7f711b1829b9b6027c4b9adcdb9e",
+              "frames/frame_011999_cgram.bin": "75025f9d1c126bf04d3ee46e97fe2512f695eb35a071438119384eb2bf99d647",
+              "frames/frame_011999_ppu.json": "df0d21b63236a2739a7741165bdc22d29d8398796b51b01fa97713fc8f6855e5"
+            },
+            "warnings": [],
+            "instructions": {
+              "snes_cpu": 13985348
+            },
+            "runtime_failures": {
+              "interpreter_step_cap": 0,
+              "scheduler_bail": 0,
+              "apu_sync_timeout": 0
+            },
+            "activity": {},
+            "case_digest": "512844b1ec105e6975e8e0a717c6d32eb773c79ce77e489481e599ddf997c56b",
+            "identity": {
+              "rom_sha256": "b8f70a6e7fb93819f79693578887e2c11e196bdf1ac6ddc7cb924b1ad0be2d32",
+              "module_id": "main",
+              "program_digest": "16b3b768480c56cfcdb3ddfc2dbb797dd1f091b7d9a7ec68ca1cc15f503a9f2a",
+              "build_digest": "e2dac119cc5eed268b87e258e89967ddec2345a0a0b5f390c8e9df53c4d7166f",
+              "generation_digest": "8a3c833c844eb097bbac01d1869e4636684b20e8245a0093c53a0fbf78204552",
+              "mapper": "lorom"
+            },
+            "transfer_tuples": 52,
+            "bail_hits": 0
+          },
+          "case": {
+            "route": {
+              "title": "mmx",
+              "route": "highway",
+              "frames": 12000,
+              "stage": "current"
+            },
+            "rom_sha256": "b8f70a6e7fb93819f79693578887e2c11e196bdf1ac6ddc7cb924b1ad0be2d32",
+            "timeout": 240,
+            "copies": {
+              "F:\\Projects\\snesrecomp\\_wt-coverage-mmx\\build-control\\MegaManXSNESRecomp.exe": "MegaManXSNESRecomp.exe",
+              "F:\\Projects\\snesrecomp\\_wt-coverage-mmx\\build-control\\SDL3.dll": "SDL3.dll"
+            },
+            "files": {
+              "input.txt": "wait 900\npress start 1\nwait 1800\npress start 1\nwait 120\npress start 1\nwait 300\npress right+y 50\nwait 11\npress right+y 51\nwait 1\npress left+b+y 40\nwait 3\npress right+b+y 58\nwait 2\npress right+y 25\nwait 2\npress left+b+y 43\nwait 12\npress left+b+y 29\nwait 1\npress right+b 55\nwait 8\npress left+b+y 39\nwait 10\npress right+b 30\nwait 4\npress left+b+y 56\nwait 3\npress left+b+y 36\nwait 7\npress right+b 69\nwait 9\npress right+y 54\nwait 6\npress left+b+y 72\nwait 4\npress right+b 40\nwait 1\npress right+y 49\nwait 12\npress left+b+y 59\nwait 4\npress right+b 25\nwait 11\npress right+y 46\nwait 12\npress right+b+y 67\nwait 9\npress right+b+y 46\nwait 2\npress left+b+y 26\nwait 8\npress right+b+y 52\nwait 3\npress right+y 65\nwait 5\npress right+y 54\nwait 3\npress right+y 48\nwait 9\npress left+b+y 67\nwait 11\npress left+b+y 38\nwait 7\npress left+b+y 60\nwait 12\npress right+y 68\nwait 2\npress right+y 37\nwait 9\npress right+b+y 47\nwait 12\npress right+y 43\nwait 10\npress right+y 67\nwait 1\npress right+b+y 48\nwait 4\npress right+b 48\nwait 2\npress right+y 60\nwait 3\npress left+b+y 57\nwait 7\npress right+b 39\nwait 7\npress right+b+y 55\nwait 2\npress left+b+y 56\nwait 2\npress right+y 58\nwait 5\npress right+y 54\nwait 3\npress right+y 62\nwait 5\npress right+y 43\nwait 3\npress right+y 47\nwait 5\npress right+y 27\nwait 4\npress right+y 50\nwait 9\npress right+b+y 55\nwait 8\npress right+y 40\nwait 7\npress right+y 32\nwait 2\npress left+b+y 67\nwait 12\npress right+b+y 35\nwait 4\npress right+y 43\nwait 3\npress right+b+y 70\nwait 6\npress right+y 58\nwait 8\npress right+b+y 51\nwait 10\npress right+b+y 56\nwait 8\npress right+b+y 30\nwait 10\npress right+b 48\nwait 1\npress right+b 70\nwait 8\npress right+b+y 75\nwait 9\npress right+b 60\nwait 6\npress right+b 63\nwait 12\npress right+b 28\nwait 4\npress right+y 64\nwait 2\npress right+b+y 69\nwait 11\npress right+b 59\nwait 11\npress left+b+y 66\nwait 4\npress right+b+y 36\nwait 11\npress right+b 64\nwait 4\npress right+b 28\nwait 9\npress right+b 70\nwait 1\npress right+y 43\nwait 3\npress right+y 75\nwait 11\npress right+y 72\nwait 10\npress right+b 66\nwait 4\npress left+b+y 60\nwait 7\npress right+b 27\nwait 9\npress right+y 73\nwait 3\npress right+b 69\nwait 7\npress right+y 28\nwait 7\npress right+b+y 69\nwait 2\npress right+b 67\nwait 5\npress right+b 36\nwait 2\npress left+b+y 41\nwait 2\npress left+b+y 71\nwait 1\npress right+y 34\nwait 2\npress left+b+y 57\nwait 1\npress right+y 67\nwait 6\npress left+b+y 53\nwait 9\npress right+b+y 36\nwait 6\npress right+y 48\nwait 12\npress right+y 75\nwait 3\npress right+y 49\nwait 9\npress right+b 42\nwait 6\npress right+b 44\nwait 4\npress left+b+y 48\nwait 2\npress right+y 57\nwait 5\n",
+              "config.ini": "[Graphics]\nOutputMethod=SDL-Software\nWindowScale=1\nNewRenderer=1\nNoSpriteLimits=1\nWidescreen=0\n[General]\nDisableFrameDelay=1\nAutosave=0\nSkipLauncher=1\n[Sound]\nEnableAudio=1\n"
+            },
+            "env": {
+              "PATH": "C:/msys64/mingw64/bin;C:\\Users\\Matthew\\.codex\\tmp\\arg0\\codex-arg0k1LPZ7;C:\\Users\\Matthew\\AppData\\Roaming\\nvm\\v24.12.0\\node_modules\\@openai\\codex\\node_modules\\@openai\\codex-win32-x64\\vendor\\x86_64-pc-windows-msvc\\codex-path;C:\\Program Files\\Eclipse Adoptium\\jdk-17.0.19.10-hotspot\\bin;C:\\VulkanSDK\\1.4.341.1\\Bin;c:\\devkitPro\\msys2\\usr\\bin;C:\\Program Files\\Eclipse Adoptium\\jdk-21.0.10.7-hotspot\\bin;C:\\Program Files\\NVIDIA GPU Computing Toolkit\\CUDA\\v12.8\\bin;C:\\Program Files\\NVIDIA GPU Computing Toolkit\\CUDA\\v12.8\\libnvvp;C:\\Program Files\\Oculus\\Support\\oculus-runtime;C:\\Program Files\\NVIDIA\\CUDNN\\v9.5\\bin;C:\\Program Files\\NVIDIA GPU Computing Toolkit\\CUDA\\v12.6\\bin;C:\\Program Files\\NVIDIA GPU Computing Toolkit\\CUDA\\v12.6\\libnvvp;C:\\Program Files\\ImageMagick-7.1.1-Q16-HDRI;C:\\Windows\\system32;C:\\Windows;C:\\Windows\\System32\\Wbem;C:\\Windows\\System32\\WindowsPowerShell\\v1.0;C:\\Windows\\System32\\OpenSSH;C:\\Program Files\\dotnet;C:\\Users\\Matthew\\AppData\\Roaming\\nvm;C:\\Program Files\\nodejs;C:\\Program Files\\PuTTY;C:\\ffmpeg\\bin;C:\\Program Files\\eSpeak NG;C:\\Program Files\\Calibre2;C:\\Program Files\\Git\\cmd;C:\\Program Files\\NVIDIA Corporation\\Nsight Compute 2024.3.2;C:\\Program Files\\dotnet\\;C:\\Program Files\\NVIDIA Corporation\\Nsight Compute 2025.1.0\\;C:\\Program Files\\NVIDIA Corporation\\NVIDIA App\\NvDLISR;C:\\Program Files (x86)\\cloudflared\\;C:\\Program Files\\Docker\\Docker\\resources\\bin;C:\\Program Files (x86)\\Windows Kits\\10\\Windows Performance Toolkit\\;C:\\Program Files\\WezTerm;C:\\Program Files\\Go\\bin;C:\\Users\\Matthew\\.local\\bin;C:\\Users\\Matthew\\.pyenv\\pyenv-win\\bin;C:\\Users\\Matthew\\.pyenv\\pyenv-win\\shims;C:\\Users\\Matthew\\AppData\\Local\\Microsoft\\WindowsApps;C:\\Users\\Matthew\\AppData\\Local\\Programs\\Microsoft VS Code\\bin;C:\\Users\\Matthew\\.dotnet\\tools;C:\\Users\\Matthew\\AppData\\Local\\Muse Hub\\lib;C:\\Program Files\\smartmontools\\bin;C:\\Users\\Matthew\\AppData\\Local\\Microsoft\\WinGet\\Packages\\Gyan.FFmpeg_Microsoft.Winget.Source_8wekyb3d8bbwe\\ffmpeg-7.1-full_build\\bin;C:\\Users\\Matthew\\AppData\\Local\\Programs\\Ollama;C:\\Users\\Matthew\\AppData\\Local\\particle\\bin;C:\\Program Files (x86)\\Nmap;C:\\Program Files\\mitmproxy\\bin;C:\\Users\\Matthew\\go\\bin;C:\\msys64\\mingw64\\bin;C:\\Program Files\\PuTTY\\;C:\\Program Files\\GitHub CLI\\;C:\\WINDOWS\\system32;C:\\WINDOWS;C:\\WINDOWS\\System32\\Wbem;C:\\WINDOWS\\System32\\WindowsPowerShell\\v1.0\\;C:\\WINDOWS\\System32\\OpenSSH\\;C:\\Program Files\\CMake\\bin;C:\\Users\\Matthew\\.cargo\\bin;C:\\Users\\Matthew\\AppData\\Local\\Programs\\Python\\Python312\\Scripts;C:\\Users\\Matthew\\AppData\\Local\\Programs\\Python\\Python312;C:\\Users\\Matthew\\AppData\\Local\\Programs\\Python\\Launcher;C:\\Users\\Matthew\\.local\\bin;C:\\Users\\Matthew\\.pyenv\\pyenv-win\\bin;C:\\Users\\Matthew\\.pyenv\\pyenv-win\\shims;C:\\Users\\Matthew\\AppData\\Local\\Microsoft\\WindowsApps;C:\\Users\\Matthew\\AppData\\Roaming\\nvm;C:\\Program Files\\nodejs;C:\\Users\\Matthew\\AppData\\Local\\Programs\\Microsoft VS Code\\bin;C:\\Users\\Matthew\\.dotnet\\tools;C:\\Users\\Matthew\\AppData\\Local\\Muse Hub\\lib;C:\\Program Files\\smartmontools\\bin;C:\\Users\\Matthew\\AppData\\Local\\Microsoft\\WinGet\\Packages\\Gyan.FFmpeg_Microsoft.Winget.Source_8wekyb3d8bbwe\\ffmpeg-7.1-full_build\\bin;C:\\Users\\Matthew\\AppData\\Local\\Programs\\Ollama;C:\\Users\\Matthew\\AppData\\Local\\particle\\bin;C:\\Program Files (x86)\\Nmap;C:\\Program Files\\mitmproxy\\bin;C:\\Users\\Matthew\\go\\bin;C:\\Users\\Matthew\\AppData\\Local\\PowerToys\\DSCModules;C:\\Users\\Matthew\\AppData\\Local\\Microsoft\\WinGet\\Packages\\int128.kubelogin_Microsoft.Winget.Source_8wekyb3d8bbwe;C:\\Godot;C:\\Android\\Sdk\\platform-tools;C:\\Android\\Sdk\\emulator;C:\\Users\\Matthew\\.local\\share\\retcomm\\toolchains\\cmake-clang-v1\\latest\\bin;C:\\Users\\Matthew\\AppData\\Local\\retcomm\\toolchains\\cmake-clang-v1\\1.0.9\\bin;C:\\Users\\Matthew\\AppData\\Local\\retcomm\\toolchains\\cmake-clang-v1\\latest\\bin;C:\\Users\\Matthew\\AppData\\Local\\Microsoft\\WindowsApps;C:\\Users\\Matthew\\AppData\\Local\\Microsoft\\WinGet\\Packages\\Ninja-build.Ninja_Microsoft.Winget.Source_8wekyb3d8bbwe;",
+              "SDL_VIDEODRIVER": "dummy",
+              "SDL_AUDIODRIVER": "dummy",
+              "SNESRECOMP_RUN_FRAMES": "12000",
+              "SNESRECOMP_WRAM_TRACE_FILE": "{run}/trace.jsonl",
+              "SNESRECOMP_STATE_TRACE": "{run}/cpu.csv",
+              "SNESRECOMP_SAVE_ROOT": "saves",
+              "SNESRECOMP_FRAMEDUMP_START": "11997",
+              "SNESRECOMP_FRAMEDUMP_END": "11999",
+              "SNESRECOMP_FRAMEDUMP_PIXELS": "1",
+              "SNESRECOMP_FRAMEDUMP_VIDEO": "1"
+            },
+            "command": [
+              "{run}/MegaManXSNESRecomp.exe",
+              "F:\\Projects\\snesrecomp\\MegamanXRecomp\\mmx.sfc",
+              "--no-launcher",
+              "--config",
+              "{run}/config.ini",
+              "--script",
+              "{run}/input.txt",
+              "--framedump",
+              "{run}/frames"
+            ],
+            "evidence": [
+              "trace.jsonl",
+              "cpu.csv",
+              "frames/frame_011997_wram.bin",
+              "frames/frame_011997.bmp",
+              "frames/frame_011997_vram.bin",
+              "frames/frame_011997_cgram.bin",
+              "frames/frame_011997_ppu.json",
+              "frames/frame_011998_wram.bin",
+              "frames/frame_011998.bmp",
+              "frames/frame_011998_vram.bin",
+              "frames/frame_011998_cgram.bin",
+              "frames/frame_011998_ppu.json",
+              "frames/frame_011999_wram.bin",
+              "frames/frame_011999.bmp",
+              "frames/frame_011999_vram.bin",
+              "frames/frame_011999_cgram.bin",
+              "frames/frame_011999_ppu.json"
+            ]
+          },
+          "checkpoint_sha256": "2f68cd5fd36bf07e2f01a73706a164230984e649898ec925d7b3c8522ed0a3ff",
+          "journal_sha256": "6fd2324a5f5f8b3c2e7c5832436521bda4b159ba20b7f8a99e660a94d88fc9af",
+          "duplicate_ingest_identical": true,
+          "program_and_executable_identity_match": true
+        },
+        "canonical": {
+          "result": {
+            "command": [
+              "F:\\Projects\\snesrecomp\\_wt-coverage-feedback\\build\\authority-study\\mmx\\current-highway-canonical/MegaManXSNESRecomp.exe",
+              "F:\\Projects\\snesrecomp\\MegamanXRecomp\\mmx.sfc",
+              "--no-launcher",
+              "--config",
+              "F:\\Projects\\snesrecomp\\_wt-coverage-feedback\\build\\authority-study\\mmx\\current-highway-canonical/config.ini",
+              "--script",
+              "F:\\Projects\\snesrecomp\\_wt-coverage-feedback\\build\\authority-study\\mmx\\current-highway-canonical/input.txt",
+              "--framedump",
+              "F:\\Projects\\snesrecomp\\_wt-coverage-feedback\\build\\authority-study\\mmx\\current-highway-canonical/frames"
+            ],
+            "returncode": 0,
+            "seconds": 39.35999999998603,
+            "cost_accounting": true,
+            "rom_sha256": "b8f70a6e7fb93819f79693578887e2c11e196bdf1ac6ddc7cb924b1ad0be2d32",
+            "evidence": {
+              "trace.jsonl": "18007a3419ed6d49ad3c0f62004907308c48ba77d2c744daf5f7ab1fb08a2042",
+              "cpu.csv": "465caae9ae57e34ef97553cb0564274f6ac5cd8169578d0af2b6e20ddb58cc73",
+              "frames/frame_011997_wram.bin": "191d3198fd9616c68db029a0109cebcda57e148e5ca4ec78120e45c6be3c1196",
+              "frames/frame_011997.bmp": "5ba705b333d16b10da11a14f5685c3279aa85f2a64d968582d63cb1f3a39022c",
+              "frames/frame_011997_vram.bin": "a37a1fedc547f5ed6856ad4f7b2b948e617e7f711b1829b9b6027c4b9adcdb9e",
+              "frames/frame_011997_cgram.bin": "75025f9d1c126bf04d3ee46e97fe2512f695eb35a071438119384eb2bf99d647",
+              "frames/frame_011997_ppu.json": "5f2fedd51de971f38d945ab03a14be2745fdf7d5d4baa61f64e1aad636e54b85",
+              "frames/frame_011998_wram.bin": "0657dae12dbc3cbaf86c6db1de0d71ac5762ad7ceb728f45d218983497dfaf73",
+              "frames/frame_011998.bmp": "5ba705b333d16b10da11a14f5685c3279aa85f2a64d968582d63cb1f3a39022c",
+              "frames/frame_011998_vram.bin": "a37a1fedc547f5ed6856ad4f7b2b948e617e7f711b1829b9b6027c4b9adcdb9e",
+              "frames/frame_011998_cgram.bin": "75025f9d1c126bf04d3ee46e97fe2512f695eb35a071438119384eb2bf99d647",
+              "frames/frame_011998_ppu.json": "fc4f34b998f981f002d0af9283bdc2527970aabd19b8fe4237d5220541d5e31a",
+              "frames/frame_011999_wram.bin": "269432b459ad724fe8e84fb10f706169b3db67fb78c5c8201c41d38479966899",
+              "frames/frame_011999.bmp": "5ba705b333d16b10da11a14f5685c3279aa85f2a64d968582d63cb1f3a39022c",
+              "frames/frame_011999_vram.bin": "a37a1fedc547f5ed6856ad4f7b2b948e617e7f711b1829b9b6027c4b9adcdb9e",
+              "frames/frame_011999_cgram.bin": "75025f9d1c126bf04d3ee46e97fe2512f695eb35a071438119384eb2bf99d647",
+              "frames/frame_011999_ppu.json": "df0d21b63236a2739a7741165bdc22d29d8398796b51b01fa97713fc8f6855e5"
+            },
+            "warnings": [],
+            "instructions": {
+              "snes_cpu": 13985348
+            },
+            "runtime_failures": {
+              "interpreter_step_cap": 0,
+              "scheduler_bail": 0,
+              "apu_sync_timeout": 0
+            },
+            "activity": {},
+            "case_digest": "512844b1ec105e6975e8e0a717c6d32eb773c79ce77e489481e599ddf997c56b",
+            "identity": {
+              "rom_sha256": "b8f70a6e7fb93819f79693578887e2c11e196bdf1ac6ddc7cb924b1ad0be2d32",
+              "module_id": "main",
+              "program_digest": "6d52cf56b4809036931e5beab5201a6643025730d64fcf62b6c2db836653a383",
+              "build_digest": "203b037a1aec90d93b52a2c1d09bc7b418df0af6caaa250cd8e46e351c083a5a",
+              "generation_digest": "f514c5036b61ec11f1dab8682fdf2a3f2747b4581d850286da612aec2aa686fd",
+              "mapper": "lorom"
+            },
+            "transfer_tuples": 52,
+            "bail_hits": 0
+          },
+          "case": {
+            "route": {
+              "title": "mmx",
+              "route": "highway",
+              "frames": 12000,
+              "stage": "current"
+            },
+            "rom_sha256": "b8f70a6e7fb93819f79693578887e2c11e196bdf1ac6ddc7cb924b1ad0be2d32",
+            "timeout": 240,
+            "copies": {
+              "F:\\Projects\\snesrecomp\\_wt-coverage-mmx\\build-canonical\\MegaManXSNESRecomp.exe": "MegaManXSNESRecomp.exe",
+              "F:\\Projects\\snesrecomp\\_wt-coverage-mmx\\build-canonical\\SDL3.dll": "SDL3.dll"
+            },
+            "files": {
+              "input.txt": "wait 900\npress start 1\nwait 1800\npress start 1\nwait 120\npress start 1\nwait 300\npress right+y 50\nwait 11\npress right+y 51\nwait 1\npress left+b+y 40\nwait 3\npress right+b+y 58\nwait 2\npress right+y 25\nwait 2\npress left+b+y 43\nwait 12\npress left+b+y 29\nwait 1\npress right+b 55\nwait 8\npress left+b+y 39\nwait 10\npress right+b 30\nwait 4\npress left+b+y 56\nwait 3\npress left+b+y 36\nwait 7\npress right+b 69\nwait 9\npress right+y 54\nwait 6\npress left+b+y 72\nwait 4\npress right+b 40\nwait 1\npress right+y 49\nwait 12\npress left+b+y 59\nwait 4\npress right+b 25\nwait 11\npress right+y 46\nwait 12\npress right+b+y 67\nwait 9\npress right+b+y 46\nwait 2\npress left+b+y 26\nwait 8\npress right+b+y 52\nwait 3\npress right+y 65\nwait 5\npress right+y 54\nwait 3\npress right+y 48\nwait 9\npress left+b+y 67\nwait 11\npress left+b+y 38\nwait 7\npress left+b+y 60\nwait 12\npress right+y 68\nwait 2\npress right+y 37\nwait 9\npress right+b+y 47\nwait 12\npress right+y 43\nwait 10\npress right+y 67\nwait 1\npress right+b+y 48\nwait 4\npress right+b 48\nwait 2\npress right+y 60\nwait 3\npress left+b+y 57\nwait 7\npress right+b 39\nwait 7\npress right+b+y 55\nwait 2\npress left+b+y 56\nwait 2\npress right+y 58\nwait 5\npress right+y 54\nwait 3\npress right+y 62\nwait 5\npress right+y 43\nwait 3\npress right+y 47\nwait 5\npress right+y 27\nwait 4\npress right+y 50\nwait 9\npress right+b+y 55\nwait 8\npress right+y 40\nwait 7\npress right+y 32\nwait 2\npress left+b+y 67\nwait 12\npress right+b+y 35\nwait 4\npress right+y 43\nwait 3\npress right+b+y 70\nwait 6\npress right+y 58\nwait 8\npress right+b+y 51\nwait 10\npress right+b+y 56\nwait 8\npress right+b+y 30\nwait 10\npress right+b 48\nwait 1\npress right+b 70\nwait 8\npress right+b+y 75\nwait 9\npress right+b 60\nwait 6\npress right+b 63\nwait 12\npress right+b 28\nwait 4\npress right+y 64\nwait 2\npress right+b+y 69\nwait 11\npress right+b 59\nwait 11\npress left+b+y 66\nwait 4\npress right+b+y 36\nwait 11\npress right+b 64\nwait 4\npress right+b 28\nwait 9\npress right+b 70\nwait 1\npress right+y 43\nwait 3\npress right+y 75\nwait 11\npress right+y 72\nwait 10\npress right+b 66\nwait 4\npress left+b+y 60\nwait 7\npress right+b 27\nwait 9\npress right+y 73\nwait 3\npress right+b 69\nwait 7\npress right+y 28\nwait 7\npress right+b+y 69\nwait 2\npress right+b 67\nwait 5\npress right+b 36\nwait 2\npress left+b+y 41\nwait 2\npress left+b+y 71\nwait 1\npress right+y 34\nwait 2\npress left+b+y 57\nwait 1\npress right+y 67\nwait 6\npress left+b+y 53\nwait 9\npress right+b+y 36\nwait 6\npress right+y 48\nwait 12\npress right+y 75\nwait 3\npress right+y 49\nwait 9\npress right+b 42\nwait 6\npress right+b 44\nwait 4\npress left+b+y 48\nwait 2\npress right+y 57\nwait 5\n",
+              "config.ini": "[Graphics]\nOutputMethod=SDL-Software\nWindowScale=1\nNewRenderer=1\nNoSpriteLimits=1\nWidescreen=0\n[General]\nDisableFrameDelay=1\nAutosave=0\nSkipLauncher=1\n[Sound]\nEnableAudio=1\n"
+            },
+            "env": {
+              "PATH": "C:/msys64/mingw64/bin;C:\\Users\\Matthew\\.codex\\tmp\\arg0\\codex-arg0k1LPZ7;C:\\Users\\Matthew\\AppData\\Roaming\\nvm\\v24.12.0\\node_modules\\@openai\\codex\\node_modules\\@openai\\codex-win32-x64\\vendor\\x86_64-pc-windows-msvc\\codex-path;C:\\Program Files\\Eclipse Adoptium\\jdk-17.0.19.10-hotspot\\bin;C:\\VulkanSDK\\1.4.341.1\\Bin;c:\\devkitPro\\msys2\\usr\\bin;C:\\Program Files\\Eclipse Adoptium\\jdk-21.0.10.7-hotspot\\bin;C:\\Program Files\\NVIDIA GPU Computing Toolkit\\CUDA\\v12.8\\bin;C:\\Program Files\\NVIDIA GPU Computing Toolkit\\CUDA\\v12.8\\libnvvp;C:\\Program Files\\Oculus\\Support\\oculus-runtime;C:\\Program Files\\NVIDIA\\CUDNN\\v9.5\\bin;C:\\Program Files\\NVIDIA GPU Computing Toolkit\\CUDA\\v12.6\\bin;C:\\Program Files\\NVIDIA GPU Computing Toolkit\\CUDA\\v12.6\\libnvvp;C:\\Program Files\\ImageMagick-7.1.1-Q16-HDRI;C:\\Windows\\system32;C:\\Windows;C:\\Windows\\System32\\Wbem;C:\\Windows\\System32\\WindowsPowerShell\\v1.0;C:\\Windows\\System32\\OpenSSH;C:\\Program Files\\dotnet;C:\\Users\\Matthew\\AppData\\Roaming\\nvm;C:\\Program Files\\nodejs;C:\\Program Files\\PuTTY;C:\\ffmpeg\\bin;C:\\Program Files\\eSpeak NG;C:\\Program Files\\Calibre2;C:\\Program Files\\Git\\cmd;C:\\Program Files\\NVIDIA Corporation\\Nsight Compute 2024.3.2;C:\\Program Files\\dotnet\\;C:\\Program Files\\NVIDIA Corporation\\Nsight Compute 2025.1.0\\;C:\\Program Files\\NVIDIA Corporation\\NVIDIA App\\NvDLISR;C:\\Program Files (x86)\\cloudflared\\;C:\\Program Files\\Docker\\Docker\\resources\\bin;C:\\Program Files (x86)\\Windows Kits\\10\\Windows Performance Toolkit\\;C:\\Program Files\\WezTerm;C:\\Program Files\\Go\\bin;C:\\Users\\Matthew\\.local\\bin;C:\\Users\\Matthew\\.pyenv\\pyenv-win\\bin;C:\\Users\\Matthew\\.pyenv\\pyenv-win\\shims;C:\\Users\\Matthew\\AppData\\Local\\Microsoft\\WindowsApps;C:\\Users\\Matthew\\AppData\\Local\\Programs\\Microsoft VS Code\\bin;C:\\Users\\Matthew\\.dotnet\\tools;C:\\Users\\Matthew\\AppData\\Local\\Muse Hub\\lib;C:\\Program Files\\smartmontools\\bin;C:\\Users\\Matthew\\AppData\\Local\\Microsoft\\WinGet\\Packages\\Gyan.FFmpeg_Microsoft.Winget.Source_8wekyb3d8bbwe\\ffmpeg-7.1-full_build\\bin;C:\\Users\\Matthew\\AppData\\Local\\Programs\\Ollama;C:\\Users\\Matthew\\AppData\\Local\\particle\\bin;C:\\Program Files (x86)\\Nmap;C:\\Program Files\\mitmproxy\\bin;C:\\Users\\Matthew\\go\\bin;C:\\msys64\\mingw64\\bin;C:\\Program Files\\PuTTY\\;C:\\Program Files\\GitHub CLI\\;C:\\WINDOWS\\system32;C:\\WINDOWS;C:\\WINDOWS\\System32\\Wbem;C:\\WINDOWS\\System32\\WindowsPowerShell\\v1.0\\;C:\\WINDOWS\\System32\\OpenSSH\\;C:\\Program Files\\CMake\\bin;C:\\Users\\Matthew\\.cargo\\bin;C:\\Users\\Matthew\\AppData\\Local\\Programs\\Python\\Python312\\Scripts;C:\\Users\\Matthew\\AppData\\Local\\Programs\\Python\\Python312;C:\\Users\\Matthew\\AppData\\Local\\Programs\\Python\\Launcher;C:\\Users\\Matthew\\.local\\bin;C:\\Users\\Matthew\\.pyenv\\pyenv-win\\bin;C:\\Users\\Matthew\\.pyenv\\pyenv-win\\shims;C:\\Users\\Matthew\\AppData\\Local\\Microsoft\\WindowsApps;C:\\Users\\Matthew\\AppData\\Roaming\\nvm;C:\\Program Files\\nodejs;C:\\Users\\Matthew\\AppData\\Local\\Programs\\Microsoft VS Code\\bin;C:\\Users\\Matthew\\.dotnet\\tools;C:\\Users\\Matthew\\AppData\\Local\\Muse Hub\\lib;C:\\Program Files\\smartmontools\\bin;C:\\Users\\Matthew\\AppData\\Local\\Microsoft\\WinGet\\Packages\\Gyan.FFmpeg_Microsoft.Winget.Source_8wekyb3d8bbwe\\ffmpeg-7.1-full_build\\bin;C:\\Users\\Matthew\\AppData\\Local\\Programs\\Ollama;C:\\Users\\Matthew\\AppData\\Local\\particle\\bin;C:\\Program Files (x86)\\Nmap;C:\\Program Files\\mitmproxy\\bin;C:\\Users\\Matthew\\go\\bin;C:\\Users\\Matthew\\AppData\\Local\\PowerToys\\DSCModules;C:\\Users\\Matthew\\AppData\\Local\\Microsoft\\WinGet\\Packages\\int128.kubelogin_Microsoft.Winget.Source_8wekyb3d8bbwe;C:\\Godot;C:\\Android\\Sdk\\platform-tools;C:\\Android\\Sdk\\emulator;C:\\Users\\Matthew\\.local\\share\\retcomm\\toolchains\\cmake-clang-v1\\latest\\bin;C:\\Users\\Matthew\\AppData\\Local\\retcomm\\toolchains\\cmake-clang-v1\\1.0.9\\bin;C:\\Users\\Matthew\\AppData\\Local\\retcomm\\toolchains\\cmake-clang-v1\\latest\\bin;C:\\Users\\Matthew\\AppData\\Local\\Microsoft\\WindowsApps;C:\\Users\\Matthew\\AppData\\Local\\Microsoft\\WinGet\\Packages\\Ninja-build.Ninja_Microsoft.Winget.Source_8wekyb3d8bbwe;",
+              "SDL_VIDEODRIVER": "dummy",
+              "SDL_AUDIODRIVER": "dummy",
+              "SNESRECOMP_RUN_FRAMES": "12000",
+              "SNESRECOMP_WRAM_TRACE_FILE": "{run}/trace.jsonl",
+              "SNESRECOMP_STATE_TRACE": "{run}/cpu.csv",
+              "SNESRECOMP_SAVE_ROOT": "saves",
+              "SNESRECOMP_FRAMEDUMP_START": "11997",
+              "SNESRECOMP_FRAMEDUMP_END": "11999",
+              "SNESRECOMP_FRAMEDUMP_PIXELS": "1",
+              "SNESRECOMP_FRAMEDUMP_VIDEO": "1"
+            },
+            "command": [
+              "{run}/MegaManXSNESRecomp.exe",
+              "F:\\Projects\\snesrecomp\\MegamanXRecomp\\mmx.sfc",
+              "--no-launcher",
+              "--config",
+              "{run}/config.ini",
+              "--script",
+              "{run}/input.txt",
+              "--framedump",
+              "{run}/frames"
+            ],
+            "evidence": [
+              "trace.jsonl",
+              "cpu.csv",
+              "frames/frame_011997_wram.bin",
+              "frames/frame_011997.bmp",
+              "frames/frame_011997_vram.bin",
+              "frames/frame_011997_cgram.bin",
+              "frames/frame_011997_ppu.json",
+              "frames/frame_011998_wram.bin",
+              "frames/frame_011998.bmp",
+              "frames/frame_011998_vram.bin",
+              "frames/frame_011998_cgram.bin",
+              "frames/frame_011998_ppu.json",
+              "frames/frame_011999_wram.bin",
+              "frames/frame_011999.bmp",
+              "frames/frame_011999_vram.bin",
+              "frames/frame_011999_cgram.bin",
+              "frames/frame_011999_ppu.json"
+            ]
+          },
+          "checkpoint_sha256": "acae4d59edc925c006aadce48a4c0d029f914a7d79e6b41b6533d54f1019edab",
+          "journal_sha256": "763e753fad2131f34ab4d18b02ebf3313b924c863c2dfefb612c34819527ce1d",
+          "duplicate_ingest_identical": true,
+          "program_and_executable_identity_match": true
+        }
+      }
+    }
+  },
+  "tests": {
+    "python": 502,
+    "bridge": 134
+  },
+  "capture_toggle": {
+    "replay_matches": true,
+    "reasons": [],
+    "interpreted_work": {
+      "snes_cpu": {
+        "before": 13985348,
+        "after": 0,
+        "reduction": null,
+        "percent": null
+      }
+    },
+    "scope": "Only the recorded route and evidence; manual playtest still required"
+  }
+}

@@ -31,9 +31,9 @@ def test_unresolved_jump_and_truncated_continuation_have_explicit_capture_kind()
     continuation = emit_function(rom, bank=0, start=0x8100,
                                  entry_m=1, entry_x=1,
                                  callee_exit_mx_modes={(0x009000, 1, 1): frozenset()})
-    assert 'interp_tier_dispatch_balanced_ex(cpu,' in jump
+    assert 'interp_tier_dispatch_balanced(cpu,' in jump
     assert '_entry_s, _hrv, true)' in jump
-    assert 'interp_tier_dispatch_balanced_ex(cpu,' in continuation
+    assert 'interp_tier_dispatch_balanced(cpu,' in continuation
     assert '0x008103u, _entry_s, _hrv, false)' in continuation
 
 

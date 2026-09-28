@@ -72,12 +72,18 @@ for analysis; SA-1's upper ROM banks are not LoROM mirrors. Outcomes mean:
 | `bail_hits` | Execution hit a bridge failure/limit |
 | `pending_hits` | A tracked entry has not yet reached an outcome |
 
+Analysis seeds use those proven aliases too. Observing both `$00:8100` and
+`$80:8100` in a LoROM capture does not create two generated bodies or count as
+new physical ROM coverage. Raw transfer records remain distinct, and generated
+execution retains live PBR. SA-1 and HiROM seeds are not folded by this rule.
+
 New generated fallback sites explicitly distinguish an unresolved indirect
 jump from an ordinary continuation. A jump records the live mirrored PC and
 its resolved destination; a continuation records its entry, not the address
-after its first instruction. Regenerate older trees to get this distinction:
-the legacy balanced-bridge API retains its address-equality inference for
-compatibility, which cannot reliably classify mirrored entries.
+after its first instruction. The balanced-bridge API now requires that semantic
+flag; address-equality inference has been removed. Regenerate older trees before
+building against this runtime. A stale five-argument call is a compile error,
+not a compatibility path that silently misclassifies a mirrored entry.
 
 Instruction costs are exclusive executed-opcode counts and guest cycles,
 keyed by instruction PC, widths and E. Main CPU and SA-1 costs are separate.
@@ -104,9 +110,22 @@ python tools/v2_emit.py --rom /path/to/game.sfc --cfg-dir /path/to/recomp \
 
 Preserve the title's existing roots and profile inputs when comparing a new
 capture; replacing historical coverage with a short attract capture can shrink
-the generated program. Do not concatenate captures from different builds to
-solve this. Retain reviewed root declarations or analyze the old evidence
-separately, then qualify the complete regenerated build.
+the generated program. Use `--historical-profile-manifest old-checkpoint.json`
+to reconcile older seeds with current `--profile-manifest` inputs. Each
+historical checkpoint (or same-build bundle) is validated independently against
+the requested ROM/module and passes the same candidate filters. Only analysis
+seeds and conservative exclusions carry forward; costs, completion evidence
+and build identity never merge across builds. Duplicate historical inputs do
+not multiply seeds. Old failure exclusions need investigation before removal;
+an observed return alone does not overturn a known semantic failure.
+
+Conversion/reconciliation procedure: audit the old file with `tier2_ingest.py`,
+explicitly associate a v1 capture with the verified ROM digest below, supply it
+as a historical input, regenerate the entire program and rebuild. Capture fresh
+v2 evidence from that executable, compare matching gameplay routes, and use the
+new captures for subsequent work. Missing historical E/build/completion facts
+cannot be reconstructed by changing a schema tag; do not fabricate them. Old
+generated source must be regenerated for the current explicit bridge API.
 
 V1 profiles remain auditable. Generation additionally requires
 `--legacy-profile-rom-sha256 <verified-ROM-digest>` because v1 did not bind its

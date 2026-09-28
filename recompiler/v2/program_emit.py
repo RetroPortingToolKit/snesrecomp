@@ -439,9 +439,18 @@ def discover_profile_roots(manifest_paths: Iterable[pathlib.Path],
                            declared_entry_pcs: Iterable[int] = (),
                            force_lle_out: set[int] | None = None,
                            *, expected_rom=None, expected_module=None,
-                           legacy_rom=None) -> tuple[VariantKey, ...]:
+                           legacy_rom=None, historical_paths=()) -> tuple[VariantKey, ...]:
     """Observe -> analyze -> validate. A profile never supplies decoding facts."""
     from .coverage_profile import load_profiles, promotion_reason, canonical_pc, pc
+    # Historical builds retain their own capture identities and eligibility
+    # checks. Only their analysis seeds and conservative exclusions survive;
+    # costs/outcomes are never combined across different executable builds.
+    roots = set()
+    for path in historical_paths:
+        roots.update(discover_profile_roots(
+            [path], declared_entry_pcs, force_lle_out,
+            expected_rom=expected_rom, expected_module=expected_module,
+            legacy_rom=legacy_rom))
     profile = load_profiles(manifest_paths, expected_rom=expected_rom,
                             expected_module=expected_module, legacy_rom=legacy_rom)
     mapper = profile.identity.get("mapper")
@@ -465,7 +474,6 @@ def discover_profile_roots(manifest_paths: Iterable[pathlib.Path],
     qualified = profile.qualified_targets
     if qualified is not None:
         qualified = {canonical(v) for v in qualified}
-    roots = set()
     for row in profile.discoveries:
         target = pc(row["target_pc24"])
         mx = row.get("entry_mx")
@@ -480,7 +488,10 @@ def discover_profile_roots(manifest_paths: Iterable[pathlib.Path],
             force_lle_out.add(alias)
             if mapper in ("lorom", "superfx", "cx4", "dsp1") and alias >> 16 < 0x40 and alias & 0xFFFF >= 0x8000:
                 force_lle_out.add(alias ^ 0x800000)
-        roots.add(VariantKey(target, int(mx[1]), int(mx[3])))
+        # A proven mapper alias is one analysis entry, not another generated
+        # body. Preserve raw banks in the capture and live PBR at execution;
+        # only the ROM-backed analysis seed is canonicalized here.
+        roots.add(VariantKey(canonical(target), int(mx[1]), int(mx[3])))
     return tuple(sorted(roots))
 
 

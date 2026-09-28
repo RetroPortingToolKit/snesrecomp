@@ -51,6 +51,40 @@ def test_sessions_sum_and_roms_never_mix(tmp_path):
         load_profiles([a, b])
 
 
+def test_historical_seeds_reconcile_without_merging_build_evidence(tmp_path):
+    current = capture([row()], "current")
+    old = capture([dict(row(), target_pc24="0x808200")], "old")
+    old["identity"]["program_digest"] = "c" * 64
+    a = write(tmp_path / "current.json", current)
+    b = write(tmp_path / "old.json", old)
+    with pytest.raises(ValueError, match="cannot merge"):
+        load_profiles([a, b])
+    assert discover_profile_roots(
+        [a], expected_rom="a" * 64, expected_module="main",
+        historical_paths=[b, b]) == (
+            VariantKey(0x008100, 0, 1), VariantKey(0x008200, 0, 1))
+    # A historical failure remains an exclusion even if a fresh capture saw
+    # the same target return; observation alone does not resolve a code bug.
+    old["unsafe_aot_targets"] = ["0x808100"]
+    write(b, old)
+    denied = set()
+    discover_profile_roots([a], force_lle_out=denied, historical_paths=[b],
+                           expected_rom="a" * 64, expected_module="main")
+    assert {0x008100, 0x808100} <= denied
+    assert load_profiles([a]).discoveries[0]["observed_hits"] == 1
+
+
+@pytest.mark.parametrize("field,value", [("rom_sha256", "d" * 64),
+                                         ("module_id", "other")])
+def test_historical_inputs_cannot_bypass_identity_validation(tmp_path, field, value):
+    old = capture([row()])
+    old["identity"][field] = value
+    path = write(tmp_path / "old.json", old)
+    with pytest.raises(ValueError, match="does not match"):
+        discover_profile_roots([], historical_paths=[path],
+                               expected_rom="a" * 64, expected_module="main")
+
+
 def test_mode_variants_remain_distinct_and_observation_is_not_completion(tmp_path):
     a = row()
     b = dict(a, entry_mx="M1X1")
@@ -58,7 +92,19 @@ def test_mode_variants_remain_distinct_and_observation_is_not_completion(tmp_pat
     profile = load_profiles([path])
     assert all(r["completed_hits"] == 0 for r in profile.discoveries)
     assert discover_profile_roots([path]) == (
-        VariantKey(0x808100, 0, 1), VariantKey(0x808100, 1, 1))
+        VariantKey(0x008100, 0, 1), VariantKey(0x008100, 1, 1))
+
+
+@pytest.mark.parametrize("mapper,targets", [
+    ("lorom", (0x008100,)), ("sa1", (0x008100, 0x808100)),
+    ("hirom", (0x008100, 0x808100)),
+])
+def test_profile_roots_fold_only_proven_mapper_aliases(tmp_path, mapper, targets):
+    document = capture([row(), dict(row(), target_pc24="0x008100")])
+    document["identity"]["mapper"] = mapper
+    path = write(tmp_path / "profile.json", document)
+    assert tuple(r.pc24 for r in discover_profile_roots([path])) == targets
+    assert len(load_profiles([path]).discoveries) == 2  # raw evidence survives
 
 
 @pytest.mark.parametrize("changes,reason", [
