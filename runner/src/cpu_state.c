@@ -1000,6 +1000,29 @@ static const DispatchEntry *_cpu_dispatch_find(uint32 pc24) {
     return NULL;
 }
 
+const char *cpu_dispatch_entry_reason(uint32_t pc24, uint8_t mx) {
+    const DispatchEntry *row = _cpu_dispatch_find(pc24);
+    if (!row) {
+        unsigned bank = pc24 >> 16;
+        if ((bank < 0x40 || (bank >= 0x80 && bank < 0xC0)) && (pc24 & 0xFFFF) >= 0x8000)
+            row = _cpu_dispatch_find(pc24 ^ 0x800000u);
+    }
+    if (!row) return "missing_entry";
+    if (!row->variant[mx & 3]) return "missing_exact_variant";
+    unsigned bank = pc24 >> 16;
+    if (bank == 0x7E || bank == 0x7F) {
+        const RamRoutineGuard *guard = _ram_guard_find(pc24);
+        if (!guard) return "ram_guard_missing";
+        uint32_t h = 2166136261u;
+        for (uint32_t i = 0; i < guard->len; ++i) {
+            h ^= g_ram[((bank - 0x7E) << 16) | ((pc24 + i) & 0xFFFF)];
+            h *= 16777619u;
+        }
+        if (h != guard->hash) return "ram_guard_mismatch";
+    }
+    return "compiled_entry_available_check_policy";
+}
+
 static RecompReturn (*_cpu_dispatch_lookup(CpuState *cpu, uint32 pc24))(CpuState *) {
     const DispatchEntry *row = _cpu_dispatch_find(pc24);
     if (row != NULL) {

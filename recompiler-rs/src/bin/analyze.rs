@@ -108,6 +108,7 @@ struct Inputs {
     entries: HashMap<u32, BankEntry>,
     sibling_entries: HashMap<u32, BTreeSet<u32>>,
     cfg_index: HashMap<u32, usize>,
+    authority_bytes: HashMap<u32, Vec<u8>>,
     data_regions: Vec<(u32, u32, u32)>,
     exclude_ranges: HashMap<u32, Vec<(u32, u32)>>,
     force_lle: BTreeSet<u32>,
@@ -247,6 +248,7 @@ fn load_inputs(cfg_dir: &Path, rom: &mut Vec<u8>, all_cfg_roots: bool) -> Result
     let mut entries = HashMap::new();
     let mut sibling_entries: HashMap<u32, BTreeSet<u32>> = HashMap::new();
     let mut cfg_index = HashMap::new();
+    let mut authority_bytes = HashMap::new();
     let mut data_regions = Vec::new();
     let mut exclude_ranges = HashMap::new();
     let mut force_lle = BTreeSet::new();
@@ -271,6 +273,16 @@ fn load_inputs(cfg_dir: &Path, rom: &mut Vec<u8>, all_cfg_roots: bool) -> Result
             force_lle.insert(pc24);
             if let Some(mirror) = mirror_pc24(pc24) {
                 force_lle.insert(mirror);
+            }
+        }
+        for (&start, raw) in &cfg.authority_insns {
+            for n in 0..raw.len() {
+                let pc = (bank << 16) | (start + n as u32);
+                let value = if n == 0 { raw.clone() } else { Vec::new() };
+                if authority_bytes.get(&pc).is_some_and(|old| old != &value) {
+                    return Err(format!("overlapping instruction authority at {pc:06X}"));
+                }
+                authority_bytes.insert(pc, value);
             }
         }
         for &(region_bank, start, end) in &cfg.data_regions {
@@ -415,6 +427,7 @@ fn load_inputs(cfg_dir: &Path, rom: &mut Vec<u8>, all_cfg_roots: bool) -> Result
         entries,
         sibling_entries,
         cfg_index,
+        authority_bytes,
         data_regions,
         exclude_ranges,
         force_lle,
@@ -630,6 +643,9 @@ fn summarize(
         });
     }
 
+    if graph.authority_conflict {
+        reasons.extend(["authority_conflict".to_string(), "structural_poison".to_string()]);
+    }
     if graph.is_empty() {
         reasons.extend(["empty_decode".to_string(), "structural_poison".to_string()]);
     }
@@ -1088,6 +1104,7 @@ fn analyze(
                 dispatch_helpers: Some(&helpers),
                 indirect_dispatch: Some(&inputs.indirect_dispatch),
                 hle_dispatch: Some(&inputs.hle_dispatch),
+                authority_bytes: Some(&inputs.authority_bytes),
                 data_regions: Some(&inputs.data_regions),
                 callee_exit_mx: Some(&active_exact),
                 callee_exit_mx_modes: Some(&active_sets),

@@ -93,8 +93,8 @@ int main(int argc, char **argv) {
         lines++;
         size_t n = strlen(line);
         CHECK(n && line[n - 1] == '\n', "line %d is torn", lines);
-        if (strstr(line, "snesrecomp tier2 discovery v1")) discoveries++;
-        if (strstr(line, "\"outcome_pending\":true")) pending++;
+        if (strstr(line, "snesrecomp tier2 discovery v2")) discoveries++;
+        if (strstr(line, "\"pending_hits\":1")) pending++;
     }
     fclose(in);
     CHECK(lines == 4, "append contract lost prior data: got %d lines", lines);

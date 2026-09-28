@@ -628,6 +628,8 @@ RecompReturn cpu_dispatch_pc_paired(CpuState *cpu, uint32 pc24, uint8 frame_size
 /* Read-only exact-AOT probe used by interpreter bounce and RTS rewriting.
  * A known LLE-only row intentionally returns false. */
 int cpu_dispatch_has_entry(CpuState *cpu, uint32 pc24);
+/* Capture-only inspection. Does not perform bus reads or update guard counters. */
+const char *cpu_dispatch_entry_reason(uint32_t pc24, uint8_t mx);
 
 /* Balanced abandon of the current function invocation at an UNRESOLVED
  * control-transfer site (unresolved indirect dispatch / OOB index,

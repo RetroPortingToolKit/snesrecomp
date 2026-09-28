@@ -384,6 +384,7 @@ static int GetIniSection(const char *s) {
     return 9;
   if (StringEqualsNoCase(s, "[Rewind]"))
     return 10;
+  if (StringEqualsNoCase(s, "[Diagnostics]")) return 11;
   return -1;
 }
 
@@ -413,6 +414,14 @@ static bool ParsePlayerSource(int player, const char *value) {
 }
 
 static bool HandleIniConfig(int section, const char *key, char *value) {
+  if (section == 11) {
+    bool enabled;
+    if (!ParseBool(value, &enabled)) return false;
+    if (StringEqualsNoCase(key, "ExposeCoverageMod")) g_config.expose_coverage_mod = enabled;
+    else if (StringEqualsNoCase(key, "CoverageCapture")) g_config.coverage_capture = enabled;
+    else return false;
+    return true;
+  }
   if (section == 0) {
     for (int i = 0; i < countof(kKeyNameId); i++) {
       if (StringEqualsNoCase(key, kKeyNameId[i].name)) {
@@ -629,6 +638,7 @@ static bool ParseOneConfigFile(const char *filename, int depth) {
 void ParseConfigFile(const char *filename) {
   g_config.enable_audio = true;
   g_config.vsync = kSnesVSync_On;
+  g_config.coverage_capture = -1;
   g_config.volume = 100;
   /* Audio defaults match the values shipped in config.ini's [Sound]
    * section. Without these a release with no config.ini next to the

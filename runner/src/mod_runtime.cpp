@@ -1,5 +1,6 @@
 #include "mod_runtime.h"
 #include "content_variant.h"
+#include "snes/tier2_capture.h"
 
 #include "crc32.h"
 #include "sha256.h"
@@ -30,6 +31,7 @@ namespace {
 
 constexpr uint64_t kMaxArchiveBytes = 256ull * 1024ull * 1024ull;
 constexpr uint32_t kMaxArchiveFiles = 4096;
+constexpr const char* kCoveragePackage = "snesrecomp.diagnostics.coverage";
 constexpr const char* kMsu1ResourceIdentity = "snes.msu1.pack";
 
 enum class OptionType {
@@ -140,6 +142,7 @@ struct PatchRow {
 };
 
 struct Package {
+    bool builtin_diagnostic = false; /* only constructed by the executable */
     uint32_t format_version = 0;
     std::string id;
     std::string version;
@@ -915,6 +918,10 @@ bool feature_enabled(Runtime& runtime, const Package& package,
     FeatureSelection& selection = package_state.features[feature.id];
     if (!selection.has_enabled)
         selection.enabled = feature.default_enabled;
+    if (package.builtin_diagnostic) {
+        tier2_capture_set_selection(selection.enabled);
+        return tier2_capture_enabled() != 0;
+    }
     return selection.enabled;
 }
 
@@ -1100,6 +1107,7 @@ bool claim_admissible(Runtime& runtime, const Package& package,
  */
 bool feature_exempt(Runtime& runtime, const Package& package,
                     const Feature& feature) {
+    if (package.builtin_diagnostic) return true;
     if (!claim_admissible(runtime, package, feature)) return false;
     return cosmetic_allowed(runtime, package);
 }
@@ -1329,6 +1337,10 @@ bool scan(Runtime& runtime, std::string* error) {
                                  manifest.string());
                 return false;
             }
+            if (package.id == kCoveragePackage) {
+                set_error(error, "Coverage Capture is an engine-owned mod; it cannot be replaced by a package.");
+                return false;
+            }
             package.root = version_dir.path();
             runtime.packages[package.id][package.version] = std::move(package);
         }
@@ -1338,6 +1350,22 @@ bool scan(Runtime& runtime, std::string* error) {
         set_error(error, "cannot scan mods directory: " + ec.message());
         return false;
     }
+    Package diagnostic;
+    diagnostic.builtin_diagnostic = true;
+    diagnostic.id = kCoveragePackage;
+    diagnostic.version = "1.0.0";
+    diagnostic.name = "Developer diagnostics";
+    diagnostic.author = "snesrecomp";
+    diagnostic.description = "Local diagnostics shared by every SNES game.";
+    diagnostic.targets.push_back({runtime.game_id, runtime.rom_sha256});
+    Feature capture;
+    capture.id = "capture";
+    capture.name = "Coverage Capture";
+    capture.group = "Developer";
+    capture.description = "Record interpreted code and AOT candidates to local files. "
+                          "Checkpoints are saved automatically during play and on exit.";
+    diagnostic.features.push_back(capture);
+    runtime.packages[diagnostic.id][diagnostic.version] = std::move(diagnostic);
     return true;
 }
 
@@ -2240,14 +2268,22 @@ std::vector<FeatureRef> selected_features(Runtime& runtime) {
     return result;
 }
 
+std::vector<const Package*> visible_packages(Runtime& runtime) {
+    auto packages = selected_packages(runtime);
+    packages.erase(std::remove_if(packages.begin(), packages.end(), [](const Package* p) {
+        return p->builtin_diagnostic && !tier2_capture_exposed() && !tier2_capture_enabled();
+    }), packages.end());
+    return packages;
+}
+
 int provider_package_count(void*) {
-    return (int)selected_packages(state()).size();
+    return (int)visible_packages(state()).size();
 }
 
 int provider_package_get(void*, int index,
                          RecompLauncherCModPackage* out) {
     if (!out || index < 0) return 0;
-    const auto packages = selected_packages(state());
+    const auto packages = visible_packages(state());
     if ((size_t)index >= packages.size()) return 0;
     const Package& package = *packages[(size_t)index];
     std::memset(out, 0, sizeof(*out));
@@ -2257,7 +2293,7 @@ int provider_package_get(void*, int index,
     copy_text(out->author, package.author);
     copy_text(out->description, package.description);
     copy_text(out->license, package.license);
-    out->removable = 1;
+    out->removable = !package.builtin_diagnostic;
     out->option_count = 0;
     for (const Feature& feature : package.features) {
         if (feature_enabled(state(), package, feature)) out->enabled = 1;
@@ -2339,6 +2375,7 @@ int provider_remove(void*, const char* package_id,
                     const char* version) {
     if (!package_id || !version) return 0;
     const Package* selected = selected_package(state(), package_id);
+    if (selected && selected->builtin_diagnostic) return 0;
     if (selected && selected->version == version &&
         std::any_of(selected->features.begin(), selected->features.end(),
                     [&](const Feature& feature) {
@@ -2436,6 +2473,9 @@ int provider_feature_get(void*, int index,
     copy_text(out->description, feature.description);
     copy_text(out->group, feature.group);
     out->enabled = feature_enabled(state(), package, feature);
+    if (package.builtin_diagnostic) {
+        out->hidden = !tier2_capture_exposed();
+    }
     out->option_count = (int)std::count_if(
         package.options.begin(), package.options.end(),
         [&](const Option& option) {
@@ -2450,6 +2490,11 @@ int provider_feature_get(void*, int index,
         });
     copy_text(out->status, out->has_error ? "Needs attention" :
                    (out->enabled ? "Enabled" : "Disabled"));
+    if (package.builtin_diagnostic) {
+        std::string status = out->enabled ? "Capturing" : "Disabled";
+        status += " ("; status += tier2_capture_setting_source(); status += ")";
+        copy_text(out->status, status);
+    }
     return 1;
 }
 
@@ -2514,6 +2559,7 @@ int provider_feature_enable(void*, const char* package_id,
         package_selection(state(), *package).features[feature_id];
     selection.enabled = enabled != 0;
     selection.has_enabled = true;
+    if (package->builtin_diagnostic) tier2_capture_set_selection(enabled);
     refresh_validation();
     state().error.clear();
     return 1;
@@ -3529,6 +3575,7 @@ extern "C" int snes_mod_runtime_installed_rows_c(SnesModPkgRow* out, int max) {
         for (const auto& by_version : by_id.second) {
             if (n >= max) return n;
             const SNESRecomp::Package& package = by_version.second;
+            if (package.builtin_diagnostic) continue;
             SnesModPkgRow row;
             std::memset(&row, 0, sizeof(row));
             if (!row_field(row.id, sizeof(row.id), by_id.first) ||

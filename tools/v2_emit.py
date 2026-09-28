@@ -174,6 +174,7 @@ def main() -> int:
         "--profile-manifest", action="append", default=[],
         help="tier2 coverage manifest whose clean targets become optional "
              "AOT roots (repeatable)")
+    parser.add_argument("--legacy-profile-rom-sha256", help="Explicitly associate legacy profiles with this ROM digest")
     parser.add_argument(
         "--cfg-roots", action="store_true",
         help="treat every cfg `func` declaration as an analysis root in "
@@ -260,7 +261,9 @@ def main() -> int:
     try:
         profile_force_lle = set()
         profile_roots = discover_profile_roots(
-            args.profile_manifest, declared_entry_pcs, profile_force_lle)
+            args.profile_manifest, declared_entry_pcs, profile_force_lle,
+            expected_rom=rom_sha256_hex, expected_module=args.module_id,
+            legacy_rom=args.legacy_profile_rom_sha256)
     except ValueError as exc:
         parser.error(str(exc))
     if profile_force_lle and parsed:

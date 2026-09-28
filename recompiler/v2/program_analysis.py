@@ -384,6 +384,8 @@ def summarize_decode_graph(
             detail="declared_boundary"))
 
     reasons = set()
+    if graph.authority_conflict:
+        reasons.update(("structural_poison", "authority_conflict"))
     if not graph.insns:
         reasons.update(("structural_poison", "empty_decode"))
     if poison_reasons:

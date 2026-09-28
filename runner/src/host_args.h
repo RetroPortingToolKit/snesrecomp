@@ -61,6 +61,8 @@ typedef struct SnesrecompHostArgs {
   int start_paused;           /* --paused */
   int force_launcher;         /* --launcher */
   int no_launcher;            /* --no-launcher */
+  int expose_coverage_mod;
+  int coverage_capture; /* -1 absent, 0 off, 1 on */
   int help;                   /* --help / -h: the port should print and exit 0 */
 
   /* Storage for the absolutized forms above. Not read directly. */

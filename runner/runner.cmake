@@ -1,3 +1,6 @@
+option(SNESRECOMP_EXPOSE_COVERAGE_MOD "Show the default-off Coverage Capture mod" OFF)
+add_compile_definitions(SNESRECOMP_EXPOSE_COVERAGE_MOD=$<BOOL:${SNESRECOMP_EXPOSE_COVERAGE_MOD}>)
+
 # runner.cmake — shared source list for snesrecomp game projects.
 #
 # Usage from a game project's CMakeLists.txt:

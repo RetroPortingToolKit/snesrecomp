@@ -179,6 +179,7 @@ echo "=== SA-1 CPU, mapping and peripherals ==="
     -I "$ROOT/runner/src" -I "$ROOT/runner/src/snes" \
     "$ROOT/tests/sa1/sa1_test.c" \
     "$ROOT/runner/src/snes/sa1.c" \
+    "$ROOT/runner/src/snes/tier2_capture.c" \
     "$ROOT/runner/src/snes/interp816.c" \
     -o "$OUT/sa1_test"
 "$OUT/sa1_test"
@@ -218,6 +219,7 @@ echo "=== runtime dispatch ==="
     "$ROOT/runner/src/snes/dsp1.c" \
     "$ROOT/runner/src/snes/dsp1_hle.c" \
     "$ROOT/runner/src/snes/sa1.c" \
+    "$ROOT/runner/src/snes/tier2_capture.c" \
     "$ROOT/runner/src/snes/interp816.c" \
     $GC_SECTIONS_LINKER -lm -o "$OUT/known_lle_entry_test"
 "$OUT/known_lle_entry_test"
@@ -380,6 +382,7 @@ echo "=== mod runtime: presentation_only is not compared by netplay ==="
     -I "$ROOT/runner/src" \
     -x c++ "$ROOT/tests/netplay/mod_presentation_only_test.c" \
     "$ROOT/runner/src/mod_runtime.cpp" \
+    "$ROOT/runner/src/snes/tier2_capture.c" \
     "$ROOT/runner/src/crc32.c" \
     "$ROOT/runner/src/sha256.c" \
     -o "$OUT/mod_presentation_only_test"

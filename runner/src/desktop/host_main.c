@@ -54,6 +54,7 @@
 #include "cpu_state.h"
 #include "cpu_trace.h"
 #include "common_cpu_infra.h"
+#include "snes/tier2_capture.h"
 #include "framedump.h"
 #include "config.h"
 #include "display_aspect.h"
@@ -2291,6 +2292,8 @@ int snesrecomp_desktop_main(const SnesDesktopHostGame *game, int argc, char **ar
       g_config.fullscreen, g_config.enable_audio, g_config.audio_freq,
       g_config.audio_samples);
   RewindGestureConfigure();
+  tier2_capture_configure(args.expose_coverage_mod || g_config.expose_coverage_mod,
+                          g_config.coverage_capture, args.coverage_capture);
 
 #if SNESRECOMP_ENABLE_MODS
   /* Before the launcher, which needs the provider to show the Mods page.

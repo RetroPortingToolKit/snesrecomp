@@ -1,202 +1,291 @@
 #include "tier2_capture.h"
 
-#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
-
+#include <errno.h>
+#include <ctype.h>
 #ifdef _WIN32
+#define WIN32_LEAN_AND_MEAN
+#include <windows.h>
+#include <direct.h>
 #include <process.h>
-#define tier2_getpid _getpid
+#define capture_pid _getpid
+#define capture_mkdir(p) _mkdir(p)
 #else
 #include <unistd.h>
-#define tier2_getpid getpid
+#include <sys/stat.h>
+#define capture_pid getpid
+#define capture_mkdir(p) mkdir(p, 0700)
 #endif
 
-#define TIER2_CAPTURE_PATH_CAP 512
-
-static char s_manifest_path[TIER2_CAPTURE_PATH_CAP];
-static char s_journal_path[TIER2_CAPTURE_PATH_CAP];
-static char s_capture_id[128];
+#ifndef SNESRECOMP_EXPOSE_COVERAGE_MOD
+#define SNESRECOMP_EXPOSE_COVERAGE_MOD 0
+#endif
+#define PATH_CAP 1024
+#define COST_CAP 65536u
+static char s_manifest[PATH_CAP], s_journal_path[PATH_CAP], s_capture_id[160];
+static char s_rom[65], s_module[128] = "main", s_program[65], s_mapper[32] = "unknown";
+static char s_build[65];
 static FILE *s_journal;
-static int s_paths_ready;
-static int s_close_registered;
-static int s_announced;
-static int s_verbose_checked;
-static int s_verbose;
-static int s_default_enabled;
+static int s_paths_ready, s_close_registered, s_journal_failed;
+static int s_default_enabled, s_selection, s_config = -1, s_launch = -1;
+static int s_exposed = SNESRECOMP_EXPOSE_COVERAGE_MOD, s_initialized;
+static const char *s_source = "default";
+static uint64_t s_sequence, s_dropped_costs;
+int g_tier2_capture_active;
+static const char *(*s_entry_probe)(uint32_t, uint8_t);
+void tier2_capture_set_entry_probe(const char *(*probe)(uint32_t, uint8_t)) { s_entry_probe = probe; }
+const char *tier2_capture_entry_reason(uint32_t pc, uint8_t mx) {
+    return s_entry_probe ? s_entry_probe(pc, mx) : "exact_entry_unavailable";
+}
+
+typedef struct {
+    uint32_t pc;
+    uint8_t mx, emulation, used, processor;
+    uint64_t instructions, cycles;
+} Cost;
+static Cost *s_costs;
+
+static int parse_bool(const char *s) {
+    if (!s || !*s) return -1;
+    char lower[8]; size_t n = strlen(s);
+    if (n >= sizeof lower) return -1;
+    for (size_t i = 0; i <= n; ++i) lower[i] = (char)tolower((unsigned char)s[i]);
+    s = lower;
+    if (!strcmp(s, "1") || !strcmp(s, "true") || !strcmp(s, "on") ||
+        !strcmp(s, "yes")) return 1;
+    if (!strcmp(s, "0") || !strcmp(s, "false") || !strcmp(s, "off") ||
+        !strcmp(s, "no")) return 0;
+    fprintf(stderr, "[coverage] invalid boolean '%s'; override ignored\n", s);
+    return -1;
+}
+
+static void refresh(void) {
+    int enabled = s_default_enabled || s_selection;
+    s_source = s_selection ? "mod" : "default";
+    if (s_config >= 0) { enabled = s_config; s_source = "config"; }
+    const char *v = getenv("SNESRECOMP_TIER2_CAPTURE");
+    if (!v || !*v) v = getenv("SNESRECOMP_TIER2");
+    int env = parse_bool(v);
+    if (env >= 0) { enabled = env; s_source = "environment"; }
+    else {
+        v = getenv("SNESRECOMP_TIER2_JOURNAL");
+        if (v && *v && strcmp(v, "0")) { enabled = 1; s_source = "journal environment"; }
+    }
+    if (s_launch >= 0) { enabled = s_launch; s_source = "launch"; }
+    g_tier2_capture_active = enabled;
+    s_initialized = 1;
+}
 
 void tier2_capture_set_default_enabled(int enabled) {
-    s_default_enabled = enabled != 0;
+    s_default_enabled = !!enabled;
+    refresh();
 }
-
-int tier2_capture_enabled(void) {
-    const char *value = getenv("SNESRECOMP_TIER2_CAPTURE");
-    if (!value || !*value) value = getenv("SNESRECOMP_TIER2");
-    if (value && *value)
-        return value[0] != '0' && value[0] != 'f' && value[0] != 'F' &&
-               value[0] != 'n' && value[0] != 'N' && value[0] != 'o' &&
-               value[0] != 'O';
-    // Preserve upstream's explicit journal-path opt-in.
-    value = getenv("SNESRECOMP_TIER2_JOURNAL");
-    return s_default_enabled || (value && *value && *value != '0');
+void tier2_capture_configure(int exposed, int config_enabled, int launch_enabled) {
+    s_exposed = SNESRECOMP_EXPOSE_COVERAGE_MOD || exposed;
+    s_config = config_enabled;
+    s_launch = launch_enabled;
+    refresh();
 }
+void tier2_capture_set_selection(int enabled) { s_selection = !!enabled; refresh(); }
+int tier2_capture_exposed(void) { return s_exposed; }
+int tier2_capture_enabled(void) { if (!s_initialized) refresh(); return g_tier2_capture_active; }
+const char *tier2_capture_setting_source(void) { return s_source; }
+uint64_t tier2_capture_next_sequence(void) { return ++s_sequence; }
+uint64_t tier2_capture_dropped_costs(void) { return s_dropped_costs; }
+int tier2_capture_journal_failed(void) { return s_journal_failed; }
 
-static int tier2_verbose(void) {
-    if (!s_verbose_checked) {
-        const char *value = getenv("SNESRECOMP_TIER2_VERBOSE");
-        s_verbose = value && *value && *value != '0';
-        s_verbose_checked = 1;
-    }
-    return s_verbose;
-}
-
-static void sanitize_romid(const char *title, char *out, size_t cap) {
+static void safe_text(const char *s, char *out, size_t cap, int filename) {
     size_t n = 0;
-    if (!title || !*title) title = "unknown";
-    for (const char *p = title; *p && n + 1 < cap; ++p) {
-        unsigned char c = (unsigned char)*p;
-        if (c >= 'A' && c <= 'Z') c = (unsigned char)(c + ('a' - 'A'));
-        out[n++] = ((c >= 'a' && c <= 'z') || (c >= '0' && c <= '9'))
-                     ? (char)c : '_';
+    if (!s) s = "";
+    for (; *s && n + 1 < cap; ++s) {
+        unsigned char c = (unsigned char)*s;
+        int ok = filename ? ((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
+                            (c >= '0' && c <= '9') || c == '-')
+                          : (c >= 32 && c != '"' && c != '\\');
+        out[n++] = ok ? (char)c : '_';
     }
-    out[n] = '\0';
+    out[n] = 0;
 }
 
-static void sanitize_json(const char *src, char *out, size_t cap) {
-    size_t n = 0;
-    if (!src) src = "unknown";
-    for (const char *p = src; *p && n + 1 < cap; ++p) {
-        unsigned char c = (unsigned char)*p;
-        out[n++] = (c == '"' || c == '\\' || c < 0x20) ? '_' : (char)c;
-    }
-    out[n] = '\0';
+void tier2_capture_set_build_digest(const char *digest) {
+    safe_text(digest, s_build, sizeof s_build, 0);
 }
 
-static void derive_journal_path(const char *manifest) {
-    size_t n = strlen(manifest);
-    const char *suffix = ".jsonl";
-    if (n >= 5 && strcmp(manifest + n - 5, ".json") == 0) {
-        n -= 5;
+void tier2_capture_set_identity(const char *rom, const char *module,
+                               const char *program, const char *mapper) {
+    /* A session must never contain observations for two images. The caller
+     * seals/reset its tables before changing an already established identity. */
+    { /* A new machine is a new capture even when the image is unchanged. */
+        tier2_capture_close();
+        s_paths_ready = 0;
+        s_manifest[0] = s_journal_path[0] = 0;
+        free(s_costs); s_costs = NULL; s_dropped_costs = 0;
     }
-    if (n + strlen(suffix) + 1 > sizeof s_journal_path) {
-        fprintf(stderr, "[tier2] manifest path is too long for journal suffix\n");
-        s_journal_path[0] = '\0';
-        return;
-    }
-    memcpy(s_journal_path, manifest, n);
-    memcpy(s_journal_path + n, suffix, strlen(suffix) + 1);
+    safe_text(rom, s_rom, sizeof s_rom, 0);
+    safe_text(module ? module : "main", s_module, sizeof s_module, 0);
+    safe_text(program, s_program, sizeof s_program, 0);
+    safe_text(mapper, s_mapper, sizeof s_mapper, 0);
 }
 
-static void init_paths(const char *rom_title) {
+static void init_paths(const char *title) {
     if (s_paths_ready) return;
+    int enabled = tier2_capture_enabled();
     s_paths_ready = 1;
-
-    char romid[64];
-    sanitize_romid(rom_title, romid, sizeof romid);
-    time_t now = time(NULL);
-    struct tm utc;
+    s_journal_failed = 0;
+    static unsigned session;
+    char id[80];
+    safe_text(title ? title : "unknown", id, sizeof id, 1);
+    snprintf(s_capture_id, sizeof s_capture_id, "%s_%lld_p%ld_s%u",
+             id, (long long)time(NULL), (long)capture_pid(), ++session);
+    const char *path = getenv("SNESRECOMP_TIER2_MANIFEST");
+    if (path && *path) {
+        if (strlen(path) >= sizeof s_manifest) goto bad_path;
+        strcpy(s_manifest, path);
+    } else {
+        char root[PATH_CAP], dir[PATH_CAP];
+        const char *base = getenv("SNESRECOMP_COVERAGE_DIR");
+        if (base && *base) snprintf(root, sizeof root, "%s", base);
+        else {
 #ifdef _WIN32
-    if (gmtime_s(&utc, &now) != 0) memset(&utc, 0, sizeof utc);
+            base = getenv("LOCALAPPDATA");
+            snprintf(root, sizeof root, "%s%s", base && *base ? base : ".",
+                     "/snesrecomp-coverage");
 #else
-    if (gmtime_r(&now, &utc) == NULL) memset(&utc, 0, sizeof utc);
+            base = getenv("XDG_STATE_HOME");
+            if (base && *base) snprintf(root, sizeof root, "%s/snesrecomp-coverage", base);
+            else {
+                base = getenv("HOME");
+                snprintf(root, sizeof root, "%s/.snesrecomp-coverage", base && *base ? base : ".");
+            }
 #endif
-    char stamp[32];
-    if (strftime(stamp, sizeof stamp, "%Y%m%dT%H%M%SZ", &utc) == 0)
-        snprintf(stamp, sizeof stamp, "%lld", (long long)now);
-    snprintf(s_capture_id, sizeof s_capture_id, "%s_%s_p%ld",
-             romid, stamp, (long)tier2_getpid());
-
-    const char *manifest = getenv("SNESRECOMP_TIER2_MANIFEST");
-    if (manifest && *manifest)
-        snprintf(s_manifest_path, sizeof s_manifest_path, "%s", manifest);
-    else
-        snprintf(s_manifest_path, sizeof s_manifest_path,
-                 "tier2_%s.json", s_capture_id);
-
-    const char *journal = getenv("SNESRECOMP_TIER2_JOURNAL");
-    if (journal && *journal)
-        snprintf(s_journal_path, sizeof s_journal_path, "%s", journal);
-    else
-        derive_journal_path(s_manifest_path);
-}
-
-const char *tier2_capture_manifest_path(const char *rom_title) {
-    init_paths(rom_title);
-    return s_manifest_path;
-}
-
-const char *tier2_capture_journal_path(const char *rom_title) {
-    init_paths(rom_title);
-    return s_journal_path;
-}
-
-void tier2_capture_close(void) {
-    if (s_journal) {
-        if (fclose(s_journal) != 0)
-            fprintf(stderr, "[tier2] failed to close dispatch-miss journal: %s\n",
-                    s_journal_path);
-        s_journal = NULL;
+        }
+        if (enabled && capture_mkdir(root) && errno != EEXIST) goto bad_path;
+        if (snprintf(dir, sizeof dir, "%s/%s", root, id) >= (int)sizeof dir) goto bad_path;
+        if (enabled && capture_mkdir(dir) && errno != EEXIST) goto bad_path;
+        if (snprintf(s_manifest, sizeof s_manifest, "%s/%s.json", dir, s_capture_id)
+                >= (int)sizeof s_manifest) goto bad_path;
     }
-}
-
-int tier2_capture_append_discovery(const char *rom_title,
-                                   uint32_t site_pc24,
-                                   uint32_t target_pc24,
-                                   const char *entry_mx,
-                                   const char *site_kind,
-                                   int outcome,
-                                   int32_t frame) {
-    if (!tier2_capture_enabled()) return 1;
-    static int s_off = -1;
-    if (s_off < 0) {
-        /* Journal is opt-in: it writes+fflushes per discovery, which on a slow
-         * disk makes the interpreter crawl and thrashes the HDD. Only enable it
-         * when SNESRECOMP_TIER2_JOURNAL is set to an explicit path. */
-        const char *v = getenv("SNESRECOMP_TIER2_JOURNAL");
-        s_off = (!v || !*v || v[0] == '0') ? 1 : 0;
+    path = getenv("SNESRECOMP_TIER2_JOURNAL");
+    if (path && *path && strcmp(path, "0")) {
+        if (strlen(path) >= sizeof s_journal_path) goto bad_path;
+        strcpy(s_journal_path, path);
+    } else {
+        size_t n = strlen(s_manifest);
+        if (n >= 5 && !strcmp(s_manifest + n - 5, ".json")) n -= 5;
+        if (n + 7 >= sizeof s_journal_path) goto bad_path;
+        memcpy(s_journal_path, s_manifest, n);
+        strcpy(s_journal_path + n, ".jsonl");
     }
-    if (s_off) return 1; /* journaling disabled (opt-in via SNESRECOMP_TIER2_JOURNAL) */
-    init_paths(rom_title);
+    fprintf(stderr, "[coverage] %s (%s); export: %s\n",
+            enabled ? "enabled" : "disabled", s_source, s_manifest);
+    return;
+bad_path:
+    s_manifest[0] = s_journal_path[0] = 0;
+    s_journal_failed = 1;
+    fprintf(stderr, "[coverage] cannot create capture directory/path\n");
+}
+const char *tier2_capture_manifest_path(const char *title) { init_paths(title); return s_manifest; }
+const char *tier2_capture_journal_path(const char *title) { init_paths(title); return s_journal_path; }
+
+void tier2_capture_write_header(FILE *f, const char *title, int journal) {
+    char safe[128];
+    init_paths(title);
+    safe_text(title, safe, sizeof safe, 0);
+    fprintf(f, "{\"schema\":\"snesrecomp tier2 %s v2\",\"capture_id\":\"%s\","
+               "\"rom_title\":\"%s\",\"sequence\":%llu,\"identity\":{"
+               "\"rom_sha256\":\"%s\",\"module_id\":\"%s\","
+               "\"program_digest\":\"%s\",\"build_digest\":\"%s\",\"mapper\":\"%s\"},",
+            journal ? "discovery" : "coverage", s_capture_id, safe,
+            (unsigned long long)s_sequence, s_rom, s_module, s_program, s_build, s_mapper);
+}
+FILE *tier2_capture_journal(const char *title) {
+    if (!tier2_capture_enabled()) return NULL;
+    init_paths(title);
+    if (s_journal_failed) return NULL;
     if (!s_journal) {
         s_journal = fopen(s_journal_path, "a");
         if (!s_journal) {
-            fprintf(stderr, "[tier2] cannot append dispatch-miss journal: %s\n",
-                    s_journal_path);
-            return 0;
+            fprintf(stderr, "[coverage] cannot open journal: %s\n", s_journal_path);
+            s_journal_failed = 1;
+            return NULL;
         }
-        if (!s_close_registered) {
-            s_close_registered = 1;
-            atexit(tier2_capture_close);
-        }
-        if (!s_announced) {
-            s_announced = 1;
-            if (tier2_verbose())
-                fprintf(stderr,
-                        "[tier2] append-only dispatch-miss journal: %s\n",
-                        s_journal_path);
-        }
+        setvbuf(s_journal, NULL, _IOFBF, 65536);
+        if (!s_close_registered) { atexit(tier2_capture_close); s_close_registered = 1; }
     }
+    return s_journal;
+}
+void tier2_capture_flush(void) {
+    if (s_journal && fflush(s_journal)) {
+        fprintf(stderr, "[coverage] journal flush failed\n");
+        s_journal_failed = 1;
+    }
+}
+void tier2_capture_close(void) {
+    if (s_journal) {
+        if (fclose(s_journal)) { s_journal_failed = 1; fprintf(stderr, "[coverage] journal close failed\n"); }
+        s_journal = NULL;
+    }
+}
+int tier2_capture_replace(const char *temp, const char *path) {
+#ifdef _WIN32
+    return MoveFileExA(temp, path, MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH) != 0;
+#else
+    return rename(temp, path) == 0;
+#endif
+}
 
-    char title[128];
-    sanitize_json(rom_title, title, sizeof title);
-    if (fprintf(s_journal,
-            "{\"schema\":\"snesrecomp tier2 discovery v1\","
-            "\"capture_id\":\"%s\",\"rom_title\":\"%s\","
-            "\"site_pc24\":\"0x%06X\",\"target_pc24\":\"0x%06X\","
-            "\"entry_mx\":\"%s\",\"site_kind\":\"%s\","
-            "\"clean_hits\":%d,\"bail_hits\":%d,\"outcome_pending\":%s,"
-            "\"first_frame\":%d,\"last_frame\":%d}\n",
-            s_capture_id, title,
-            (unsigned)(site_pc24 & 0xFFFFFFu),
-            (unsigned)(target_pc24 & 0xFFFFFFu),
-            entry_mx, site_kind, outcome > 0 ? 1 : 0, outcome == 0 ? 1 : 0,
-            outcome < 0 ? "true" : "false",
-            (int)frame, (int)frame) < 0 || fflush(s_journal) != 0) {
-        fprintf(stderr, "[tier2] failed appending dispatch-miss journal: %s\n",
-                s_journal_path);
-        clearerr(s_journal);
-        return 0;
+void tier2_capture_instruction(uint32_t pc, uint8_t mx, uint8_t emulation, unsigned cycles) {
+    tier2_capture_cpu_instruction(0, pc, mx, emulation, cycles);
+}
+void tier2_capture_cpu_instruction(uint8_t processor, uint32_t pc, uint8_t mx, uint8_t emulation, unsigned cycles) {
+    if (!g_tier2_capture_active) return;
+    if (!s_costs) {
+        s_costs = (Cost *)calloc(COST_CAP, sizeof(Cost));
+        if (!s_costs) { ++s_dropped_costs; return; }
     }
-    return 1;
+    uint32_t h = (pc * 2654435761u + mx * 17u + emulation + processor * 97u) & (COST_CAP - 1);
+    /* Bounded probing, including on full tables. Costs are exclusive executed
+     * opcodes, never inclusive nested calls, so AOT bounces cannot double count. */
+    for (unsigned probe = 0; probe < 32; ++probe, h = (h + 1) & (COST_CAP - 1)) {
+        Cost *c = &s_costs[h];
+        if (!c->used) { c->used = 1; c->pc = pc; c->mx = mx; c->emulation = emulation; c->processor = processor; }
+        if (c->pc == pc && c->mx == mx && c->emulation == emulation && c->processor == processor) {
+            c->instructions++; c->cycles += cycles; return;
+        }
+    }
+    ++s_dropped_costs;
+}
+void tier2_capture_write_costs(FILE *f) {
+    fprintf(f, "\"dropped_cost_samples\":%llu,\"costs\":[",
+            (unsigned long long)s_dropped_costs);
+    int comma = 0;
+    for (unsigned i = 0; s_costs && i < COST_CAP; ++i) {
+        const Cost *c = &s_costs[i];
+        if (!c->used) continue;
+        fprintf(f, "%s{\"record_kind\":\"instruction\",\"site_pc24\":0,"
+                "\"processor\":\"%s\",\"target_pc24\":\"0x%06X\",\"entry_mx\":\"M%uX%u\","
+                "\"emulation\":%u,\"interpreted_instructions\":%llu,\"guest_cycles\":%llu}",
+                comma++ ? "," : "", c->processor ? "sa1" : "snes_cpu", c->pc, c->mx >> 1, c->mx & 1, c->emulation,
+                (unsigned long long)c->instructions, (unsigned long long)c->cycles);
+    }
+    fprintf(f, "],");
+}
+
+/* Legacy entry point retained for third-party hosts. These are observations,
+ * not verified completions; the bridge uses cumulative v2 rows instead. */
+int tier2_capture_append_discovery(const char *title, uint32_t site, uint32_t target,
+        const char *mx, const char *kind, int outcome, int32_t frame) {
+    if (!tier2_capture_enabled()) return 1;
+    FILE *f = tier2_capture_journal(title);
+    if (!f) return 0;
+    tier2_capture_next_sequence();
+    tier2_capture_write_header(f, title, 1);
+    fprintf(f, "\"row\":{\"site_pc24\":\"0x%06X\",\"target_pc24\":\"0x%06X\","
+               "\"entry_mx\":\"%s\",\"site_kind\":\"%s\",\"observed_hits\":%d,"
+               "\"bail_hits\":%d,\"pending_hits\":%d,\"first_frame\":%d,\"last_frame\":%d}}\n",
+            site & 0xFFFFFFu, target & 0xFFFFFFu, mx, kind, outcome > 0,
+            outcome == 0, outcome < 0, (int)frame, (int)frame);
+    return !ferror(f);
 }

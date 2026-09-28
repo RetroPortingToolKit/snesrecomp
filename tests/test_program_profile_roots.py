@@ -1,3 +1,4 @@
+import hashlib
 import json
 import pathlib
 import subprocess
@@ -152,6 +153,7 @@ def test_profile_manifest_materializes_observed_exact_variant():
             "--rom", str(rom_path), "--cfg-dir", str(cfg_dir),
             "--out-dir", str(out_dir), "--no-host-root-scan",
             "--profile-manifest", str(profile),
+            "--legacy-profile-rom-sha256", hashlib.sha256(rom_path.read_bytes()).hexdigest(),
         ], text=True, capture_output=True)
 
         assert result.returncode == 0, result.stdout + result.stderr

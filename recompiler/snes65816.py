@@ -13,6 +13,7 @@ from typing import Optional, List
 
 ROM_MAP_LOROM = 'lorom'
 ROM_MAP_HIROM = 'hirom'
+ROM_MAP_SA1 = 'sa1'
 ROM_MAP_SDD1_EXLOROM = 'sdd1_exlorom'
 SDD1_MMC_DEFAULT_PAGES = (0, 1, 2, 3)
 _active_rom_mapping = ROM_MAP_LOROM
@@ -77,6 +78,8 @@ def detect_rom_mapping(data: bytes) -> str:
     LoROM. Star Ocean is a 6 MiB S-DD1 ExLoROM cart whose banks $C0-$FF are
     exposed by the S-DD1 MMC using reset pages 0, 1, 2, 3.
     """
+    if len(data) >= 0x8000 and data[0x7FD5] == 0x23 and data[0x7FD6] in (0x34, 0x35):
+        return ROM_MAP_SA1
     lorom_score = _header_score(data, 0x7FC0, 0)
     hirom_score = _header_score(data, 0xFFC0, 1)
     if hirom_score > lorom_score:
@@ -88,7 +91,7 @@ def detect_rom_mapping(data: bytes) -> str:
 
 def set_rom_mapping(mapping: str) -> None:
     global _active_rom_mapping
-    if mapping not in (ROM_MAP_LOROM, ROM_MAP_HIROM, ROM_MAP_SDD1_EXLOROM):
+    if mapping not in (ROM_MAP_LOROM, ROM_MAP_HIROM, ROM_MAP_SDD1_EXLOROM, ROM_MAP_SA1):
         raise ValueError(f"unsupported ROM mapping: {mapping}")
     _active_rom_mapping = mapping
 
@@ -122,6 +125,11 @@ def rom_offset(bank: int, addr: int) -> int:
         return reloc
     assert bank not in (0x7E, 0x7F), (
         f"address ${bank:02X}:{addr:04X} is WRAM, not ROM")
+    if _active_rom_mapping == ROM_MAP_SA1:
+        if bank >= 0xC0:
+            return ((bank - 0xC0) << 16) | addr
+        assert bank & 0x7F < 0x40 and addr >= 0x8000, "not a SA-1 ROM window"
+        return (0x200000 if bank & 0x80 else 0) | ((bank & 0x3F) << 15) | (addr & 0x7FFF)
     if _active_rom_mapping == ROM_MAP_SDD1_EXLOROM:
         if 0xC0 <= bank <= 0xFF:
             page = SDD1_MMC_DEFAULT_PAGES[(bank >> 4) & 3]
@@ -144,6 +152,8 @@ def is_rom_address(bank: int, addr: int) -> bool:
         return True
     if bank in (0x7E, 0x7F):
         return False
+    if _active_rom_mapping == ROM_MAP_SA1:
+        return bank >= 0xC0 or ((bank & 0x7F) < 0x40 and addr >= 0x8000)
     if _active_rom_mapping == ROM_MAP_SDD1_EXLOROM:
         if 0xC0 <= bank <= 0xFF:
             return True

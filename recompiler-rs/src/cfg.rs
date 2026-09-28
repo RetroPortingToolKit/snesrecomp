@@ -111,6 +111,7 @@ pub struct BankCfg {
     /// Exact 24-bit executable function boundaries which must remain LLE.
     pub force_lle: BTreeSet<u32>,
     pub exclude_ranges: Vec<(u32, u32)>,
+    pub authority_insns: BTreeMap<u32, Vec<u8>>,
     pub data_regions: Vec<(u32, u32, u32)>, // (bank, start, end)
     pub reloc_regions: Vec<RelocRegion>,
     pub ram_routines: Vec<RamRoutine>,
@@ -241,6 +242,21 @@ pub fn parse_bank_cfg(text: &str, path: &str) -> Result<BankCfg, String> {
         }
         if head == "auto_vectors" {
             cfg.auto_vectors = true;
+            continue;
+        }
+        if head == "authority_insn" {
+            if tokens.len() != 3 { return Err(format!("{path}: authority_insn needs <pc16> <hexbytes>")); }
+            let start = parse_hex(tokens[1])?;
+            let hex = tokens[2];
+            if !hex.is_ascii() || hex.len() % 2 != 0 || !(2..=8).contains(&hex.len()) || start + (hex.len()/2) as u32 > 0x10000 {
+                return Err(format!("{path}: invalid instruction authority"));
+            }
+            let raw: Vec<u8> = (0..hex.len()).step_by(2).map(|i| u8::from_str_radix(&hex[i..i+2], 16)
+                .map_err(|e| format!("{path}: invalid authority bytes: {e}"))).collect::<Result<_,_>>()?;
+            if cfg.authority_insns.get(&start).is_some_and(|old| old != &raw) {
+                return Err(format!("{path}: conflicting instruction authority"));
+            }
+            cfg.authority_insns.insert(start, raw);
             continue;
         }
         if head == "entry_mx_at" {

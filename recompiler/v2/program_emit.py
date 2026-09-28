@@ -120,7 +120,8 @@ def emit_module_namespace(prefix: str, bases: Iterable[str]) -> str:
 
 
 def emit_module_descriptor(module_id: str, module_prefix: str | None,
-                           rom_size: int, rom_sha256_hex: str) -> str:
+                           rom_size: int, rom_sha256_hex: str, program_digest: str = "",
+                           build_digest: str = "") -> str:
     """The generated half of a SnesProgramModule: identity + table pointers.
 
     Registration runs from a constructor so the runtime sees every linked
@@ -160,6 +161,8 @@ def emit_module_descriptor(module_id: str, module_prefix: str | None,
         f"  g_program_module.id = \"{module_id}\";",
         f"  g_program_module.symbol_prefix = "
         + (f"\"{module_prefix}\";" if module_prefix else "\"\";"),
+        f'  g_program_module.program_digest = "{program_digest}";',
+        f'  g_program_module.build_digest = "{build_digest}";',
         "  g_program_module.dispatch = g_dispatch_table;",
         "  g_program_module.dispatch_count = g_dispatch_table_count;",
         "  g_program_module.guards = g_ram_routine_guards;",
@@ -393,133 +396,42 @@ def discover_host_roots(parsed, source_roots: Iterable[pathlib.Path],
 
 def discover_profile_roots(manifest_paths: Iterable[pathlib.Path],
                            declared_entry_pcs: Iterable[int] = (),
-                           force_lle_out: set[int] | None = None) \
-        -> tuple[VariantKey, ...]:
-    """Load clean runtime-observed targets as optional AOT roots.
-
-    A coverage profile influences only materialization: it never authorizes
-    behavior, changes decoding semantics, or removes the LLE fallback. Bailed
-    observations are deliberately excluded because they are bug evidence, not
-    proof that a target is executable code.
-
-    A clean interpreter landing is also not, by itself, proof of a callable
-    function boundary.  Computed returns, inline-argument continuations, and
-    indirect jumps can all land in the middle of an enclosing function.  Such
-    PCs are valid LLE resume points but acquire a false stack/return ABI if
-    emitted as standalone C functions.  Promote only hardware call landings
-    (``call_gap``) or targets independently declared as function boundaries.
-    """
-    declared = {int(pc) & 0xFFFFFF for pc in declared_entry_pcs}
-    for pc in tuple(declared):
-        mirror = _lorom_mirror_pc24(pc)
-        if mirror is not None:
-            declared.add(mirror)
+                           force_lle_out: set[int] | None = None,
+                           *, expected_rom=None, expected_module=None,
+                           legacy_rom=None) -> tuple[VariantKey, ...]:
+    """Observe -> analyze -> validate. A profile never supplies decoding facts."""
+    from .coverage_profile import load_profiles, promotion_reason, canonical_pc, pc
+    profile = load_profiles(manifest_paths, expected_rom=expected_rom,
+                            expected_module=expected_module, legacy_rom=legacy_rom)
+    mapper = profile.identity.get("mapper")
+    canonical = lambda value: canonical_pc(value, mapper)
+    unsafe = {canonical(v) for v in profile.unsafe_targets}
+    for row in profile.discoveries:
+        if row.get("legacy") and row.get("bail_hits"):
+            unsafe.add(canonical(row.get("site_pc24", 0)))
+    failed_variants = {
+        (canonical(row["target_pc24"]), row.get("entry_mx"))
+        for row in profile.discoveries if row.get("bail_hits")
+    }
+    qualified = profile.qualified_targets
+    if qualified is not None:
+        qualified = {canonical(v) for v in qualified}
     roots = set()
-    profile_discoveries = []
-    explicit_unsafe_targets = set()
-    qualified_targets = set()
-    qualified_targets_declared = False
-    for path in manifest_paths:
-        path = pathlib.Path(path)
-        try:
-            manifest = json.loads(path.read_text(encoding="utf-8"))
-        except OSError as exc:
-            raise ValueError(f"cannot read profile manifest {path}: {exc}") \
-                from exc
-        except json.JSONDecodeError as exc:
-            raise ValueError(f"invalid profile manifest {path}: {exc}") \
-                from exc
-        schema = str(manifest.get("schema", ""))
-        if not schema.startswith("snesrecomp tier2 coverage"):
-            raise ValueError(
-                f"unsupported profile manifest schema {schema!r} in {path}")
-        discoveries = manifest.get("discoveries", ())
-        if not isinstance(discoveries, list):
-            raise ValueError(
-                f"profile manifest discoveries must be a list in {path}")
-        profile_discoveries.extend(
-            item for item in discoveries if isinstance(item, dict))
-        unsafe = manifest.get("unsafe_aot_targets", [])
-        if not isinstance(unsafe, list):
-            raise ValueError(
-                f"profile manifest unsafe_aot_targets must be a list in {path}")
-        for value in unsafe:
-            try:
-                target = int(str(value), 0) & 0xFFFFFF
-            except (TypeError, ValueError):
-                raise ValueError(
-                    f"invalid unsafe AOT target {value!r} in {path}")
-            explicit_unsafe_targets.add(target)
-            mirror = _lorom_mirror_pc24(target)
-            if mirror is not None:
-                explicit_unsafe_targets.add(mirror)
-        qualified = manifest.get("qualified_aot_targets")
-        if qualified is not None:
-            qualified_targets_declared = True
-            if not isinstance(qualified, list):
-                raise ValueError(
-                    f"profile manifest qualified_aot_targets must be a list "
-                    f"in {path}")
-            for value in qualified:
-                try:
-                    target = int(str(value), 0) & 0xFFFFFF
-                except (TypeError, ValueError):
-                    raise ValueError(
-                        f"invalid qualified AOT target {value!r} in {path}")
-                qualified_targets.add(target)
-                mirror = _lorom_mirror_pc24(target)
-                if mirror is not None:
-                    qualified_targets.add(mirror)
-
-    # A later AOT trial can prove that a formerly clean target is not a safe
-    # standalone C boundary: the generated body begins at that target, then
-    # its own dynamic edge bails. Treat the bailout's site as a target
-    # blacklist across the whole profile set. This closes the feedback loop
-    # without requiring a person to edit an earlier clean call-gap row.
-    unsafe_targets = set(explicit_unsafe_targets)
-    for item in profile_discoveries:
-        try:
-            bail_hits = int(item.get("bail_hits", 0))
-            site = int(str(item["site_pc24"]), 0) & 0xFFFFFF
-        except (KeyError, TypeError, ValueError):
+    for row in profile.discoveries:
+        target = pc(row["target_pc24"])
+        mx = row.get("entry_mx")
+        if canonical(target) in unsafe or (canonical(target), mx) in failed_variants:
             continue
-        if bail_hits <= 0:
+        if promotion_reason(row, declared_entry_pcs, profile.identity) != \
+                "candidate_requires_analysis_and_replay":
             continue
-        unsafe_targets.add(site)
-        mirror = _lorom_mirror_pc24(site)
-        if mirror is not None:
-            unsafe_targets.add(mirror)
-
-    for item in profile_discoveries:
-        if not isinstance(item, dict):
-            continue
-        try:
-            clean_hits = int(item.get("clean_hits", 0))
-            bail_hits = int(item.get("bail_hits", 0))
-        except (TypeError, ValueError):
-            continue
-        if clean_hits <= 0 or bail_hits != 0:
-            continue
-        match = _PROFILE_MX_RE.fullmatch(str(item.get("entry_mx", "")))
-        if match is None:
-            continue
-        try:
-            target = int(str(item["target_pc24"]), 0) & 0xFFFFFF
-        except (KeyError, TypeError, ValueError):
-            continue
-        if target in unsafe_targets:
-            continue
-        if (qualified_targets_declared and target not in qualified_targets
-                and force_lle_out is not None):
+        if qualified is not None and canonical(target) not in qualified and force_lle_out is not None:
             force_lle_out.add(target)
-            mirror = _lorom_mirror_pc24(target)
-            if mirror is not None:
-                force_lle_out.add(mirror)
-        if (str(item.get("site_kind", "")) != "call_gap" and
-                target not in declared):
-            continue
-        roots.add(VariantKey(
-            target, int(match.group(1)), int(match.group(2))))
+            alias = canonical(target)
+            force_lle_out.add(alias)
+            if mapper in ("lorom", "superfx", "cx4", "dsp1") and alias >> 16 < 0x40 and alias & 0xFFFF >= 0x8000:
+                force_lle_out.add(alias ^ 0x800000)
+        roots.add(VariantKey(target, int(mx[1]), int(mx[3])))
     return tuple(sorted(roots))
 
 
@@ -981,7 +893,8 @@ def emit_program(*, rom: bytes, parsed, manifest: ProgramManifest,
         write_if_changed(
             staging / MODULE_DESCRIPTOR_SOURCE,
             emit_module_descriptor(module_id, module_prefix, rom_size,
-                                   rom_sha256_hex))
+                                   rom_sha256_hex, hashlib.sha256(manifest_text.encode()).hexdigest(),
+                                   hashlib.sha256((generator_digest + config_digest + manifest_text).encode()).hexdigest()))
         if module_prefix:
             all_bases = sorted({
                 base for bases in new_bank_symbols.values() for base in bases

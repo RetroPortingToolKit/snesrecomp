@@ -45,6 +45,8 @@ typedef struct SnesProgramModule {
      * check. */
     uint32_t rom_size;
     uint8_t rom_sha256[32];
+    const char *program_digest; /* generated manifest SHA-256; NULL for older trees */
+    const char *build_digest; /* generator/config/manifest identity */
 } SnesProgramModule;
 
 #define SNES_PROGRAM_MODULE_MAX 16

@@ -1,6 +1,7 @@
 #include "common_rtl.h"
 #include "apu_frame_clock.h"
 #include "common_cpu_infra.h"
+#include "snes/interp_bridge.h"
 #include <setjmp.h>
 #include <time.h>
 #include <stdlib.h>
@@ -807,6 +808,7 @@ bool RtlRunFrame(uint32 inputs) {
 #endif
 
   snes_frame_counter++;
+  Tier2CoverageTick(snes_frame_counter);
   /* Every runner client gets the same guest-frame/APU coupling. Presentation
    * code may opt into fast-forward PCM recovery separately, but cannot omit
    * the emulation clock.
