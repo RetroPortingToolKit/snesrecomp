@@ -792,6 +792,42 @@ pub fn parse_bank_cfg(text: &str, path: &str) -> Result<BankCfg, String> {
             }
             continue;
         }
+        // exit_mx_variant <addr24> <entry_m> <entry_x> <exit_m> <exit_x>
+        if head == "exit_mx_variant" {
+            if tokens.len() != 6 {
+                return Err(format!(
+                    "{path}: exit_mx_variant needs <addr24> <entry_m> <entry_x> <exit_m> <exit_x>"
+                ));
+            }
+            let addr = parse_hex(tokens[1])?;
+            let widths: Result<Vec<u8>, _> = tokens[2..].iter().map(|v| v.parse::<u8>()).collect();
+            let widths = widths.map_err(|_| format!("{path}: invalid exit_mx_variant widths"))?;
+            if addr > 0xffffff || widths.iter().any(|&w| w > 1) {
+                return Err(format!(
+                    "{path}: exit_mx_variant needs a 24-bit address and 0/1 widths"
+                ));
+            }
+            let item = (
+                (addr >> 16) as u8,
+                addr & 0xffff,
+                widths[0],
+                widths[1],
+                widths[2],
+                widths[3],
+            );
+            for old in &cfg.exit_mx_at_per_variant {
+                if (old.0, old.1, old.2, old.3) == (item.0, item.1, item.2, item.3)
+                    && (old.4, old.5) != (item.4, item.5)
+                {
+                    return Err(format!("{path}: conflicting exit_mx_variant"));
+                }
+            }
+            if !cfg.exit_mx_at_per_variant.contains(&item) {
+                cfg.exit_mx_at_per_variant.push(item);
+            }
+            continue;
+        }
+
         // exit_mx_set <hex_24bit_addr> <entry MmXn> <exit MmXn>[,<exit MmXn>...]
         //
         // A callee that returns in several widths from a single entry variant.
@@ -927,6 +963,18 @@ pub fn parse_bank_cfg(text: &str, path: &str) -> Result<BankCfg, String> {
     if cfg.bank < 0 {
         return Err(format!("{path}: missing 'bank = NN' line"));
     }
+
+    // Inline contracts seed the consumed table; standalone directives win.
+    let inline_exits: Vec<_> = cfg
+        .entries
+        .iter()
+        .filter_map(|entry| {
+            entry
+                .exit_mx
+                .map(|(m, x)| (cfg.bank as u8, entry.start & 0xffff, m, x))
+        })
+        .collect();
+    cfg.exit_mx_at.splice(0..0, inline_exits);
 
     for entry in &mut cfg.entries {
         if let Some(&(m, x)) = entry_mx_at.get(&(entry.start & 0xFFFF)) {
@@ -1272,5 +1320,20 @@ exit_mx_set 028000 M0X0 M0X1
         let cfg = parse_bank_cfg("bank = 00\nforce_lle 038DA0\n", "t").unwrap();
         assert_eq!(cfg.force_lle, BTreeSet::from([0x038DA0]));
         assert!(parse_bank_cfg("bank = 00\nforce_lle 038DA0\nforce_lle 038DA0\n", "t").is_err());
+    }
+
+    #[test]
+    fn declared_exit_contracts_are_consumable_and_strict() {
+        let cfg = parse_bank_cfg("bank = 00\nfunc Root 8000 exit_mx:1,1\nexit_mx_at 008000 0 0\nexit_mx_variant 008000 1 0 0 1\n", "t").unwrap();
+        assert_eq!(cfg.exit_mx_at, vec![(0, 0x8000, 1, 1), (0, 0x8000, 0, 0)]);
+        assert_eq!(cfg.exit_mx_at_per_variant, vec![(0, 0x8000, 1, 0, 0, 1)]);
+        for line in [
+            "exit_mx_variant 008000 1 0 0",
+            "exit_mx_variant 008000 1 0 0 2",
+            "exit_mx_variant 1000000 1 0 0 1",
+            "exit_mx_variant 008000 1 0 0 1\nexit_mx_variant 008000 1 0 1 1",
+        ] {
+            assert!(parse_bank_cfg(&format!("bank = 00\n{line}\n"), "t").is_err());
+        }
     }
 }

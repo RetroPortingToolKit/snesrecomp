@@ -1810,7 +1810,7 @@ def main() -> int:
             break
         exit_variant_total += exit_variant_added
         for _bank2, _cfg_path2, cfg2 in parsed:
-            cfg2.exit_mx_at_per_variant.clear()
+            cfg2.exit_mx_at_per_variant[:] = cfg2.declared_exit_mx_at_per_variant
         exit_mx_fixes = autoroute_exit_mx(
             parsed, rom, dispatch_helpers=dispatch_helpers)
         callee_exit_mx, _cfg_exit_count, _decl_exit_count, \
@@ -2366,7 +2366,7 @@ def main() -> int:
         # before the next emit pass so callers decode post-JSR/JSL code
         # with the newly-known return M/X state.
         for _bank2, _cfg_path2, cfg2 in parsed:
-            cfg2.exit_mx_at_per_variant.clear()
+            cfg2.exit_mx_at_per_variant[:] = cfg2.declared_exit_mx_at_per_variant
         refreshed_exit_mx_fixes = autoroute_exit_mx(
             parsed, rom, dispatch_helpers=dispatch_helpers)
         callee_exit_mx = {}

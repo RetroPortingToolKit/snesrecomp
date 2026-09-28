@@ -112,6 +112,8 @@ class BankCfg:
     # is wrong for those (Bug C class, see
     # docs/ABSTRACT_INTERPRETATION_GAPS.md).
     exit_mx_at_per_variant: List[Tuple[int, int, int, int, int, int]] = field(default_factory=list)
+    # Keep authored facts separate from auto-derived exits during regen refresh.
+    declared_exit_mx_at_per_variant: List[Tuple[int, int, int, int, int, int]] = field(default_factory=list)
 
     # `exit_mx_set` directives: (bank, addr16, entry_m, entry_x, frozenset of
     # (exit_m, exit_x)). Declares that a callee entered at one variant returns
@@ -822,6 +824,26 @@ def load_bank_cfg(path: str) -> BankCfg:
                 cfg.exit_mx_at.append((bank_id, addr16, m_val, x_val))
                 continue
 
+            # exit_mx_variant <addr24> <entry_m> <entry_x> <exit_m> <exit_x>
+            if head == 'exit_mx_variant':
+                if len(tokens) != 6:
+                    raise ValueError(f"{path}: exit_mx_variant needs <addr24> <entry_m> <entry_x> <exit_m> <exit_x>")
+                try:
+                    addr = _parse_hex(tokens[1])
+                    widths = tuple(int(t) for t in tokens[2:])
+                except ValueError as exc:
+                    raise ValueError(f"{path}: invalid exit_mx_variant") from exc
+                if not 0 <= addr <= 0xffffff or any(w not in (0, 1) for w in widths):
+                    raise ValueError(f"{path}: exit_mx_variant needs a 24-bit address and 0/1 widths")
+                item = (addr >> 16, addr & 0xffff, *widths)
+                for old in cfg.exit_mx_at_per_variant:
+                    if old[:4] == item[:4] and old[4:] != item[4:]:
+                        raise ValueError(f"{path}: conflicting exit_mx_variant")
+                if item not in cfg.exit_mx_at_per_variant:
+                    cfg.exit_mx_at_per_variant.append(item)
+                    cfg.declared_exit_mx_at_per_variant.append(item)
+                continue
+
             # exit_mx_set <hex_24bit_addr> <entry MmXn> <exit MmXn>[,<exit MmXn>...]
             #
             # Declares a callee's exit widths as a SET, for the entry variant
@@ -905,6 +927,13 @@ def load_bank_cfg(path: str) -> BankCfg:
 
     if cfg.bank < 0:
         raise ValueError(f"{path}: missing 'bank = NN' line")
+
+    # Route inline contracts through the same consumed table as standalone
+    # exits. Explicit standalone entries retain override precedence.
+    cfg.exit_mx_at[:0] = [
+        (cfg.bank, entry.start & 0xffff, *entry.exit_mx)
+        for entry in cfg.entries if getattr(entry, 'exit_mx', None) is not None
+    ]
 
     for entry in cfg.entries:
         override = entry_mx_at.get(entry.start & 0xFFFF)
