@@ -759,7 +759,14 @@ EOF
 # path cache the host reads beside its executable, and the build stages
 # this copy there (snesrecomp_target_rom_cache), so the first launch opens
 # on the same dump instead of asking for one. Ignored by git.
-printf '%s\n' "$ROM_ABS" > rom.cfg
+# The desktop executable is native on Windows; an MSYS /c/... or /home/...
+# path only works inside the shell. Keep shell paths for shell operations,
+# but store a Windows path in the launcher's cache.
+ROM_CACHE=$ROM_ABS
+case "$(uname -s)" in
+    MINGW*|MSYS*|CYGWIN*) ROM_CACHE=$(cygpath -m "$ROM_ABS") ;;
+esac
+printf '%s\n' "$ROM_CACHE" > rom.cfg
 
 echo "== Seeding analysis config =="
 "$PYTHON" "$PROBE_ROM" "$ROM_ABS" --quiet --display-name "$NAME" \
