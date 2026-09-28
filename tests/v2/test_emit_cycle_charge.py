@@ -75,6 +75,13 @@ def test_taken_branch_charges_one_cycle():
         r'if \(.*\) \{ cpu->cycles \+= 1; cpu->master_cycles \+= [^;]+; goto ', src), src
 
 
+def test_wide_index_read_folds_penalty_without_dynamic_double_count():
+    rom = make_lorom_bank0({0x8000: bytes([0xBD,0x34,0x12,0x60])})
+    src = emit_function(rom, bank=0, start=0x8000, entry_m=1, entry_x=0)
+    assert _STATIC_CHARGE.findall(src) == ['11']  # LDA 5 + RTS 6
+    assert 'page-cross' not in src
+
+
 def test_store_abs_x_has_no_page_cross_charge():
     # STA $1234,X (store) — stores pay a fixed cost (in the base), no cross add.
     rom = make_lorom_bank0({0x8000: bytes([0x9D, 0x34, 0x12, 0x60])})

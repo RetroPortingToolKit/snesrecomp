@@ -124,6 +124,20 @@ def test_index_page_cross_modifier():
     assert _cyc(0xBF, index_page_cross=True) == 5   # LDA long,X: never crosses
 
 
+def test_16_bit_index_read_penalty_is_not_double_counted():
+    for op, base in ((0xBD, 4), (0xB9, 4), (0xB1, 5)):
+        assert _cyc(op, x=0) == base + 1
+        assert _cyc(op, x=0, index_page_cross=True) == base + 1
+        assert _cyc(op, m=0, x=0, index_page_cross=True) == base + 2
+        assert sc.instr_static_cycles(op, x_flag=0) == base + 1
+        assert 'xcross' not in sc.instr_runtime_charges(op, x_flag=0)
+    # LDX abs,Y transfers a 16-bit operand AND uses a 16-bit index.
+    assert _cyc(0xBE, x=0) == 6
+    assert _cyc(0xBE, x=0, index_page_cross=True) == 6
+    for op, base in ((0x9D,5),(0x99,5),(0x91,6),(0x1E,7)):
+        assert _cyc(op,x=0,index_page_cross=True) == base
+
+
 def test_branch_modifiers():
     assert _cyc(0xF0) == 2                                   # BEQ not taken
     assert _cyc(0xF0, branch_taken=True) == 3               # taken (native)

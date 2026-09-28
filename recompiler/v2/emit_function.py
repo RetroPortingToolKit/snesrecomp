@@ -104,7 +104,7 @@ def _dynamic_charge_lines(insn, speed_expr: str = "8") -> List[str]:
     op = getattr(insn, 'opcode', None)
     if op is None:
         return []
-    charges = instr_runtime_charges(op)
+    charges = instr_runtime_charges(op, getattr(insn, 'x_flag', 1))
     out: List[str] = []
     if 'dp' in charges:
         out.append(

@@ -191,7 +191,7 @@ int main(void) {
     MEM[0x20f0]=0x34; MEM[0x20f1]=0x12;
     int cycles = interp816_runOpcode(p);
     printf("T22 LDA abs,X read without page cross\n");
-    CHECK(cycles==5, "cycles=%d exp 5", cycles);
+    CHECK(cycles==6, "cycles=%d exp 6 (16-bit index)", cycles);
     CHECK(p->a==0x1234, "A=%04X exp 1234", p->a); }
 
   { uint8_t c[] = {0x18,0xFB, 0xC2,0x30, 0xA2,0x10,0x00, 0xBD,0xF8,0x20};
@@ -211,6 +211,23 @@ int main(void) {
     printf("T24 LDA abs,Y read with page cross\n");
     CHECK(cycles==6, "cycles=%d exp 6", cycles);
     CHECK(p->a==0x9ABC, "A=%04X exp 9ABC", p->a); }
+
+  /* Datasheet cycle-table note 4: X=0 OR page cross adds one read
+   * cycle; stores already include the unconditional cycle in their base. */
+  { const uint8_t ops[]={0xbd,0xb9,0xb1,0x9d,0x99,0x91};
+    for(unsigned i=0;i<6;++i) for(unsigned m=0;m<2;++m)
+    for(unsigned x=0;x<2;++x) for(unsigned cross=0;cross<2;++cross) {
+      uint8_t code[]={ops[i],0x10,0x20};
+      Interp816 *p=prep(code,sizeof code);
+      p->e=false;p->mf=m;p->xf=x;p->x=1;p->y=1;
+      if((ops[i]&15)==1) {MEM[0x8001]=0x20;MEM[0x20]=cross?0xff:0x10;MEM[0x21]=0x20;}
+      else MEM[0x8001]=cross?0xff:0x10;
+      int expected=(i%3==2?5:4)+(m==0)+(i>=3?1:(!x||cross));
+      int actual=interp816_runOpcode(p);
+      CHECK(actual==expected,"op=%02X M=%u X=%u cross=%u cycles=%d exp %d",
+            ops[i],m,x,cross,actual,expected);
+    }
+  }
 
   printf("\n==== interp816 Phase-0: %d/%d checks passed ====\n", g_check - g_fail, g_check);
   if (g_fail) { printf("RESULT: FAIL (%d)\n", g_fail); return 1; }
