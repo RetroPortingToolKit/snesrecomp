@@ -13,9 +13,11 @@ are exercised by hand against a real framework checkout.
 from __future__ import annotations
 
 import json
+import os
 import pathlib
 import shutil
 import subprocess
+import sys
 import tempfile
 
 import pytest
@@ -23,6 +25,13 @@ import pytest
 REPO_ROOT = pathlib.Path(__file__).resolve().parent.parent
 SETUP = REPO_ROOT / "tools" / "new_project" / "setup_project.sh"
 PROBE = REPO_ROOT / "tools" / "new_project" / "probe_rom.py"
+
+
+@pytest.fixture(autouse=True)
+def _use_test_interpreter(monkeypatch):
+    # Shell subprocesses must use the same installed Python as pytest, not
+    # Windows' python3 Store alias or an unrelated MSYS installation.
+    monkeypatch.setenv("PYTHON", pathlib.Path(sys.executable).as_posix())
 
 
 def _fixture_rom(path: pathlib.Path) -> None:
@@ -70,7 +79,7 @@ def test_probe_reads_the_cartridge_header():
         _fixture_rom(rom)
         out = tmp / "probe.json"
         subprocess.run(
-            ["python3", str(PROBE), str(rom), "--json-out", str(out), "--quiet"],
+            [sys.executable, str(PROBE), str(rom), "--json-out", str(out), "--quiet"],
             check=True, cwd=REPO_ROOT)
         info = json.loads(out.read_text())
 
@@ -97,7 +106,7 @@ def test_probe_flags_an_unverifiable_header():
         rom.write_bytes(bytes(raw))
         out = tmp / "probe.json"
         subprocess.run(
-            ["python3", str(PROBE), str(rom), "--json-out", str(out), "--quiet"],
+            [sys.executable, str(PROBE), str(rom), "--json-out", str(out), "--quiet"],
             check=True, cwd=REPO_ROOT)
         assert json.loads(out.read_text())["checksum_valid"] is False
 
@@ -117,7 +126,8 @@ def test_scaffold_writes_the_expected_layout():
         assert not missing, f"scaffold omitted: {missing}"
         for script in ("tools/regen.sh", "scripts/package_release.sh"):
             mode = (project / script).stat().st_mode
-            assert mode & 0o111, f"{script} is not executable"
+            if os.name != "nt":  # Windows stat does not expose POSIX chmod bits.
+                assert mode & 0o111, f"{script} is not executable"
 
 
 def test_scaffold_leaves_no_unfilled_tokens():
@@ -158,7 +168,7 @@ def test_scaffold_carries_rom_identity_into_the_pipeline():
         # The launcher's path cache is seeded with the dump the project was
         # set up from, so the first launch does not ask for a ROM.
         cache = (project / "rom.cfg").read_text(encoding="utf-8").strip()
-        assert cache == str((tmp / "fixture.sfc").resolve()), cache
+        assert pathlib.Path(cache).resolve() == (tmp / "fixture.sfc").resolve(), cache
         assert sha in identity, "rom_identity.txt is missing the ROM SHA-256"
         # The catalog matches on every digest; a submission takes them from
         # here instead of hashing the ROM again, so all of them are recorded.
