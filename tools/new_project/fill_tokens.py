@@ -38,7 +38,8 @@ def fill(src: pathlib.Path, dst: pathlib.Path, values: dict[str, str],
         raise SystemExit(
             f"fill_tokens: {src.name} has unset tokens: {', '.join(unique)}")
     dst.parent.mkdir(parents=True, exist_ok=True)
-    dst.write_text(rendered, encoding="utf-8", newline="\n")
+    with dst.open("w", encoding="utf-8", newline="\n") as stream:
+        stream.write(rendered)
 
 
 def main() -> int:
