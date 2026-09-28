@@ -1821,9 +1821,9 @@ def emit_function(rom: bytes, bank: int, start: int,
                                         f"(void)cpu_trace_dispatch_oob(cpu, "
                                         f"0x{site_pc24:06x}, 0xFFFF);")
                                     lines.append(
-                                        f"{{ RecompReturn _r = interp_tier_dispatch_tail(cpu, "
+                                        f"{{ RecompReturn _r = interp_tier_dispatch_tail_ex(cpu, "
                                         f"{_transfer_target_expr(site_pc24, False)}, 0x{site_pc24:06x}u, "
-                                        f"_entry_s, _hrv); RecompStackPop(); return _r; }} "
+                                        f"_entry_s, _hrv, true); RecompStackPop(); return _r; }} "
                                         f"/* balanced_interp_dispatch */")
                             else:
                                 lines.append(
@@ -1852,9 +1852,9 @@ def emit_function(rom: bytes, bank: int, start: int,
                             # return), and unwinds to _entry_s. Bail -> the
                             # stack-safe abandon, never worse. docs/MULTI_TIER.md
                             lines.append(
-                                f"return interp_tier_dispatch_balanced(cpu, "
+                                f"return interp_tier_dispatch_balanced_ex(cpu, "
                                 f"{_transfer_target_expr(site_pc24, False)}, 0x{site_pc24:06x}u, "
-                                f"_entry_s, _hrv); "
+                                f"_entry_s, _hrv, true); "
                                 f"/* unresolved IndirectGoto -> interpreter tier */")
                         block_terminated = True
                 elif isinstance(op, (PushReg, PushEffectiveAddress)) and getattr(
@@ -2001,8 +2001,8 @@ def emit_function(rom: bytes, bank: int, start: int,
                                           for insn, _ in pairs)) & 0xFFFF
                 fall_pc24 = ((bank & 0xFF) << 16) | fall_pc16
                 lines.append(
-                    f"return interp_tier_dispatch_balanced(cpu, {_transfer_target_expr(fall_pc24, False)}, "
-                    f"0x{fall_pc24:06x}u, _entry_s, _hrv); "
+                    f"return interp_tier_dispatch_balanced_ex(cpu, {_transfer_target_expr(fall_pc24, False)}, "
+                    f"0x{fall_pc24:06x}u, _entry_s, _hrv, false); "
                     f"/* truncated (no successor): interpret continuation, balanced */")
         block_lines[key] = lines
 
@@ -2085,8 +2085,8 @@ def emit_function(rom: bytes, bank: int, start: int,
     if os.environ.get('SNESRECOMP_EMIT_AOT_DENY_GATE'):
         src.append(
             f'  if (rtl_aot_node_denied(0x{fn_entry_pc:06X}u)) {{ '
-            f'RecompStackPop(); return interp_tier_dispatch_balanced('
-            f'cpu, {_transfer_target_expr(fn_entry_pc, False)}, 0x{fn_entry_pc:06X}u, _entry_s, _hrv); }}')
+            f'RecompStackPop(); return interp_tier_dispatch_balanced_ex('
+            f'cpu, {_transfer_target_expr(fn_entry_pc, False)}, 0x{fn_entry_pc:06X}u, _entry_s, _hrv, false); }}')
     src.append(f'  uint32 _host_return_pc24 = 0xFFFFFFFFu;')
     src.append(f'  if (_hrv == 2 || _hrv == 3) {{')
     src.append(f'    uint16 _host_rpcl = cpu_read8(cpu, 0x00, (uint16)(_entry_s + 1u));')
@@ -2123,8 +2123,8 @@ def emit_function(rom: bytes, bank: int, start: int,
             src.append(
                 f'    if (!cpu_aot_rom_mapping_matches(0x{block_pc24:06X}u, '
                 f'0x{offset:X}u, {insn.length}u)) {{ RecompStackPop(); '
-                f'return interp_tier_dispatch_balanced(cpu, {_transfer_target_expr(block_pc24, False)}, '
-                f'0x{block_pc24:06X}u, _entry_s, _hrv); }}')
+                f'return interp_tier_dispatch_balanced_ex(cpu, {_transfer_target_expr(block_pc24, False)}, '
+                f'0x{block_pc24:06X}u, _entry_s, _hrv, false); }}')
         # Profile-guided AOT may keep the CPU inside one generated function
         # across a frame boundary. Every CFG block starts at an architectural
         # instruction boundary, so it is safe to unwind here and resume this

@@ -3056,6 +3056,12 @@ RecompReturn interp_tier_dispatch_interrupt(CpuState *cpu,
 RecompReturn interp_tier_dispatch_tail(CpuState *cpu, uint32_t target_pc24,
                                        uint32_t site_pc24, uint16_t entry_s,
                                        uint8_t hrv) {
+    return interp_tier_dispatch_tail_ex(cpu, target_pc24, site_pc24,
+                                       entry_s, hrv, false);
+}
+
+RecompReturn interp_tier_dispatch_tail_ex(CpuState *cpu, uint32_t target_pc24,
+    uint32_t site_pc24, uint16_t entry_s, uint8_t hrv, bool from_indirect) {
     if (cpu_interrupt_context_active())
         return interp_tier_dispatch_interrupt(cpu, target_pc24);
     /* This tail transfer abandons every compiled guest frame beneath the AOT
@@ -3069,8 +3075,8 @@ RecompReturn interp_tier_dispatch_tail(CpuState *cpu, uint32_t target_pc24,
      * AOT tail fallbacks retain the balanced nested-interpreter path below. */
     if (s_interp_bounce_owner_depth > 0)
         return interp_bridge_lle_yield_unwind(cpu, target_pc24);
-    return interp_tier_dispatch_balanced(cpu, target_pc24, site_pc24,
-                                         entry_s, hrv);
+    return interp_tier_dispatch_balanced_ex(cpu, target_pc24, site_pc24,
+                                            entry_s, hrv, from_indirect);
 }
 
 /* Upgrade of an unresolved tail-dispatch site (one that would otherwise call
@@ -3080,13 +3086,21 @@ RecompReturn interp_tier_dispatch_tail(CpuState *cpu, uint32_t target_pc24,
 RecompReturn interp_tier_dispatch_balanced(CpuState *cpu, uint32_t target_pc24,
                                            uint32_t site_pc24, uint16_t entry_s,
                                            uint8_t hrv) {
+    /* Compatibility for previously emitted trees. New output supplies the
+     * semantic flag, since address equality cannot identify a mirrored jump
+     * or distinguish a truncated continuation from an indirect instruction. */
+    return interp_tier_dispatch_balanced_ex(cpu, target_pc24, site_pc24,
+        entry_s, hrv, target_pc24 == site_pc24);
+}
+
+RecompReturn interp_tier_dispatch_balanced_ex(CpuState *cpu, uint32_t target_pc24,
+    uint32_t site_pc24, uint16_t entry_s, uint8_t hrv, bool from_indirect) {
     interp_tier_note(target_pc24);
     const uint8_t mx = tier2_entry_mx(cpu);
-    /* The generated unresolved-IndirectGoto site passes target==site (we
-     * re-interpret FROM the JMP itself); a real dispatch default passes the
-     * loaded target. */
-    const uint8_t kind = (target_pc24 == site_pc24) ? TIER2_KIND_INDIRECT_GOTO
-                                                    : TIER2_KIND_DISPATCH;
+    const uint8_t kind = from_indirect ? TIER2_KIND_INDIRECT_GOTO
+                                      : TIER2_KIND_DISPATCH;
+    /* Capture the live guest jump PC, not the canonical generated mirror. */
+    if (from_indirect) site_pc24 = target_pc24;
     if (kind == TIER2_KIND_DISPATCH)
         tier2_discover(site_pc24 & 0xFFFFFF, target_pc24 & 0xFFFFFF, mx,
                        kind, -1);

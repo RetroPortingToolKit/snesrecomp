@@ -72,6 +72,13 @@ for analysis; SA-1's upper ROM banks are not LoROM mirrors. Outcomes mean:
 | `bail_hits` | Execution hit a bridge failure/limit |
 | `pending_hits` | A tracked entry has not yet reached an outcome |
 
+New generated fallback sites explicitly distinguish an unresolved indirect
+jump from an ordinary continuation. A jump records the live mirrored PC and
+its resolved destination; a continuation records its entry, not the address
+after its first instruction. Regenerate older trees to get this distinction:
+the legacy balanced-bridge API retains its address-equality inference for
+compatibility, which cannot reliably classify mirrored entries.
+
 Instruction costs are exclusive executed-opcode counts and guest cycles,
 keyed by instruction PC, widths and E. Main CPU and SA-1 costs are separate.
 They are neither wall-clock speedups nor guessed per-function inclusive costs.

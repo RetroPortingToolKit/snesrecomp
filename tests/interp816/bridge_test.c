@@ -1000,6 +1000,50 @@ int main(void) {
       CHECK(rc == 1 && g_c.S == 0x01FF, "rc=%d S=%04X", rc, g_c.S);
       CHECK(g_aot_called == 0, "abandoned call dispatched %d times", g_aot_called);
     }
+    /* Explicit capture semantics survive a generated low-bank mirror and
+     * distinguish an ordinary continuation whose entry equals its site. */
+    for (unsigned tail = 0; tail < 2; ++tail) {
+      memset(RAM, 0, MEMSZ); init_cpu(); g_post_return_skip = 0;
+      g_c.emulation = 0; g_c.PB = 0xA6; cpu_mirrors_to_p(&g_c);
+      uint8_t jump[] = {0xDC,0x00,0x10}; /* JML [$1000] */
+      uint8_t body[] = {0xA9,0x07,0x60}; /* LDA #7 ; RTS */
+      load(0xA69000, jump, sizeof jump); load(0xA69100, body, sizeof body);
+      RAM[0x1000] = 0x00; RAM[0x1001] = 0x91; RAM[0x1002] = 0xA6;
+      cpu_push_jsr_return_frame(&g_c);
+      RecompReturn r = tail
+          ? interp_tier_dispatch_tail_ex(&g_c, 0xA69000, 0x269000, g_c.S, 2, true)
+          : interp_tier_dispatch_balanced_ex(&g_c, 0xA69000, 0x269000, g_c.S, 2, true);
+      CHECK(r == RECOMP_RETURN_NORMAL && g_c.S == 0x01FF && g_c.A == 7,
+            "mirrored indirect tail=%u r=%d S=%04X A=%04X", tail, r, g_c.S, g_c.A);
+    }
+    { memset(RAM, 0, MEMSZ); init_cpu(); g_post_return_skip = 0;
+      g_c.emulation = 0; g_c.PB = 0xA6; cpu_mirrors_to_p(&g_c);
+      uint8_t body[] = {0xA9,0x07,0x60};
+      load(0xA69200, body, sizeof body); cpu_push_jsr_return_frame(&g_c);
+      RecompReturn r = interp_tier_dispatch_balanced_ex(
+          &g_c, 0xA69200, 0xA69200, g_c.S, 2, false);
+      CHECK(r == RECOMP_RETURN_NORMAL && g_c.S == 0x01FF && g_c.A == 7,
+            "ordinary continuation r=%d S=%04X A=%04X", r, g_c.S, g_c.A);
+    }
+    tier2_capture_flush();
+    { FILE *f = fopen(journal, "rb"); char line[8192];
+      int jump = 0, continuation = 0, false_target = 0;
+      while (f && fgets(line, sizeof line, f)) {
+        if (strstr(line, "\"site_pc24\":\"0xA69000\"") &&
+            strstr(line, "\"target_pc24\":\"0xA69100\"") &&
+            strstr(line, "\"site_kind\":\"indirect_goto\"") &&
+            strstr(line, "\"completed_hits\":1")) jump = 1;
+        if (strstr(line, "\"site_pc24\":\"0xA69200\"") &&
+            strstr(line, "\"target_pc24\":\"0xA69200\"") &&
+            strstr(line, "\"site_kind\":\"indirect_dispatch\"") &&
+            strstr(line, "\"completed_hits\":1")) continuation = 1;
+        if (strstr(line, "\"target_pc24\":\"0xA69202\"")) false_target = 1;
+      }
+      if (f) fclose(f);
+      CHECK(jump, "journal must retain live jump PC and resolved destination");
+      CHECK(continuation, "journal must retain ordinary continuation entry");
+      CHECK(!false_target, "first instruction fall-through is not a discovered entry");
+    }
     printf("\n==== interp_bridge Phase-1: %d/%d checks passed ====\n", g_check - g_fail, g_check);
     if (g_fail) { printf("RESULT: FAIL (%d)\n", g_fail); return 1; }
     tier2_capture_close();

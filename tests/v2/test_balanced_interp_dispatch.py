@@ -17,10 +17,24 @@ def test_reserved_hle_dispatch_uses_balanced_interpreter_tier():
         hle_dispatch={0x8000: '__balanced_interp__'},
     )
 
-    assert 'interp_tier_dispatch_tail(cpu, (((uint32)cpu->PB << 16) | 0x8000u), 0x008000u' in src
+    assert 'interp_tier_dispatch_tail_ex(cpu, (((uint32)cpu->PB << 16) | 0x8000u), 0x008000u' in src
     assert '/* balanced_interp_dispatch */' in src
     assert 'RecompStackPop(); return _r;' in src
     assert 'extern RecompReturn __balanced_interp__' not in src
+    assert '_entry_s, _hrv, true)' in src
+
+
+def test_unresolved_jump_and_truncated_continuation_have_explicit_capture_kind():
+    rom = make_lorom_bank0({0x8000: bytes([0xDC, 0x00, 0x10]),
+                            0x8100: bytes([0x20, 0x00, 0x90, 0x60])})
+    jump = emit_function(rom, bank=0, start=0x8000, entry_m=1, entry_x=1)
+    continuation = emit_function(rom, bank=0, start=0x8100,
+                                 entry_m=1, entry_x=1,
+                                 callee_exit_mx_modes={(0x009000, 1, 1): frozenset()})
+    assert 'interp_tier_dispatch_balanced_ex(cpu,' in jump
+    assert '_entry_s, _hrv, true)' in jump
+    assert 'interp_tier_dispatch_balanced_ex(cpu,' in continuation
+    assert '0x008103u, _entry_s, _hrv, false)' in continuation
 
 
 def test_reserved_dispatch_lowers_phk_pea_jml_as_pushed_call():
