@@ -263,7 +263,10 @@ def x_add(op: int) -> int:
     if op in _SPECIAL_BASE:
         return 0
     mn, _ = _info(op)
-    return 1 if mn in _X_WIDTH_MNEMS else 0
+    # Indexed reads pay the address-indexing cycle whenever X=0, even if
+    # the access stays on one page (W65C816S cycle-table note 4). This is in
+    # addition to a 16-bit LDX/LDY data transfer's own width cycle.
+    return (1 if mn in _X_WIDTH_MNEMS else 0) + xcross_add(op)
 
 
 def dp_add(op: int) -> int:
@@ -283,8 +286,8 @@ def xcross_add(op: int) -> int:
     mn, mode = _info(op)
     if mode not in _XCROSS_MODES:
         return 0
-    if mn in _STORE_MNEMS:
-        return 0                        # stores pay a fixed cost, no cross add
+    if mn in _STORE_MNEMS or mn in _RMW_MNEMS:
+        return 0                        # writes already include indexing
     return 1
 
 
@@ -330,7 +333,7 @@ def instr_cpu_cycles(op: int, *, m: int = 1, x: int = 1, e: int = 0,
         c += x_add(op)
     if dp_low_nonzero:
         c += dp_add(op)
-    if index_page_cross:
+    if index_page_cross and x != 0:
         c += xcross_add(op)
 
     bc = branch_class(op)
@@ -400,13 +403,13 @@ def instr_static_cycles(op: int, m_flag: int = 1, x_flag: int = 1,
     return c
 
 
-def instr_runtime_charges(op: int) -> dict:
+def instr_runtime_charges(op: int, x_flag: int = 1) -> dict:
     """Runtime-only cycle charges for opcode `op` the emitter must add
     conditionally (empty dict if the instruction is fully static)."""
     out = {}
     if dp_add(op):
         out['dp'] = dp_add(op)
-    if xcross_add(op):
+    if x_flag != 0 and xcross_add(op):
         out['xcross'] = xcross_add(op)
     bc = branch_class(op)
     if bc:
@@ -429,7 +432,7 @@ def block_static_cycles(items, e: int = 0):
     dynamics = []
     for i, (op, m_flag, x_flag) in enumerate(items):
         const += instr_static_cycles(op, m_flag, x_flag, e)
-        charges = instr_runtime_charges(op)
+        charges = instr_runtime_charges(op, x_flag)
         if charges:
             dynamics.append((i, op, charges))
     return const, dynamics
@@ -546,7 +549,7 @@ static inline int snes_instr_cpu_cycles(
     if (m == 0) c += SNES_M_ADD[op];
     if (x == 0) c += SNES_X_ADD[op];
     if (dp_low_nonzero) c += SNES_DP_ADD[op];
-    if (index_page_cross) c += SNES_XCROSS_ADD[op];
+    if (index_page_cross && x != 0) c += SNES_XCROSS_ADD[op];
     switch (SNES_BRANCH_CLASS[op]) {{
         case 1: /* conditional */
             if (branch_taken) {{ c += 1; if (e == 1 && branch_page_cross) c += 1; }}
