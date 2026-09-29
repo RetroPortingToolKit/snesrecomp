@@ -1,6 +1,7 @@
 // Standalone, ROM-free provider test; compile with RECOMP_LAUNCHER enabled.
 #include "mod_runtime.h"
 #include "sha256.h"
+#include "content_variant.h"
 #include <cassert>
 #include <cstdio>
 #include <cstring>
@@ -9,6 +10,10 @@
 #include <string>
 #include <vector>
 namespace fs=std::filesystem;
+// Like coverage_mod_test, isolate resource providers from program switching.
+// These fixtures declare no content variants. Link the real tier2_capture.c.
+extern "C" void snes_variant_clear_declared(void) {}
+extern "C" const SnesContentVariant *snes_variant_register_declared(const SnesVariantDecl *) { return nullptr; }
 static std::string hash(const std::vector<uint8_t>& b) {
   uint8_t digest[32];sha256_compute(b.data(),b.size(),digest);char text[65];
   for(unsigned i=0;i<32;++i) std::snprintf(text+i*2,3,"%02x",digest[i]);return text;
