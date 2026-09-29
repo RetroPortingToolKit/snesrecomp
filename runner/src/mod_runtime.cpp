@@ -105,6 +105,8 @@ struct Resource {
     std::string format;
     std::string identity;
     std::string normalized_sha1;
+    std::string normalized_sha256;
+    std::string shared_key;
     std::string file_patterns;
     std::string file_description;
     uint64_t size = 0;
@@ -242,6 +244,7 @@ struct Runtime {
     std::string rom_sha256;
     std::map<std::string, std::map<std::string, Package>> packages;
     std::map<std::string, PackageSelection> selections;
+    std::map<std::string, std::string> shared_resources;
     Validation validation;
     Validation committed;
     std::string error;
@@ -718,6 +721,8 @@ bool read_manifest(const fs::path& path, Package& out, std::string* error) {
                 else if (key == "identity") parsed = string_field(resource->identity);
                 else if (key == "normalized_sha1") parsed = string_field(resource->normalized_sha1);
                 else if (key == "sha256") parsed = string_field(resource->sha256);
+                else if (key == "normalized_sha256") parsed = string_field(resource->normalized_sha256);
+                else if (key == "shared_key") parsed = string_field(resource->shared_key);
                 else if (key == "file_patterns") parsed = string_field(resource->file_patterns);
                 else if (key == "file_description") parsed = string_field(resource->file_description);
                 else if (key == "size") {
@@ -818,6 +823,11 @@ bool read_manifest(const fs::path& path, Package& out, std::string* error) {
     }
     std::set<std::pair<std::string, std::string>> resource_ids;
     for (Resource& item : out.resources) {
+        if ((!item.shared_key.empty() && !valid_id(item.shared_key)) ||
+            (!item.normalized_sha256.empty() && !valid_sha256(item.normalized_sha256))) {
+            set_error(error, "manifest has an invalid shared resource key or sha256");
+            return false;
+        }
         if (!find_feature(out, item.feature_id) || !valid_id(item.id) ||
             item.label.empty() ||
             !resource_ids.insert({item.feature_id, item.id}).second) {
@@ -1124,6 +1134,25 @@ std::string option_value(Runtime& runtime, const Package& package,
 std::string resource_path(Runtime& runtime, const Package& package,
                           const Feature& feature,
                           const Resource& resource) {
+    if (!resource.shared_key.empty()) {
+        const auto shared = runtime.shared_resources.find(resource.shared_key);
+        if (shared != runtime.shared_resources.end()) return shared->second;
+        /* Migrate a previously per-feature selection once. New edits and
+         * persistence have one canonical value, including an explicit clear. */
+        for (const auto& [id, versions] : runtime.packages) {
+            const Package* p = selected_package(runtime, id);
+            if (!p) continue;
+            for (const auto& r : p->resources) if (r.shared_key == resource.shared_key) {
+                const auto& paths = package_selection(runtime, *p).features[r.feature_id].resources;
+                const auto old = paths.find(r.id);
+                if (old != paths.end() && !old->second.empty()) {
+                    runtime.shared_resources[resource.shared_key] = old->second;
+                    return old->second;
+                }
+            }
+        }
+        return {};
+    }
     PackageSelection& package_state = package_selection(runtime, package);
     FeatureSelection& selection = package_state.features[feature.id];
     const auto value = selection.resources.find(resource.id);
@@ -1131,6 +1160,7 @@ std::string resource_path(Runtime& runtime, const Package& package,
                                                 value->second;
 }
 
+bool sha256_file(const fs::path& path, std::string& out, std::string* error);
 bool validate_resource_file(const Resource& resource,
                             const std::string& path_text,
                             std::string* status) {
@@ -1160,6 +1190,26 @@ bool validate_resource_file(const Resource& resource,
             if (status) *status = "File size does not match";
             return false;
         }
+    }
+    if (!resource.normalized_sha256.empty()) {
+        struct HashMemo { uintmax_t size; fs::file_time_type time; std::string hash; };
+        static std::map<std::string, HashMemo> memo;
+        const auto size = fs::file_size(path, ec);
+        if (ec || size > 64 * 1024 * 1024) { if (status) *status = "ROM size is invalid"; return false; }
+        const auto time = fs::last_write_time(path, ec);
+        if (ec) { if (status) *status = "Cannot read ROM"; return false; }
+        auto found = memo.find(path_text);
+        if (found == memo.end() || found->second.size != size || found->second.time != time) {
+            std::string hash, error;
+            if (!sha256_file(path, hash, &error)) { if (status) *status = "Cannot read ROM"; return false; }
+            found = memo.insert_or_assign(path_text, HashMemo{size,time,hash}).first;
+        }
+        if (found->second.hash != resource.normalized_sha256) {
+            if (status) *status = "Wrong ROM: select the original supported version";
+            return false;
+        }
+        if (status) *status = "ROM verified";
+        return true;
     }
     if (status) {
         *status = resource.normalized_sha1.empty()
@@ -1371,6 +1421,7 @@ bool scan(Runtime& runtime, std::string* error) {
 
 bool load_state(Runtime& runtime, std::string* error) {
     runtime.selections.clear();
+    runtime.shared_resources.clear();
     const fs::path path = runtime.root / "state.toml";
     if (!fs::exists(path)) return true;
     std::ifstream file(path);
@@ -1378,7 +1429,7 @@ bool load_state(Runtime& runtime, std::string* error) {
         set_error(error, "cannot read mod state");
         return false;
     }
-    enum class Section { Root, Package, Feature, Values, Resource };
+    enum class Section { Root, Package, Feature, Values, Resource, SharedResource };
     Section section = Section::Root;
     std::string current_package;
     std::string current_feature;
@@ -1387,6 +1438,11 @@ bool load_state(Runtime& runtime, std::string* error) {
     while (std::getline(file, raw)) {
         const std::string line = trim(strip_comment(raw));
         if (line.empty()) continue;
+        if (line == "[[shared_resource]]") {
+            section = Section::SharedResource;
+            current_resource.clear();
+            continue;
+        }
         if (line == "[[package]]") {
             section = Section::Package;
             current_package.clear();
@@ -1448,6 +1504,12 @@ bool load_state(Runtime& runtime, std::string* error) {
             !current_feature.empty() && parse_string(value, parsed)) {
             runtime.selections[current_package]
                 .features[current_feature].values[key] = parsed;
+            continue;
+        }
+        if (section == Section::SharedResource) {
+            if (key == "id") parse_string(value, current_resource);
+            else if (key == "path" && !current_resource.empty() && parse_string(value, parsed))
+                runtime.shared_resources[current_resource] = parsed;
             continue;
         }
         if (section == Section::Resource) {
@@ -1512,6 +1574,9 @@ bool save_state(Runtime& runtime, std::string* error) {
         return false;
     }
     file << "format_version = 1\n";
+    for (const auto& [key, path] : runtime.shared_resources)
+        file << "\n[[shared_resource]]\nid = " << quote_toml(key)
+             << "\npath = " << quote_toml(path) << "\n";
     for (const auto& [package_id, selection] : runtime.selections) {
         file << "\n[[package]]\nid = " << quote_toml(package_id)
              << "\nversion = " << quote_toml(selection.version) << "\n";
@@ -2673,9 +2738,9 @@ int provider_feature_resource_set_path(void*, const char* package_id,
     if (!package || !find_feature(*package, feature_id) ||
         !find_resource(*package, feature_id, resource_id))
         return 0;
-    package_selection(state(), *package)
-        .features[feature_id]
-        .resources[resource_id] = path;
+    const Resource* resource = find_resource(*package, feature_id, resource_id);
+    if (!resource->shared_key.empty()) state().shared_resources[resource->shared_key] = path;
+    else package_selection(state(), *package).features[feature_id].resources[resource_id] = path;
     refresh_validation();
     state().error.clear();
     return 1;
