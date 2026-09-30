@@ -170,6 +170,7 @@ decision rather than a surprise.
    `force_lle` boundaries; `true` entries become `func` declarations and explicit
    analysis roots without needing `--cfg-roots`. Edit the TOML, keeping manual
    cfg directives outside its generated blocks.
+   Python older than 3.11 needs `python -m pip install tomli` to read the TOML.
 3. **Resolve dispatch misses after every run, before anything else.** An
    unresolved indirect target is the reason a port diverges, and it is cheap
    to fix early and expensive to fix late.

@@ -11,7 +11,6 @@ from dataclasses import dataclass
 from pathlib import Path
 import re
 import tempfile
-import tomllib
 
 
 BEGIN = "# >>> BEGIN symbols.toml (generated — do not edit)"
@@ -46,6 +45,17 @@ def _number(value, maximum, field, context):
 
 
 def load_symbols(path: Path) -> list[FunctionSymbol]:
+    # TOML is optional for cfg-only projects. Import lazily so Python < 3.11
+    # can still start the CLI and generate without an installed TOML parser.
+    try:
+        import tomllib
+    except ModuleNotFoundError:
+        try:
+            import tomli as tomllib
+        except ModuleNotFoundError as exc:
+            raise ValueError(
+                f"{path}: reading symbols.toml on Python < 3.11 requires "
+                "tomli (install with: python -m pip install tomli)") from exc
     data = tomllib.loads(path.read_text(encoding="utf-8"))
     functions = data.get("func", [])
     if not isinstance(functions, list):

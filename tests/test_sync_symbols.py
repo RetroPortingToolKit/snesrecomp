@@ -94,6 +94,28 @@ def test_absent_toml_is_noop(tmp_path):
     assert path.read_text() == "bank = 00\n"
 
 
+def test_older_python_uses_tomli_fallback(tmp_path, monkeypatch):
+    try:
+        import tomllib
+    except ModuleNotFoundError:
+        import tomli as tomllib
+    monkeypatch.setitem(sys.modules, "tomllib", None)
+    monkeypatch.setitem(sys.modules, "tomli", tomllib)
+    write_symbols(tmp_path, ("Start", 0xc0, 0, True))
+    sync_symbols(tmp_path)
+    assert "func Start 0000" in (tmp_path / "bankc0.cfg").read_text()
+
+
+def test_missing_toml_reader_only_errors_when_symbols_exist(tmp_path, monkeypatch):
+    monkeypatch.setitem(sys.modules, "tomllib", None)
+    monkeypatch.setitem(sys.modules, "tomli", None)
+    assert sync_symbols(tmp_path) == []
+    write_symbols(tmp_path, ("Start", 0xc0, 0, True))
+    with pytest.raises(ValueError, match="python -m pip install tomli"):
+        sync_symbols(tmp_path)
+    assert not list(tmp_path.glob("*.cfg"))
+
+
 def test_existing_uppercase_cfg_and_manual_tier_override_are_preserved(tmp_path):
     path = tmp_path / "bankC0.cfg"
     manual = "bank = c0\nfunc Existing 0100 entry_mx:0,1\nforce_lle c00200\n"

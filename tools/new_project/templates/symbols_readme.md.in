@@ -13,6 +13,9 @@ The block between `>>> BEGIN symbols.toml` and `<<< END symbols.toml` in
 each bank cfg is rewritten from `symbols.toml` on every regen. Edit
 `symbols.toml`, not the block.
 
+Python 3.11+ includes the TOML reader. On older Python, install it with
+`python -m pip install tomli`. Projects without `symbols.toml` do not need it.
+
 Each `[[func]]` has a C identifier `name`, a 16-bit hexadecimal `addr`
 (for example, `"8000"`), and an integer `bank` (for example, `0xc0`).
 Missing bank configs are created automatically; hand-written directives outside
