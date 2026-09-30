@@ -40,6 +40,7 @@ from v2_analyze import (  # noqa: E402
     ensure_native_analyzer,
 )
 from disassembly_layout import configured_authority  # noqa: E402
+from sync_symbols import sync_symbols  # noqa: E402
 
 
 def _tree_digest(paths) -> str:
@@ -235,14 +236,17 @@ def main() -> int:
         parser.error("the Python analyzer was retired; the native analyzer "
                      "is the only one (drop --analysis-backend python)")
     try:
+        symbols = sync_symbols(pathlib.Path(args.cfg_dir).resolve())
+        symbol_roots = tuple(VariantKey(s.pc24, s.entry_m, s.entry_x)
+                             for s in symbols if s.emit)
         with configured_authority(args.rom, args.cfg_dir) as (cfg_dir, probe_modes):
             args.disassembly_entry_modes |= probe_modes
-            return _generate(args, parser, cfg_dir)
+            return _generate(args, parser, cfg_dir, symbol_roots=symbol_roots)
     except (ValueError, KeyError, OSError) as exc:
         parser.error(str(exc))
 
 
-def _generate(args, parser, cfg_dir):
+def _generate(args, parser, cfg_dir, *, symbol_roots=()):
     shard_threshold_bytes = max(0, args.bank_shard_threshold_kib) * 1024
     shard_pc_span = max(0, args.bank_shard_pc_span)
 
@@ -259,6 +263,15 @@ def _generate(args, parser, cfg_dir):
     rom_sha256_hex = hashlib.sha256(rom).hexdigest()
     rom_image_size = len(rom)
     parsed = _load_cfgs(cfg_dir)
+    # cfg entry_mx_at/manual func overrides remain authoritative when a
+    # symbol requests an AOT root at an already configured entry.
+    entry_modes = {
+        (bank << 16) | entry.start: (entry.entry_m, entry.entry_x)
+        for bank, _path, cfg in parsed for entry in cfg.entries
+    }
+    symbol_roots = tuple(
+        VariantKey(key.pc24, *entry_modes.get(key.pc24, (key.m, key.x)))
+        for key in symbol_roots)
     # Materialize ram_routine blobs into the ROM image + reloc registry so
     # their WRAM entries decode as ordinary AOT bodies. The native analyzer
     # seeds the same WRAM roots from cfg; passing them as additional roots
@@ -295,7 +308,7 @@ def _generate(args, parser, cfg_dir):
         # explicitly qualified targets reach AOT eligibility.
         parsed[0][2].force_lle.update(profile_force_lle)
     additional_roots = tuple(sorted(
-        set(host_roots) | set(profile_roots) | set(ram_routine_roots)
+        set(host_roots) | set(profile_roots) | set(ram_routine_roots) | set(symbol_roots)
         | (set(discover_authority_roots(parsed)) if args.disassembly_entry_modes else set())))
 
     def generator_digest_for():
@@ -304,6 +317,7 @@ def _generate(args, parser, cfg_dir):
             REPO / "recompiler" / "snes65816.py",
             REPO / "tools" / "v2_analyze.py",
             REPO / "tools" / "disassembly_layout.py",
+            REPO / "tools" / "sync_symbols.py",
             REPO / "tools" / "ingest_disassembly_authority.py",
             REPO / "recompiler-rs" / "src",
             REPO / "recompiler-rs" / "Cargo.toml",
