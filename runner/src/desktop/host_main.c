@@ -159,6 +159,7 @@ static int RemapSdlButton(int button);
 static void HandleGamepadInput(GamepadInfo *gi, int button, bool pressed);
 static void HandleInput(int keyCode, int keyMod, bool pressed);
 static void HandleCommand(uint32 j, bool pressed);
+static void PollKeyboardControls(const uint8_t *keys);
 static void RequestScreenshot(void);
 #ifndef __ANDROID__
 void OpenGLRenderer_Create(struct RendererFuncs *funcs);
@@ -3652,22 +3653,8 @@ error_reading:;
       continue;
     }
 
-    /* Drive the SNES controller bits in g_input_state from keybinds.ini.
-     * config.ini's [KeyMap] still owns system commands (state save/load,
-     * fullscreen, pause, etc.); the 12 controller buttons per player come
-     * from keybinds.ini. Mapping: keybinds bit layout (see keybinds.h) ->
-     * kKeys_Controls index ([Controls] order: Up Down Left Right Select
-     * Start A B X Y L R). HandleCommand is idempotent for set/clear. */
-    {
-      const uint8_t *keys = snesrecomp_sdl_get_keyboard_state();
-      uint16_t kb_p1 = keybinds_read_player(keys, 1);
-      uint16_t kb_p2 = keybinds_read_player(keys, 2);
-      static const uint8 kKb2CtrlsIdx[12] = { 7, 6, 5, 4, 9, 8, 3, 11, 2, 10, 1, 0 };
-      for (int i = 0; i < 12; i++) {
-        HandleCommand(kKeys_Controls   + i, (kb_p1 >> kKb2CtrlsIdx[i]) & 1);
-        HandleCommand(kKeys_ControlsP2 + i, (kb_p2 >> kKb2CtrlsIdx[i]) & 1);
-      }
-    }
+    /* Input-source assignments apply to each keyboard map independently. */
+    PollKeyboardControls(snesrecomp_sdl_get_keyboard_state());
 
     /* Seat 0's HUMAN word, kept separate from the script's and the debug
      * server's: the overlays are human facilities, and a repro script must
@@ -3997,6 +3984,14 @@ error_reading:;
  * to draw a second one -- bare white digits in the frame's corner -- so a
  * player who pressed the key saw two counters that disagreed. */
 
+static void PollKeyboardControls(const uint8_t *keys) {
+  /* Replace the whole keyboard word so changing a seat to Gamepad/None also
+   * releases keys held under its previous assignment. Hotkeys remain separate. */
+  uint32 p1 = g_config.player_src[0] == 1 ? keybinds_read_player_runner(keys, 1) : 0;
+  uint32 p2 = g_config.player_src[1] == 1 ? keybinds_read_player_runner(keys, 2) : 0;
+  g_input_state = p1 | (p2 << 12);
+}
+
 static void HandleCommand(uint32 j, bool pressed) {
   static const uint8 kKbdRemap[] = { 4, 5, 6, 7, 2, 3, 8, 0, 9, 1, 10, 11 };
   if (j < kKeys_Controls)
@@ -4109,7 +4104,8 @@ static void RequestScreenshot(void) {
 }
 
 static uint32 GetActiveControllers(void) {
-  uint32 ctrl = g_config.has_keyboard_controls;
+  uint32 ctrl = (g_config.player_src[0] == 1 ? 1u : 0u) |
+                (g_config.player_src[1] == 1 ? 2u : 0u);
   ctrl |= g_gamepad[0].joystick_id != -1 ? 1 : 0;
   ctrl |= g_gamepad[1].joystick_id != -1 ? 2 : 0;
   return ctrl << 30;
