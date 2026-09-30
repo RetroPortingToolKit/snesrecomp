@@ -286,6 +286,28 @@ enum { kProfileGuest, kProfileRaster, kProfileAcquire,
 static bool g_profile;
 static unsigned g_profile_frame;
 static struct { double total, maximum; unsigned count, maximum_frame; } g_timings[kProfileCount];
+/* Opt-in presentation trace, retained in memory and written only after play.
+ * Per-frame file flushing would itself introduce the stalls this measures. */
+enum { kFrameTimingCapacity = 36000 };
+typedef struct FrameTiming {
+  unsigned frame;
+  double at, periods, stages[kProfileCount];
+} FrameTiming;
+static FrameTiming *g_frame_timings;
+static unsigned g_frame_timing_count;
+static double g_frame_timing_previous[kProfileCount];
+
+static void RecordFrameTiming(unsigned frame) {
+  if (!g_profile || !g_frame_timings || g_frame_timing_count == kFrameTimingCapacity) return;
+  FrameTiming *t = &g_frame_timings[g_frame_timing_count++];
+  t->frame = frame;
+  t->at = MonotonicSeconds();
+  t->periods = RtlLastFramePeriods();
+  for (unsigned i = 0; i < kProfileCount; ++i) {
+    t->stages[i] = g_timings[i].total - g_frame_timing_previous[i];
+    g_frame_timing_previous[i] = g_timings[i].total;
+  }
+}
 static double ProfileStart(void) {
   return g_profile ? MonotonicSeconds() : 0;
 }
@@ -1377,6 +1399,7 @@ static void DrawPpuFrameWithPerf(void) {
   profile_start = ProfileStart();
   g_renderer_funcs.EndDraw();
   ProfileEnd(kProfilePresent, profile_start);
+  RecordFrameTiming(g_present_frame);
 }
 
 /* Seat-0 input word the overlays navigate with — the same sources the guest
@@ -2097,10 +2120,11 @@ static bool SdlRenderer_Init(SDL_Window *window) {
     printf("Failed to create renderer: %s\n", SDL_GetError());
     return false;
   }
-  if (kDebugFlag) {
+  if (kDebugFlag || HostGetenv("HOST_PROFILE") || HostGetenv("FRAME_TIMING")) {
     const char *name = snesrecomp_sdl_renderer_name(renderer);
-    printf("Renderer: %s (vsync=%d)\n", name ? name : "(unknown)",
-           snesrecomp_sdl_get_render_vsync(renderer));
+    printf("Renderer: %s (vsync=%d display_hz=%.3f simulation_hz=%.6f)\n",
+           name ? name : "(unknown)", snesrecomp_sdl_get_render_vsync(renderer),
+           DisplayRefresh(), g_simulation_hz);
   }
   g_renderer = renderer;
 
@@ -2857,6 +2881,14 @@ int snesrecomp_desktop_main(const SnesDesktopHostGame *game, int argc, char **ar
   SetErrorMode(SEM_FAILCRITICALERRORS | SEM_NOGPFAULTERRORBOX);
 #endif
   atexit(post_mortem_atexit);
+  /* MinGW's unbuffered formatted output can issue a write for each character.
+   * An inherited Windows write-through log handle then turns a single line
+   * into seconds of synchronous disk I/O. Batch the formatting; breadcrumbs
+   * explicitly flush at diagnostic boundaries, including startup and fatal
+   * reports, and the crash handlers also flush before terminating. */
+  static char stdout_buffer[4096], stderr_buffer[4096];
+  setvbuf(stdout, stdout_buffer, _IOFBF, sizeof(stdout_buffer));
+  setvbuf(stderr, stderr_buffer, _IOFBF, sizeof(stderr_buffer));
   host_report_init(game->display_name, build_version);
   /* ARM the backwards watcher BEFORE any recompiled code runs. Without
    * this, the trace ring records but no tripwires fire. Heap-allocate the
@@ -2864,8 +2896,6 @@ int snesrecomp_desktop_main(const SnesDesktopHostGame *game, int argc, char **ar
    * SNESRECOMP_CPU_TRACE_RING_ENTRIES). */
   cpu_trace_init();
   cpu_trace_arm_default_watches();
-  setvbuf(stdout, NULL, _IONBF, 0);
-  setvbuf(stderr, NULL, _IONBF, 0);
   /* Capture program path before argv shift — used to place keybinds.ini
    * next to the executable. */
   const char *program_path = (argc >= 1) ? argv[0] : NULL;
@@ -3517,7 +3547,10 @@ error_reading:;
   const char *trace_path = HostGetenv("STATE_TRACE");
   FILE *state_trace = trace_path ? fopen(trace_path, "w") : NULL;
   uint64_t presentations = 0;
-  bool profile_requested = HostGetenv("HOST_PROFILE") && atoi(HostGetenv("HOST_PROFILE")) != 0;
+  const char *frame_timing_path = HostGetenv("FRAME_TIMING");
+  if (frame_timing_path) g_frame_timings = calloc(kFrameTimingCapacity, sizeof(*g_frame_timings));
+  bool profile_requested = g_frame_timings ||
+      (HostGetenv("HOST_PROFILE") && atoi(HostGetenv("HOST_PROFILE")) != 0);
   unsigned profile_first = HostGetenv("HOST_PROFILE_START_FRAME")
       ? (unsigned)strtoul(HostGetenv("HOST_PROFILE_START_FRAME"), NULL, 10) : 1;
   if (!profile_first) profile_first = 1;
@@ -3544,6 +3577,11 @@ error_reading:;
   host_report_breadcrumb("entering main loop");
 
   while (running) {
+    g_profile_frame = frameCtr + 1;
+    if (profile_requested && !g_profile && g_profile_frame >= profile_first) {
+      g_profile = true;
+      profile_window_start = MonotonicSeconds();
+    }
     if (g_state_generation != RtlStateGeneration()) {
       ResetAudioTimeline();
       snes_rewind_shutdown();
@@ -3669,20 +3707,27 @@ error_reading:;
         int burst = 0;
         for (;;) {
           uint32 inputs = snes_netplay_published_inputs() | snes_netplay_active_mask();
+          g_profile_frame = frameCtr + 1;
+          double profile_start = ProfileStart();
           if (game->before_run_frame) game->before_run_frame();
           RtlRunFrame(inputs);
+          ProfileEnd(kProfileGuest, profile_start);
           frameCtr++;
           g_present_frame = frameCtr;
           if (game->after_run_frame) {
+            profile_start = ProfileStart();
             SnesDesktopHostFrameStats st = {
               .frame = frameCtr, .run_seconds = MonotonicSeconds() - run_start,
               .audio_output_rate = audio_output_rate,
             };
             game->after_run_frame(&st);
+            ProfileEnd(kProfileGameHook, profile_start);
           }
           snes_osd_note_frame();
+          profile_start = ProfileStart();
           CaptureSimulationFrame(frameCtr);
           NoteStateFrame();
+          ProfileEnd(kProfileRaster, profile_start);
           snes_netplay_finish_frame();
           if (run_frames && frameCtr >= run_frames) {
             running = false;
@@ -3902,11 +3947,6 @@ error_reading:;
       break;
     }
     inputs |= debug_server_get_controller_inputs();
-    g_profile_frame = frameCtr + 1;
-    if (profile_requested && !g_profile && g_profile_frame >= profile_first) {
-      g_profile = true;
-      profile_window_start = MonotonicSeconds();
-    }
     double profile_start = ProfileStart();
     double guest_start = MonotonicSeconds();
     if (game->before_run_frame) game->before_run_frame();
@@ -3997,13 +4037,31 @@ error_reading:;
     }
   }
 
+  const double run_end = MonotonicSeconds();
   if (state_trace) fclose(state_trace);
+  if (g_frame_timings) {
+    FILE *f = fopen(frame_timing_path, "w");
+    if (f) {
+      fprintf(f, "frame,present_seconds,guest_periods,guest_ms,raster_ms,acquire_ms,compose_ms,present_ms,trace_ms,hook_ms,events_ms,wait_ms\n");
+      for (unsigned n = 0; n < g_frame_timing_count; ++n) {
+        const FrameTiming *t = &g_frame_timings[n];
+        fprintf(f, "%u,%.9f,%.6f", t->frame, t->at - profile_window_start, t->periods);
+        for (unsigned i = 0; i < kProfileCount; ++i) fprintf(f, ",%.6f", t->stages[i] * 1000);
+        fputc('\n', f);
+      }
+      fclose(f);
+    } else {
+      host_report_breadcrumb("could not write frame timing file: %s", frame_timing_path);
+    }
+    free(g_frame_timings);
+    g_frame_timings = NULL;
+  }
   host_report_breadcrumb("exit: %s after %u frames", exit_reason, frameCtr);
   host_report_breadcrumb("video totals: simulations=%u presentations=%llu seconds=%.3f",
                          frameCtr, (unsigned long long)presentations,
-                         MonotonicSeconds() - run_start);
+                         run_end - run_start);
   if (g_profile) {
-    double profile_seconds = MonotonicSeconds() - profile_window_start;
+    double profile_seconds = run_end - profile_window_start;
     host_report_breadcrumb("video profile window: first=%u last=%u seconds=%.6f presentations=%u",
         profile_first, frameCtr, profile_seconds, g_timings[kProfilePresent].count);
     static const char *names[kProfileCount] = {

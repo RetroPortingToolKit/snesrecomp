@@ -188,6 +188,10 @@ static void breadcrumb_v(const char *fmt, va_list ap) {
     hr_unlock();
 
     fprintf(stderr, "[host +%u.%03us] %s\n", bc->t_ms / 1000, bc->t_ms % 1000, msg);
+    /* The desktop host buffers formatted output to avoid character-at-a-time
+     * writes on Windows. Keep boot/fatal breadcrumbs visible immediately. */
+    fflush(stdout);
+    fflush(stderr);
 }
 
 void host_report_breadcrumb(const char *fmt, ...) {
