@@ -54,6 +54,13 @@ The primary display reported 165 Hz; SDL selected Direct3D 11. Independent
 offline runs captured 1,200 frames with real audio and presentation. The
 steady section (frames 601–1200) gave these completed-present intervals:
 
+**Qualification correction:** subsequent headed inspection showed that the
+early Start presses in these initial offline scripts were ignored during the
+logos. Those samples describe boot/title presentation, not Highway movement.
+They remain useful startup/presentation baselines, but must not be cited as
+validation of moving co-op characters. The subsequent MMX Highway route waits
+for gameplay mode and verifies both characters visually before measurement.
+
 | Run | Mean | 95th percentile | 99th percentile | Maximum |
 | --- | ---: | ---: | ---: | ---: |
 | Offline, VSync on | 16.639 ms | 17.875 ms | 21.436 ms | 26.178 ms |
@@ -96,8 +103,31 @@ advancing the guest. The first row includes work since profiling activation.
 Network admission/replay and miscellaneous host work are not separately
 attributed; stage sums need not equal the presentation interval.
 
+`guest_periods` comes from `RtlLastFramePeriods()`, which uses the runtime's
+APU frame-clock duration. A value greater than one explains a longer host
+deadline, but does not by itself prove that original hardware would exhibit
+the same slowdown. The repeatable MMX Highway hitches now point to this shared
+simulation/audio-time accounting as a follow-up, beyond display cadence alone.
+
 Renderer, effective VSync, display refresh, and simulation rate appear in
 the log when profiling is requested. Recording stops when the buffer is full;
 it does not grow without bound. Exit-time CSV I/O is excluded from the reported
 run/profile duration. The older pixel-checksum `PRESENT_LOG` flushes per frame
 and should not be used to measure subtle timing differences.
+
+## Two-player scripted movement
+
+The desktop `--script` driver accepts `p1:` and `p2:` prefixes on individual
+buttons. Unprefixed buttons still address P1. For example:
+
+```text
+press right+p2:right 480
+press right+p2:right+b+p2:b+y+p2:y 20
+```
+
+Both masks enter the normal packed `RtlRunFrame` controller word. A port
+mentioned by a script remains logically connected during release/wait frames,
+even with keyboard/gamepad sources disabled. This lets production builds run
+headed controller tests without enabling the TCP debugger or writing gameplay
+positions directly. P2 prefixes are a desktop-host extension; the original
+unprefixed P1 script syntax remains compatible with existing oracle scripts.

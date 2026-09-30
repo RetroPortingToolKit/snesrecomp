@@ -619,6 +619,7 @@ static int g_script_count;
 static int g_script_index;    // current entry
 static int g_script_phase;    // 0=holding, 1=waiting
 static int g_script_counter;  // frames left in current phase
+static uint32 g_script_controllers;  // scripted ports stay connected while idle
 static ScriptForcePoke *g_script_force_pokes;
 static int g_script_force_poke_count;
 static int g_script_force_poke_cap;
@@ -642,6 +643,11 @@ static uint32 ParseButtonMask(const char *name) {
     }
     return mask;
   }
+
+  /* Prefix each button independently: right+p2:right+b+p2:b. The default
+   * remains P1, preserving existing scripts and the oracle's P1 syntax. */
+  if (name[0] == 'p' && (name[1] == '1' || name[1] == '2') && name[2] == ':')
+    return (ParseButtonMask(name + 3) & 0x0fffu) << (name[1] == '2' ? 12 : 0);
 
   if (strcmp(name, "start")  == 0) return 0x0008;
   if (strcmp(name, "select") == 0) return 0x0004;
@@ -722,6 +728,7 @@ static ScriptEntry *NewScriptEntry(int *cap) {
 /* Script grammar, one command per line, `#` comments:
  *   wait N                  frames before the next command
  *   press <buttons> [N]     hold a+b+... for N frames (default 1)
+ *                           prefix P2 buttons with p2:, e.g. right+p2:right
  *   loadstate N             load save-state slot N
  *   reset                   the Reset hotkey's console reset
  *   turbo on|off            change the held-Turbo state at this frame boundary
@@ -859,6 +866,8 @@ static void LoadScript(const char *path) {
       int hold = (sscanf(line, "%*s %*s %d", &n) == 1) ? n : 1;
       ScriptEntry *e = NewScriptEntry(&cap);
       e->mask = ParseButtonMask(arg1);
+      if (e->mask & 0x000fffu) g_script_controllers |= 1u;
+      if (e->mask & 0xfff000u) g_script_controllers |= 2u;
       e->hold_frames = hold;
       e->wait_frames = pending_wait;
       pending_wait = 0;
@@ -4279,7 +4288,8 @@ static void RequestScreenshot(void) {
 }
 
 static uint32 GetActiveControllers(void) {
-  uint32 ctrl = (g_config.player_src[0] == 1 ? 1u : 0u) |
+  uint32 ctrl = g_script_controllers |
+                (g_config.player_src[0] == 1 ? 1u : 0u) |
                 (g_config.player_src[1] == 1 ? 2u : 0u);
   ctrl |= g_gamepad[0].joystick_id != -1 ? 1 : 0;
   ctrl |= g_gamepad[1].joystick_id != -1 ? 2 : 0;
