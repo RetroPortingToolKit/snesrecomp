@@ -80,6 +80,11 @@ static int rb_env_int(const char *name, const char *generic, int def, int lo, in
  * is folded into cfg->rollback before start() calls here. NETPLAY.md §4 is
  * satisfied by the settlement being room-wide, not per-process. */
 static int s_rb_default;
+static void (*s_replay_frame)(uint32_t inputs, uint32_t tick);
+
+void snes_netplay_rb_set_replay_frame(void (*run)(uint32_t, uint32_t)) {
+    s_replay_frame = run;
+}
 
 void snes_netplay_rb_set_default(int on)
 {
@@ -213,8 +218,8 @@ static uint32_t rb_run_frame_inputs(void)
 static int rb_host_run_tick(void *ctx, uint32_t tick)
 {
     (void)ctx;
-    (void)tick;
-    RtlRunFrame(rb_run_frame_inputs());
+    if (s_replay_frame) s_replay_frame(rb_run_frame_inputs(), tick);
+    else RtlRunFrame(rb_run_frame_inputs());
     return 1;
 }
 

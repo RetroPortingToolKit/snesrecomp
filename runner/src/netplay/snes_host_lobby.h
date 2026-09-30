@@ -87,6 +87,8 @@ typedef struct SnesHostLobbyOpts {
    * `presentation_only` is only a request.
    */
   const char *cosmetic_allow;
+  /* 0 preserves the SNES maximum; titles may cap their online seat count. */
+  int max_players;
 } SnesHostLobbyOpts;
 
 /* Init once before first launcher open. Returns 0 on success. */

@@ -248,7 +248,8 @@ int snes_host_lobby_init(const SnesHostLobbyIdentity *id,
   h.lan_registry_path = id->lan_registry_path;
   h.platform = "snes";
   h.legacy_env_prefix = "SNES_NET_";
-  h.max_players = SNES_LOBBY_MAX_PLAYERS;
+  h.max_players = g_opts.max_players >= 2 && g_opts.max_players <= SNES_LOBBY_MAX_PLAYERS
+      ? g_opts.max_players : SNES_LOBBY_MAX_PLAYERS;
   h.slot_policy = RECOMP_NETPLAY_SLOTS_SEAT;
   h.input_player = 0;
   h.exe_dir_path = snes_exe_dir_path;

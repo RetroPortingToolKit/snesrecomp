@@ -49,6 +49,7 @@ extern "C" {
 struct RtlGameInfo;
 struct SpcPlayer;
 struct RecompLauncherCModProvider;
+struct RecompLauncherCGameInfo;
 
 /* Per-frame numbers a game's after_run_frame hook may want. Wall-clock
  * figures are diagnostics only; nothing here samples or changes guest state. */
@@ -185,6 +186,14 @@ typedef struct SnesDesktopHostGame {
    * restarts the game through a temporary save state, so the player resumes
    * exactly where they left off. Zero keeps today's behaviour exactly. */
   int in_game_launcher;
+
+  /* Optional title policy after the shared launcher has been seeded. */
+  void (*configure_launcher)(struct RecompLauncherCGameInfo *info);
+  /* Before a netplay launch commits mods. from_lobby distinguishes an
+   * agreed room plan from direct/environment launch. Return 0 to refuse. */
+  int (*prepare_netplay)(int from_lobby, char *reason, size_t reason_cap);
+  /* Validate that required title plugins actually activated before linking. */
+  int (*netplay_ready)(char *reason, size_t reason_cap);
 } SnesDesktopHostGame;
 
 /* The whole program. Returns the process exit code. */
