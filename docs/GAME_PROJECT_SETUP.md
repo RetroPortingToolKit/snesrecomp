@@ -164,8 +164,12 @@ decision rather than a surprise.
 1. **Make it boot** — `src/game_rtl.c`.
 2. **Name things** — add `[[func]]` entries to `recomp/symbols.toml`, re-run
    `tools/regen.sh`. `emit = true` promotes a function into ahead-of-time
-   codegen; `false` keeps it interpreted. The block inside `bank00.cfg` is
-   regenerated from the toml, so edit the toml.
+   analysis (unproven variants still use the interpreter); `false` keeps it
+   interpreted. Marked blocks in each `bankNN.cfg` are regenerated from the
+   TOML, creating missing configs. `false` entries become `symbol` labels and
+   `force_lle` boundaries; `true` entries become `func` declarations and explicit
+   analysis roots without needing `--cfg-roots`. Edit the TOML, keeping manual
+   cfg directives outside its generated blocks.
 3. **Resolve dispatch misses after every run, before anything else.** An
    unresolved indirect target is the reason a port diverges, and it is cheap
    to fix early and expensive to fix late.
