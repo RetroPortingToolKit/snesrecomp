@@ -3642,12 +3642,16 @@ error_reading:;
       g_reset_clock = true;
 
 #if defined(SNES_HAS_LOBBY_CLIENT)
-    /* Netplay session: the delay-sync admit pump owns the frame cadence.
-     * Both seats' inputs come back merged from the netcode; on a stall the
-     * held framebuffer is re-presented so the window stays live. */
+    /* Netplay settles inputs and peer pacing; the host still caps the guest
+     * rate. VSync may be off or tied to a 144 Hz display, never a sim clock. */
     if (snes_netplay_active()) {
       /* Refused mid-match; dropped rather than left to fire when it ends. */
       g_open_launcher_hotkey = 0;
+      if (!snes_host_clock_simulation_due(&video_clock, MonotonicSeconds())) {
+        snes_netplay_pump();
+        WaitUntil(video_clock.next_simulation);
+        continue;
+      }
       SnesHostBarrierHooks hooks;
       int run = running;
       int admitted;
@@ -3692,11 +3696,17 @@ error_reading:;
             break;
           burst++;
         }
+        snes_host_clock_simulation_done(&video_clock, MonotonicSeconds(), false,
+                                        RtlLastFramePeriods());
+      } else {
+        /* Do not repay a transport stall as a wall-clock turbo burst. The
+         * network's explicit catch-up budget above owns peer catch-up. */
+        snes_host_clock_reset(&video_clock, MonotonicSeconds(), g_simulation_hz, presentation_hz);
+        SDL_Delay(1);
       }
       g_present_alpha = 1;
       DrawPpuFrameWithPerf();
       ++presentations;
-      snes_host_clock_reset(&video_clock, MonotonicSeconds(), g_simulation_hz, presentation_hz);
       continue;
     }
 #endif /* SNES_HAS_LOBBY_CLIENT */
