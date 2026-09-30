@@ -82,6 +82,12 @@ def main() -> int:
             "probe_entry_modes": True,
             "instructions": [["0x008000", 1]],
         }), encoding="utf-8")
+        # Scaffold symbols need both the imported helper and its source file
+        # (the generator hashes it). Exercise this together with the temporary
+        # authority overlay so the original cfg/header still receive the name.
+        (output / "config" / "symbols.toml").write_text(
+            '[[func]]\nname = "FixtureReset"\naddr = "8000"\n'
+            'bank = 0\nemit = true\n', encoding="utf-8")
         generate = subprocess.run([
             str(executable), "generate",
             "--rom", str(rom_path),
@@ -113,6 +119,10 @@ def main() -> int:
                     f"packaged generate missing phase {phase!r}: {phases}")
         if not any(e.get("event") == "result" and e.get("ok") for e in events):
             raise RuntimeError(f"packaged generate missing result event: {events}")
+        cfg = (output / "config" / "bank00.cfg").read_text(encoding="utf-8")
+        header = (output / "config" / "funcs.h").read_text(encoding="utf-8")
+        if "func FixtureReset 8000" not in cfg or "void FixtureReset(" not in header:
+            raise RuntimeError("packaged generate did not synchronize symbols.toml")
     print("packaged CLI smoke test passed")
     return 0
 

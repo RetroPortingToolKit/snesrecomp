@@ -88,6 +88,7 @@ def main() -> int:
         (ROOT / "recompiler", "recompiler"),
         (ROOT / "tools" / "v2_emit.py", "tools"),
         (ROOT / "tools" / "v2_analyze.py", "tools"),
+        (ROOT / "tools" / "sync_symbols.py", "tools"),
         (ROOT / "tools" / "disassembly_layout.py", "tools"),
         (ROOT / "tools" / "ingest_disassembly_authority.py", "tools"),
         (ROOT / "tools" / "__init__.py", "tools"),
