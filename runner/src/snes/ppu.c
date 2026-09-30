@@ -2603,17 +2603,37 @@ static void PpuDrawMode7HdLine(Ppu *ppu, unsigned line) {
   SnesMode7HdTransform transform =
       SnesMode7HdMakeTransform(ppu->m7matrix, ppu->m7sel, line);
   const uint16_t *vram = PpuRenderVram(ppu);
+  double offsets[4]; /* The surface binding accepts scales 1..4. */
+  for (unsigned sx = 0; sx < scale; ++sx) offsets[sx] = (double)sx / scale;
   for (unsigned sy = 0; sy < scale; ++sy) {
     uint32_t *row = (uint32_t *)(first + sy * surface->pitch);
     memset(row, 0, width * scale * sizeof(uint32_t));
     double subline = (double)sy / scale;
+    double left = -(int)ppu->extraLeftCur, right = 256 + ppu->extraRightCur;
+    double dy_x = subline * transform.row_x, dy_y = subline * transform.row_y;
+    bool bounded = SnesMode7HdSpanFits(
+        transform.origin_x + left * transform.step_x + dy_x,
+        transform.origin_y + left * transform.step_y + dy_y,
+        transform.origin_x + right * transform.step_x + dy_x,
+        transform.origin_y + right * transform.step_y + dy_y, INT_MAX);
+    int last_x = INT_MIN, last_y = INT_MIN;
+    uint8_t index = 0;
     for (int x = -(int)ppu->extraLeftCur; x < 256 + ppu->extraRightCur; ++x) {
       unsigned i = (unsigned)(x + kPpuExtraLeftRight);
       uint8_t visible = visibility[i];
       uint16_t object = ppu->objBuffer.data[i];
       for (unsigned sx = 0; sx < scale; ++sx) {
-        uint8_t index = SnesMode7HdSample(&transform, vram,
-                                          x + (double)sx / scale, subline);
+        double position = x + offsets[sx];
+        if (bounded) {
+          int tx = SnesMode7HdFloorInt(transform.origin_x + position * transform.step_x + dy_x);
+          int ty = SnesMode7HdFloorInt(transform.origin_y + position * transform.step_y + dy_y);
+          if (tx != last_x || ty != last_y) {
+            index = SnesMode7HdFetchInt(transform.control, vram, tx, ty, -1);
+            last_x = tx; last_y = ty;
+          }
+        } else {
+          index = SnesMode7HdSample(&transform, vram, position, subline);
+        }
         uint16_t bg = index ? (uint16_t)(0x5000 | index) : 0x0500;
         uint16_t main = visible & 1 ? bg : 0x0500;
         uint16_t sub = visible & 2 ? bg : 0x0500;
