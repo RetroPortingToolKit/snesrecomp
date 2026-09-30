@@ -244,6 +244,8 @@ struct Runtime {
     std::string rom_sha256;
     std::map<std::string, std::map<std::string, Package>> packages;
     std::map<std::string, PackageSelection> selections;
+    std::map<std::string, PackageSelection> offline_selections;
+    bool temporary_selection = false;
     std::map<std::string, std::string> shared_resources;
     Validation validation;
     Validation committed;
@@ -1564,6 +1566,14 @@ std::string quote_toml(const std::string& value) {
 }
 
 bool save_state(Runtime& runtime, std::string* error) {
+    /* A lobby's plan lasts only for that session. Owner-selected ROM paths
+     * are still local durable preferences, never part of the network plan. */
+    auto saved = runtime.temporary_selection ? runtime.offline_selections : runtime.selections;
+    if (runtime.temporary_selection) {
+        for (const auto& [id, package] : runtime.selections)
+            for (const auto& [fid, feature] : package.features)
+                saved[id].features[fid].resources = feature.resources;
+    }
     std::error_code ec;
     fs::create_directories(runtime.root, ec);
     const fs::path temp = runtime.root / "state.toml.tmp";
@@ -1577,11 +1587,11 @@ bool save_state(Runtime& runtime, std::string* error) {
     for (const auto& [key, path] : runtime.shared_resources)
         file << "\n[[shared_resource]]\nid = " << quote_toml(key)
              << "\npath = " << quote_toml(path) << "\n";
-    for (const auto& [package_id, selection] : runtime.selections) {
+    for (const auto& [package_id, selection] : saved) {
         file << "\n[[package]]\nid = " << quote_toml(package_id)
              << "\nversion = " << quote_toml(selection.version) << "\n";
     }
-    for (const auto& [package_id, selection] : runtime.selections) {
+    for (const auto& [package_id, selection] : saved) {
         for (const auto& [feature_id, feature] : selection.features) {
             file << "\n[[feature]]\npackage_id = " << quote_toml(package_id)
                  << "\nid = " << quote_toml(feature_id)
@@ -3851,6 +3861,29 @@ snes_mod_runtime_launcher_provider_c(void) {
 #else
     return nullptr;
 #endif
+}
+
+extern "C" int snes_mod_runtime_begin_temporary_c(void) {
+    auto& runtime = SNESRecomp::state();
+    if (!runtime.initialized) return 0;
+    if (!runtime.temporary_selection) {
+        runtime.offline_selections = runtime.selections;
+        runtime.temporary_selection = true;
+    }
+    return 1;
+}
+
+extern "C" void snes_mod_runtime_end_temporary_c(void) {
+    auto& runtime = SNESRecomp::state();
+    if (!runtime.temporary_selection) return;
+    for (const auto& [id, package] : runtime.selections)
+        for (const auto& [fid, feature] : package.features)
+            runtime.offline_selections[id].features[fid].resources = feature.resources;
+    runtime.selections = std::move(runtime.offline_selections);
+    runtime.temporary_selection = false;
+    runtime.committed = {};
+    runtime.cosmetic_allow.clear();
+    SNESRecomp::refresh_validation();
 }
 
 extern "C" int snes_mod_runtime_resource_path_c(const char* package_id,

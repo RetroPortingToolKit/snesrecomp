@@ -122,6 +122,9 @@
 /* ─────────────────────────────────────────────────────────────────────────── */
 
 static const SnesDesktopHostGame *g_game;
+/* Stay true through transport shutdown, so disconnect cannot turn an online
+ * match into an offline autosave or enable local state controls. */
+static bool g_netplay_session;
 static char g_window_title[128];
 static char g_launcher_title[160];
 
@@ -1048,6 +1051,14 @@ static void CaptureSimulationFrame(unsigned number) {
     g_rtl_game_info->draw_ppu_frame();
   if (g_game->end_sim_frame) g_game->end_sim_frame(g_my_pixels, number);
 }
+
+#if defined(SNESRECOMP_NET_ROLLBACK)
+static void NetplayReplayFrame(uint32_t inputs, uint32_t tick) {
+  if (g_game->before_run_frame) g_game->before_run_frame();
+  RtlRunFrame(inputs);
+  CaptureSimulationFrame(tick + 1);
+}
+#endif
 
 /* Run-ahead's view of the capture above. It calls this after its last
  * speculative frame and before rewinding, so the picture the player sees is
@@ -2252,6 +2263,7 @@ static int g_mods_ready;
 static SnesNetplayConfig g_netplay_cfg;
 static int g_netplay_pending;    /* launcher armed a session; start after SnesInit */
 static int g_netplay_from_lobby; /* admit pump waits for the lobby peer */
+static int g_netplay_exit_requested;
 
 static void host_lobby_ensure_init(void) {
   static int once;
@@ -2267,21 +2279,32 @@ static void host_lobby_ensure_init(void) {
   id.default_lobby_name = "Netplay Lobby";
   memset(&opts, 0, sizeof(opts));
   opts.rematch_set_ready = 1;
+  opts.max_players = g_game->num_players;
   if (snes_host_lobby_init(&id, &opts) != 0)
     fprintf(stderr, "netplay: snes_host_lobby_init failed\n");
 }
 
 static uint16_t netplay_capture_pad(void *ctx) {
   (void)ctx;
-  return (uint16_t)(OverlayNavInputs() & 0x0fffu);
+  PollKeyboardControls(snesrecomp_sdl_get_keyboard_state());
+  const unsigned player = snes_netplay_input_player() == 1 ? 1 : 0;
+  return (uint16_t)((((g_input_state | g_pad_buttons) >> (player * 12)) |
+      g_gamepad[player].axis_buttons) & 0x0fffu);
 }
 
 static void netplay_poll_events(void *ctx, int *want_soft_exit) {
   SDL_Event event;
   (void)ctx;
+  if (g_netplay_exit_requested) {
+    *want_soft_exit = g_netplay_exit_requested;
+    g_netplay_exit_requested = 0;
+  }
   while (SDL_PollEvent(&event)) {
-    if (event.type == SDL_QUIT)
+    if (HandleDeviceEvent(&event)) continue;
+    if (event.type == SDL_QUIT) {
       *want_soft_exit = 2;
+      g_netplay_from_lobby = 0; /* Closing the window exits the application. */
+    }
     if (event.type == SDL_KEYDOWN &&
         SNESRECOMP_SDL_EVENT_KEY(event) == SDLK_ESCAPE)
       *want_soft_exit = 1;
@@ -2336,6 +2359,7 @@ static char g_mod_state_path[1100];      /* <catalog>/state.toml; "" without mod
 static struct {
   bool pending;
   bool with_state;
+  bool launcher;
   char rom[1024];
   char state[1024];
 } g_relaunch;
@@ -2520,6 +2544,7 @@ static void LauncherSeed(RecompLauncherCSettings *ls, RecompLauncherCGameInfo *g
   if (!in_session)
     snesrecomp_codegen_host_autowire(gi, gi->name);
 #endif
+  if (game->configure_launcher) game->configure_launcher(gi);
 }
 
 /* The player's edits, into g_config and the file. Runs on EVERY way out of
@@ -3049,6 +3074,11 @@ int snesrecomp_desktop_main(const SnesDesktopHostGame *game, int argc, char **ar
             rom_path_buf, sizeof(rom_path_buf));
         host_report_breadcrumb("launcher: action=%d rom=%s", act,
                                rom_path_buf[0] ? rom_path_buf : "(none)");
+#if defined(RECOMP_LAUNCHER_HAS_NETPLAY_MODE_POLICY)
+        if (gi.netplay_mode_changed &&
+            (act != RECOMP_LAUNCHER_RESULT_LAUNCH || !ls.netplay_launch.enabled))
+          gi.netplay_mode_changed(0);
+#endif
 
         /* UNAVAILABLE: the window never opened, so ls still holds exactly
          * what this host seeded and rewriting the file would be pure noise. */
@@ -3117,6 +3147,28 @@ int snesrecomp_desktop_main(const SnesDesktopHostGame *game, int argc, char **ar
   host_report_breadcrumb("rom resolved: %s", rom_path_buf);
   g_rom_path = rom_path_buf;
 
+#if defined(SNES_HAS_LOBBY_CLIENT)
+  /* Same direct-IP/environment entry point as the standalone SNES hosts. */
+  if (!g_netplay_pending) {
+    snes_netplay_config_defaults(&g_netplay_cfg);
+    snes_netplay_apply_env(&g_netplay_cfg);
+    g_netplay_pending = g_netplay_cfg.enabled;
+    g_netplay_from_lobby = 0;
+  }
+  if (g_netplay_pending && game->prepare_netplay) {
+    char reason[512] = {0};
+    if (!game->prepare_netplay(g_netplay_from_lobby, reason, sizeof(reason))) {
+      fprintf(stderr, "netplay: launch refused: %s\n", reason);
+      return 1;
+    }
+  }
+  g_netplay_session = g_netplay_pending != 0;
+  if (g_netplay_session && (args.resume_state || start_paused || script_file)) {
+    fprintf(stderr, "netplay: launch from a cold boot without local state, pause or input scripts\n");
+    return 1;
+  }
+#endif
+
 #if SNESRECOMP_ENABLE_MODS
   /* Resolve the enabled features against THIS ROM and persist the plan. A
    * rejected plan (wrong ROM for a package, a plugin nothing registered) is a
@@ -3127,8 +3179,8 @@ int snesrecomp_desktop_main(const SnesDesktopHostGame *game, int argc, char **ar
   }
 #endif
 
-  // Initialize debug server
-  {
+  // A local debugger cannot independently mutate an agreed network session.
+  if (!g_netplay_session) {
     /* Per-game debug server port so sibling games can run concurrently on
      * the same host without TCP-bind collisions. */
     int debug_port = game->debug_port > 0 ? game->debug_port : 4377;
@@ -3253,6 +3305,16 @@ error_reading:;
 #endif
 #if defined(SNES_HAS_LOBBY_CLIENT)
   if (g_netplay_pending) {
+    if (game->netplay_ready) {
+      char reason[512] = {0};
+      if (!game->netplay_ready(reason, sizeof(reason))) {
+        fprintf(stderr, "netplay: required mod failed to activate: %s\n", reason);
+        return 1;
+      }
+    }
+#if defined(SNESRECOMP_NET_ROLLBACK)
+    snes_netplay_rb_set_replay_frame(NetplayReplayFrame);
+#endif
 #if SNESRECOMP_ENABLE_MODS && defined(SNESRECOMP_NET_ROLLBACK)
     /* A mod that patches guest memory is simulation state. The host
      * publishes its effective set and every peer must confirm it before
@@ -3264,14 +3326,18 @@ error_reading:;
       if (need >= 0 && need < (int)sizeof(s_modset))
         snes_netplay_rb_set_modset(s_modset, &snes_mod_runtime_check_set_c,
                                    &snes_mod_runtime_adopt_set_c);
-      else
+      else {
         fprintf(stderr, "mods: effective set is %d bytes, too large "
-                "to publish -- netplay cannot gate on it\n", need);
+                "to publish -- refusing netplay\n", need);
+        return 1;
+      }
     }
 #endif
     int nrc = snes_netplay_start(&g_netplay_cfg);
-    if (nrc != 0)
-      fprintf(stderr, "netplay: snes_netplay_start failed (%d) — continuing offline\n", nrc);
+    if (nrc != 0) {
+      fprintf(stderr, "netplay: snes_netplay_start failed (%d)\n", nrc);
+      return 1;
+    }
     g_netplay_pending = 0;
   }
 #endif
@@ -3407,12 +3473,12 @@ error_reading:;
   PreparePpuFrame();
 
   MkDir("saves");
-  RtlReadSram();
+  if (!g_netplay_session) RtlReadSram();
 
   OverlaySelftestPadAttach();
   OpenAllGamepads();
 
-  if (g_config.autosave)
+  if (g_config.autosave && !g_netplay_session)
     HandleCommand(kKeys_Load + 0, true);
 
   /* --resume-state: the in-game launcher restarted this game to apply a
@@ -3508,6 +3574,12 @@ error_reading:;
         }
         break;
       case SDL_KEYDOWN:
+#if defined(SNES_HAS_LOBBY_CLIENT)
+        if (g_netplay_session && SNESRECOMP_SDL_EVENT_KEY(event) == SDLK_ESCAPE) {
+          g_netplay_exit_requested = 1;
+          break;
+        }
+#endif
         HandleInput(SNESRECOMP_SDL_EVENT_KEY(event),
                     SNESRECOMP_SDL_EVENT_MOD(event), true);
         break;
@@ -3582,6 +3654,7 @@ error_reading:;
       memset(&hooks, 0, sizeof(hooks));
       hooks.capture_local_pad = &netplay_capture_pad;
       hooks.poll_events = &netplay_poll_events;
+      hooks.connect_timeout_ms = 30000;
       admitted = snes_host_barrier_admit(g_netplay_from_lobby, &run, &hooks);
       running = run;
       if (!running) {
@@ -3596,10 +3669,22 @@ error_reading:;
           RtlRunFrame(inputs);
           frameCtr++;
           g_present_frame = frameCtr;
+          if (game->after_run_frame) {
+            SnesDesktopHostFrameStats st = {
+              .frame = frameCtr, .run_seconds = MonotonicSeconds() - run_start,
+              .audio_output_rate = audio_output_rate,
+            };
+            game->after_run_frame(&st);
+          }
           snes_osd_note_frame();
           CaptureSimulationFrame(frameCtr);
           NoteStateFrame();
           snes_netplay_finish_frame();
+          if (run_frames && frameCtr >= run_frames) {
+            running = false;
+            exit_reason = "RUN_FRAMES reached";
+            break;
+          }
           if (burst >= snes_host_catchup_budget())
             break;
           snes_netplay_stage_local(netplay_capture_pad(NULL));
@@ -3922,14 +4007,25 @@ error_reading:;
           g_timings[i].maximum * 1000, g_timings[i].maximum_frame);
   }
 
-  if (g_config.autosave)
+  if (g_config.autosave && !g_netplay_session)
     HandleCommand(kKeys_Save + 0, true);
   /* A volume or fullscreen change made with the keys survives the session,
    * like the launcher's. */
   if (g_volume_changed || g_fullscreen_changed)
     WriteConfigFile(g_active_config_file);
 
-  RtlWriteSram();
+  if (!g_netplay_session) RtlWriteSram();
+#if defined(SNES_HAS_LOBBY_CLIENT)
+  /* Reopen the launcher from a clean process. No match state is resumed and
+   * offline mod selections are already the durable on-disk plan. */
+  if (g_netplay_from_lobby && snes_netplay_return_to_lobby_requested()) {
+    g_relaunch.pending = g_relaunch.launcher = true;
+    g_relaunch.with_state = false;
+    snprintf(g_relaunch.rom, sizeof(g_relaunch.rom), "%s", g_rom_path);
+  }
+  snes_netplay_shutdown();
+  snes_host_lobby_shutdown();
+#endif
   snes_rewind_shutdown();
   snes_runahead_shutdown();
 #if defined(SNESRECOMP_HOST_HAS_BLEND)
@@ -3957,7 +4053,7 @@ error_reading:;
   if (g_relaunch.pending) {
     const char *relaunch_args[8];
     int n = 0;
-    relaunch_args[n++] = "--no-launcher";
+    relaunch_args[n++] = g_relaunch.launcher ? "--launcher" : "--no-launcher";
     if (g_active_config_file) {
       relaunch_args[n++] = "--config";
       relaunch_args[n++] = g_active_config_file;
@@ -4007,6 +4103,17 @@ static void HandleCommand(uint32 j, bool pressed) {
     uint32 m = 0x1000 << kKbdRemap[j - kKeys_ControlsP2];
     g_input_state = pressed ? (g_input_state | m) : (g_input_state & ~m);
     return;
+  }
+
+  if (g_netplay_session) {
+    switch (j) {
+    case kKeys_Fullscreen: case kKeys_WindowBigger: case kKeys_WindowSmaller:
+    case kKeys_DisplayPerf: case kKeys_Screenshot:
+    case kKeys_VolumeUp: case kKeys_VolumeDown:
+      break; /* Presentation controls do not change the agreed simulation. */
+    default:
+      return; /* Pause the game with synchronized SNES Start instead. */
+    }
   }
 
   if (j == kKeys_Turbo) {
