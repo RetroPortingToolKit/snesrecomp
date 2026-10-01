@@ -467,6 +467,11 @@ static int resolve_use_ice(const SnesNetplayConfig *cfg)
     int in_motk_room = 0;
 
     if (cfg->transport == 2) return 0; /* force LAN */
+    /* Host relay (2026-10-01): the server launched transport "host" -- the
+     * host binds its advertised port and every guest dials it. That is the
+     * LAN transport (accept-first / hub), chosen by the server after each
+     * guest proved the path, so neither ICE nor the relay applies. */
+    if (cfg->transport_host) return 0;
 
     /* The lobby server owns the transport, and when it allocates a UDP input
      * relay it says so: op:"launch" carries relay_endpoint, both endpoints are
@@ -925,7 +930,16 @@ int snes_netplay_start(const SnesNetplayConfig *cfg)
     }
 
     if (!use_ice) {
-        if (rnet_session_start_lan(g_np.session, cfg->bind_hostport, cfg->peer_hostport) != 0) {
+        /* Host relay with 3+ seats: the host is the hub (recomp-net fans the
+         * guests' rows out); every guest dials it. Two seats stay the plain
+         * pair (host accept-first). LAN rooms are two seats and unaffected. */
+        const int peer_empty = !cfg->peer_hostport || !cfg->peer_hostport[0];
+        const int use_hub = cfg->transport_host && rcfg.local_slot == 0 &&
+                            rcfg.slot_count >= 3 && peer_empty;
+        const int rc = use_hub
+            ? rnet_session_start_lan_hub(g_np.session, cfg->bind_hostport)
+            : rnet_session_start_lan(g_np.session, cfg->bind_hostport, cfg->peer_hostport);
+        if (rc != 0) {
             rnet_session_destroy(g_np.session);
             g_np.session = NULL;
             return -3;
