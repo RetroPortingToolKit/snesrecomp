@@ -79,6 +79,11 @@ typedef struct SnesNetplayConfig {
     int         force_turn;
     /* 1 = lobby-server UDP input relay (match_caps.force_input_relay). */
     int         force_input_relay;
+    /* 1 = the launch said transport "host": an online room whose host
+     * carries the match on bind_hostport; guests dial peer_hostport
+     * (recomp-ui docs/HOST_NETPLAY.md "Host relay"). LAN transport, not ICE
+     * and not the server relay. */
+    int         transport_host;
 } SnesNetplayConfig;
 
 void snes_netplay_config_defaults(SnesNetplayConfig *cfg);
