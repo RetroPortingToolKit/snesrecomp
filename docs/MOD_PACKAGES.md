@@ -165,6 +165,13 @@ callbacks make the package state authoritative over old config files: disabling
 widescreen restores native 4:3 on the next launch even if a legacy config once
 stored `Widescreen = 1`.
 
+Features that claim the same plugin ID are alternatives. Enabling one, by
+feature or by package, deselects every other enabled feature claiming any of
+its plugins, so a package can declare mutual exclusion by also claiming its
+rival's plugin. A saved state that still has two claimants enabled is reported
+as a conflict on Play. `tests/mod_resources/exclusive_plugin_test.cpp` covers
+this through the real launcher provider.
+
 The initial operation vocabulary is intentionally narrow: trusted activation
 plugins only. Future guarded ROM writes, asset overlays, or interpreter hooks
 must retain the same pre-boot validation and no-arbitrary-code model rather than

@@ -937,6 +937,34 @@ bool feature_enabled(Runtime& runtime, const Package& package,
     return selection.enabled;
 }
 
+/* Features claiming the same trusted plugin cannot run together (validate
+ * reports them as a conflict), so selecting one is a choice between them:
+ * enabling it deselects every other enabled claimant. */
+void deselect_plugin_rivals(Runtime& runtime, const Package& package,
+                            const Feature& feature) {
+    for (const auto& [id, versions] : runtime.packages) {
+        (void)versions;
+        const Package* other = selected_package(runtime, id);
+        if (!other) continue;
+        for (const Feature& rival : other->features) {
+            if (other->id == package.id && rival.id == feature.id) continue;
+            const bool shared = std::any_of(
+                rival.plugins.begin(), rival.plugins.end(),
+                [&](const std::string& plugin) {
+                    return std::find(feature.plugins.begin(),
+                                     feature.plugins.end(),
+                                     plugin) != feature.plugins.end();
+                });
+            if (!shared || !feature_enabled(runtime, *other, rival)) continue;
+            FeatureSelection& selection =
+                package_selection(runtime, *other).features[rival.id];
+            selection.enabled = false;
+            selection.has_enabled = true;
+            if (other->builtin_diagnostic) tier2_capture_set_selection(0);
+        }
+    }
+}
+
 /* Deterministic content digest of an installed package, memoised.
  *
  * zip_store_tree sorts its file list precisely so that the same package packs
@@ -2485,6 +2513,7 @@ int provider_enable(void*, const char* package_id, int enabled) {
             package_selection(state(), *package).features[feature.id];
         selection.enabled = enabled != 0;
         selection.has_enabled = true;
+        if (enabled) deselect_plugin_rivals(state(), *package, feature);
     }
     refresh_validation();
     state().error.clear();
@@ -2629,12 +2658,14 @@ int provider_feature_enable(void*, const char* package_id,
                             const char* feature_id, int enabled) {
     if (!package_id || !feature_id) return 0;
     const Package* package = selected_package(state(), package_id);
-    if (!package || !find_feature(*package, feature_id)) return 0;
+    const Feature* feature = package ? find_feature(*package, feature_id) : nullptr;
+    if (!feature) return 0;
     FeatureSelection& selection =
         package_selection(state(), *package).features[feature_id];
     selection.enabled = enabled != 0;
     selection.has_enabled = true;
     if (package->builtin_diagnostic) tier2_capture_set_selection(enabled);
+    if (enabled) deselect_plugin_rivals(state(), *package, *feature);
     refresh_validation();
     state().error.clear();
     return 1;
