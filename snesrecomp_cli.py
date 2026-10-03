@@ -95,7 +95,10 @@ def resolve_project_rom(project_root: pathlib.Path, names: list[str],
     """
     def accept(value: str, source: str) -> pathlib.Path:
         path = pathlib.Path(value)
-        if not path.is_absolute():
+        # The wizard records a Windows path (C:/...). An MSYS/Cygwin Python
+        # opens it fine but does not call it absolute, so never join a
+        # drive-letter path onto the project root.
+        if not path.is_absolute() and not re.match(r"[A-Za-z]:[\\/]", value):
             path = project_root / path
         if not path.is_file():
             raise ValueError(f"{source} names a ROM that does not exist: {value}")
