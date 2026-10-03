@@ -715,3 +715,19 @@ def test_project_rom_errors_name_their_source(tmp_path, monkeypatch):
     monkeypatch.setenv("SNESRECOMP_ROM", str(tmp_path / "gone.sfc"))
     with pytest.raises(ValueError, match="SNESRECOMP_ROM"):
         _resolve(tmp_path, "game.sfc")
+
+
+def test_project_rom_never_joins_a_windows_path(tmp_path, monkeypatch):
+    """The wizard writes rom.cfg as C:/...; MSYS/Cygwin Python can open that
+    but does not call it absolute, and joining it onto the project root
+    produced a path that never exists."""
+    monkeypatch.delenv("SNESRECOMP_ROM", raising=False)
+    (tmp_path / "rom.cfg").write_text("C:/dumps/game.sfc\n")
+    checked = []
+    real = pathlib.Path.is_file
+    def is_file(self):
+        checked.append(str(self).replace("\\", "/"))
+        return str(self).replace("\\", "/") == "C:/dumps/game.sfc" or real(self)
+    monkeypatch.setattr(pathlib.Path, "is_file", is_file)
+    assert str(_resolve(tmp_path, "absent.sfc")).replace("\\", "/") == "C:/dumps/game.sfc"
+    assert not any(c.endswith("/C:/dumps/game.sfc") for c in checked), checked
