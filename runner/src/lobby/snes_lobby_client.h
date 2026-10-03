@@ -214,6 +214,13 @@ int  snes_lobby_automatch_ruleset_get(int index, SnesLobbyRuleset *out);
 #define snes_lobby_set_ready                rnet_lobby_set_ready
 #define snes_lobby_launch_pending           rnet_lobby_launch_pending
 #define snes_lobby_clear_launch_pending     rnet_lobby_clear_launch_pending
+#define snes_lobby_set_relay_via_ice        rnet_lobby_set_relay_via_ice
+#define snes_lobby_relay_via_ice            rnet_lobby_relay_via_ice
+#define snes_lobby_host_ice_status          rnet_lobby_host_ice_status
+#define snes_lobby_ice_take_hub             rnet_lobby_ice_take_hub
+#define snes_lobby_ice_take_guest_agent     rnet_lobby_ice_take_guest_agent
+#define snes_lobby_ice_launch_error         rnet_lobby_ice_launch_error
+#define snes_lobby_ice_discard              rnet_lobby_ice_discard
 #define snes_lobby_clear_last_error         rnet_lobby_clear_last_error
 #define snes_lobby_try_fill_launch          rnet_lobby_try_fill_launch
 #define snes_lobby_send_signal_to           rnet_lobby_send_signal_to

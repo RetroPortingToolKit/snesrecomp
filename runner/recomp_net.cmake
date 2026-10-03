@@ -165,6 +165,8 @@ function(snesrecomp_enable_recomp_net target)
         target_sources(${target} PRIVATE
             "${SNESRECOMP_RUNNER_ROOT}/src/netplay/snes_netplay.c"
             "${SNESRECOMP_RUNNER_ROOT}/src/netplay/snes_host_session.c"
+        "${SNESRECOMP_RUNNER_ROOT}/src/netplay/snes_netplay_route.c"
+            "${SNESRECOMP_RUNNER_ROOT}/src/netplay/snes_netplay_route.c"
             "${SNESRECOMP_RUNNER_ROOT}/src/netplay/snes_host_lobby.c"
             "${SNESRECOMP_RUNNER_ROOT}/src/netplay/snes_netplay_identity.c"
             "${SNESRECOMP_RUNNER_ROOT}/src/netplay/snes_host_app.c"

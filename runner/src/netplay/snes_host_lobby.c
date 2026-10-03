@@ -45,6 +45,9 @@ void snes_host_lobby_set_runtime_error(const char *error_code)
 {
   (void)error_code;
 }
+int snes_host_lobby_relay_via_ice_get(void) { return 0; }
+int snes_host_lobby_relay_via_ice_set(int on) { (void)on; return -1; }
+const char *snes_host_lobby_ice_launch_error(void) { return ""; }
 
 #else
 
@@ -290,6 +293,27 @@ const char *snes_host_lobby_resume_endpoint(void)
 }
 
 int snes_host_lobby_in_lan(void) { return recomp_netplay_host_in_lan(); }
+
+int snes_host_lobby_relay_via_ice_get(void)
+{
+  const RNetLobbyMatchCaps *caps = rnet_lobby_match_caps();
+  /* A guest reads what the room's host published; the host (and a room with
+   * no caps yet) reads its own preference. */
+  if (!rnet_lobby_is_host() && caps && caps->valid)
+    return caps->relay_via_ice ? 1 : 0;
+  return rnet_lobby_relay_via_ice() ? 1 : 0;
+}
+
+int snes_host_lobby_relay_via_ice_set(int on)
+{
+  rnet_lobby_set_relay_via_ice(on ? 1 : 0);
+  return 0;
+}
+
+const char *snes_host_lobby_ice_launch_error(void)
+{
+  return rnet_lobby_ice_launch_error();
+}
 
 void snes_host_lobby_set_runtime_error(const char *error_code)
 {

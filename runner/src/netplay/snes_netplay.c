@@ -1,4 +1,5 @@
 #include "snes_netplay.h"
+#include "snes_netplay_route.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -11,6 +12,9 @@
 
 #if defined(SNESRECOMP_NET)
 #include "recomp_net/recomp_net.h"
+#if defined(RNET_ENABLE_ICE)
+#include "recomp_net/host_ice.h"
+#endif
 /*
  * Rollback is an optional build (snesrecomp_enable_rollback). A game that
  * links netplay without it must still compile, so everything the rollback
@@ -144,6 +148,12 @@ int  snes_netplay_start(const SnesNetplayConfig *cfg)
     (void)cfg;
     return -1;
 }
+int  snes_netplay_ice_take_launch(const SnesNetplayConfig *cfg)
+{
+    (void)cfg;
+    return -1;
+}
+const char *snes_netplay_ice_launch_error(void) { return "no netplay in this build"; }
 void snes_netplay_shutdown(void) {}
 void snes_netplay_connect_wait_reset(void) {}
 int  snes_netplay_connect_timed_out(uint32_t timeout_ms)
@@ -224,6 +234,7 @@ typedef struct {
     uint8_t      host_sync[2];       /* game-defined slot-0 sync bytes */
     int          host_sync_valid;
     int          use_ice;
+    int          ice_hub;            /* host relay over ICE (adopted agents) */
     int          guest_sandbox;      /* save root redirected to saves/netplay */
     int          sram_sync_sent;     /* host: SRAM blob transfer started */
     int          sram_sync_done;     /* both: initial SRAM sync finished */
@@ -443,7 +454,9 @@ static void drain_lobby_signals(void)
 {
     int type = 0, flag = 0;
     char text[2048];
-    if (!g_np.session) return;
+    /* Never push signals to adopted agents (recomp-net host_integration.md):
+     * their negotiation finished in the waiting room. */
+    if (!g_np.session || g_np.ice_hub) return;
     while (snes_lobby_poll_signal(&type, &flag, text, sizeof(text))) {
         RNetSignal sig;
         memset(&sig, 0, sizeof(sig));
@@ -466,6 +479,10 @@ static int resolve_use_ice(const SnesNetplayConfig *cfg)
 {
     int in_motk_room = 0;
 
+    /* Host relay over ICE is routed before this is asked
+     * (snes_netplay_route_decide); if it ever gets here it must not become
+     * single-agent ICE or a LAN bind to the launch's placeholder endpoint. */
+    if (cfg->transport_ice_hub) return -1;
     if (cfg->transport == 2) return 0; /* force LAN */
     /* Host relay (2026-10-01): the server launched transport "host" -- the
      * host binds its advertised port and every guest dials it. That is the
@@ -557,6 +574,7 @@ const char *snes_netplay_transport_name(void)
 {
     if (!snes_netplay_active()) return "none";
     if (g_np.use_ice) return "ice";
+    if (g_np.ice_hub) return "ice-hub";
     /* "lan" and "relay" are the same UDP transport; they are not the same
      * thing to read in a log when a match misbehaves. */
     return g_np.force_input_relay ? "relay" : "lan";
@@ -665,12 +683,138 @@ uint32_t snes_netplay_active_mask(void)
     return 3u << 30;
 }
 
+/* ---- host relay over ICE: launch handover ----------------------------------
+ * The agents are the lobby client's until taken; they are held here between
+ * the launch and snes_netplay_start (SnesInit runs in between, and the client
+ * drops an untaken bundle after 60 s). Not part of NetplayState: shutdown
+ * memsets that, and an untaken stash must be destroyed, not forgotten. */
+static char g_ice_launch_error[160];
+
+#if defined(SNES_HAS_LOBBY_CLIENT) && defined(RNET_ENABLE_ICE)
+typedef struct IceStash {
+    int is_host;
+    int n;
+    RNetLobbyIceSeat seat[RNET_HOST_ICE_MAX_PEERS];
+    RNetIceAgent *guest;
+} IceStash;
+static IceStash g_ice_stash;
+
+static void ice_stash_destroy(void)
+{
+    int i;
+    for (i = 0; i < g_ice_stash.n; ++i)
+        if (g_ice_stash.seat[i].agent)
+            rnet_host_ice_destroy_agent(g_ice_stash.seat[i].agent);
+    if (g_ice_stash.guest)
+        rnet_host_ice_destroy_agent(g_ice_stash.guest);
+    memset(&g_ice_stash, 0, sizeof(g_ice_stash));
+}
+
+#endif
+
+static void ice_set_error(const char *why)
+{
+    snprintf(g_ice_launch_error, sizeof(g_ice_launch_error), "%s",
+             (why && why[0]) ? why : "ice_not_connected");
+}
+
+const char *snes_netplay_ice_launch_error(void)
+{
+    return g_ice_launch_error;
+}
+
+int snes_netplay_ice_take_launch(const SnesNetplayConfig *cfg)
+{
+    g_ice_launch_error[0] = '\0';
+    if (!cfg || !cfg->transport_ice_hub)
+        return 0;
+#if defined(SNES_HAS_LOBBY_CLIENT) && defined(RNET_ENABLE_ICE)
+    ice_stash_destroy();
+    if (cfg->local_slot == 0 && !cfg->spectator) {
+        const int n = rnet_lobby_ice_take_hub(g_ice_stash.seat,
+                                              RNET_HOST_ICE_MAX_PEERS);
+        if (n < 1) {
+            ice_set_error(rnet_lobby_ice_launch_error());
+            memset(&g_ice_stash, 0, sizeof(g_ice_stash));
+            return -1;
+        }
+        g_ice_stash.is_host = 1;
+        g_ice_stash.n = n;
+    } else {
+        g_ice_stash.guest = rnet_lobby_ice_take_guest_agent();
+        if (!g_ice_stash.guest) {
+            ice_set_error(rnet_lobby_ice_launch_error());
+            return -1;
+        }
+    }
+    return 0;
+#else
+    ice_set_error("this build has no ICE");
+    return -1;
+#endif
+}
+
+/* Adopt the stashed (or freshly taken) agents into g_np.session. 0 on
+ * success (the session owns the agents); -1 with the agents destroyed and
+ * g_ice_launch_error set. */
+static int np_ice_hub_adopt(const SnesNetplayConfig *cfg, int slot_count)
+{
+#if defined(SNES_HAS_LOBBY_CLIENT) && defined(RNET_ENABLE_ICE)
+    int i;
+    if (!g_ice_stash.n && !g_ice_stash.guest &&
+        snes_netplay_ice_take_launch(cfg) != 0)
+        return -1;
+    if (g_ice_stash.is_host) {
+        RNetIceAdoptSeat adopt[RNET_HOST_ICE_MAX_PEERS];
+        int lobby_slot[RNET_HOST_ICE_MAX_PEERS];
+        int session_slot[RNET_HOST_ICE_MAX_PEERS];
+        const char *why = NULL;
+        for (i = 0; i < g_ice_stash.n; ++i)
+            lobby_slot[i] = g_ice_stash.seat[i].lobby_slot;
+        if (snes_netplay_ice_hub_map_slots(cfg->local_slot, slot_count,
+                                           lobby_slot, g_ice_stash.n,
+                                           session_slot, &why) != 0) {
+            ice_set_error(why);
+            ice_stash_destroy();
+            return -1;
+        }
+        for (i = 0; i < g_ice_stash.n; ++i) {
+            adopt[i].slot = session_slot[i];
+            adopt[i].agent = g_ice_stash.seat[i].agent;
+            fprintf(stderr, "snes_netplay: ICE hub: lobby seat %d -> session "
+                    "slot %d\n", lobby_slot[i], session_slot[i]);
+        }
+        if (rnet_session_start_ice_hub_adopt(g_np.session, adopt,
+                                             g_ice_stash.n) != 0) {
+            ice_set_error("the session refused the ICE hub agents");
+            ice_stash_destroy(); /* -1: the caller still owns them */
+            return -1;
+        }
+    } else {
+        if (rnet_session_adopt_ice_agent(g_np.session, g_ice_stash.guest) != 0) {
+            ice_set_error("the session refused the ICE agent");
+            ice_stash_destroy();
+            return -1;
+        }
+    }
+    memset(&g_ice_stash, 0, sizeof(g_ice_stash)); /* the session owns them */
+    return 0;
+#else
+    (void)cfg; (void)slot_count;
+    ice_set_error("this build has no ICE");
+    return -1;
+#endif
+}
+
 int snes_netplay_start(const SnesNetplayConfig *cfg)
 {
     RNetConfig rcfg;
     RNetHostVTable host;
     int use_ice;
     int in_player;
+    SnesNetplayRoute route;
+    SnesNetplayRouteWhy route_why = SNES_ROUTE_WHY_NONE;
+    int ice_hub;
 
     if (!cfg || !cfg->enabled) return -1;
     if (g_np.session) snes_netplay_shutdown();
@@ -734,7 +878,31 @@ int snes_netplay_start(const SnesNetplayConfig *cfg)
     /* Host resolves auto (-1) before start; accept only 0/1 here. */
     in_player = (cfg->input_player == 1) ? 1 : 0;
 
-    use_ice = resolve_use_ice(cfg);
+    /* Host relay over ICE is decided first and on its own: its launch carries
+     * transport_host too, with placeholder endpoints, so neither the
+     * single-agent ICE nor the LAN/legacy-hub rule below may see it. */
+    route = snes_netplay_route_decide(cfg,
+#if defined(RNET_ENABLE_ICE) && defined(SNES_HAS_LOBBY_CLIENT)
+                                      1,
+#else
+                                      0,
+#endif
+                                      &route_why);
+    if (route == SNES_ROUTE_REFUSE) {
+        static const char *const why_text[] = {
+            "", "this build has no ICE",
+            "spectators are not on the ICE relay path",
+            "the local seat is unusable for an ICE hub"
+        };
+        fprintf(stderr, "snes_netplay: host-relay-over-ICE launch refused: "
+                "%s\n", why_text[route_why]);
+        snprintf(g_ice_launch_error, sizeof(g_ice_launch_error), "%s",
+                 why_text[route_why]);
+        return -6;
+    }
+    ice_hub = (route == SNES_ROUTE_ICE_HUB_HOST ||
+               route == SNES_ROUTE_ICE_HUB_GUEST);
+    use_ice = ice_hub ? 0 : resolve_use_ice(cfg);
     if (use_ice < 0)
         return -4;
 
@@ -929,7 +1097,18 @@ int snes_netplay_start(const SnesNetplayConfig *cfg)
 #endif
     }
 
-    if (!use_ice) {
+    if (ice_hub) {
+        /* Bind no UDP socket and dial nothing: the match runs over the
+         * agents the waiting room connected. */
+        if (np_ice_hub_adopt(cfg, (int)rcfg.slot_count) != 0) {
+            fprintf(stderr, "snes_netplay: ICE hub adopt failed: %s\n",
+                    g_ice_launch_error[0] ? g_ice_launch_error
+                                          : "ice_not_connected");
+            rnet_session_destroy(g_np.session);
+            g_np.session = NULL;
+            return -7;
+        }
+    } else if (!use_ice) {
         /* Host relay with 3+ seats: the host is the hub (recomp-net fans the
          * guests' rows out); every guest dials it. Two seats stay the plain
          * pair (host accept-first). LAN rooms are two seats and unaffected. */
@@ -959,6 +1138,7 @@ int snes_netplay_start(const SnesNetplayConfig *cfg)
     g_np.host_sync[0] = g_np.host_sync[1] = 0;
     memset(g_np.published, 0, sizeof(g_np.published));
     g_np.use_ice = use_ice;
+    g_np.ice_hub = ice_hub;
     g_np.sram_sync_sent = 0;
     g_np.sram_sync_done = 0;
     g_np.host_sram_applied = 0;
@@ -984,7 +1164,7 @@ int snes_netplay_start(const SnesNetplayConfig *cfg)
     g_np.lobby_server[0] = '\0';
     g_np.lobby_id[0] = '\0';
 #if defined(SNES_HAS_LOBBY_CLIENT)
-    if (use_ice && snes_lobby_connected() && snes_lobby_in_lobby()) {
+    if ((use_ice || ice_hub) && snes_lobby_connected() && snes_lobby_in_lobby()) {
         const char *url = snes_lobby_url();
         const SnesLobbyJoinInfo *ji = snes_lobby_join_info();
         snprintf(g_np.match_mode, sizeof(g_np.match_mode), "hosted_lobby");
@@ -1037,12 +1217,17 @@ int snes_netplay_start(const SnesNetplayConfig *cfg)
             (unsigned)rcfg.session_id, (unsigned)rcfg.input_delay,
             g_np.force_input_relay, cfg->bind_hostport,
             /* Lobby peer rewrite is unused for ICE (candidates via WS). */
-            use_ice ? "(ice)" : cfg->peer_hostport);
+            ice_hub ? "(ice-hub)" : use_ice ? "(ice)" : cfg->peer_hostport);
     return 0;
 }
 
 void snes_netplay_shutdown(void)
 {
+    /* snes_netplay_start calls this while a previous session is still up, with
+     * the NEW launch's agents already stashed: only a shutdown with no live
+     * session may destroy an untaken stash. */
+    const int had_session = g_np.session != NULL;
+    (void)had_session;
     snes_netplay_rb_shutdown();
 #if defined(SNESRECOMP_NET_ROLLBACK)
     snes_netplay_rb_bind(NULL);
@@ -1075,6 +1260,10 @@ void snes_netplay_shutdown(void)
                 RtlSaveRoot());
     }
     memset(&g_np, 0, sizeof(g_np));
+#if defined(SNES_HAS_LOBBY_CLIENT) && defined(RNET_ENABLE_ICE)
+    if (!had_session)
+        ice_stash_destroy(); /* an untaken handover is destroyed, not leaked */
+#endif
     snes_netplay_connect_wait_reset();
 }
 
@@ -1594,6 +1783,8 @@ static void np_diag_escape(char *out, size_t out_len, const char *in)
 
 static const char *np_diag_ice_path(const RNetSessionStats *st)
 {
+    if (g_np.ice_hub)
+        return "ice_hub"; /* adopted agents; per-path stats are the lobby's */
     if (!g_np.use_ice)
         return "lan";
     if (!st)
@@ -1611,6 +1802,8 @@ static const char *np_diag_ice_path(const RNetSessionStats *st)
 /* Map ICE candidate type → NAT family for soak triage. */
 static const char *np_diag_ice_nat(const char *path)
 {
+    if (g_np.ice_hub)
+        return "ice_hub";
     if (!g_np.use_ice)
         return "lan";
     if (!path || !path[0] || strcmp(path, "pending") == 0)

@@ -346,8 +346,20 @@ echo "=== SNES lobby caps (widescreen keys over recomp-net's client) ==="
     "$ROOT/lib/recomp-net/src/chat/rnet_chat_filter.c" \
     "$ROOT/lib/recomp-net/src/chat/rnet_chat_report.c" \
     "$ROOT/lib/recomp-net/src/platform/rnet_platform.c" \
+    "$ROOT/lib/recomp-net/src/nat/rnet_host_ice.c" \
+    "$ROOT/lib/recomp-net/src/nat/rnet_host_relay.c" \
+    "$ROOT/lib/recomp-net/src/nat/rnet_sig_hold.c" \
+    "$ROOT/lib/recomp-net/src/platform/rnet_stun.c" \
     -o "$OUT/snes_lobby_caps_test"
 "$OUT/snes_lobby_caps_test"
+
+echo "=== netplay: host relay over ICE route + slot map ==="
+"$CC" -std=c11 -Wall -Wextra -Werror -O1 \
+    -D_POSIX_C_SOURCE=200809L -I "$ROOT/runner/src" \
+    "$ROOT/tests/netplay/snes_netplay_route_test.c" \
+    "$ROOT/runner/src/netplay/snes_netplay_route.c" \
+    -o "$OUT/snes_netplay_route_test"
+"$OUT/snes_netplay_route_test"
 
 echo "=== keybinds: the runner-layout keyboard word ==="
 # Needs SDL headers for the scancode enum only (no window, no device). Skipped

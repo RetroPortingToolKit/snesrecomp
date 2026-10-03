@@ -119,6 +119,22 @@ int snes_host_lobby_in_lan(void);
  * (prefer over inventing a second error channel in each title). */
 void snes_host_lobby_set_runtime_error(const char *error_code);
 
+/*
+ * Host-as-relay over ICE preference (recomp-net rnet_lobby_relay_via_ice,
+ * default ON; the host publishes match_caps relay_via "ice" when it is on and
+ * the build has ICE). Same shape as the launcher's relay_host_get/set pair:
+ * the getter answers what the room's host published for a guest, the host's
+ * own preference otherwise. recomp-ui's RecompLauncherCNetplayCallbacks has
+ * no relay_via_ice field yet, so a launcher toggle needs that field to call
+ * these; until then SNES_NET_RELAY_VIA_ICE=0 (snes_lobby_configure) is the
+ * switch. Returns 0/1; set returns 0.
+ */
+int snes_host_lobby_relay_via_ice_get(void);
+int snes_host_lobby_relay_via_ice_set(int on);
+/* Why the last ICE launch was refused ("" none): the seat that was not
+ * connected over ICE. join.last_error carries only "ice_not_connected". */
+const char *snes_host_lobby_ice_launch_error(void);
+
 #if defined(RECOMP_LAUNCHER) || defined(SNES_HOST_HAS_RECOMP_UI)
 /*
  * Headless MotK self-test (no ImGui). Leaves the lobby WebSocket open after

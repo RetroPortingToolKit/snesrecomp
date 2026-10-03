@@ -32,6 +32,8 @@ extern "C" {
  * Transport:
  *   LAN  — rnet_session_start_lan(bind, peer)
  *   ICE  — rnet_session_start_ice + lobby WS signal relay (SNES_HAS_LOBBY_CLIENT)
+ *   ICE hub — host relay over ICE: adopt the waiting room's connected agents
+ *             (rnet_session_start_ice_hub_adopt / rnet_session_adopt_ice_agent)
  */
 
 #define SNES_NETPLAY_PAD_BYTES 4
@@ -84,6 +86,13 @@ typedef struct SnesNetplayConfig {
      * (recomp-ui docs/HOST_NETPLAY.md "Host relay"). LAN transport, not ICE
      * and not the server relay. */
     int         transport_host;
+    /* 1 = the launch said transport "host" + relay_via "ice" (host as relay
+     * over ICE): the match runs over the ICE agents the waiting room already
+     * connected. transport_host is ALSO 1 then (its bind/peer endpoints are
+     * placeholders); this flag takes precedence and the match binds no UDP
+     * socket and dials nothing. Set from RNetLobbyJoinInfo.transport_ice_hub
+     * by snes_host_app_apply_launch. See snes_netplay_route.h. */
+    int         transport_ice_hub;
 } SnesNetplayConfig;
 
 void snes_netplay_config_defaults(SnesNetplayConfig *cfg);
@@ -137,6 +146,25 @@ uint32_t snes_netplay_sim_tick(void);
 /* Admitted RtlRunFrame + finish_frame count for this session (0 if inactive). */
 uint32_t snes_netplay_frames_finished(void);
 
+/*
+ * Host relay over ICE launch handover. Takes the connected ICE agents out of
+ * the lobby client (rnet_lobby_ice_take_hub / _take_guest_agent) and holds
+ * them until snes_netplay_start adopts them -- the client keeps an untaken
+ * bundle only 60 s, and SnesInit sits between the launch and the start.
+ * Call once when the launch arrives. Returns 0 (taken; nothing to do for a
+ * non-ICE-hub cfg), or -1 with snes_netplay_ice_launch_error() set.
+ * snes_netplay_start takes them itself if this was not called.
+ */
+int  snes_netplay_ice_take_launch(const SnesNetplayConfig *cfg);
+/* Why the last ICE-hub take/adopt failed ("" when none). */
+const char *snes_netplay_ice_launch_error(void);
+
+/* snes_netplay_start() return codes beyond the legacy -1..-5:
+ *   -6 ICE-hub launch refused (see snes_netplay_route.h; no ICE build,
+ *      spectator seat, bad slot, or a slot map that cannot be proven)
+ *   -7 ICE-hub launch: the connected agents could not be taken or adopted
+ *      (surfaced as "ice_not_connected" by the lobby client when a seat had
+ *      no completed ICE link) */
 int  snes_netplay_start(const SnesNetplayConfig *cfg);
 void snes_netplay_shutdown(void);
 

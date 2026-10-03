@@ -9,6 +9,7 @@
 #include "snes_lobby_client.h"
 
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 /* The SNES keys ride in RNetLobbyMatchCaps.ext, which is opaque to recomp-net
@@ -133,6 +134,12 @@ void snes_lobby_configure(void)
     cfg.legacy_env_prefix = "SNES_NET_";
     rnet_lobby_configure(&cfg);
     rnet_lobby_set_caps_codec(&g_snes_codec);
+    /* Host as relay over ICE is on by default (recomp-net); this is the
+     * operator switch back to the legacy UPnP/STUN endpoint path. */
+    {
+        const char *v = getenv("SNES_NET_RELAY_VIA_ICE");
+        if (v && v[0]) rnet_lobby_set_relay_via_ice(v[0] != '0');
+    }
 }
 
 const char *snes_lobby_default_url(void)

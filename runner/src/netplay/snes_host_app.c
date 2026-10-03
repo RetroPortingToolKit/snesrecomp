@@ -51,6 +51,28 @@ void snes_host_app_apply_launch(const RecompLauncherCNetplayLaunch *net,
   out->net_cfg.force_input_relay = net->force_input_relay ? 1 : 0;
 #if defined(RECOMP_LAUNCHER_HAS_HOST_RELAY)
   out->net_cfg.transport_host = net->transport_host ? 1 : 0;
+#if defined(SNES_HAS_LOBBY_CLIENT)
+  /* Host relay over ICE: the launch struct only says transport_host (recomp-ui
+   * predates the ICE mode); the lobby client's join info says which kind.
+   * Gated on transport_host so a stale join record can never colour a LAN or
+   * relay launch. The bind/peer endpoints are placeholders in this mode. */
+  if (net->transport_host) {
+    const SnesLobbyJoinInfo *ji = snes_lobby_join_info();
+    if (ji && ji->transport_ice_hub) {
+      out->net_cfg.transport_ice_hub = 1;
+      /* Seat count comes from the room: a hub needs one agent per guest, and
+       * snes_netplay_ice_hub_map_slots proves they match. */
+      if (net->player_count >= 2 && net->player_count <= SNES_NETPLAY_MAX_SLOTS)
+        out->net_cfg.slot_count = net->player_count;
+      /* The agents are the lobby's for only 60 s; SnesInit follows this.
+       * A failure is reported by snes_netplay_start (-7), which retries the
+       * take and carries the lobby's reason. */
+      if (snes_netplay_ice_take_launch(&out->net_cfg) != 0)
+        fprintf(stderr, "snes_host_app: ICE hub handover failed: %s\n",
+                snes_netplay_ice_launch_error());
+    }
+  }
+#endif
 #endif
   {
     const SnesLobbyMatchCaps *caps = snes_lobby_match_caps();
