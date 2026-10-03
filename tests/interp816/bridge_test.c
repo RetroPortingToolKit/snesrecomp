@@ -140,8 +140,14 @@ void (*g_interp_recent_dump_hook)(int n, FILE *out) = 0;
 uint8 cpu_read8(CpuState *cpu, uint8 bank, uint16 addr) {
     (void)cpu; return RAM[(((uint32)bank << 16) | addr) & 0xFFFFFF];
 }
+/* Write-site attribution probe (S16): what the bridge published as the
+ * executing opcode's PC when this store reached the bus. */
+extern uint32_t g_interp_wlog_pc24;
+static uint32_t g_write_site_pc24 = 0xFFFFFFFFu;
+static uint32_t g_aot_saw_site_pc24 = 0xFFFFFFFFu;
 void cpu_write8(CpuState *cpu, uint8 bank, uint16 addr, uint8 v) {
     (void)cpu; RAM[(((uint32)bank << 16) | addr) & 0xFFFFFF] = v;
+    if (bank == 0 && addr == 0x0420) g_write_site_pc24 = g_interp_wlog_pc24;
 }
 uint16 cpu_read16(CpuState *cpu, uint8 bank, uint16 addr) {
     uint8 lo = cpu_read8(cpu, bank, addr);
@@ -184,6 +190,7 @@ RecompReturn cpu_unresolved_abandon_balanced(CpuState *cpu, uint32 site_pc24,
 RecompReturn cpu_dispatch_pc(CpuState *cpu, uint32 pc24, uint16 miss_restore) {
     if ((pc24 & 0xFFFFFF) == FAKE_AOT) {
         g_aot_called++;
+        g_aot_saw_site_pc24 = g_interp_wlog_pc24;
         cpu->A = (uint16)(cpu->A + 0x0100);     /* observable "compiled" work */
         cpu->S = (uint16)(cpu->S + 2);          /* models RTS popping its frame */
         return RECOMP_RETURN_NORMAL;
@@ -1120,6 +1127,73 @@ int main(void) {
       rc=interp_bridge_run(&g_c,0x008000);
       CHECK(rc==1 && g_c.S==0x01ff,"redirected RTS is classified as return");
       interp_bridge_set_pre_opcode_hook(0,NULL);
+    }
+    /* S16: the always-on observability rings. One run of
+     *   $8400 LDX #$05 / loop: DEX / BNE loop / STA $0420 /
+     *         JSR $8200 (interpreted) / JSR $8100 (compiled) / RTS
+     *   $8200 LDA #$33 / RTS
+     * must leave exactly five control-transfer records -- the four taken
+     * BNEs fold into ONE record, which is what keeps a spin's path in
+     * readable -- and attribute the store to its exact instruction while the
+     * compiled body sees no interpreter PC at all. */
+    { memset(RAM, 0, MEMSZ); init_cpu(); g_aot_called = 0;
+      uint8_t c[] = {0xA2,0x05, 0xCA, 0xD0,0xFD, 0x8D,0x20,0x04,
+                     0x20,0x00,0x82, 0x20,0x00,0x81, 0x60};
+      uint8_t callee[] = {0xA9,0x33, 0x60};
+      load(0x8400, c, sizeof c);
+      load(0x8200, callee, sizeof callee);
+      cpu_push_jsr_return_frame(&g_c);
+      g_write_site_pc24 = g_aot_saw_site_pc24 = 0xFFFFFFFFu;
+      const uint64_t e0 = interp_bridge_edge_total();
+      int rc = interp_bridge_run(&g_c, 0x008400);
+      printf("S16 edge ring folds a loop; write site and resume writes recorded\n");
+      CHECK(rc == 1 && g_c.S == 0x01FF, "rc=%d S=%04X exp balanced return", rc, g_c.S);
+      const uint64_t e1 = interp_bridge_edge_total();
+      CHECK(e1 - e0 == 5, "edges recorded=%llu exp 5",
+            (unsigned long long)(e1 - e0));
+      static const struct { uint32_t from, to; int kind; uint32_t count; } want[5] = {
+          {0x000000, 0x008400, INTERP_EDGE_ENTRY,    1},
+          {0x008403, 0x008402, INTERP_EDGE_BRANCH,   4},
+          {0x008408, 0x008200, INTERP_EDGE_CALL,     1},
+          {0x008202, 0x00840B, INTERP_EDGE_RETURN,   1},
+          {0x00840B, 0x008100, INTERP_EDGE_AOT_CALL, 1},
+      };
+      for (int i = 0; i < 5 && e1 - e0 == 5; i++) {
+        InterpEdge e;
+        CHECK(interp_bridge_edge_get(e0 + (uint64_t)i, &e), "edge %d readable", i);
+        CHECK(e.from_pc24 == want[i].from && e.to_pc24 == want[i].to &&
+              e.kind == want[i].kind && e.count == want[i].count,
+              "edge %d = $%06X->$%06X %s x%u, exp $%06X->$%06X %s x%u", i,
+              (unsigned)e.from_pc24, (unsigned)e.to_pc24,
+              interp_bridge_edge_kind_name(e.kind), (unsigned)e.count,
+              (unsigned)want[i].from, (unsigned)want[i].to,
+              interp_bridge_edge_kind_name(want[i].kind),
+              (unsigned)want[i].count);
+      }
+      InterpEdge gone;
+      CHECK(!interp_bridge_edge_get(e1, &gone), "a not-yet-written record is refused");
+      CHECK(g_write_site_pc24 == 0x008405,
+            "store attributed to $%06X exp $008405", (unsigned)g_write_site_pc24);
+      CHECK(g_aot_saw_site_pc24 == 0,
+            "compiled body saw interp PC $%06X exp 0", (unsigned)g_aot_saw_site_pc24);
+      CHECK(g_interp_wlog_pc24 == 0,
+            "interp PC $%06X still published after the bridge returned",
+            (unsigned)g_interp_wlog_pc24);
+
+      const uint64_t r0 = interp_bridge_resume_total();
+      const uint32_t before = interp_bridge_lle_resume_pc();
+      interp_bridge_set_lle_resume_pc(0x00ABCD);
+      InterpResumeEvent re;
+      memset(&re, 0, sizeof re);
+      CHECK(interp_bridge_resume_total() == r0 + 1 &&
+            interp_bridge_resume_get(r0, &re) &&
+            re.site == INTERP_RESUME_SITE_EXTERNAL &&
+            re.kind == INTERP_RESUME_KIND_SET &&
+            re.old_pc24 == (before & 0xFFFFFFu) && re.new_pc24 == 0x00ABCD,
+            "external resume write recorded old->new with its site");
+      CHECK(!strcmp(interp_bridge_resume_site_name(re.site), "external"),
+            "site name '%s'", interp_bridge_resume_site_name(re.site));
+      interp_bridge_set_lle_resume_pc(before);
     }
     printf("\n==== interp_bridge Phase-1: %d/%d checks passed ====\n", g_check - g_fail, g_check);
     if (g_fail) { printf("RESULT: FAIL (%d)\n", g_fail); return 1; }

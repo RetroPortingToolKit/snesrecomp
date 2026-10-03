@@ -180,6 +180,8 @@ int interp_bridge_run_loop(CpuState *cpu, uint32_t entry_pc24,
  * game-address hint. */
 int interp_bridge_run_until_quiescent(CpuState *cpu, uint32_t entry_pc24);
 uint32_t interp_bridge_lle_resume_pc(void);
+/* Host override of the resume PC (recorded in the resume ring as external). */
+void interp_bridge_set_lle_resume_pc(uint32_t pc);
 
 /*
  * Rollback support: the bridge carries execution state across frames that no
