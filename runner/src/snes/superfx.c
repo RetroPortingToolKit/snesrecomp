@@ -23,7 +23,20 @@ void superfx_saveload(SuperFx *fx, SaveLoadInfo *sli) {
    * follow irq_pending. Neither belongs to the emulated GSU state. */
   _Static_assert(offsetof(SuperFx, instruction_count) - offsetof(SuperFx, r) == 696,
                  "Super FX state layout changed: bump RTL_SAV_VERSION");
+  /* pipeline_pc is not in the saved range. A save must not touch it (a run
+   * that snapshots every frame for rewind has to execute exactly like one
+   * that does not), so it is rebuilt only when the call actually replaced the
+   * state -- i.e. a load. A running core's pipeline byte came from R15-1 in
+   * straight-line code; an idle core's is the post-STOP NOP. */
+  uint8_t before[696];
+  memcpy(before, &fx->r, sizeof(before));
   sli->func(sli, &fx->r, 696);
+  if (memcmp(before, &fx->r, sizeof(before)) != 0) {
+    fx->pipeline_pc = (fx->sfr & (1u << 5))
+        ? (((uint32_t)fx->pbr << 16) | (uint16_t)(fx->r[15].data - 1u))
+        : UINT32_MAX;
+    fx->redirect_pending = false;
+  }
 }
 
 typedef struct SuperFxPresentationReplay {
@@ -69,6 +82,8 @@ static void reset_prefix(SuperFx *f) {
 }
 
 static void step_clocks(SuperFx *f, unsigned clocks);
+static void job_start(SuperFx *f);
+static void job_stop(SuperFx *f);
 static uint8_t gsu_read(SuperFx *f, uint32_t address);
 static void gsu_write(SuperFx *f, uint32_t address, uint8_t data);
 
@@ -163,6 +178,7 @@ static uint8_t read_opcode(SuperFx *f, uint16_t a) {
 static uint8_t pipe(SuperFx *f) {
   uint8_t out = f->pipeline;
   wr(f, 15, rv(f, 15) + 1);
+  f->pipeline_pc = ((uint32_t)f->pbr << 16) | rv(f, 15);
   f->pipeline = read_opcode(f, rv(f, 15));
   f->r[15].modified = false;
   return out;
@@ -298,7 +314,9 @@ static void instruction(SuperFx *f, uint8_t op) {
         f->ws_replay_pending = true;
     }
     if (!(f->cfgr & 0x80)) { f->sfr |= SFR_IRQ; f->irq_pending = true; }
-    f->sfr &= (uint16_t)~SFR_G; f->pipeline = 1; reset_prefix(f); return;
+    job_stop(f);
+    f->sfr &= (uint16_t)~SFR_G; f->pipeline = 1; f->pipeline_pc = UINT32_MAX;
+    reset_prefix(f); return;
   }
   if (op == 0x01) { reset_prefix(f); return; }
   if (op == 0x02) {
@@ -373,8 +391,85 @@ static void instruction(SuperFx *f, uint8_t op) {
   if (op >= 0xf0) { if(f->sfr&SFR_ALT1){ f->ramaddr=pipe(f); f->ramaddr|=(uint16_t)pipe(f)<<8; wr(f,n,read_ram_buffer(f,f->ramaddr)|((uint16_t)read_ram_buffer(f,f->ramaddr^1)<<8)); } else if(f->sfr&SFR_ALT2){ f->ramaddr=pipe(f); f->ramaddr|=(uint16_t)pipe(f)<<8; write_ram_buffer(f,f->ramaddr,(uint8_t)rv(f,n)); write_ram_buffer(f,f->ramaddr^1,(uint8_t)(rv(f,n)>>8)); } else { uint8_t lo=pipe(f); wr(f,n,lo|((uint16_t)pipe(f)<<8)); } reset_prefix(f); return; }
 }
 
+struct SuperFxPcHookSlot {
+  uint32_t pc24;
+  SuperFxPcHook *hook;
+  void *context;
+};
+
+/* Run the title hook for the instruction about to execute, if one is armed.
+ * Returns true when the hook redirected: the pipeline then holds the
+ * redirect target, R15 points past it, and the hooked opcode is dropped. */
+static bool run_pc_hook(SuperFx *f) {
+  const uint32_t pc = f->pipeline_pc;
+  if (pc == UINT32_MAX) return false;
+  for (unsigned i = 0; i < f->pc_hook_count; i++) {
+    const struct SuperFxPcHookSlot *s = &f->pc_hooks[i];
+    if (s->pc24 != pc) continue;
+    f->redirect_pending = false;
+    s->hook(f, pc, s->context);
+    if (!f->redirect_pending) return false;
+    f->redirect_pending = false;
+    const uint16_t target = f->redirect_pc;
+    f->pipeline_pc = ((uint32_t)f->pbr << 16) | target;
+    f->pipeline = read_opcode(f, target);
+    wr(f, 15, (uint16_t)(target + 1u));
+    f->r[15].modified = false;
+    return true;
+  }
+  return false;
+}
+
+bool superfx_set_pc_hook(SuperFx *f, uint32_t pc24, SuperFxPcHook *hook,
+                         void *context) {
+  if (!f) return false;
+  pc24 &= 0xFFFFFFu;
+  for (unsigned i = 0; i < f->pc_hook_count; i++) {
+    if (f->pc_hooks[i].pc24 != pc24) continue;
+    if (hook) {
+      f->pc_hooks[i].hook = hook;
+      f->pc_hooks[i].context = context;
+    } else {
+      f->pc_hooks[i] = f->pc_hooks[--f->pc_hook_count];
+    }
+    return true;
+  }
+  if (!hook) return true;
+  if (f->pc_hook_count == f->pc_hook_cap) {
+    unsigned cap = f->pc_hook_cap ? f->pc_hook_cap * 2u : 8u;
+    struct SuperFxPcHookSlot *grown =
+        realloc(f->pc_hooks, cap * sizeof(*grown));
+    if (!grown) return false;
+    f->pc_hooks = grown;
+    f->pc_hook_cap = (uint16_t)cap;
+  }
+  f->pc_hooks[f->pc_hook_count++] =
+      (struct SuperFxPcHookSlot){pc24, hook, context};
+  return true;
+}
+
+void superfx_clear_pc_hooks(SuperFx *f) { if (f) f->pc_hook_count = 0; }
+uint8_t superfx_ram_peek(const SuperFx *f, uint16_t address) {
+  /* A GSU store completes a few clocks after the instruction that issued it
+   * (write_ram_buffer); until then it lives in ramar/ramdr, and fx->ram still
+   * holds the old byte. Only the most recent store can be pending. */
+  if (f->ramcl && f->ramar == address) return f->ramdr;
+  uint32_t a = ((uint32_t)(f->rambr & 1) << 16) | address;
+  return f->ram[a & f->ram_mask];
+}
+uint16_t superfx_reg(const SuperFx *f, unsigned n) { return f->r[n & 15].data; }
+void superfx_set_reg(SuperFx *f, unsigned n, uint16_t value) {
+  f->r[n & 15].data = value;
+  if ((n & 15) == 14) update_rom_buffer(f);
+}
+void superfx_hook_redirect(SuperFx *f, uint16_t address) {
+  f->redirect_pending = true;
+  f->redirect_pc = address;
+}
+
 static void run_one(SuperFx *f) {
   if (!(f->sfr & SFR_G)) { step_clocks(f, 6); return; }
+  if (f->pc_hook_count && run_pc_hook(f)) return;
   uint8_t op=f->pipeline;
   uint64_t sequence=++f->instruction_count;
   SuperFxTraceEntry *trace=&f->trace[sequence&255];
@@ -383,6 +478,7 @@ static void run_one(SuperFx *f) {
   trace->sfr=f->sfr;
   trace->pbr=f->pbr;
   trace->opcode=op;
+  f->pipeline_pc=((uint32_t)f->pbr<<16)|rv(f,15);
   f->pipeline=read_opcode(f,rv(f,15));
   f->r[15].modified=false;
   instruction(f,op);
@@ -411,6 +507,7 @@ static bool render_widescreen_frame(SuperFx *f) {
   clone.ws_render_active = false;
   clone.ws_replay_pending = false;
   clone.ws_replay_mode = true;
+  clone.pc_hook_count = 0;   /* a replay never runs title policy */
   for (unsigned i = 0; i < clone.ws_replay_zero_word_count; i++) {
     const unsigned address = clone.ws_replay_zero_words[i];
     if (address + 1u < clone.ram_size) {
@@ -479,6 +576,7 @@ bool superfx_replay_snapshot(const SuperFx *source, uint8_t *private_ram,
   result->presentation = NULL;
   result->enhancement_mode = kSuperFxEnhancement_None;
   result->ws_render_active = result->ws_replay_pending = result->ws_replay_mode = false;
+  result->pc_hook_count = 0;
   unsigned guard = 0;
   while ((result->sfr & SFR_G) && guard++ < 20000000)
     run_one(result);
@@ -543,9 +641,13 @@ void superfx_destroy(SuperFx *f) {
     free(f->presentation->ram);
     free(f->presentation);
   }
+  free(f->pc_hooks);
   free(f);
 }
 void superfx_reset(SuperFx *f) {
+  /* PC hooks are host policy, not GSU state: they survive a reset. */
+  struct SuperFxPcHookSlot *pc_hooks = f->pc_hooks;
+  uint16_t pc_hook_count = f->pc_hook_count, pc_hook_cap = f->pc_hook_cap;
   uint8_t *rom=f->rom,*ram=f->ram; uint32_t rs=f->rom_size,rm=f->ram_size;
   uint8_t *ws_pixels=f->ws_pixels,*ws_valid=f->ws_valid;
   uint8_t *ws_present_pixels=f->ws_present_pixels;
@@ -563,7 +665,36 @@ void superfx_reset(SuperFx *f) {
   f->presentation=presentation;
   if (presentation) presentation->active=presentation->pending=false;
   f->vcr=4; f->pipeline=1; f->pixel[0].offset=f->pixel[1].offset=UINT16_MAX;
+  f->pipeline_pc=UINT32_MAX;
+  f->pc_hooks=pc_hooks; f->pc_hook_count=pc_hook_count; f->pc_hook_cap=pc_hook_cap;
 }
+bool superfx_is_running(const SuperFx *f) { return f && (f->sfr & SFR_G) != 0; }
+
+#define SUPERFX_JOB_CAP 4096u
+static SuperFxJob s_jobs[SUPERFX_JOB_CAP];
+static uint32_t s_job_head;   /* total jobs ever started */
+
+static void job_start(SuperFx *f) {
+  SuperFxJob *j = &s_jobs[s_job_head++ & (SUPERFX_JOB_CAP - 1)];
+  j->start_master = f->master_clock;
+  j->stop_master = 0;
+  j->pc24 = ((uint32_t)f->pbr << 16) | rv(f, 15);
+}
+static void job_stop(SuperFx *f) {
+  if (!s_job_head) return;
+  SuperFxJob *j = &s_jobs[(s_job_head - 1) & (SUPERFX_JOB_CAP - 1)];
+  if (!j->stop_master)
+    j->stop_master = f->master_clock - (uint64_t)(f->clock_credit > 0 ? f->clock_credit : 0);
+}
+int superfx_job_log(SuperFxJob *out, int cap) {
+  uint32_t n = s_job_head < SUPERFX_JOB_CAP ? s_job_head : SUPERFX_JOB_CAP;
+  if (cap < 0) cap = 0;
+  if (n > (uint32_t)cap) n = (uint32_t)cap;
+  for (uint32_t i = 0; i < n; i++)
+    out[i] = s_jobs[(s_job_head - n + i) & (SUPERFX_JOB_CAP - 1)];
+  return (int)n;
+}
+
 void superfx_sync(SuperFx *f, uint64_t master) {
   if(!f) return;
   if(master < f->master_clock){ f->master_clock=master; f->clock_credit=0; return; }
@@ -596,6 +727,7 @@ void superfx_cpu_write_io(SuperFx *f, uint16_t a, uint8_t v) {
   if(a<=0x301f){unsigned n=(a>>1)&15;uint16_t q=rv(f,n);wr(f,n,(a&1)?((q&255)|(v<<8)):((q&0xff00)|v));if(n==14)update_rom_buffer(f);if(a==0x301f){
     f->ws_last_task=rv(f,15);
     f->sfr|=SFR_G;
+    job_start(f);
     SuperFxPresentationReplay *p = f->presentation;
     if (f->enhancement_mode == kSuperFxEnhancement_PresentationReplay && p &&
         p->prepare && p->bank == f->pbr && p->address == rv(f,15)) {
@@ -606,6 +738,7 @@ void superfx_cpu_write_io(SuperFx *f, uint16_t a, uint8_t v) {
       p->clone.enhancement_mode = kSuperFxEnhancement_None;
       p->clone.ws_render_active = p->clone.ws_replay_pending = false;
       p->clone.ws_replay_mode = false;
+      p->clone.pc_hook_count = 0;
       p->active = p->prepare(p->context, f, p->ram);
       p->pending = false;
     }

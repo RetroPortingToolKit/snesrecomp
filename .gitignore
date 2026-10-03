@@ -1,6 +1,7 @@
 # Compiled output
 build/
 build-cli/
+build-content-packs/
 dist/
 *.exe
 *.obj
@@ -77,3 +78,6 @@ hg51bs169.data.rom
 dsp1.rom
 dsp1b.rom
 dsp1.bin
+/build-data-packs/
+
+/build-content-pack/

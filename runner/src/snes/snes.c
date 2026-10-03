@@ -68,6 +68,28 @@ void snes_set_hdma_beam_enabled(Snes *snes, bool enabled) {
   snes->hdmaBeamOff = !enabled;
 }
 
+static bool s_raster_irq_beam_off;
+void snes_set_raster_irq_beam_enabled(bool enabled) {
+  s_raster_irq_beam_off = !enabled;
+}
+
+static SnesMasterClockChargeHook s_master_clock_charge_hook;
+static SnesWramWriteLogHook s_wram_write_log_hook;
+
+void snes_set_master_clock_charge_hook(SnesMasterClockChargeHook hook) {
+  s_master_clock_charge_hook = hook;
+}
+
+void snes_set_wram_write_log_hook(SnesWramWriteLogHook hook) {
+  s_wram_write_log_hook = hook;
+}
+
+static void snes_note_direct_wram_write(uint32_t ram_off, uint8_t value,
+                                        const char *via) {
+  if (s_wram_write_log_hook)
+    s_wram_write_log_hook(ram_off, value, via);
+}
+
 Snes* snes_init(uint8_t *ram) {
   Snes* snes = calloc(1, sizeof(Snes));  /* zero padding: saveload/co-sim hash determinism */
     snes->ram = ram;
@@ -93,10 +115,10 @@ void snes_free(Snes* snes) {
 
 /* RTLS v5 and earlier serialized beamMasterLast between vPos and
  * apuCatchupCycles (+8 bytes). v6+ keeps it host-only (before hPos). */
-static uint32_t s_saveload_version = 7;
+static uint32_t s_saveload_version = 10;
 
 void snes_saveload_set_version(uint32_t version) {
-  s_saveload_version = version ? version : 7;
+  s_saveload_version = version ? version : 10;
 }
 
 uint32_t snes_saveload_get_version(void) { return s_saveload_version; }
@@ -190,6 +212,11 @@ void snes_saveload(Snes *snes, SaveLoadInfo *sli) {
   if (s_saveload_version >= 8)
     joypad_saveload(sli);
 
+  if (s_saveload_version >= 10)
+    sli->func(sli, &snes->rdnmiPending, sizeof(snes->rdnmiPending));
+  else
+    snes->rdnmiPending = false; // old states had only the inNmi host flag
+
   snes->cpu->e = 0;
 }
 
@@ -211,6 +238,7 @@ void snes_reset(Snes* snes, bool hard) {
   snes->hTimer = 0x1ff;
   snes->vTimer = 0x1ff;
   snes->inNmi = false;
+  snes->rdnmiPending = false;
   snes->inIrq = false;
   snes->inVblank = false;
   snes->autoJoyRead = false;
@@ -324,6 +352,7 @@ void snes_writeBBus(Snes* snes, uint8_t adr, uint8_t val) {
       uint32_t wa = snes->ramAdr & 0x1ffffu;
       uint8_t old = snes->ram[wa];
       snes->ram[wa] = val;
+      snes_note_direct_wram_write(wa, val, "wmdata");
 #if SNESRECOMP_TRACE
       snes_trace_direct_wram_write(wa, old, val);
 #endif
@@ -401,7 +430,7 @@ static uint32_t snes_advance_beam(Snes *snes, uint32_t clocks, bool check_irq) {
                          ? 0 : (uint16_t)(snes->autoJoyTimer - span);
     }
 
-    if (check_irq &&
+    if (check_irq && !s_raster_irq_beam_off &&
         (snes->hIrqEnabled || snes->vIrqEnabled)) {
       bool line_matches = !snes->vIrqEnabled || v == snes->vTimer;
       uint32_t target = snes->hIrqEnabled ? (uint32_t)snes->hTimer * 4u : 0u;
@@ -429,7 +458,11 @@ static uint32_t snes_advance_beam(Snes *snes, uint32_t clocks, bool check_irq) {
         snes->dbgLatchedThisField = 1;
         h += upto;
         consumed += upto;
-        if (h >= 1364u) { h = 0; v++; if (v >= 262u) v = 0; }
+        if (h >= 1364u) {
+          h = 0; v++; if (v >= 262u) v = 0;
+          if (v == 225u) snes->rdnmiPending = true;
+          if (v == 0u) snes->rdnmiPending = false;
+        }
         snes->hPos = (uint16_t)h;
         snes->vPos = (uint16_t)v;
         snes->inVblank = v >= 225u;
@@ -459,8 +492,10 @@ static uint32_t snes_advance_beam(Snes *snes, uint32_t clocks, bool check_irq) {
     if (h >= 1364u) {
       h = 0;
       v++;
+      if (v == 225u) snes->rdnmiPending = true;
       if (v >= 262u) {
         v = 0;
+        snes->rdnmiPending = false;
         if (check_irq && !snes->hdmaBeamOff)
           dma_initHdma(snes->dma);
         /* End of field. Armed the whole way round and nothing latched means
@@ -586,7 +621,9 @@ uint8_t snes_readReg(Snes* snes, uint16_t adr) {
   switch(adr) {
     case 0x4210: {
       uint8_t val = 0x2; // CPU version (4 bit)
-      val |= snes->inNmi << 7;
+      // Beam-driven hosts latch independently of NMITIMEN. Keep accepting
+      // inNmi for existing frame hosts which explicitly deliver each NMI.
+      val |= (snes->rdnmiPending || snes->inNmi) << 7;
       // Real hardware clears the NMI-pending latch on read. Without this
       // a stale `inNmi=true` would persist across NMI handler exit and
       // produce a spurious second-read=true if anything re-reads $4210
@@ -594,6 +631,7 @@ uint8_t snes_readReg(Snes* snes, uint16_t adr) {
       // value, but a hardware-correct read-clear costs one store and
       // is the right contract for game #2.)
       snes->inNmi = false;
+      snes->rdnmiPending = false;
       return val;
     }
     case 0x4211: {
@@ -815,7 +853,6 @@ void snes_writeReg(Snes* snes, uint16_t adr, uint8_t val) {
        * gundamwing-parity-root-cause. HDMA stays uncharged here (per-line,
        * far smaller; out of scope for this fix). */
       {
-        extern CpuState g_cpu;
         uint64_t dma_master = 12;
         for (int ch = 0; ch < 8; ch++) {
           if (val & (1 << ch)) {
@@ -824,8 +861,19 @@ void snes_writeReg(Snes* snes, uint16_t adr, uint8_t val) {
             dma_master += 8 + (uint64_t)n * 8;
           }
         }
-        g_cpu.master_cycles += dma_master;
-        snes_sync_master_clock(snes, g_cpu.master_cycles);
+        /* SnesInit installs the CpuState-clock charge; a host that drives
+         * the beam itself installs its own (see snes.h). With no hook the
+         * device layer advances its own beam, so snes.c needs no CpuState. */
+        if (s_master_clock_charge_hook) {
+          s_master_clock_charge_hook(snes, dma_master);
+        } else {
+          while (dma_master) {
+            uint32_t chunk = dma_master > 0xffffffffull
+                ? 0xffffffffu : (uint32_t)dma_master;
+            snes_advance_master_cycles(snes, chunk);
+            dma_master -= chunk;
+          }
+        }
       }
       dma_startDma(snes->dma, val, false);
       while (dma_cycle(snes->dma)) {}
@@ -836,6 +884,7 @@ void snes_writeReg(Snes* snes, uint16_t adr, uint8_t val) {
        * draws (SimpleHdma) re-arm from this latch — without it, LLE games keep
        * last_hdmaen at 0 and wipe channel hdmaActive before every present. */
       g_snesrecomp_last_hdmaen = val;
+      ppu_wlog_note_reg(0x420C, val);
       dma_startDma(snes->dma, val, true);
       break;
     }
@@ -878,6 +927,7 @@ void snes_write(Snes* snes, uint32_t adr, uint8_t val) {
     uint32_t addr = ((bank & 1) << 16) | adr;
     uint8_t old = snes->ram[addr];
     snes->ram[addr] = val; // ram
+    snes_note_direct_wram_write(addr, val, "snes_write");
 #if SNESRECOMP_TRACE
     snes_trace_direct_wram_write(addr, old, val);
 #endif
@@ -890,6 +940,7 @@ void snes_write(Snes* snes, uint32_t adr, uint8_t val) {
     if(adr < 0x2000) {
       uint8_t old = snes->ram[adr];
       snes->ram[adr] = val; // ram mirror
+      snes_note_direct_wram_write((uint32_t)adr, val, "snes_write_mirror");
 #if SNESRECOMP_TRACE
       snes_trace_direct_wram_write((uint32_t)adr, old, val);
 #endif

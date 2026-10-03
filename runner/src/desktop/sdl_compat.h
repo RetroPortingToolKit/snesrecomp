@@ -151,6 +151,18 @@ static inline const char *snesrecomp_sdl_renderer_name(
 #endif
 }
 
+/* Change a live renderer's vsync, with the same adaptive fallback as
+ * creation. SDL2 has had SDL_RenderSetVSync since 2.0.18. */
+static inline void snesrecomp_sdl_set_render_vsync(SDL_Renderer *renderer,
+                                                   int vsync) {
+#if SNESRECOMP_SDL3
+  if (!SDL_SetRenderVSync(renderer, vsync) && vsync < 0)
+    SDL_SetRenderVSync(renderer, 1);
+#else
+  SDL_RenderSetVSync(renderer, vsync != 0);
+#endif
+}
+
 static inline int snesrecomp_sdl_get_render_vsync(SDL_Renderer *renderer) {
 #if SNESRECOMP_SDL3
   int vsync = 0;

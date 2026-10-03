@@ -49,6 +49,7 @@ extern "C" {
 struct RtlGameInfo;
 struct SpcPlayer;
 struct RecompLauncherCModProvider;
+struct RecompLauncherCGameInfo;
 
 /* Per-frame numbers a game's after_run_frame hook may want. Wall-clock
  * figures are diagnostics only; nothing here samples or changes guest state. */
@@ -177,6 +178,22 @@ typedef struct SnesDesktopHostGame {
    * holds whole-machine snapshots, so a port that wants it off out of the box
    * ships `[Rewind] Enabled = 0` in default_config_ini. */
   int rewind_settings;
+  /* Opt in to reopening the launcher mid-game: [KeyMap] OpenLauncher
+   * (default Ctrl+L) or [Controller] LauncherGesture (default Select+L3)
+   * freezes the guest and opens the full launcher over it. Settings that can
+   * change live (display, audio volume, input, hotkeys, rewind, run-ahead)
+   * apply on RESUME; a change that cannot (renderer, audio rate, mods, ROM)
+   * restarts the game through a temporary save state, so the player resumes
+   * exactly where they left off. Zero keeps today's behaviour exactly. */
+  int in_game_launcher;
+
+  /* Optional title policy after the shared launcher has been seeded. */
+  void (*configure_launcher)(struct RecompLauncherCGameInfo *info);
+  /* Before a netplay launch commits mods. from_lobby distinguishes an
+   * agreed room plan from direct/environment launch. Return 0 to refuse. */
+  int (*prepare_netplay)(int from_lobby, char *reason, size_t reason_cap);
+  /* Validate that required title plugins actually activated before linking. */
+  int (*netplay_ready)(char *reason, size_t reason_cap);
 } SnesDesktopHostGame;
 
 /* The whole program. Returns the process exit code. */

@@ -90,7 +90,7 @@ def test_direct_jsr_missing_variant_uses_two_byte_call_frame_bridge():
         codegen.set_valid_variants(saved_variants)
         codegen.set_name_resolver(saved_names)
 
-    assert "interp_tier_run_call_frame(cpu, 0x008000u, 0x009100u, 2, NULL)" in source
+    assert "interp_tier_run_call_frame(cpu, (((uint32)cpu->PB << 16) | 0x8000u), 0x009100u, 2, NULL)" in source
 
 
 def test_authoritative_manifest_treats_absent_target_as_all_lle():

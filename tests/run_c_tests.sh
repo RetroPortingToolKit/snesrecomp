@@ -30,6 +30,13 @@ echo "=== launcher ==="
     -o "$OUT/launcher_test"
 "$OUT/launcher_test"
 
+echo "=== MSU soundtrack routing ==="
+"$CC" -std=c11 -Wall -Wextra -O1 \
+    -D_POSIX_C_SOURCE=200809L -I "$ROOT/runner/src" \
+    "$ROOT/tests/audio/msu_track_resolver_test.c" \
+    "$ROOT/runner/src/snes/msu1.c" -lm -o "$OUT/msu_track_resolver_test"
+(cd "$OUT" && ./msu_track_resolver_test)
+
 echo "=== PPU sprite limits ==="
 "$CC" -std=c11 -Wall -Wextra -O1 \
     -DSNESRECOMP_REVERSE_DEBUG=0 \
@@ -102,9 +109,10 @@ echo "=== interpreter and bridge ==="
 "$CC" -std=c11 -Wall -Wextra -Werror -O1 \
     -D_POSIX_C_SOURCE=200809L -I "$ROOT/runner/src/snes" \
     "$ROOT/tests/interp816/tier2_capture_test.c" \
-    "$ROOT/runner/src/snes/tier2_capture.c" \
+    "$ROOT/runner/src/sha256.c" "$ROOT/runner/src/snes/tier2_capture.c" \
     -o "$OUT/tier2_capture_test"
 (cd "$OUT" && ./tier2_capture_test disabled)
+(cd "$OUT" && ./tier2_capture_test lifecycle)
 (cd "$OUT" && ./tier2_capture_test)
 
 "$CC" -std=c11 -Wall -Wextra -Wno-unused-parameter -O1 \
@@ -119,13 +127,20 @@ echo "=== interpreter and bridge ==="
     -I "$ROOT/runner/src" -I "$ROOT/runner/src/snes" \
     "$ROOT/tests/interp816/bridge_test.c" \
     "$ROOT/runner/src/snes/interp816.c" \
-    "$ROOT/runner/src/snes/tier2_capture.c" \
+    "$ROOT/runner/src/sha256.c" "$ROOT/runner/src/snes/tier2_capture.c" \
     "$ROOT/runner/src/snes/interp_bridge.c" \
     "$ROOT/runner/src/snes/cx4.c" \
     -lm -o "$OUT/bridge_test"
 "$OUT/bridge_test"
 
 echo "=== DSP-1 bus/core shell ==="
+"$CC" -std=c11 -Wall -Wextra -Werror -O1 \
+    -I "$ROOT/runner/src" -I "$ROOT/runner/src/snes" \
+    "$ROOT/tests/runtime_dispatch/rom_image_identity_test.c" \
+    "$ROOT/runner/src/snes/snes_other.c" "$ROOT/runner/src/sha256.c" \
+    -o "$OUT/rom_image_identity_test"
+"$OUT/rom_image_identity_test"
+
 "$CC" -std=c11 -Wall -Wextra -Werror -O1 \
     -I "$ROOT/runner/src" -I "$ROOT/runner/src/snes" \
     "$ROOT/tests/dsp1/dsp1_header_test.c" \
@@ -179,6 +194,7 @@ echo "=== SA-1 CPU, mapping and peripherals ==="
     -I "$ROOT/runner/src" -I "$ROOT/runner/src/snes" \
     "$ROOT/tests/sa1/sa1_test.c" \
     "$ROOT/runner/src/snes/sa1.c" \
+    "$ROOT/runner/src/sha256.c" "$ROOT/runner/src/snes/tier2_capture.c" \
     "$ROOT/runner/src/snes/interp816.c" \
     -o "$OUT/sa1_test"
 "$OUT/sa1_test"
@@ -218,6 +234,7 @@ echo "=== runtime dispatch ==="
     "$ROOT/runner/src/snes/dsp1.c" \
     "$ROOT/runner/src/snes/dsp1_hle.c" \
     "$ROOT/runner/src/snes/sa1.c" \
+    "$ROOT/runner/src/sha256.c" "$ROOT/runner/src/snes/tier2_capture.c" \
     "$ROOT/runner/src/snes/interp816.c" \
     $GC_SECTIONS_LINKER -lm -o "$OUT/known_lle_entry_test"
 "$OUT/known_lle_entry_test"
@@ -317,18 +334,22 @@ for mode in 0 1 2 3; do
         "./audio_trace_clock_gate_test_$mode" open-fail)
 done
 
-echo "=== lobby mod plan (match_caps.mods wire shape) ==="
-# Includes snes_lobby_client.c directly to exercise the real codec, so it needs
-# the same guard define and include roots the runner build uses.
+echo "=== SNES lobby caps (widescreen keys over recomp-net's client) ==="
+# The lobby client moved to recomp-net (its codec/state-machine test is
+# lib/recomp-net tests/lobby_client_test.c). This compiles the SNES adapter
+# together with the real client to test the SNES keys end to end.
 "$CC" -std=c11 -Wall -Wextra -O1 \
-    -D_POSIX_C_SOURCE=200809L -DSNES_HAS_LOBBY_CLIENT=1 \
+    -D_POSIX_C_SOURCE=200809L -D_DEFAULT_SOURCE \
     -I "$ROOT/runner/src" -I "$ROOT/runner/src/lobby" \
-    -I "$ROOT/runner/src/lobby/ws" -I "$ROOT/lib/recomp-net/include" \
-    "$ROOT/tests/netplay/lobby_mod_plan_test.c" \
+    -I "$ROOT/lib/recomp-net/include" -I "$ROOT/lib/recomp-net/src" \
+    "$ROOT/tests/netplay/snes_lobby_caps_test.c" \
     "$ROOT/lib/recomp-net/src/chat/rnet_chat_filter.c" \
     "$ROOT/lib/recomp-net/src/chat/rnet_chat_report.c" \
-    -o "$OUT/lobby_mod_plan_test"
-"$OUT/lobby_mod_plan_test"
+    "$ROOT/lib/recomp-net/src/platform/rnet_platform.c" \
+    "$ROOT/lib/recomp-net/src/platform/rnet_stun.c" \
+    "$ROOT/lib/recomp-net/src/nat/rnet_host_relay.c" \
+    -o "$OUT/snes_lobby_caps_test"
+"$OUT/snes_lobby_caps_test"
 
 echo "=== keybinds: the runner-layout keyboard word ==="
 # Needs SDL headers for the scancode enum only (no window, no device). Skipped
@@ -380,8 +401,8 @@ echo "=== mod runtime: presentation_only is not compared by netplay ==="
     -I "$ROOT/runner/src" \
     -x c++ "$ROOT/tests/netplay/mod_presentation_only_test.c" \
     "$ROOT/runner/src/mod_runtime.cpp" \
+    "$ROOT/runner/src/sha256.c" "$ROOT/runner/src/snes/tier2_capture.c" \
     "$ROOT/runner/src/crc32.c" \
-    "$ROOT/runner/src/sha256.c" \
     -o "$OUT/mod_presentation_only_test"
 rm -rf "$OUT/mod_presentation_only_fixture"
 "$OUT/mod_presentation_only_test" "$OUT/mod_presentation_only_fixture"
@@ -421,6 +442,7 @@ echo "=== account secret path (rebuild must not sign you out) ==="
     -I "$ROOT/lib/recomp-net/include" -I "$ROOT/lib/recomp-net/src" \
     "$ROOT/tests/auth/secret_path_test.c" \
     "$ROOT/lib/recomp-net/src/auth/rnet_auth.c" \
+    "$ROOT/lib/recomp-net/src/auth/rnet_open_url.c" \
     "$ROOT/lib/recomp-net/src/auth/rnet_sha256.c" \
     -lpthread -o "$OUT/secret_path_test"
 "$OUT/secret_path_test"
@@ -443,3 +465,61 @@ echo "=== Super FX state and presentation isolation ==="
     "$ROOT/runner/src/snes/superfx.c" \
     -o "$OUT/superfx_state_test"
 "$OUT/superfx_state_test"
+
+echo "=== program module registry ==="
+"$CC" -std=c11 -Wall -Wextra -Werror -O1 \
+    -I "$ROOT/runner/src" -I "$ROOT/runner/src/snes" \
+    "$ROOT/tests/program_module/program_module_test.c" \
+    "$ROOT/runner/src/program_module.c" \
+    "$ROOT/runner/src/sha256.c" \
+    -o "$OUT/program_module_test"
+"$OUT/program_module_test"
+
+echo "=== ROM patch (IPS/BPS) ==="
+"$CC" -std=c11 -Wall -Wextra -Werror -O1 \
+    -I "$ROOT/runner/src" \
+    "$ROOT/tests/rom_patch/rom_patch_test.c" \
+    "$ROOT/runner/src/rom_patch.c" \
+    "$ROOT/runner/src/crc32.c" \
+    -o "$OUT/rom_patch_test"
+"$OUT/rom_patch_test"
+
+echo "=== content variants + selector ==="
+"$CC" -std=c11 -Wall -Wextra -Werror -O1 \
+    -I "$ROOT/runner/src" -I "$ROOT/runner/src/snes" -I "$ROOT/third_party" \
+    -DSNESRECOMP_ENABLE_MODS=0 \
+    "$ROOT/tests/content_variant/content_variant_test.c" \
+    "$ROOT/runner/src/content_variant.c" \
+    "$ROOT/runner/src/variant_selector.c" \
+    "$ROOT/runner/src/program_module.c" \
+    "$ROOT/runner/src/rom_patch.c" \
+    "$ROOT/runner/src/crc32.c" \
+    "$ROOT/runner/src/sha256.c" \
+    "$ROOT/runner/src/snes_overlay_draw.c" \
+    -o "$OUT/content_variant_test"
+(cd "$OUT" && "$OUT/content_variant_test")
+
+echo "=== Super FX PC hooks ==="
+"$CC" -std=c11 -Wall -Wextra -Werror -O1 \
+    -I "$ROOT/runner/src" \
+    "$ROOT/tests/superfx/pc_hook_test.c" \
+    "$ROOT/runner/src/snes/superfx.c" \
+    -o "$OUT/superfx_pc_hook_test"
+"$OUT/superfx_pc_hook_test"
+
+# Both include common_rtl.c whole; -fwhole-program drops the host entry
+# points they do not exercise instead of linking the full runtime. Its
+# desktop config header needs SDL headers, not the library.
+RTL_UNIT_FLAGS="$(pkg-config --cflags sdl2) -std=c11 -O2 -flto -fwhole-program -ffunction-sections -fdata-sections -DSNESRECOMP_TRACE=0 -D_POSIX_C_SOURCE=200809L -I $ROOT/runner/src/desktop -I $ROOT/runner/src"
+
+echo "=== audio delivery + console reset ==="
+"$CC" $RTL_UNIT_FLAGS "$ROOT/tests/audio_delivery_test.c" \
+    "$ROOT/runner/src/snes/dsp.c" "$ROOT/runner/src/audio_trace.c" \
+    -Wl,--gc-sections -lm -o "$OUT/audio_delivery_test"
+"$OUT/audio_delivery_test"
+
+echo "=== DMA snapshot layouts ==="
+"$CC" $RTL_UNIT_FLAGS "$ROOT/tests/dma_snapshot_test.c" \
+    "$ROOT/runner/src/snes/dma.c" \
+    -Wl,--gc-sections -lm -o "$OUT/dma_snapshot_test"
+"$OUT/dma_snapshot_test"

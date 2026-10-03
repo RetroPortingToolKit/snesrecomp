@@ -58,9 +58,14 @@ typedef struct SnesrecompHostArgs {
   const char *config_file;
   const char *script_file;    /* --script <path> */
   const char *framedump_dir;  /* --framedump <dir> */
+  /* --resume-state <path>: a save state to load before the first frame and then
+   * delete. Written by the in-game launcher when an edit needs a restart. */
+  const char *resume_state;
   int start_paused;           /* --paused */
   int force_launcher;         /* --launcher */
   int no_launcher;            /* --no-launcher */
+  int expose_coverage_mod;
+  int coverage_capture; /* -1 absent, 0 off, 1 on */
   int help;                   /* --help / -h: the port should print and exit 0 */
 
   /* Storage for the absolutized forms above. Not read directly. */
@@ -68,6 +73,7 @@ typedef struct SnesrecompHostArgs {
   char config_buf[SNESRECOMP_HOST_ARGS_PATH_MAX];
   char script_buf[SNESRECOMP_HOST_ARGS_PATH_MAX];
   char framedump_buf[SNESRECOMP_HOST_ARGS_PATH_MAX];
+  char resume_buf[SNESRECOMP_HOST_ARGS_PATH_MAX];
 } SnesrecompHostArgs;
 
 /* Consume the engine-owned arguments from *argc / *argv, in place.

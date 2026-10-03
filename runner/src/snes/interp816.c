@@ -188,6 +188,40 @@ uint64_t s_interp816_opcodes_run = 0; /* dev perf: per-bridge-call opcode count 
 uint64_t interp816_insns_total(void)  { return s_interp816_insns; }
 uint64_t interp816_cycles_total(void) { return s_interp816_cycles; }
 
+/* ── Always-on interpreted-execution map, by 256-byte guest page ───────────
+ *
+ * interp_stats answers "how much of the guest is interpreted"; it cannot
+ * answer "WHICH code". Without that second answer a coverage burndown is
+ * guesswork: a session reads 99% interpreted, picks the routine it happens to
+ * be looking at, and finds out after a regen whether that was the dominant
+ * class. This is the instrument that names the class BEFORE the work.
+ *
+ * Accumulated from instruction zero in every configuration, Release included
+ * (PRINCIPLES.md, "Always-On Rings, Never Arm-and-Hope"): a probe queries the
+ * window it cares about, it never arms a recorder and re-runs a workload.
+ * Page granularity (pc24 >> 8) is 64K counters -- 1 MB of BSS, one indexed
+ * 64-bit add per interpreted instruction, which is noise beside the
+ * interpreter's own per-opcode cost -- and it is fine enough to name a
+ * routine against the cfg symbol map while being immune to the aliasing a
+ * hashed-PC sampler suffers from.
+ *
+ * Cycles, not instructions, is the headline: it is the same unit
+ * interp_stats divides by (g_cpu.cycles), so a page's share here is directly
+ * comparable to the whole-run interpreted share. Instructions are kept beside
+ * it because a page that is all long-cycle opcodes and a page that is a tight
+ * two-cycle loop want different fixes. */
+#define INTERP816_PAGE_COUNT 0x10000u
+static uint64_t s_interp_page_cycles[INTERP816_PAGE_COUNT];
+static uint64_t s_interp_page_insns[INTERP816_PAGE_COUNT];
+
+uint64_t interp816_page_cycles(unsigned page) {
+    return page < INTERP816_PAGE_COUNT ? s_interp_page_cycles[page] : 0;
+}
+uint64_t interp816_page_insns(unsigned page) {
+    return page < INTERP816_PAGE_COUNT ? s_interp_page_insns[page] : 0;
+}
+unsigned interp816_page_count(void) { return INTERP816_PAGE_COUNT; }
+
 /* Dev hotspot sampler (SNESRECOMP_PHASE_MS): top EXACT PCs executed by the
  * interpreter, dumped via interp816_perf_dump(). Keyed by a 12-bit hash of
  * the full pc24 so the dump shows the precise hot instruction, not a page. */
@@ -309,6 +343,13 @@ int interp816_runOpcode(Interp816* cpu) {
   OPCODE_HIST_END(opcode);
   s_interp816_insns++;
   s_interp816_cycles += (uint64_t)cpu->cyclesUsed;
+  {
+    /* Charge the page the OPCODE stood on (_pcb), not the post-execute PC,
+     * so a branch or a jump is attributed to the routine that issued it. */
+    const unsigned _pg = (unsigned)((_pcb >> 8) & 0xFFFFu);
+    s_interp_page_cycles[_pg] += (uint64_t)cpu->cyclesUsed;
+    s_interp_page_insns[_pg]++;
+  }
 #ifdef SNES_COSIM
   { I816RingEnt* e = &g_i816_ring[g_i816_ring_head & (I816_RING_N - 1)];
     e->pc = _pcb; e->op = opcode; e->mf = _mf; e->xf = _xf;
@@ -489,9 +530,9 @@ static uint32_t interp816_adrIdy(Interp816* cpu, uint32_t* low, bool write) {
   if(cpu->dp & 0xff) cpu->cyclesUsed++; // dpr not 0: 1 extra cycle
   uint16_t pointer = interp816_readWord(cpu, (cpu->dp + adr) & 0xffff, (cpu->dp + adr + 1) & 0xffff);
   bool crossed = (pointer >> 8) != ((pointer + cpu->y) >> 8);
-  if(write ? (!cpu->xf || crossed) : crossed) cpu->cyclesUsed++;
-  // Reads pay only on a page crossing. Stores retain their existing 16-bit
-  // index/page-crossing penalty.
+  // W65C816S cycle-table note 4: read penalty for X=0 OR crossing.
+  // Store/RMW base cycles already include the unconditional indexing cycle.
+  if(!write && (!cpu->xf || crossed)) cpu->cyclesUsed++;
   *low = ((cpu->db << 16) + pointer + cpu->y) & 0xffffff;
   return ((cpu->db << 16) + pointer + cpu->y + 1) & 0xffffff;
 }
@@ -536,7 +577,7 @@ static uint32_t interp816_adrAbs(Interp816* cpu, uint32_t* low) {
 static uint32_t interp816_adrAbx(Interp816* cpu, uint32_t* low, bool write) {
   uint16_t adr = interp816_readOpcodeWord(cpu);
   bool crossed = (adr >> 8) != ((adr + cpu->x) >> 8);
-  if(write ? (!cpu->xf || crossed) : crossed) cpu->cyclesUsed++;
+  if(!write && (!cpu->xf || crossed)) cpu->cyclesUsed++;
   *low = ((cpu->db << 16) + adr + cpu->x) & 0xffffff;
   return ((cpu->db << 16) + adr + cpu->x + 1) & 0xffffff;
 }
@@ -544,7 +585,7 @@ static uint32_t interp816_adrAbx(Interp816* cpu, uint32_t* low, bool write) {
 static uint32_t interp816_adrAby(Interp816* cpu, uint32_t* low, bool write) {
   uint16_t adr = interp816_readOpcodeWord(cpu);
   bool crossed = (adr >> 8) != ((adr + cpu->y) >> 8);
-  if(write ? (!cpu->xf || crossed) : crossed) cpu->cyclesUsed++;
+  if(!write && (!cpu->xf || crossed)) cpu->cyclesUsed++;
   *low = ((cpu->db << 16) + adr + cpu->y) & 0xffffff;
   return ((cpu->db << 16) + adr + cpu->y + 1) & 0xffffff;
 }

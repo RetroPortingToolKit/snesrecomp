@@ -21,22 +21,26 @@ from snes65816 import (  # noqa: E402
     clear_reloc_regions,
     load_rom,
     register_reloc_region,
+    set_rom_image_size,
 )
 from v2.link_closure import assert_closed  # noqa: E402
 from v2.program_analysis import VariantKey  # noqa: E402
 from v2.program_emit import (  # noqa: E402
     CACHE_FORMAT_VERSION,
     discover_host_roots,
+    discover_authority_roots,
     discover_profile_roots,
     emit_program,
+    validate_module_identity,
 )
 from v2_analyze import (  # noqa: E402
     _load_cfgs,
     _seed_auto_vectors,
-    build_manifest,
     build_manifest_native,
-    native_analyzer_path,
+    ensure_native_analyzer,
 )
+from disassembly_layout import configured_authority  # noqa: E402
+from sync_symbols import sync_symbols  # noqa: E402
 
 
 def _tree_digest(paths) -> str:
@@ -85,7 +89,9 @@ def _analysis_input_digest(*, rom: bytes, generator_digest: str,
                            analysis_backend: str,
                            enable_hle: bool, max_insns: int,
                            max_nodes: int, shard_threshold_bytes: int,
-                           shard_pc_span: int) -> str:
+                           shard_pc_span: int,
+                           module_id: str = "main",
+                           module_prefix: str | None = None) -> str:
     value = {
         "format": CACHE_FORMAT_VERSION,
         "rom": hashlib.sha256(rom).hexdigest(),
@@ -98,6 +104,7 @@ def _analysis_input_digest(*, rom: bytes, generator_digest: str,
         "cfg_roots": bool(cfg_roots),
         "analysis_backend": str(analysis_backend),
         "hle": bool(enable_hle),
+        "module": [str(module_id), str(module_prefix or "")],
         "max_insns": int(max_insns),
         "max_nodes": int(max_nodes),
         "sharding": [int(shard_threshold_bytes), int(shard_pc_span)],
@@ -146,6 +153,7 @@ def _install_ram_routines(rom: bytes, parsed):
     native analyzer, which does the same against the ROM file). Returns
     (extended_rom, tuple_of_VariantKey_roots)."""
     clear_reloc_regions()
+    set_rom_image_size(len(rom))
     buf = bytearray(rom)
     roots = []
     for _bank, _path, cfg in parsed:
@@ -170,6 +178,11 @@ def main() -> int:
         "--profile-manifest", action="append", default=[],
         help="tier2 coverage manifest whose clean targets become optional "
              "AOT roots (repeatable)")
+    parser.add_argument("--legacy-profile-rom-sha256", help="Explicitly associate legacy profiles with this ROM digest")
+    parser.add_argument(
+        "--historical-profile-manifest", action="append", default=[],
+        help="Retain seeds from a separate historical checkpoint/bundle; "
+             "validate each identity independently, never merge its costs")
     parser.add_argument(
         "--cfg-roots", action="store_true",
         help="treat every cfg `func` declaration as an analysis root in "
@@ -177,15 +190,30 @@ def main() -> int:
              "coverage policy: the declared surface is materialized as AOT "
              "wherever the analysis proves it; LLE remains the failsafe for "
              "anything unprovable, never the plan of record.")
+    parser.add_argument(
+        "--module-id", default="main",
+        help="program-module id recorded in the generated module_v2.c "
+             "descriptor and used by the runtime registry "
+             "(runner/src/program_module.h) to select this tree "
+             "(default: main)")
+    parser.add_argument(
+        "--module-prefix", default=None,
+        help="prefix every generated symbol as <prefix>_<name> through a "
+             "generated module_namespace.h so this module can be linked "
+             "beside another generated module (content variants). Requires "
+             "a funcs.h beside the cfg files; default: no prefix")
     parser.add_argument("--no-host-root-scan", action="store_true")
+    parser.add_argument("--disassembly-entry-modes", action="store_true",
+                        help="probe all M/X modes at byte-authoritative declared entries; "
+                             "contradictory paths remain LLE (requires gameplay qualification)")
     parser.add_argument("--no-hle", action="store_true")
     parser.add_argument("--max-insns", type=int, default=4096)
     parser.add_argument("--max-nodes", type=int, default=100_000)
     parser.add_argument(
-        "--analysis-backend", choices=("auto", "python", "native"),
-        default="auto",
-        help="whole-program analyzer (default: use the release native binary "
-             "when present, otherwise Python)")
+        "--analysis-backend", choices=("auto", "native", "python"),
+        default="native",
+        help="accepted for compatibility: the native analyzer is the only "
+             "one; auto means native, and python is an error")
     parser.add_argument(
         "--no-link-closure-check", action="store_true",
         help="skip the post-emit check that every called <Name>_M<m>X<x> "
@@ -204,26 +232,59 @@ def main() -> int:
         help="entry-PC range per bank translation unit (default: 0x800; "
              "0 disables sharding)")
     args = parser.parse_args()
+    if args.analysis_backend == "python":
+        parser.error("the Python analyzer was retired; the native analyzer "
+                     "is the only one (drop --analysis-backend python)")
+    try:
+        symbols = sync_symbols(pathlib.Path(args.cfg_dir).resolve())
+        symbol_roots = tuple(VariantKey(s.pc24, s.entry_m, s.entry_x)
+                             for s in symbols if s.emit)
+        with configured_authority(args.rom, args.cfg_dir) as (cfg_dir, probe_modes):
+            args.disassembly_entry_modes |= probe_modes
+            return _generate(args, parser, cfg_dir, symbol_roots=symbol_roots)
+    except (ValueError, KeyError, OSError) as exc:
+        parser.error(str(exc))
+
+
+def _generate(args, parser, cfg_dir, *, symbol_roots=()):
     shard_threshold_bytes = max(0, args.bank_shard_threshold_kib) * 1024
     shard_pc_span = max(0, args.bank_shard_pc_span)
 
     started = time.perf_counter()
-    cfg_dir = pathlib.Path(args.cfg_dir).resolve()
     out_dir = pathlib.Path(args.out_dir).resolve()
     rom = load_rom(args.rom)
+    try:
+        validate_module_identity(args.module_id, args.module_prefix)
+    except ValueError as exc:
+        parser.error(str(exc))
+    # The module descriptor names the IMAGE this tree was generated from, so
+    # take the digest before ram_routine blobs are materialized into the copy
+    # the analyzer sees.
+    rom_sha256_hex = hashlib.sha256(rom).hexdigest()
+    rom_image_size = len(rom)
     parsed = _load_cfgs(cfg_dir)
+    # cfg entry_mx_at/manual func overrides remain authoritative when a
+    # symbol requests an AOT root at an already configured entry.
+    entry_modes = {
+        (bank << 16) | entry.start: (entry.entry_m, entry.entry_x)
+        for bank, _path, cfg in parsed for entry in cfg.entries
+    }
+    symbol_roots = tuple(
+        VariantKey(key.pc24, *entry_modes.get(key.pc24, (key.m, key.x)))
+        for key in symbol_roots)
     # Materialize ram_routine blobs into the ROM image + reloc registry so
-    # their WRAM entries decode as ordinary AOT bodies. Their WRAM roots join
-    # additional_roots so the (Python-backend) manifest includes them; the
-    # native analyzer seeds the same roots from cfg independently.
+    # their WRAM entries decode as ordinary AOT bodies. The native analyzer
+    # seeds the same WRAM roots from cfg; passing them as additional roots
+    # too keeps the demand explicit.
     rom, ram_routine_roots = _install_ram_routines(rom, parsed)
-    native_path = native_analyzer_path()
-    analysis_backend = args.analysis_backend
-    if analysis_backend == "auto":
-        analysis_backend = "native" if native_path.is_file() else "python"
+    try:
+        native_path = ensure_native_analyzer()
+    except (OSError, RuntimeError) as exc:
+        parser.error(str(exc))
+    analysis_backend = "native"
     source_roots = [pathlib.Path(p).resolve() for p in args.source_root]
     if not source_roots and not args.no_host_root_scan:
-        conventional = cfg_dir.parent / "src"
+        conventional = pathlib.Path(args.cfg_dir).resolve().parent / "src"
         if conventional.exists():
             source_roots.append(conventional)
     host_roots = () if args.no_host_root_scan else discover_host_roots(
@@ -235,7 +296,10 @@ def main() -> int:
     try:
         profile_force_lle = set()
         profile_roots = discover_profile_roots(
-            args.profile_manifest, declared_entry_pcs, profile_force_lle)
+            args.profile_manifest, declared_entry_pcs, profile_force_lle,
+            expected_rom=rom_sha256_hex, expected_module=args.module_id,
+            legacy_rom=args.legacy_profile_rom_sha256,
+            historical_paths=args.historical_profile_manifest)
     except ValueError as exc:
         parser.error(str(exc))
     if profile_force_lle and parsed:
@@ -244,20 +308,21 @@ def main() -> int:
         # explicitly qualified targets reach AOT eligibility.
         parsed[0][2].force_lle.update(profile_force_lle)
     additional_roots = tuple(sorted(
-        set(host_roots) | set(profile_roots) | set(ram_routine_roots)))
+        set(host_roots) | set(profile_roots) | set(ram_routine_roots) | set(symbol_roots)
+        | (set(discover_authority_roots(parsed)) if args.disassembly_entry_modes else set())))
 
-    def generator_digest_for(backend):
-        native_inputs = ()
-        if backend == "native":
-            native_inputs = (
-                REPO / "recompiler-rs" / "src",
-                REPO / "recompiler-rs" / "Cargo.toml",
-                REPO / "recompiler-rs" / "Cargo.lock",
-                native_path,
-            )
+    def generator_digest_for():
         tree_digest = _tree_digest((
             REPO / "recompiler" / "v2", pathlib.Path(__file__).resolve(),
-            REPO / "tools" / "v2_analyze.py", *native_inputs))
+            REPO / "recompiler" / "snes65816.py",
+            REPO / "tools" / "v2_analyze.py",
+            REPO / "tools" / "disassembly_layout.py",
+            REPO / "tools" / "sync_symbols.py",
+            REPO / "tools" / "ingest_disassembly_authority.py",
+            REPO / "recompiler-rs" / "src",
+            REPO / "recompiler-rs" / "Cargo.toml",
+            REPO / "recompiler-rs" / "Cargo.lock",
+            native_path))
         # This environment switch changes every emitted AOT body, so it must
         # participate in the published-output cache key.  Treat any non-empty
         # value as enabled to match emit_function.py's codegen guard.
@@ -266,7 +331,7 @@ def main() -> int:
             f"{tree_digest}\0aot_deny_gate={int(deny_gate)}".encode()
         ).hexdigest()
 
-    generator_digest = generator_digest_for(analysis_backend)
+    generator_digest = generator_digest_for()
     config_digest = _config_digest(parsed)
     analysis_input_digest = _analysis_input_digest(
         rom=rom,
@@ -281,6 +346,7 @@ def main() -> int:
         max_nodes=args.max_nodes,
         shard_threshold_bytes=shard_threshold_bytes,
         shard_pc_span=shard_pc_span,
+        module_id=args.module_id, module_prefix=args.module_prefix,
     )
     cached = _verified_cached_stats(out_dir, analysis_input_digest)
     if cached is not None and not args.no_link_closure_check:
@@ -300,47 +366,22 @@ def main() -> int:
         print(f"v2_emit: reused verified published output {out_dir}")
         return 0
 
-    if analysis_backend == "native":
-        try:
-            # The Python analyzer normally materializes friendly vector
-            # entries as a side effect.  Native analysis owns a separate
-            # cfg model, so mirror that mutation before Python emission.
-            _seed_auto_vectors(parsed, rom)
-            manifest, helpers, inline_args, native_output = \
-                build_manifest_native(
-                    rom_path=args.rom, cfg_dir=cfg_dir,
-                    all_cfg_roots=args.cfg_roots,
-                    additional_roots=additional_roots,
-                    force_lle=profile_force_lle,
-                    executable=native_path,
-                    max_insns=args.max_insns,
-                    max_nodes=args.max_nodes)
-            if native_output:
-                print(native_output)
-        except (OSError, RuntimeError, ValueError) as exc:
-            if args.analysis_backend == "native":
-                parser.error(str(exc))
-            print(f"v2_emit: native analysis unavailable ({exc}); "
-                  "falling back to Python")
-            analysis_backend = "python"
-    if analysis_backend == "python":
-        # A failed auto-native attempt must not publish Python output under a
-        # native cache identity. The next successful native run must analyze.
-        if generator_digest != generator_digest_for("python"):
-            generator_digest = generator_digest_for("python")
-            analysis_input_digest = _analysis_input_digest(
-                rom=rom, generator_digest=generator_digest,
-                config_digest=config_digest,
-                additional_roots=additional_roots, cfg_roots=args.cfg_roots,
-                force_lle=profile_force_lle,
-                analysis_backend="python", enable_hle=not args.no_hle,
-                max_insns=args.max_insns, max_nodes=args.max_nodes,
-                shard_threshold_bytes=shard_threshold_bytes,
-                shard_pc_span=shard_pc_span)
-        manifest, helpers, inline_args = build_manifest(
-            rom, parsed, max_insns=args.max_insns, max_nodes=args.max_nodes,
+    # The emitter's cfg model needs the friendly auto_vectors entries
+    # (I_RESET/I_NMI/I_IRQ); the native analyzer seeds its own copy.
+    _seed_auto_vectors(parsed, rom)
+    try:
+        manifest, helpers, inline_args, native_output = build_manifest_native(
+            rom_path=args.rom, cfg_dir=cfg_dir,
             all_cfg_roots=args.cfg_roots,
-            additional_roots=additional_roots)
+            additional_roots=additional_roots,
+            force_lle=profile_force_lle,
+            executable=native_path,
+            max_insns=args.max_insns,
+            max_nodes=args.max_nodes)
+    except (OSError, RuntimeError, ValueError) as exc:
+        parser.error(f"native analysis failed: {exc}")
+    if native_output:
+        print(native_output)
     result = emit_program(
         rom=rom,
         parsed=parsed,
@@ -364,6 +405,10 @@ def main() -> int:
         shard_threshold_bytes=shard_threshold_bytes,
         shard_pc_span=shard_pc_span,
         check_link_closure=not args.no_link_closure_check,
+        module_id=args.module_id,
+        module_prefix=args.module_prefix,
+        rom_sha256_hex=rom_sha256_hex,
+        rom_size=rom_image_size,
     )
     elapsed = time.perf_counter() - started
     print(

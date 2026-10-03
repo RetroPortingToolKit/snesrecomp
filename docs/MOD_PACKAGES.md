@@ -165,7 +165,43 @@ callbacks make the package state authoritative over old config files: disabling
 widescreen restores native 4:3 on the next launch even if a legacy config once
 stored `Widescreen = 1`.
 
+Features that claim the same plugin ID are alternatives. Enabling one, by
+feature or by package, deselects every other enabled feature claiming any of
+its plugins, so a package can declare mutual exclusion by also claiming its
+rival's plugin. A saved state that still has two claimants enabled is reported
+as a conflict on Play. `tests/mod_resources/exclusive_plugin_test.cpp` covers
+this through the real launcher provider.
+
 The initial operation vocabulary is intentionally narrow: trusted activation
 plugins only. Future guarded ROM writes, asset overlays, or interpreter hooks
 must retain the same pre-boot validation and no-arbitrary-code model rather than
 turning package order into an implicit patch priority.
+
+## Temporary session selections
+
+`snes_mod_runtime_begin_temporary_c()` snapshots the current feature choices
+and package versions once. A lobby may then enable required features or adopt
+the host's canonical configuration and commit it normally. Commits persist the
+offline choices while the temporary selection is active. Resource picker
+paths (including shared source ROM paths) remain local durable preferences.
+`snes_mod_runtime_end_temporary_c()` restores offline choices, clears the
+committed plan/cosmetic grants, and revalidates. Call it when leaving the
+netplay flow without launching. No paths enter the network's effective set.
+
+The desktop host exposes `configure_launcher`, `prepare_netplay` and
+`netplay_ready` title hooks to stage a session policy, reject an invalid plan
+before commit, and reject required plugins that failed to activate. A failed
+network start never silently falls back to offline play. Netplay cold boots
+without local SRAM/autosaves and blocks state-changing emulator shortcuts;
+the synchronized game's own pause controls remain available.
+
+## Content variants: `[[variant]]`, `[[patch]]`, `external_rom.sha256`
+
+A package may declare selectable **content variants** -- another program run
+from a user-supplied image, or a ROM hack -- each with its own recompiled
+module and isolated saves. The manifest vocabulary, the runtime registry and
+the in-game Left/Right picker are documented in `CONTENT_VARIANTS.md`. Two
+rules carry over from the trust model above: an `[[external_rom]]` that a
+variant runs must declare `sha256`, and the engine (not a plugin) verifies it
+before any use; a `[[patch]]` is applied in memory to the verified source and
+its `target_sha256` is checked before a module may run the result.

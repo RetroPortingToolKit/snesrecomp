@@ -80,6 +80,15 @@ static int s_mix_buf_cap;         /* frames capacity of s_mix_buf */
 static double s_mix_phase;        /* fractional 44.1kHz position, carried over */
 static int16_t s_mix_carry[8 * 2];
 static int s_mix_carry_count;
+static Msu1TrackResolver s_track_resolver;
+static void *s_track_context;
+
+void msu1_set_track_resolver(Msu1TrackResolver resolver, void *context) {
+    RtlApuLock();
+    s_track_resolver = resolver;
+    s_track_context = context;
+    RtlApuUnlock();
+}
 
 /* ── lifecycle ───────────────────────────────────────────────────────── */
 
@@ -236,8 +245,16 @@ static void msu_load_track(uint16_t track) {
     s_mix_phase = 0.0;
     s_mix_carry_count = 0;
 
-    char fn[MSU1_PATH_MAX + 32];
-    snprintf(fn, sizeof(fn), "%s-%u.pcm", g.base, (unsigned)track);
+    char fn[MSU1_PATH_MAX + 32] = {0};
+    if (s_track_resolver) {
+        if (!s_track_resolver(s_track_context, g.base, track, fn, sizeof(fn)) ||
+            !fn[0] || !memchr(fn, 0, sizeof(fn))) {
+            g.audio_error = true;
+            return;
+        }
+    } else {
+        snprintf(fn, sizeof(fn), "%s-%u.pcm", g.base, (unsigned)track);
+    }
     FILE *f = fopen(fn, "rb");
     if (!f) { g.audio_error = true; return; }
 

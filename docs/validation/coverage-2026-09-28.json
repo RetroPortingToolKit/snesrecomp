@@ -1,0 +1,974 @@
+{
+  "date": "2026-09-28",
+  "framework_branch": "feat/coverage-feedback",
+  "status": "capture controls passed; expanded AOT builds not qualified for final playtest or merge",
+  "control_routes": [
+    {
+      "title": "yi",
+      "route": "attract",
+      "frames": 6000,
+      "capture_control": {
+        "replay_matches": true,
+        "reasons": [],
+        "interpreted_work": {
+          "snes_cpu": {
+            "before": 0,
+            "after": 72098399,
+            "reduction": null,
+            "percent": null
+          }
+        },
+        "scope": "Only the recorded route and evidence; manual playtest still required"
+      },
+      "identity": {
+        "rom_sha256": "9b4957466798bbdb5b43a450bbb60b2591ae81d95b891430f62d53ca62e8bc7b",
+        "module_id": "main",
+        "program_digest": "a9ea8fe65fe7ead0b846d4a8c084b5bc4a2114f77c55afba2614dd3a95f8e8e4",
+        "build_digest": "149a8fae32eeebd136fe9864baaaf4b18e296f2c6694701875edef54ee836485",
+        "generation_digest": "db3be81dfdb9c7f58f09454ba0f3aa09428c1993f706eb18c3c14a59736b33d8",
+        "mapper": "superfx"
+      },
+      "instructions": {
+        "snes_cpu": 72098399
+      },
+      "transfer_tuples": 139,
+      "capture_warnings": [],
+      "duplicate_ingest_identical": true,
+      "executable_digest_verified": true,
+      "artifact_dir": "build/capture-controls/yi-attract-on",
+      "case": "build/capture-controls/yi-attract-on.case.json",
+      "evidence": {
+        "trace.txt": "e196c89ab7529f9c20c844f1cb73081d48e0b0595a753574c03e78a3f3eb1ef3",
+        "final.fb.bgrx": "817e3e4aacd1481e0e7608bb0784086607fe2f37d454a3882db7386da615e0ec",
+        "final.wram.bin": "84fba8c8d27dd06bcfb967bc42b75b10dda876f86c9f6271a78c76c360e8cf95",
+        "final.vram.bin": "aafc5d3e2ab49f73bd3ac6082ca1c54060acf01562ffbcb77f142f6dc608d02e"
+      },
+      "supplemental_evidence": [
+        "final.wram.bin",
+        "final.vram.bin"
+      ],
+      "activity": {}
+    },
+    {
+      "title": "yi",
+      "route": "fuzz",
+      "frames": 6000,
+      "capture_control": {
+        "replay_matches": true,
+        "reasons": [],
+        "interpreted_work": {
+          "snes_cpu": {
+            "before": 0,
+            "after": 69102535,
+            "reduction": null,
+            "percent": null
+          }
+        },
+        "scope": "Only the recorded route and evidence; manual playtest still required"
+      },
+      "identity": {
+        "rom_sha256": "9b4957466798bbdb5b43a450bbb60b2591ae81d95b891430f62d53ca62e8bc7b",
+        "module_id": "main",
+        "program_digest": "a9ea8fe65fe7ead0b846d4a8c084b5bc4a2114f77c55afba2614dd3a95f8e8e4",
+        "build_digest": "149a8fae32eeebd136fe9864baaaf4b18e296f2c6694701875edef54ee836485",
+        "generation_digest": "db3be81dfdb9c7f58f09454ba0f3aa09428c1993f706eb18c3c14a59736b33d8",
+        "mapper": "superfx"
+      },
+      "instructions": {
+        "snes_cpu": 69102535
+      },
+      "transfer_tuples": 363,
+      "capture_warnings": [],
+      "duplicate_ingest_identical": true,
+      "executable_digest_verified": true,
+      "artifact_dir": "build/capture-controls/yi-fuzz-on",
+      "case": "build/capture-controls/yi-fuzz-on.case.json",
+      "evidence": {
+        "trace.txt": "3bb60b10d66a4a15bc4dce379eae4ecc14d974924758236de7ba02035bfe1a4f",
+        "final.fb.bgrx": "468bdf21f2fecd47000d286af13e8a231bab0136e4844301cf52c9211181b308",
+        "final.wram.bin": "5db893e9048571817d7d3d71ed7e1cf5ec2dca5ba15ccf152e133e909c39f3eb",
+        "final.vram.bin": "5866d93fbaf1cf7f8835c4bf7e9e63b3c31146f7314de62e6f766236c44614f2"
+      },
+      "supplemental_evidence": [
+        "final.wram.bin",
+        "final.vram.bin"
+      ],
+      "activity": {}
+    },
+    {
+      "title": "bsfzero2",
+      "route": "attract",
+      "frames": 6000,
+      "capture_control": {
+        "replay_matches": true,
+        "reasons": [],
+        "interpreted_work": {
+          "snes_cpu": {
+            "before": 0,
+            "after": 87720786,
+            "reduction": null,
+            "percent": null
+          }
+        },
+        "scope": "Only the recorded route and evidence; manual playtest still required"
+      },
+      "identity": {
+        "rom_sha256": "9dfcf1ea852d44f32a073e9754bf58eb632bf6e1a067687b245ecb9893a454cb",
+        "module_id": "main",
+        "program_digest": "ba434e48a625cb06466e0f59f48d6c5b9038feb9b3b6fe14597f9b7d662edff3",
+        "build_digest": "0088e7ebb8536f300154d9474a8a15683968bfc405c98517067511f9391f5b36",
+        "generation_digest": "7391a28322982d5e86065f5b7366cda3dbe585b32196a8c77802fccea4401a98",
+        "mapper": "lorom"
+      },
+      "instructions": {
+        "snes_cpu": 87720786
+      },
+      "transfer_tuples": 123,
+      "capture_warnings": [],
+      "duplicate_ingest_identical": true,
+      "executable_digest_verified": true,
+      "artifact_dir": "build/capture-controls/bsfzero2-attract-on",
+      "case": "build/capture-controls/bsfzero2-attract-on.case.json",
+      "evidence": {
+        "trace.txt": "6dd8b3d24cf0418616d73e294014c170c0fe0623ead9042a48d6230d0b00d94d",
+        "final.fb.bgrx": "13281f210ad618b523151d0af0eb6ceec5450f87b93cc47ae8c9b84985a018d0",
+        "final.wram.bin": "74f964d0ee5bded5c1411b6054a90153026ba720c7f34a4c335e3e319807a818",
+        "final.vram.bin": "494eb1b139d9496c37a7899ce1042d7860dbea90732fe9f80c3b380aa9cdc825"
+      },
+      "supplemental_evidence": [
+        "final.wram.bin",
+        "final.vram.bin"
+      ],
+      "activity": {}
+    },
+    {
+      "title": "bsfzero2",
+      "route": "fuzz",
+      "frames": 6000,
+      "capture_control": {
+        "replay_matches": true,
+        "reasons": [],
+        "interpreted_work": {
+          "snes_cpu": {
+            "before": 0,
+            "after": 80302034,
+            "reduction": null,
+            "percent": null
+          }
+        },
+        "scope": "Only the recorded route and evidence; manual playtest still required"
+      },
+      "identity": {
+        "rom_sha256": "9dfcf1ea852d44f32a073e9754bf58eb632bf6e1a067687b245ecb9893a454cb",
+        "module_id": "main",
+        "program_digest": "ba434e48a625cb06466e0f59f48d6c5b9038feb9b3b6fe14597f9b7d662edff3",
+        "build_digest": "0088e7ebb8536f300154d9474a8a15683968bfc405c98517067511f9391f5b36",
+        "generation_digest": "7391a28322982d5e86065f5b7366cda3dbe585b32196a8c77802fccea4401a98",
+        "mapper": "lorom"
+      },
+      "instructions": {
+        "snes_cpu": 80302034
+      },
+      "transfer_tuples": 531,
+      "capture_warnings": [],
+      "duplicate_ingest_identical": true,
+      "executable_digest_verified": true,
+      "artifact_dir": "build/capture-controls/bsfzero2-fuzz-on",
+      "case": "build/capture-controls/bsfzero2-fuzz-on.case.json",
+      "evidence": {
+        "trace.txt": "bd6d5f63ccbebbbe90e2a14b37f74b7107f5e5274ac5c1aefa9a02dfab514172",
+        "final.fb.bgrx": "fc0b09a84238288e6f8b189db2742a9b486eea61d525c09118e42bb210ef6e3f",
+        "final.wram.bin": "fafec65c0becfbef7e1a9e1b3f8808f2e71ea75e8f709302961c03c995a24bab",
+        "final.vram.bin": "f90272ce8d9cab166770a05eee21540aea494859a4ebf75d30f32603139080c6"
+      },
+      "supplemental_evidence": [
+        "final.wram.bin",
+        "final.vram.bin"
+      ],
+      "activity": {}
+    },
+    {
+      "title": "fzero",
+      "route": "attract",
+      "frames": 6000,
+      "capture_control": {
+        "replay_matches": true,
+        "reasons": [],
+        "interpreted_work": {
+          "snes_cpu": {
+            "before": 0,
+            "after": 70378623,
+            "reduction": null,
+            "percent": null
+          }
+        },
+        "scope": "Only the recorded route and evidence; manual playtest still required"
+      },
+      "identity": {
+        "rom_sha256": "bf16c3c867c58e2ab061c70de9295b6930d63f29f81cc986f5ecae03e0ad18d2",
+        "module_id": "main",
+        "program_digest": "7799b44b0cd4cad286002e763471da7e3bcb8e0eb1bb9e512c4bd4b9c2c1720a",
+        "build_digest": "845da3b52f7cfe69e669a39f7df86ec8733ebb76926904d58a57467835133e4d",
+        "generation_digest": "bf721c94be418be9cccdd84c9bc8ca0f3d688aa243fd31981ca7d0272d9a4f16",
+        "mapper": "lorom"
+      },
+      "instructions": {
+        "snes_cpu": 70378623
+      },
+      "transfer_tuples": 26,
+      "capture_warnings": [],
+      "duplicate_ingest_identical": true,
+      "executable_digest_verified": true,
+      "artifact_dir": "build/capture-controls/fzero-attract-on",
+      "case": "build/capture-controls/fzero-attract-on.case.json",
+      "evidence": {
+        "wram.bin": "d5c63d0b71e83034e6f88b8cbe72c860d92fc5dd984b065e9e262a034f05be0c",
+        "final.ppm": "3e909e722306a9314c29e8dbb78442cd989da8eff4de9215db6ba3e36f0ee493"
+      },
+      "supplemental_evidence": [
+        "wram.bin"
+      ],
+      "activity": {}
+    },
+    {
+      "title": "fzero",
+      "route": "fuzz",
+      "frames": 6000,
+      "capture_control": {
+        "replay_matches": true,
+        "reasons": [],
+        "interpreted_work": {
+          "snes_cpu": {
+            "before": 0,
+            "after": 53543673,
+            "reduction": null,
+            "percent": null
+          }
+        },
+        "scope": "Only the recorded route and evidence; manual playtest still required"
+      },
+      "identity": {
+        "rom_sha256": "bf16c3c867c58e2ab061c70de9295b6930d63f29f81cc986f5ecae03e0ad18d2",
+        "module_id": "main",
+        "program_digest": "7799b44b0cd4cad286002e763471da7e3bcb8e0eb1bb9e512c4bd4b9c2c1720a",
+        "build_digest": "845da3b52f7cfe69e669a39f7df86ec8733ebb76926904d58a57467835133e4d",
+        "generation_digest": "bf721c94be418be9cccdd84c9bc8ca0f3d688aa243fd31981ca7d0272d9a4f16",
+        "mapper": "lorom"
+      },
+      "instructions": {
+        "snes_cpu": 53543673
+      },
+      "transfer_tuples": 76,
+      "capture_warnings": [],
+      "duplicate_ingest_identical": true,
+      "executable_digest_verified": true,
+      "artifact_dir": "build/capture-controls/fzero-fuzz-on",
+      "case": "build/capture-controls/fzero-fuzz-on.case.json",
+      "evidence": {
+        "wram.bin": "9ff6ae90f08ebf0ee7974d91fe8da61a07f44f386b85ec699e686f4f00a79d36",
+        "final.ppm": "ac8738a50d18a7a7df4b4f6e19615790472f7cdb43fc1210896034756e20742f"
+      },
+      "supplemental_evidence": [
+        "wram.bin"
+      ],
+      "activity": {}
+    },
+    {
+      "title": "starfox",
+      "route": "attract",
+      "frames": 6000,
+      "capture_control": {
+        "replay_matches": true,
+        "reasons": [],
+        "interpreted_work": {
+          "snes_cpu": {
+            "before": 0,
+            "after": 76099780,
+            "reduction": null,
+            "percent": null
+          }
+        },
+        "scope": "Only the recorded route and evidence; manual playtest still required"
+      },
+      "identity": {
+        "rom_sha256": "82e39dfbb3e4fe5c28044e80878392070c618b298dd5a267e5ea53c8f72cc548",
+        "module_id": "main",
+        "program_digest": "c96ea4c228ab2d4d2a35cf13eba6a450fe531410ed97287493c6b92baf555eb7",
+        "build_digest": "bf1999272252787d42633c46b1370d2a3ebd4e6ebdd1ed6f7364ebbaa26eb57b",
+        "generation_digest": "0453c0653fa7265bc7ce98b4eebc95994f013031d651a1c025f71a9527defa8b",
+        "mapper": "superfx"
+      },
+      "instructions": {
+        "snes_cpu": 76099780
+      },
+      "transfer_tuples": 402,
+      "capture_warnings": [],
+      "duplicate_ingest_identical": true,
+      "executable_digest_verified": true,
+      "artifact_dir": "build/capture-controls/starfox-attract-on-video",
+      "case": "build/capture-controls/starfox-attract-on-video.case.json",
+      "evidence": {
+        "frames/frame_005999_wram.bin": "f44c40c9e822d8f4436413fea76e9dff2894e9cfacad28dec21606c00ccd37b3",
+        "frames/frame_005999.bmp": "bad90ae49355ac05d76e5c112c23489859cdc9af5c8657b819cf74fc83551793"
+      },
+      "supplemental_evidence": [],
+      "activity": {}
+    },
+    {
+      "title": "starfox",
+      "route": "fuzz",
+      "frames": 6000,
+      "capture_control": {
+        "replay_matches": true,
+        "reasons": [],
+        "interpreted_work": {
+          "snes_cpu": {
+            "before": 0,
+            "after": 75410809,
+            "reduction": null,
+            "percent": null
+          }
+        },
+        "scope": "Only the recorded route and evidence; manual playtest still required"
+      },
+      "identity": {
+        "rom_sha256": "82e39dfbb3e4fe5c28044e80878392070c618b298dd5a267e5ea53c8f72cc548",
+        "module_id": "main",
+        "program_digest": "c96ea4c228ab2d4d2a35cf13eba6a450fe531410ed97287493c6b92baf555eb7",
+        "build_digest": "bf1999272252787d42633c46b1370d2a3ebd4e6ebdd1ed6f7364ebbaa26eb57b",
+        "generation_digest": "0453c0653fa7265bc7ce98b4eebc95994f013031d651a1c025f71a9527defa8b",
+        "mapper": "superfx"
+      },
+      "instructions": {
+        "snes_cpu": 75410809
+      },
+      "transfer_tuples": 641,
+      "capture_warnings": [],
+      "duplicate_ingest_identical": true,
+      "executable_digest_verified": true,
+      "artifact_dir": "build/capture-controls/starfox-fuzz-on-video",
+      "case": "build/capture-controls/starfox-fuzz-on-video.case.json",
+      "evidence": {
+        "frames/frame_005999_wram.bin": "abc55720593041aedd5f7be3974c0a581ce25a40611e1712260b8c6fa96b0b9c",
+        "frames/frame_005999.bmp": "8511282d26af14d49164a564cfa2059d87bac62c76a09b9737f225ec70221915"
+      },
+      "supplemental_evidence": [],
+      "activity": {}
+    },
+    {
+      "title": "iog",
+      "route": "attract",
+      "frames": 6000,
+      "capture_control": {
+        "replay_matches": true,
+        "reasons": [],
+        "interpreted_work": {
+          "snes_cpu": {
+            "before": 0,
+            "after": 84974664,
+            "reduction": null,
+            "percent": null
+          }
+        },
+        "scope": "Only the recorded route and evidence; manual playtest still required"
+      },
+      "identity": {
+        "rom_sha256": "32adc048fd89228a4310c03df243e83de7d436cdb2460b4cc83ade20d359b2bd",
+        "module_id": "main",
+        "program_digest": "be34eb9b9d0df7efc5fcd6265b92291ad8320f44228ecabad9d72a2e0cf63f5a",
+        "build_digest": "393451418dfafa8faae7cc4d21098094c9688d93f7db2e2d7dafb4a3436b8032",
+        "generation_digest": "0dd1bea2f97b1d60567d0b0e9070c33eae5ff099583e4dc3e5b5d2e8d597fb30",
+        "mapper": "hirom"
+      },
+      "instructions": {
+        "snes_cpu": 84974664
+      },
+      "transfer_tuples": 267,
+      "capture_warnings": [],
+      "duplicate_ingest_identical": true,
+      "executable_digest_verified": true,
+      "artifact_dir": "build/iog-state-controls/attract-on",
+      "case": "build/iog-state-controls/attract-on.case.json",
+      "evidence": {
+        "final.fb.bgrx": "964751809f656b7103e565d55daa1ded9f802c84543c72f1f92f191083ff16b7",
+        "final.wram.bin": "c55513f4cbcd63a3f2f1015ac88c392782ed43cd1f17ca137d5fcd681e17c8ad",
+        "final.vram.bin": "a8f4b29fa661811aaa88e2af230da0f0ae199dc3a21d5e8a3b04f3b1b9782434"
+      },
+      "supplemental_evidence": [
+        "final.wram.bin",
+        "final.vram.bin"
+      ],
+      "activity": {
+        "logic_changes": 5942,
+        "video_changes": 2360
+      }
+    },
+    {
+      "title": "iog",
+      "route": "fuzz",
+      "frames": 6000,
+      "capture_control": {
+        "replay_matches": true,
+        "reasons": [],
+        "interpreted_work": {
+          "snes_cpu": {
+            "before": 0,
+            "after": 96350252,
+            "reduction": null,
+            "percent": null
+          }
+        },
+        "scope": "Only the recorded route and evidence; manual playtest still required"
+      },
+      "identity": {
+        "rom_sha256": "32adc048fd89228a4310c03df243e83de7d436cdb2460b4cc83ade20d359b2bd",
+        "module_id": "main",
+        "program_digest": "be34eb9b9d0df7efc5fcd6265b92291ad8320f44228ecabad9d72a2e0cf63f5a",
+        "build_digest": "393451418dfafa8faae7cc4d21098094c9688d93f7db2e2d7dafb4a3436b8032",
+        "generation_digest": "0dd1bea2f97b1d60567d0b0e9070c33eae5ff099583e4dc3e5b5d2e8d597fb30",
+        "mapper": "hirom"
+      },
+      "instructions": {
+        "snes_cpu": 96350252
+      },
+      "transfer_tuples": 220,
+      "capture_warnings": [],
+      "duplicate_ingest_identical": true,
+      "executable_digest_verified": true,
+      "artifact_dir": "build/iog-state-controls/fuzz-on",
+      "case": "build/iog-state-controls/fuzz-on.case.json",
+      "evidence": {
+        "final.fb.bgrx": "d2a23a7de3af6bf70d164a0ce45201371aca7624e30079d30cccab1cb6cf52e3",
+        "final.wram.bin": "ddc4a9d90a683fa0f50f4ee3b480132afa357632057917610700d72231e2faf8",
+        "final.vram.bin": "af521587ee9974fed538bd54a2161152e10db425b3daa8460bc96972df71255f"
+      },
+      "supplemental_evidence": [
+        "final.wram.bin",
+        "final.vram.bin"
+      ],
+      "activity": {
+        "logic_changes": 1209,
+        "video_changes": 161
+      }
+    },
+    {
+      "title": "smk",
+      "route": "attract",
+      "frames": 6000,
+      "capture_control": {
+        "replay_matches": true,
+        "reasons": [],
+        "interpreted_work": {
+          "snes_cpu": {
+            "before": 0,
+            "after": 66267495,
+            "reduction": null,
+            "percent": null
+          }
+        },
+        "scope": "Only the recorded route and evidence; manual playtest still required"
+      },
+      "identity": {
+        "rom_sha256": "2ada8919688087be60a6a48cace8f877add60c45d2e5d09e2442faa55be62a49",
+        "module_id": "main",
+        "program_digest": "54a09b2db789870d39acfc068f787c803d1a8223caa7372128aa29c041fb1fbc",
+        "build_digest": "3aee0550158f986315fe82bb81f0d986e6dac42cc156b0da057e63c699f43416",
+        "generation_digest": "d26c5acad684e9763e1e7ee45da44c11ee2ebbf3040070db25bdf8308838c7a5",
+        "mapper": "dsp1_hirom"
+      },
+      "instructions": {
+        "snes_cpu": 66267495
+      },
+      "transfer_tuples": 247,
+      "capture_warnings": [],
+      "duplicate_ingest_identical": true,
+      "executable_digest_verified": true,
+      "artifact_dir": "build/capture-controls/smk-attract-on",
+      "case": "build/capture-controls/smk-attract-on.case.json",
+      "evidence": {
+        "final.ppm": "c5b48135b184708ab67447c58d3852f9bae2766b90073beb706c7d8a61338271",
+        "wram.bin": "4a7a7e74de5cb7c87fc582bdbd69cd1513c28c704ff6ac9650c8335f3099a6c5"
+      },
+      "supplemental_evidence": [
+        "wram.bin"
+      ],
+      "activity": {}
+    },
+    {
+      "title": "smk",
+      "route": "fuzz",
+      "frames": 6000,
+      "capture_control": {
+        "replay_matches": true,
+        "reasons": [],
+        "interpreted_work": {
+          "snes_cpu": {
+            "before": 0,
+            "after": 80778899,
+            "reduction": null,
+            "percent": null
+          }
+        },
+        "scope": "Only the recorded route and evidence; manual playtest still required"
+      },
+      "identity": {
+        "rom_sha256": "2ada8919688087be60a6a48cace8f877add60c45d2e5d09e2442faa55be62a49",
+        "module_id": "main",
+        "program_digest": "54a09b2db789870d39acfc068f787c803d1a8223caa7372128aa29c041fb1fbc",
+        "build_digest": "3aee0550158f986315fe82bb81f0d986e6dac42cc156b0da057e63c699f43416",
+        "generation_digest": "d26c5acad684e9763e1e7ee45da44c11ee2ebbf3040070db25bdf8308838c7a5",
+        "mapper": "dsp1_hirom"
+      },
+      "instructions": {
+        "snes_cpu": 80778899
+      },
+      "transfer_tuples": 56,
+      "capture_warnings": [],
+      "duplicate_ingest_identical": true,
+      "executable_digest_verified": true,
+      "artifact_dir": "build/capture-controls/smk-fuzz-on",
+      "case": "build/capture-controls/smk-fuzz-on.case.json",
+      "evidence": {
+        "final.ppm": "7b043d56f5f14ba604d542253d5956e7d4ce881ef64c305e14da08f2a0253d6f",
+        "wram.bin": "64987ec0aeb6e82e42ed1eae66ed64c1cc4c6ae4171c12f870a323cd5b26a718"
+      },
+      "supplemental_evidence": [
+        "wram.bin"
+      ],
+      "activity": {}
+    },
+    {
+      "title": "simcity",
+      "route": "attract",
+      "frames": 6000,
+      "capture_control": {
+        "replay_matches": true,
+        "reasons": [],
+        "interpreted_work": {
+          "snes_cpu": {
+            "before": 0,
+            "after": 69767278,
+            "reduction": null,
+            "percent": null
+          }
+        },
+        "scope": "Only the recorded route and evidence; manual playtest still required"
+      },
+      "identity": {
+        "rom_sha256": "bed6dcf26533ae40d0c8233809ce4c575bc4900e4e2a4db10b48af5419114d79",
+        "module_id": "standalone",
+        "program_digest": "",
+        "build_digest": "1a32a49d9914d68215e81e39ba209dd535b6b0692e1b7afc3a8f1f5702d09c6a",
+        "generation_digest": "",
+        "mapper": "lorom"
+      },
+      "instructions": {
+        "snes_cpu": 69767278
+      },
+      "transfer_tuples": 0,
+      "capture_warnings": [],
+      "duplicate_ingest_identical": true,
+      "executable_digest_verified": true,
+      "artifact_dir": "build/capture-controls/simcity-attract-on-patched-identity",
+      "case": "build/capture-controls/simcity-attract-on-patched-identity.case.json",
+      "evidence": {
+        "final.ppm": "3590b9edff09c9d4443bacb7986600d5d67b43735e0750a1b8423435c9ab9eae",
+        "wram.bin": "7736d7e2768d64f0b968ece5afba40fdda5a5b8990437d64c1255a5e006d95c7"
+      },
+      "supplemental_evidence": [
+        "wram.bin"
+      ],
+      "activity": {}
+    },
+    {
+      "title": "simcity",
+      "route": "fuzz",
+      "frames": 6000,
+      "capture_control": {
+        "replay_matches": true,
+        "reasons": [],
+        "interpreted_work": {
+          "snes_cpu": {
+            "before": 0,
+            "after": 70000928,
+            "reduction": null,
+            "percent": null
+          }
+        },
+        "scope": "Only the recorded route and evidence; manual playtest still required"
+      },
+      "identity": {
+        "rom_sha256": "bed6dcf26533ae40d0c8233809ce4c575bc4900e4e2a4db10b48af5419114d79",
+        "module_id": "standalone",
+        "program_digest": "",
+        "build_digest": "1a32a49d9914d68215e81e39ba209dd535b6b0692e1b7afc3a8f1f5702d09c6a",
+        "generation_digest": "",
+        "mapper": "lorom"
+      },
+      "instructions": {
+        "snes_cpu": 70000928
+      },
+      "transfer_tuples": 0,
+      "capture_warnings": [],
+      "duplicate_ingest_identical": true,
+      "executable_digest_verified": true,
+      "artifact_dir": "build/capture-controls/simcity-fuzz-on-patched-identity",
+      "case": "build/capture-controls/simcity-fuzz-on-patched-identity.case.json",
+      "evidence": {
+        "final.ppm": "f96409a6c02e5d6376da78359e4873abe4b2374516a16ff1de7a1fe5f38c8d3c",
+        "wram.bin": "468a6375c87c0e74502390bbf79d9328fd5b6db41cd0537ac54f4e0127ff4125"
+      },
+      "supplemental_evidence": [
+        "wram.bin"
+      ],
+      "activity": {}
+    },
+    {
+      "title": "gwed",
+      "route": "attract",
+      "frames": 6000,
+      "capture_control": {
+        "replay_matches": true,
+        "reasons": [],
+        "interpreted_work": {
+          "snes_cpu": {
+            "before": 0,
+            "after": 71886863,
+            "reduction": null,
+            "percent": null
+          }
+        },
+        "scope": "Only the recorded route and evidence; manual playtest still required"
+      },
+      "identity": {
+        "rom_sha256": "dd94308d822636c6ddf73c5e2644c84f2eb8fb4d9201150fc5f37d44d6f423f1",
+        "module_id": "main",
+        "program_digest": "17b828ff63db2d8fa10f8b7f00efa83f97d4cbeaa8b7545594aea9b3a9e5e123",
+        "build_digest": "22c92ad1daa798d214f1440e2dc107ae4dfa3a641ec5936aab8265082eab5d3c",
+        "generation_digest": "f66487aff604fecece566d54ebf056118f667af6ec86ceb6433eb8ebe40a02cb",
+        "mapper": "lorom"
+      },
+      "instructions": {
+        "snes_cpu": 71886863
+      },
+      "transfer_tuples": 2541,
+      "capture_warnings": [],
+      "duplicate_ingest_identical": true,
+      "executable_digest_verified": true,
+      "artifact_dir": "build/capture-controls/gwed-attract-on",
+      "case": "build/capture-controls/gwed-attract-on.case.json",
+      "evidence": {
+        "final.fb.bgrx": "965743c02808f6eb895b8bfaf2215d1d865cfd6d4cc2e6e79c40302b8e969fcb",
+        "final.wram.bin": "f556962d23e8d64231b09213b7557e0c85edcba3045017cb122efa754570f4e4",
+        "final.vram.bin": "2c980da89b8b76b00e380f93684f43f1fd71866683cff11a5dbee67372ad104a"
+      },
+      "supplemental_evidence": [
+        "final.wram.bin",
+        "final.vram.bin"
+      ],
+      "activity": {}
+    },
+    {
+      "title": "gwed",
+      "route": "fuzz",
+      "frames": 6000,
+      "capture_control": {
+        "replay_matches": true,
+        "reasons": [],
+        "interpreted_work": {
+          "snes_cpu": {
+            "before": 0,
+            "after": 69988228,
+            "reduction": null,
+            "percent": null
+          }
+        },
+        "scope": "Only the recorded route and evidence; manual playtest still required"
+      },
+      "identity": {
+        "rom_sha256": "dd94308d822636c6ddf73c5e2644c84f2eb8fb4d9201150fc5f37d44d6f423f1",
+        "module_id": "main",
+        "program_digest": "17b828ff63db2d8fa10f8b7f00efa83f97d4cbeaa8b7545594aea9b3a9e5e123",
+        "build_digest": "22c92ad1daa798d214f1440e2dc107ae4dfa3a641ec5936aab8265082eab5d3c",
+        "generation_digest": "f66487aff604fecece566d54ebf056118f667af6ec86ceb6433eb8ebe40a02cb",
+        "mapper": "lorom"
+      },
+      "instructions": {
+        "snes_cpu": 69988228
+      },
+      "transfer_tuples": 2702,
+      "capture_warnings": [],
+      "duplicate_ingest_identical": true,
+      "executable_digest_verified": true,
+      "artifact_dir": "build/capture-controls/gwed-fuzz-on",
+      "case": "build/capture-controls/gwed-fuzz-on.case.json",
+      "evidence": {
+        "final.fb.bgrx": "cb95cf0a30a69cdfe187c874e18a4620303d67ebea55f817f3a1bec04a0d41ba",
+        "final.wram.bin": "990c4a1eba22a26fbc96c78f818f5127d14f626fa7d71606d14c5bd67a3e1fe5",
+        "final.vram.bin": "bf9840f2e7982493a073a205d7260567305defadb308db673359e9f5b072795b"
+      },
+      "supplemental_evidence": [
+        "final.wram.bin",
+        "final.vram.bin"
+      ],
+      "activity": {}
+    },
+    {
+      "title": "smrpg",
+      "route": "attract",
+      "frames": 6000,
+      "capture_control": {
+        "replay_matches": true,
+        "reasons": [],
+        "interpreted_work": {
+          "snes_cpu": {
+            "before": 0,
+            "after": 79669626,
+            "reduction": null,
+            "percent": null
+          },
+          "sa1": {
+            "before": 0,
+            "after": 311633137,
+            "reduction": null,
+            "percent": null
+          }
+        },
+        "scope": "Only the recorded route and evidence; manual playtest still required"
+      },
+      "identity": {
+        "rom_sha256": "740646f3535bfb365ca44e70d46ab433467b142bd84010393070bd0b141af853",
+        "module_id": "main",
+        "program_digest": "f745576dac3e7db3e378099aa6278951b3387aff81f79d078e9c678305681c81",
+        "build_digest": "7a433ef00e444a47b9ca70b371b605654dabb44459f81380914e66807b952b4c",
+        "generation_digest": "79a9732915d1c118c2fd84f6a495bddb1c8a9607ce3a16568dd3e4d96b8ec69b",
+        "mapper": "sa1"
+      },
+      "instructions": {
+        "snes_cpu": 79669626,
+        "sa1": 311633137
+      },
+      "transfer_tuples": 1071,
+      "capture_warnings": [],
+      "duplicate_ingest_identical": true,
+      "executable_digest_verified": true,
+      "artifact_dir": "build/srm-controls/attract-on",
+      "case": "build/srm-controls/attract-on.case.json",
+      "evidence": {
+        "trace.txt": "0a4e6fad6fb30fc5be5f396847a293d29f81ffc20bc16edd17a151130e2d7af9",
+        "final.ppm": "9ae54bb0a9b666c36e08fcb5122c4743a9fb479fe4f3c81b0fb521503d41e3fd"
+      },
+      "supplemental_evidence": [],
+      "activity": {
+        "logic_changes": 5938,
+        "video_changes": 3810,
+        "audio_active": 5407
+      }
+    },
+    {
+      "title": "smrpg",
+      "route": "BoosterTower",
+      "frames": 6000,
+      "capture_control": {
+        "replay_matches": true,
+        "reasons": [],
+        "interpreted_work": {
+          "snes_cpu": {
+            "before": 0,
+            "after": 79119891,
+            "reduction": null,
+            "percent": null
+          },
+          "sa1": {
+            "before": 0,
+            "after": 330417328,
+            "reduction": null,
+            "percent": null
+          }
+        },
+        "scope": "Only the recorded route and evidence; manual playtest still required"
+      },
+      "identity": {
+        "rom_sha256": "740646f3535bfb365ca44e70d46ab433467b142bd84010393070bd0b141af853",
+        "module_id": "main",
+        "program_digest": "f745576dac3e7db3e378099aa6278951b3387aff81f79d078e9c678305681c81",
+        "build_digest": "7a433ef00e444a47b9ca70b371b605654dabb44459f81380914e66807b952b4c",
+        "generation_digest": "79a9732915d1c118c2fd84f6a495bddb1c8a9607ce3a16568dd3e4d96b8ec69b",
+        "mapper": "sa1"
+      },
+      "instructions": {
+        "snes_cpu": 79119891,
+        "sa1": 330417328
+      },
+      "transfer_tuples": 645,
+      "capture_warnings": [],
+      "duplicate_ingest_identical": true,
+      "executable_digest_verified": true,
+      "artifact_dir": "build/srm-controls/BoosterTower-on",
+      "case": "build/srm-controls/BoosterTower-on.case.json",
+      "evidence": {
+        "trace.txt": "6b71ae8012b45c192253addbf529c3bd81d4b26ec8e65844ee95786ab4146523",
+        "final.ppm": "4402602172e6bf3df30cc4bb5de8a20542ce0813cd55410b5893320e0bd345af"
+      },
+      "supplemental_evidence": [],
+      "activity": {
+        "logic_changes": 5948,
+        "video_changes": 2670,
+        "audio_active": 5429
+      }
+    },
+    {
+      "title": "smrpg",
+      "route": "SunkenShip",
+      "frames": 6000,
+      "capture_control": {
+        "replay_matches": true,
+        "reasons": [],
+        "interpreted_work": {
+          "snes_cpu": {
+            "before": 0,
+            "after": 77217632,
+            "reduction": null,
+            "percent": null
+          },
+          "sa1": {
+            "before": 0,
+            "after": 339843324,
+            "reduction": null,
+            "percent": null
+          }
+        },
+        "scope": "Only the recorded route and evidence; manual playtest still required"
+      },
+      "identity": {
+        "rom_sha256": "740646f3535bfb365ca44e70d46ab433467b142bd84010393070bd0b141af853",
+        "module_id": "main",
+        "program_digest": "f745576dac3e7db3e378099aa6278951b3387aff81f79d078e9c678305681c81",
+        "build_digest": "7a433ef00e444a47b9ca70b371b605654dabb44459f81380914e66807b952b4c",
+        "generation_digest": "79a9732915d1c118c2fd84f6a495bddb1c8a9607ce3a16568dd3e4d96b8ec69b",
+        "mapper": "sa1"
+      },
+      "instructions": {
+        "snes_cpu": 77217632,
+        "sa1": 339843324
+      },
+      "transfer_tuples": 659,
+      "capture_warnings": [],
+      "duplicate_ingest_identical": true,
+      "executable_digest_verified": true,
+      "artifact_dir": "build/srm-controls/SunkenShip-on",
+      "case": "build/srm-controls/SunkenShip-on.case.json",
+      "evidence": {
+        "trace.txt": "1f0c48ceeebc89e10115b1549106475c80bfc2ae18f6f71acbf79c781e1cc6dc",
+        "final.ppm": "f5bd3b25810d330f7469972a657d34de80e6488fc18d99434ee48457ef460bdf"
+      },
+      "supplemental_evidence": [],
+      "activity": {
+        "logic_changes": 5950,
+        "video_changes": 4347,
+        "audio_active": 5429
+      }
+    },
+    {
+      "title": "smrpg",
+      "route": "SmithsFactoryEnd",
+      "frames": 6000,
+      "capture_control": {
+        "replay_matches": true,
+        "reasons": [],
+        "interpreted_work": {
+          "snes_cpu": {
+            "before": 0,
+            "after": 79846036,
+            "reduction": null,
+            "percent": null
+          },
+          "sa1": {
+            "before": 0,
+            "after": 324357446,
+            "reduction": null,
+            "percent": null
+          }
+        },
+        "scope": "Only the recorded route and evidence; manual playtest still required"
+      },
+      "identity": {
+        "rom_sha256": "740646f3535bfb365ca44e70d46ab433467b142bd84010393070bd0b141af853",
+        "module_id": "main",
+        "program_digest": "f745576dac3e7db3e378099aa6278951b3387aff81f79d078e9c678305681c81",
+        "build_digest": "7a433ef00e444a47b9ca70b371b605654dabb44459f81380914e66807b952b4c",
+        "generation_digest": "79a9732915d1c118c2fd84f6a495bddb1c8a9607ce3a16568dd3e4d96b8ec69b",
+        "mapper": "sa1"
+      },
+      "instructions": {
+        "snes_cpu": 79846036,
+        "sa1": 324357446
+      },
+      "transfer_tuples": 616,
+      "capture_warnings": [],
+      "duplicate_ingest_identical": true,
+      "executable_digest_verified": true,
+      "artifact_dir": "build/srm-controls/SmithsFactoryEnd-on",
+      "case": "build/srm-controls/SmithsFactoryEnd-on.case.json",
+      "evidence": {
+        "trace.txt": "666dacb1de27d01b57d20aeee4d8cbb7d8d988884c1a0b09e6e6f828d00c6409",
+        "final.ppm": "a2df6eac2c566764ddf6ef148c0a3e1f20ce5814fad56b32642169a39b4248f6"
+      },
+      "supplemental_evidence": [],
+      "activity": {
+        "logic_changes": 5950,
+        "video_changes": 5034,
+        "audio_active": 5441
+      }
+    }
+  ],
+  "saves": [
+    {
+      "source": "https://fantasyanime.com/squaresoft/mariorpg/saves/mariorpgsave15-BoosterTower.zip",
+      "files": [
+        {
+          "path": "build\\online-saves\\mariorpgsave15-BoosterTower.srm",
+          "size": 32768,
+          "sha256": "edf8d47ab5cc253e32bee56552b50313ae02ac75d22d0169102b76b440f996b6"
+        }
+      ]
+    },
+    {
+      "source": "https://fantasyanime.com/squaresoft/mariorpg/saves/mariorpgsave22-SunkenShip.zip",
+      "files": [
+        {
+          "path": "build\\online-saves\\mariorpgsave22-SunkenShip.srm",
+          "size": 32768,
+          "sha256": "1c036c8025d3baf5e353bb5813db2732b049c5feeb8c2982c45a2ae7ba8af21d"
+        }
+      ]
+    },
+    {
+      "source": "https://fantasyanime.com/squaresoft/mariorpg/saves/mariorpgsave41-SmithsFactoryEnd.zip",
+      "files": [
+        {
+          "path": "build\\online-saves\\mariorpgsave41-SmithsFactoryEnd.srm",
+          "size": 32768,
+          "sha256": "24c85866f1297c3d22d0dde9a2c33d3888888b3be9414d8ef41bb5be5c57c489"
+        }
+      ]
+    }
+  ],
+  "issues": [
+    "beads-8wg.2.86",
+    "beads-8wg.2.87",
+    "beads-44eu.1",
+    "beads-8wg.20.5"
+  ],
+  "title_feature_commits": {
+    "yi": "31c1396277851ba5f324dd1ad2c676066465d39c",
+    "bsfzero2": "59d90d711e7f86c9d6759f2c07933edfad91b8b0",
+    "fzero": "ec0061de8de0824b504f96adae89b0a01a13bed3",
+    "smrpg": "9cef8bc9f6dc467a7338c27b0b61e603e6454265",
+    "iog": "a83d0b50a68eaf46366045805702074c591449d1",
+    "smk": "60c2590c5324ce242384be9d9d88a47c8fedb3c3",
+    "starfox": "9dda073a185563732527d293eb11f30996c74b01",
+    "gwed": "ba24b7d6cfc991078a0322ebbabddddf22f67391",
+    "simcity": "d0ba701188b5dc8461a139c89597d3136655d1c5"
+  }
+}

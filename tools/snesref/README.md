@@ -65,11 +65,12 @@ CMake package. The resulting executable is `build/snesref/snesref`.
 
 ```bat
 :: 1. extract the SDL2 VC dev package here as SDL2-2.30.9\   (libsdl.org)
-:: 2. build
+::    or set SDL2_DIR to an extracted package elsewhere
+:: 2. build (OUT_DIR optional)
 build.bat
 ```
 
-Produces `snesref.exe`.
+Produces `snesref.exe` (in `OUT_DIR` if set).
 
 Linux / macOS (SDL2 development headers from the system package manager):
 
@@ -128,6 +129,80 @@ Environment variables select non-interactive capture outputs:
 | `SNESREF_FRAME_DUMP_STEP=N` | Dump every `N`th eligible frame. |
 | `SNESREF_APURAM_TRACE_FILE=path` | Trace SPC RAM when supported by a patched core. |
 | `SNESREF_DSPREG_TRACE_FILE=path` | Trace S-DSP registers when supported by a patched core. |
+| `SNESREF_SCRIPT=path` | Scene-keyed script (grammar below). Exit 0 on `quit`, 3 on an `until` timeout, 6 on a malformed script. Headless runs without `quit`/`SNESREF_FRAMES` exit at end of script. |
+| `SNESREF_DUMP_DIR=path` | Directory for script `dump` outputs (default: cwd). |
+| `SNESREF_SRAM_IN=path` | Load into `RETRO_MEMORY_SAVE_RAM` after `retro_load_game`, before frame 1. |
+| `SNESREF_LAYERS=hex` | Layer mask, bit0=BG1 bit1=BG2 bit2=BG3 bit3=BG4 bit4=OBJ (default `1F`). Maps to snes9x `snes9x_layer_1..5` (5 = sprites). |
+| `SNESREF_NO_COLORMATH=1` | `snes9x_gfx_transp=disabled`. |
+| `SNESREF_NO_CLIP=1` | `snes9x_gfx_clip=disabled` (windows). |
+| `SNESREF_CORE_OPTIONS=k=v;k=v` | Override any core option. |
+
+Core options: every option the core declares (`SET_VARIABLES` /
+`SET_CORE_OPTIONS*`) is answered with its declared default, as RetroArch does.
+Leaving them unanswered is not equivalent -- snes9x then leaves
+`SuperFXClockMultiplier` at 0 and every GSU game (Yoshi's Island, Star Fox)
+freezes. Non-default answers are logged as `core option k=v (default d)`.
+
+### Script (`SNESREF_SCRIPT`)
+
+One command per line, `#` comments. Commands are evaluated at frame
+boundaries (before each `retro_run`). The grammar and the per-frame semantics
+are shared with the recomp host (`runner/src/desktop/host_main.c`), so one
+file drives both sides.
+
+```text
+wait N                                  # N idle frames (consecutive waits accumulate)
+press <btn[+btn...]> [N]                # hold for N frames (default 1); + , | all join
+poke <addr> <hexbytes>                  # write WRAM bytes on one frame
+pokefor <addr> <hexbytes> N             # write WRAM bytes on N frames
+forcepoke <addr> <hexbytes>             # write WRAM bytes every frame from the next one on
+loadstate N | reset                     # loadstate: ignored (warning); reset: retro_reset
+until <addr> <op> <hexval> [timeout]    # op == or !=, 8-bit; timeout frames (default 36000)
+until16 <addr> <op> <hexval> [timeout]  # 16-bit little-endian
+dump <tag>                              # write state of the frame just completed
+quit                                    # exit 0
+```
+
+- `addr` is a WRAM offset in hex, `0..1FFFF` (`$7E:0118` -> `0118`,
+  `$7F:0000` -> `10000`). Buttons: `b y select start up down left right a x l r`.
+- Hold-type commands (`press`, `poke`, `pokefor`, `forcepoke`, `loadstate`,
+  `reset`) run for their hold frames and are then followed by **one idle
+  frame**. `press a 2` then `press b` = frames A, A, idle, B, idle.
+- `until` true, `dump`, `quit` cost zero frames and have no trailing idle
+  frame. A false `until` costs one idle frame per re-check.
+- Frame numbers are 1-based `retro_run` counts; each executed command logs
+  `script f=<frames completed> ...` to stdout.
+
+### Dump outputs (`dump <tag>`, into `SNESREF_DUMP_DIR`)
+
+| File | Content |
+|---|---|
+| `<tag>.fb.bmp` / `<tag>.fb.bgrx` | Last video frame, 24-bit BMP and raw WxH BGRX (W,H as the core reported; 512 wide is written as-is). |
+| `<tag>.wram.bin` / `.vram.bin` / `.sram.bin` | `RETRO_MEMORY_SYSTEM_RAM` (128 KiB), `VIDEO_RAM` (64 KiB), `SAVE_RAM` (for snes9x SuperFX carts this is the GSU Game Pak RAM, `$70:0000`...). |
+| `<tag>.cgram.bin` | 512 bytes, CGRAM as little-endian words *(patched core)*. |
+| `<tag>.oam.bin` | 544 bytes *(patched core)*. |
+| `<tag>.regs.json` | Last-written `$2100-$2133`/`$4200-$420D`, decoded PPU internals (BG scroll/bases, mode, TM/TS/TMW/TSW, color math, fixed color, windows, Mode 7, OBSEL/OAM, VRAM port), DMA/HDMA channels at dump time and at this frame's HDMA init *(patched core)*. |
+| `<tag>.ppuw.tsv` | `frame vcounter hcounter addr value source` for every write to `$2100-$2133` and `$420C` during the dumped frame; `hcounter` in dots (0-339), `source` = `cpu`/`dma`/`hdma` *(patched core)*. |
+| `<tag>.info.json` | Frame, fb size/format, core name/version, layer mask, memory sizes. |
+
+A dumped "frame" is one `retro_run`: for snes9x it spans V=225 (vblank start)
+of the previous frame through V=224, so its vblank writes come first.
+
+### Patched snes9x core (debug exports)
+
+`cgram`/`oam`/`regs`/`ppuw` need a snes9x libretro core carrying
+`libretro/snesref_debug.{h,cpp}`, shipped here as
+`patches/snes9x-snesref-debug-exports.patch` (applies to upstream snes9x
+`b5cc765`: `git am <patch>` in a snes9x checkout). It exports `snesref_dbg_*` (resolved with
+`GetProcAddress`/`dlsym`; a stock core still works and those files are skipped
+with a warning) and keeps an **always-on** ring of the last 1M PPU register
+writes, hooked in `S9xSetPPU`, `S9xSetCPU($420C)` and the DMA fast paths;
+the dump queries it backward, nothing is armed. Windows build (mingw, run from
+PowerShell with `C:\msys64\mingw64\bin` on `PATH`):
+
+```powershell
+mingw32-make -C libretro platform=win CC=gcc CXX=g++ -j16
+```
 
 An input script contains one `start-frame:duration:hex-mask` event per line.
 Events may overlap and comments begin with `#`.

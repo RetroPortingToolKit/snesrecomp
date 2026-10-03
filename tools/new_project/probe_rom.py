@@ -235,8 +235,9 @@ def symbols_toml(info: dict) -> str:
 #
 # Each [[func]] names an address the analyzer should treat as a function.
 # Set emit = true to promote one into ahead-of-time codegen; leave it false
-# to keep it interpreted. tools/regen.sh syncs this into recomp/bank00.cfg
-# and recomp/funcs.h — do not hand-edit the generated blocks there.
+# to keep it interpreted. tools/regen.sh syncs labels and tier choices into
+# each recomp/bankNN.cfg; only emit=true adds a func/funcs.h declaration.
+# Do not hand-edit the generated blocks in the bank configs.
 
 [[func]]
 name = "I_RESET"

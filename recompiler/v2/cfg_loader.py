@@ -90,6 +90,8 @@ class BankCfg:
     # callable ABI cannot represent.
     force_lle: set = field(default_factory=set)
     exclude_ranges: List[Tuple[int, int]] = field(default_factory=list)
+    authority_insns: dict[int, bytes] = field(default_factory=dict)
+    authority_data: List[Tuple[int, int]] = field(default_factory=list)
     data_regions: List[Tuple[int, int, int]] = field(default_factory=list)  # (bank, start, end)
     # exit_mx_at directives: list of (bank, addr16, m, x) — annotates the
     # exit (m, x) state of a function at that PC. Decoder uses this to
@@ -110,6 +112,24 @@ class BankCfg:
     # is wrong for those (Bug C class, see
     # docs/ABSTRACT_INTERPRETATION_GAPS.md).
     exit_mx_at_per_variant: List[Tuple[int, int, int, int, int, int]] = field(default_factory=list)
+    # Keep authored facts separate from auto-derived exits during regen refresh.
+    declared_exit_mx_at_per_variant: List[Tuple[int, int, int, int, int, int]] = field(default_factory=list)
+
+    # `exit_mx_set` directives: (bank, addr16, entry_m, entry_x, frozenset of
+    # (exit_m, exit_x)). Declares that a callee entered at one variant returns
+    # in MORE THAN ONE width depending on the path it takes -- which neither
+    # `exit_mx_at` (one width, broadcast to every variant) nor
+    # `exit_mx_at_per_variant` (one width per variant) can express.
+    #
+    # This is not hypothetical. SimCity's 02:8000 is entered only at m0x0 and
+    # returns in m0x1 or m1x1: 02:803C is `JMP $824B` into a shared tail that
+    # ends at a different RTL from its own. The decoder already models exactly
+    # this -- `callee_exit_mx_modes` forks the post-call fall-through into one
+    # DecodeKey per proven exit mode and the emitter picks the live one with a
+    # runtime width switch -- but until now only the whole-program fixed point
+    # could populate it, so a callee the solver could not prove had no way to
+    # be told the answer.
+    exit_mx_set: List[Tuple[int, int, int, int, frozenset]] = field(default_factory=list)
     # `auto_vectors` directive — when true and this cfg is bank 00,
     # v2_regen reads the SNES interrupt-vector table from the detected
     # LoROM/HiROM internal-header location and auto-seeds
@@ -293,6 +313,26 @@ def load_bank_cfg(path: str) -> BankCfg:
             # entry_mx_at <pc16> <m> <x> — override a cfg entry's
             # canonical decode width without modifying auto-ingested
             # `func` lines.
+            if head == 'authority_data':
+                if len(tokens) != 3:
+                    raise ValueError(f"{path}: authority_data needs <start> <end_exclusive>")
+                start, end = map(_parse_hex, tokens[1:])
+                if not 0 <= start < end <= 0x10000:
+                    raise ValueError(f"{path}: invalid authority_data interval")
+                cfg.authority_data.append((start, end))
+                continue
+            if head == 'authority_insn':
+                if len(tokens) != 3:
+                    raise ValueError(f"{path}: authority_insn needs <pc16> <hexbytes>")
+                start = _parse_hex(tokens[1])
+                raw = bytes.fromhex(tokens[2])
+                if not 0 <= start <= 0xFFFF or not 1 <= len(raw) <= 4 or start + len(raw) > 0x10000:
+                    raise ValueError(f"{path}: invalid instruction authority")
+                if start in cfg.authority_insns and cfg.authority_insns[start] != raw:
+                    raise ValueError(f"{path}: conflicting instruction authority")
+                cfg.authority_insns[start] = raw
+                continue
+
             if head == 'entry_mx_at':
                 if len(tokens) != 4:
                     raise ValueError(
@@ -784,6 +824,63 @@ def load_bank_cfg(path: str) -> BankCfg:
                 cfg.exit_mx_at.append((bank_id, addr16, m_val, x_val))
                 continue
 
+            # exit_mx_variant <addr24> <entry_m> <entry_x> <exit_m> <exit_x>
+            if head == 'exit_mx_variant':
+                if len(tokens) != 6:
+                    raise ValueError(f"{path}: exit_mx_variant needs <addr24> <entry_m> <entry_x> <exit_m> <exit_x>")
+                try:
+                    addr = _parse_hex(tokens[1])
+                    widths = tuple(int(t) for t in tokens[2:])
+                except ValueError as exc:
+                    raise ValueError(f"{path}: invalid exit_mx_variant") from exc
+                if not 0 <= addr <= 0xffffff or any(w not in (0, 1) for w in widths):
+                    raise ValueError(f"{path}: exit_mx_variant needs a 24-bit address and 0/1 widths")
+                item = (addr >> 16, addr & 0xffff, *widths)
+                for old in cfg.exit_mx_at_per_variant:
+                    if old[:4] == item[:4] and old[4:] != item[4:]:
+                        raise ValueError(f"{path}: conflicting exit_mx_variant")
+                if item not in cfg.exit_mx_at_per_variant:
+                    cfg.exit_mx_at_per_variant.append(item)
+                    cfg.declared_exit_mx_at_per_variant.append(item)
+                continue
+
+            # exit_mx_set <hex_24bit_addr> <entry MmXn> <exit MmXn>[,<exit MmXn>...]
+            #
+            # Declares a callee's exit widths as a SET, for the entry variant
+            # named. Use when a routine returns in more than one width from a
+            # single entry variant -- see the field comment above.
+            #
+            #   exit_mx_set 028000 M0X0 M0X1,M1X1
+            if head == 'exit_mx_set' and len(tokens) >= 4:
+                try:
+                    addr_24 = _parse_hex(tokens[1])
+                except ValueError:
+                    raise ValueError(
+                        f"{path}: exit_mx_set bad address in {stripped!r}")
+                entry = _parse_mx(tokens[2])
+                if entry is None:
+                    raise ValueError(
+                        f"{path}: exit_mx_set bad entry variant {tokens[2]!r} "
+                        f"(want M0X0..M1X1)")
+                # Join the tail before splitting so both `M0X1,M1X1` and
+                # `M0X1, M1X1` parse -- the tokenizer splits on whitespace.
+                exits = set()
+                for part in ''.join(tokens[3:]).split(','):
+                    mx = _parse_mx(part.strip())
+                    if mx is None:
+                        raise ValueError(
+                            f"{path}: exit_mx_set bad exit variant {part!r} "
+                            f"in {stripped!r} (want M0X0..M1X1)")
+                    exits.add(mx)
+                if len(exits) < 2:
+                    raise ValueError(
+                        f"{path}: exit_mx_set needs two or more distinct exit "
+                        f"widths in {stripped!r}; use exit_mx_at for a single one")
+                cfg.exit_mx_set.append((
+                    (addr_24 >> 16) & 0xFF, addr_24 & 0xFFFF,
+                    entry[0], entry[1], frozenset(exits)))
+                continue
+
             # data_region <bank> <start> <end>
             if head == 'data_region' and len(tokens) >= 4:
                 try:
@@ -830,6 +927,13 @@ def load_bank_cfg(path: str) -> BankCfg:
 
     if cfg.bank < 0:
         raise ValueError(f"{path}: missing 'bank = NN' line")
+
+    # Route inline contracts through the same consumed table as standalone
+    # exits. Explicit standalone entries retain override precedence.
+    cfg.exit_mx_at[:0] = [
+        (cfg.bank, entry.start & 0xffff, *entry.exit_mx)
+        for entry in cfg.entries if getattr(entry, 'exit_mx', None) is not None
+    ]
 
     for entry in cfg.entries:
         override = entry_mx_at.get(entry.start & 0xFFFF)

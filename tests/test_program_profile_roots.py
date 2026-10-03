@@ -1,3 +1,4 @@
+import hashlib
 import json
 import pathlib
 import subprocess
@@ -112,7 +113,7 @@ def test_qualified_target_allowlist_separates_coverage_from_promotion():
         force_lle = set()
         assert discover_profile_roots((profile,), (), force_lle) == (
             VariantKey(0x008123, 1, 0),
-            VariantKey(0x808456, 0, 1),
+            VariantKey(0x008456, 0, 1),
         )
         assert force_lle == {0x008123, 0x808123}
 
@@ -131,7 +132,7 @@ def test_declared_profile_target_is_safe_even_when_landing_is_not_a_call():
 
         # A LoROM mirror of a declared boundary carries the same function ABI.
         assert discover_profile_roots((profile,), (0x008ABC,)) == (
-            VariantKey(0x808ABC, 0, 0),)
+            VariantKey(0x008ABC, 0, 0),)
 
 
 def test_profile_manifest_materializes_observed_exact_variant():
@@ -152,6 +153,7 @@ def test_profile_manifest_materializes_observed_exact_variant():
             "--rom", str(rom_path), "--cfg-dir", str(cfg_dir),
             "--out-dir", str(out_dir), "--no-host-root-scan",
             "--profile-manifest", str(profile),
+            "--legacy-profile-rom-sha256", hashlib.sha256(rom_path.read_bytes()).hexdigest(),
         ], text=True, capture_output=True)
 
         assert result.returncode == 0, result.stdout + result.stderr

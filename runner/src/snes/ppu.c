@@ -74,7 +74,8 @@ static void PpuUpdateWidescreenOamHistory(Ppu *ppu, int line);
 Ppu* ppu_init(void) {
   Ppu* ppu = calloc(1, sizeof(Ppu));  /* zero padding: saveload/co-sim hash determinism */
   if (ppu)
-    ppu->wsOamMotionLastLine = -1;
+    ppu->wsOamMotionGraceOn = 1;
+  ppu->wsOamMotionLastLine = -1;
   return ppu;
 }
 
@@ -101,6 +102,7 @@ void ppu_reset(Ppu* ppu) {
     memcpy(ppu->overlayRenderBuffer, overlayBuffer, sizeof(overlayBuffer));
   }
   ppu->vramIncrement = 1;
+  ppu->wsOamMotionGraceOn = 1;
   ppu->wsOamMotionLastLine = -1;
 }
 
@@ -110,12 +112,27 @@ void ppu_saveload(Ppu *ppu, SaveLoadInfo *sli) {
   uint32 version[2] = {'P' | 'P' << 8 | 'U' << 16 | '0' << 24, PPU_SAVESTATE_REGS_SIZE + PPU_SAVESTATE_MEM_SIZE};
   sli->func(sli, version, 8);
   sli->func(sli, &ppu->inidisp, PPU_SAVESTATE_REGS_SIZE);
+  /* The write counters must move on a load (it replaces VRAM and OAM
+   * wholesale) and must NOT move on a save: rewind and run-ahead save every
+   * few frames, and a host pairing "OAM was just uploaded" with what produced
+   * it would take each snapshot for an upload. There is no direction flag,
+   * so compare what the call left behind. */
+  static uint16_t vram_before[0x8000], oam_before[0x100];
+  static uint8_t high_before[0x20];
+  memcpy(vram_before, ppu->vram, sizeof(vram_before));
+  memcpy(oam_before, ppu->oam, sizeof(oam_before));
+  memcpy(high_before, ppu->highOam, sizeof(high_before));
   sli->func(sli, &ppu->cgram, PPU_SAVESTATE_MEM_SIZE);
+  if (memcmp(vram_before, ppu->vram, sizeof(vram_before)) != 0) ppu->vramWriteCount++;
+  if (memcmp(oam_before, ppu->oam, sizeof(oam_before)) != 0 ||
+      memcmp(high_before, ppu->highOam, sizeof(high_before)) != 0)
+    ppu->oamWriteCount++;
 }
 
 void PpuResetWidescreenOamHistory(Ppu *ppu) {
   if (!ppu)
     return;
+  ppu->wsOamMotionGraceOn = 1;
   ppu->wsOamMotionLastLine = -1;
   memset(ppu->wsOamMotionX, 0, sizeof(ppu->wsOamMotionX));
   memset(ppu->wsOamMotionSig, 0, sizeof(ppu->wsOamMotionSig));
@@ -687,8 +704,72 @@ static inline uint8 PpuMosaicAt(Ppu *ppu, int i) {
  * instrumentation only -- it never affects rendering. */
 static int s_oam_snap_frame = -1;
 
+/* PPU register write journal -- see ppu.h. */
+#define PPU_WLOG_CAP (1u << 17)
+static PpuWlogEntry s_wlog[PPU_WLOG_CAP];
+static uint32_t s_wlog_head;          /* total entries ever written */
+static int s_wlog_line = kPpuWlogPreRaster;
+static uint32_t s_wlog_line_frame = 0xffffffffu;
+uint8_t g_ppu_wlog_src = kPpuWlogCpu;
+
+void ppu_wlog_note_reg(uint16_t reg, uint8_t val) {
+  const uint32_t frame = (uint32_t)snes_frame_counter;
+  PpuWlogEntry *e = &s_wlog[s_wlog_head++ & (PPU_WLOG_CAP - 1)];
+  e->frame = frame;
+  /* The line cursor belongs to the frame whose raster set it; the first
+   * writes of a new frame's raster (HDMA for line 0) come before any
+   * ppu_runLine of that frame. */
+  e->line = (int16_t)(frame == s_wlog_line_frame ? s_wlog_line : 0);
+  e->reg = reg;
+  e->val = val;
+  e->src = g_ppu_wlog_src;
+}
+
+void ppu_wlog_position(uint32_t *frame, int16_t *line) {
+  const uint32_t f = (uint32_t)snes_frame_counter;
+  if (frame) *frame = f;
+  if (line) *line = (int16_t)(f == s_wlog_line_frame ? s_wlog_line : 0);
+}
+
+static void ppu_wlog_note(uint8_t adr, uint8_t val) {
+  if (adr == 0x04 || adr == 0x18 || adr == 0x19 || adr == 0x22 || adr > 0x33)
+    return;
+  ppu_wlog_note_reg((uint16_t)(0x2100u + adr), val);
+}
+
+int ppu_wlog_collect(uint32_t frame, PpuWlogEntry *out, int cap, int *lost) {
+  const uint32_t n = s_wlog_head < PPU_WLOG_CAP ? s_wlog_head : PPU_WLOG_CAP;
+  const uint32_t first = s_wlog_head - n;
+  int count = 0;
+  if (lost) {
+    /* The oldest surviving entry is already inside the requested window:
+     * part of it may have been evicted. */
+    const PpuWlogEntry *o = &s_wlog[first & (PPU_WLOG_CAP - 1)];
+    *lost = n == PPU_WLOG_CAP &&
+            (o->frame > frame - 1u ||
+             (o->frame == frame - 1u && o->line >= kPpuWlogPreRaster) ||
+             o->frame == frame);
+  }
+  for (uint32_t i = first; i != s_wlog_head && count < cap; i++) {
+    const PpuWlogEntry *e = &s_wlog[i & (PPU_WLOG_CAP - 1)];
+    if (e->frame == frame - 1u && e->line >= kPpuWlogPreRaster) {
+      out[count] = *e;
+      out[count].frame = frame;
+      out[count].line = -1;
+      count++;
+    } else if (e->frame == frame && e->line < kPpuWlogPreRaster) {
+      out[count++] = *e;
+    }
+  }
+  return count;
+}
+
 void ppu_runLine(Ppu* ppu, int line) {
   PPU_T0_DECL
+  /* Writes from here to the next ppu_runLine land on line + 1; no register
+   * write happens inside a line's render. */
+  s_wlog_line = line + 1;
+  s_wlog_line_frame = (uint32_t)snes_frame_counter;
   /* Per-line HDMA state must be captured here, not at end-of-frame: games can
    * rewrite windows and scroll registers before every scanline. */
   debug_server_on_ppu_line(line);
@@ -2522,17 +2603,37 @@ static void PpuDrawMode7HdLine(Ppu *ppu, unsigned line) {
   SnesMode7HdTransform transform =
       SnesMode7HdMakeTransform(ppu->m7matrix, ppu->m7sel, line);
   const uint16_t *vram = PpuRenderVram(ppu);
+  double offsets[4]; /* The surface binding accepts scales 1..4. */
+  for (unsigned sx = 0; sx < scale; ++sx) offsets[sx] = (double)sx / scale;
   for (unsigned sy = 0; sy < scale; ++sy) {
     uint32_t *row = (uint32_t *)(first + sy * surface->pitch);
     memset(row, 0, width * scale * sizeof(uint32_t));
     double subline = (double)sy / scale;
+    double left = -(int)ppu->extraLeftCur, right = 256 + ppu->extraRightCur;
+    double dy_x = subline * transform.row_x, dy_y = subline * transform.row_y;
+    bool bounded = SnesMode7HdSpanFits(
+        transform.origin_x + left * transform.step_x + dy_x,
+        transform.origin_y + left * transform.step_y + dy_y,
+        transform.origin_x + right * transform.step_x + dy_x,
+        transform.origin_y + right * transform.step_y + dy_y, INT_MAX);
+    int last_x = INT_MIN, last_y = INT_MIN;
+    uint8_t index = 0;
     for (int x = -(int)ppu->extraLeftCur; x < 256 + ppu->extraRightCur; ++x) {
       unsigned i = (unsigned)(x + kPpuExtraLeftRight);
       uint8_t visible = visibility[i];
       uint16_t object = ppu->objBuffer.data[i];
       for (unsigned sx = 0; sx < scale; ++sx) {
-        uint8_t index = SnesMode7HdSample(&transform, vram,
-                                          x + (double)sx / scale, subline);
+        double position = x + offsets[sx];
+        if (bounded) {
+          int tx = SnesMode7HdFloorInt(transform.origin_x + position * transform.step_x + dy_x);
+          int ty = SnesMode7HdFloorInt(transform.origin_y + position * transform.step_y + dy_y);
+          if (tx != last_x || ty != last_y) {
+            index = SnesMode7HdFetchInt(transform.control, vram, tx, ty, -1);
+            last_x = tx; last_y = ty;
+          }
+        } else {
+          index = SnesMode7HdSample(&transform, vram, position, subline);
+        }
         uint16_t bg = index ? (uint16_t)(0x5000 | index) : 0x0500;
         uint16_t main = visible & 1 ? bg : 0x0500;
         uint16_t sub = visible & 2 ? bg : 0x0500;
@@ -2606,19 +2707,60 @@ static void PpuWsOamHistoryMarkSeen(Ppu *ppu, uint8_t slot) {
   ppu->wsOamMotionSeen[slot >> 3] |= (uint8_t)(1u << (slot & 7));
 }
 
+/* Once per FRAME, and a repeated line is not a new frame.
+ *
+ * The guard used to skip only when the line number ADVANCED, so an equal
+ * line number read as a frame boundary. That holds for a host that renders
+ * each line once. A host that re-renders lines into scratch surfaces -- to
+ * isolate the backgrounds, or the OBJ layer, for a widescreen compositor --
+ * arrives a second time with line == lastLine, which the old test took for a
+ * wrap. The body then ran on the order of once per line.
+ *
+ * That is fatal to a classifier built on per-frame deltas. OAM does not
+ * change between two passes over the same line, so every repeat saw dx == 0:
+ * the first pass set the grace and the repeats decremented it straight back
+ * to zero. Measured on SimCity's city view, which re-renders every line for
+ * its margin passes: the longest unbroken stretch of frames on which ANY
+ * slot held motion grace was 1, against 68 once this is keyed correctly.
+ * A moving sprite needs grace on every frame to stay drawn in a margin, so
+ * at 1 no game-authored object could ever hold one -- reported from play as
+ * the train missing from the widescreen margins.
+ *
+ * A real frame boundary is the line number going BACKWARDS, which a repeated
+ * line never does. line == 0 is accepted too, for hosts that pass it, with
+ * lastLine != 0 so a repeat there cannot double-run either. Hosts that render
+ * the field as lines 1..224 and never pass line 0 still wrap 224 -> 1.
+ *
+ * Deliberately not keyed on snes_frame_counter: RtlRunFrame owns that, and a
+ * host driving the PPU directly never calls it, which freezes the classifier
+ * outright -- tried, and it left the grace at zero for the whole run. */
 static void PpuUpdateWidescreenOamHistory(Ppu *ppu, int line) {
-  if (ppu->wsOamMotionLastLine >= 0 && line > ppu->wsOamMotionLastLine) {
-    ppu->wsOamMotionLastLine = (int16_t)line;
-    return;
-  }
+  const int last = ppu->wsOamMotionLastLine;
+  const bool new_frame = last < 0 || line < last || (line == 0 && last != 0);
   ppu->wsOamMotionLastLine = (int16_t)line;
+  if (!new_frame)
+    return;
   for (uint8_t slot = 0; slot < 128; slot++) {
     uint8_t index = (uint8_t)(slot * 2);
     int16_t x = (int16_t)PpuDecodeOamX(ppu, index);
     uint32_t sig = PpuOamMotionSignature(ppu, index);
     if (PpuWsOamHistorySeen(ppu, slot) &&
         sig == ppu->wsOamMotionSig[slot]) {
-      if (x != ppu->wsOamMotionX[slot]) {
+      /* A STEP, not a teleport.
+       *
+       * "X changed" is too weak a test for movement. SimCity's scenario
+       * selector blinks a selection bracket by flipping it between an
+       * on-screen position and one 256 px to the left, which hardware
+       * clips and a widened margin does not. Every toggle looks like
+       * motion, so the grace never expires and the bracket sits in the
+       * margin blinking -- measured as 128 stray green pixels there.
+       *
+       * Real movement is small and per-frame: the title sign this
+       * classifier exists for travels about 2 px a frame. A jump of a
+       * whole screen is a game hiding something, not an object moving,
+       * so it must not refresh the grace. */
+      const int dx = x - ppu->wsOamMotionX[slot];
+      if (dx != 0 && dx > -32 && dx < 32) {
         ppu->wsOamMotionGrace[slot] = kPpuWsOamMovingGraceFrames;
       } else if (ppu->wsOamMotionGrace[slot]) {
         ppu->wsOamMotionGrace[slot]--;
@@ -2641,7 +2783,7 @@ static bool PpuWidescreenOamLeftHintAllows(Ppu *ppu, uint8_t index, int x,
   int slot = index >> 1;
   if (ppu->wsOamLeftHint[slot >> 3] & (1u << (slot & 7)))
     return true;
-  return ppu->wsOamMotionGrace[slot] != 0;
+  return ppu->wsOamMotionGraceOn && ppu->wsOamMotionGrace[slot] != 0;
 }
 
 void PpuSetExtraObjects(Ppu *ppu,const PpuExtraObject *objects,size_t count) {
@@ -2762,6 +2904,43 @@ static bool ppu_evaluateSprites(Ppu* ppu, int line) {
             int px_right = IntMin(256 + kPpuExtraLeftRight - (col + x), 8);
             PpuZbufType *dst = ppu->objBuffer.data + col + x + px_left + kPpuExtraLeftRight;
             int slot = index >> 1;
+             /* Clip an unhinted sprite at the SCREEN EDGE, per pixel.
+             *
+             * PpuWidescreenOamLeftHintAllows() gates whole sprites, so a
+             * sprite is drawn entirely or not at all. For an object sliding
+             * off the left that means it pops out in whole-sprite steps --
+             * the title's SimCity sign is three 16 px sprites, so it leaves
+             * in three 16 px chunks instead of sliding.
+             *
+             * Hardware clips at x=0 per pixel. Doing the same here makes the
+             * object leave smoothly and costs nothing elsewhere: a sprite
+             * fully on screen never has a negative pixel, and a host-placed
+             * one is hinted and keeps its margin pixels. */
+            static int ws_edge_clip_on = -1;
+            if (ws_edge_clip_on < 0) {
+              const char *e = getenv("SNESRECOMP_WS_OBJ_EDGE_CLIP");
+              ws_edge_clip_on = (e && *e) ? (*e != '0') : 1;
+            }
+            /* NOT while the sprite is moving.
+             *
+             * PpuWidescreenOamLeftHintAllows() now lets an unhinted OBJ
+             * with motion grace travel into the widened left margin. This
+             * clip then threw away every one of its pixels past x=0, so
+             * the object was admitted and immediately erased -- reported
+             * from play as the title's SimCity sign fading out ON screen
+             * rather than leaving at the true edge. Measured on the title:
+             * with the clip off the sign tracks smoothly from x=56..94
+             * down to x=34..72 across the margin; with it on those pixels
+             * are simply gone.
+             *
+             * It still applies to a sprite that is NOT moving, which is
+             * what it was written for: an unhinted parked object has no
+             * business in the margin, and clipping it at the screen edge
+             * beats popping it out a whole sprite at a time. */
+            const bool ws_clip_left =
+                ws_edge_clip_on && ppu->wsOamLeftHintStrict &&
+                !(ppu->wsOamLeftHint[slot >> 3] & (1u << (slot & 7))) &&
+                !(ppu->wsOamMotionGraceOn && ppu->wsOamMotionGrace[slot]);
             PpuOverlayCapture *obj_capture =
                 &ppu->overlayCaptures[kPpuOverlaySource_Obj];
             bool capture_slot = PpuOverlayActiveOnLine(
@@ -2777,6 +2956,7 @@ static bool ppu_evaluateSprites(Ppu* ppu, int line) {
         int pixel = (bits >> 0) & 1 | (bits >> 7) & 2 |
                     (bits >> 14) & 4 | (bits >> 21) & 8;
         if (pixel == 0) continue;
+        if (ws_clip_left && col + x + px < 0) continue;
               if (capture_slot) {
                 int screen_x = col + x + px;
                 if (screen_x >= obj_capture->x0 && screen_x < obj_capture->x1) {
@@ -2946,6 +3126,12 @@ uint8_t ppu_read(Ppu* ppu, uint8_t adr) {
  * display state, and replaying them would double-apply the data. */
 int g_ppu_scanout_latch_bypass = 0;
 
+static PpuVramWriteLogHook s_vram_write_log_hook;
+
+void ppu_set_vram_write_log_hook(PpuVramWriteLogHook hook) {
+  s_vram_write_log_hook = hook;
+}
+
 #define PPU_RASTER_MAX 256
 typedef struct { uint8_t line; uint16_t reg; uint8_t val; } PpuRasterEntry;
 static PpuRasterEntry s_raster[PPU_RASTER_MAX];
@@ -3102,13 +3288,17 @@ void ppu_rasterApplyLine(Ppu *ppu, int line) {
       s_raster_hdmaen = val;
       s_raster_hdmaen_pending = 1;
     } else {
+      const uint8_t saved_src = g_ppu_wlog_src;
+      g_ppu_wlog_src = kPpuWlogReplay;
       ppu_write(ppu, (uint8_t)(reg & 0xFF), val);
+      g_ppu_wlog_src = saved_src;
     }
     s_raster_next++;
   }
 }
 
 void ppu_write(Ppu* ppu, uint8_t adr, uint8_t val) {
+  ppu_wlog_note(adr, val);
 //  if (adr != 24 && adr != 25)
 //    printf("ppu_write(%d, %d)\n", adr, val);
   switch(adr) {
@@ -3134,6 +3324,7 @@ void ppu_write(Ppu* ppu, uint8_t adr, uint8_t val) {
       if(ppu->oamInHigh) {
         int hidx = ((ppu->oamAdr & 0xf) << 1) | ppu->oamSecondWrite;
         ppu->highOam[hidx] = val;
+        ppu->oamWriteCount++;
         debug_server_on_oam_write(1, (uint16_t)hidx, (uint16_t)val);
         if(ppu->oamSecondWrite) {
           ppu->oamAdr++;
@@ -3146,6 +3337,7 @@ void ppu_write(Ppu* ppu, uint8_t adr, uint8_t val) {
           uint16_t widx = ppu->oamAdr;
           uint16_t word = (uint16_t)((val << 8) | ppu->oamBuffer);
           ppu->oam[ppu->oamAdr++] = word;
+          ppu->oamWriteCount++;
           debug_server_on_oam_write(0, widx, word);
           if(ppu->oamAdr == 0) ppu->oamInHigh = true;
         }
@@ -3224,8 +3416,11 @@ void ppu_write(Ppu* ppu, uint8_t adr, uint8_t val) {
       // TODO: vram access during rendering (also cgram and oam)
       uint16_t vramAdr = ppu_getVramRemap(ppu);
       ppu->vram[vramAdr & 0x7fff] = (ppu->vram[vramAdr & 0x7fff] & 0xff00) | val;
+      ppu->vramWriteCount++;
       // $2118 == low byte of word; byte_addr = word << 1.
       debug_server_on_vram_write(((uint32_t)(vramAdr & 0x7fff) << 1), val);
+      if (s_vram_write_log_hook)
+        s_vram_write_log_hook(((uint32_t)(vramAdr & 0x7fff) << 1), val);
 #if SNESRECOMP_ENABLE_MODS
       snes_text_xlate_on_vram_write_c((uint16_t)(vramAdr & 0x7fff));
 #endif
@@ -3237,8 +3432,11 @@ void ppu_write(Ppu* ppu, uint8_t adr, uint8_t val) {
     case 0x19: {
       uint16_t vramAdr = ppu_getVramRemap(ppu);
       ppu->vram[vramAdr & 0x7fff] = (ppu->vram[vramAdr & 0x7fff] & 0x00ff) | (val << 8);
+      ppu->vramWriteCount++;
       // $2119 == high byte of word; byte_addr = (word << 1) + 1.
       debug_server_on_vram_write(((uint32_t)(vramAdr & 0x7fff) << 1) + 1, val);
+      if (s_vram_write_log_hook)
+        s_vram_write_log_hook(((uint32_t)(vramAdr & 0x7fff) << 1) + 1, val);
 #if SNESRECOMP_ENABLE_MODS
       snes_text_xlate_on_vram_write_c((uint16_t)(vramAdr & 0x7fff));
 #endif

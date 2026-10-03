@@ -1,5 +1,8 @@
 # SNES performance burn-down
 
+For the shared Windows startup stall and optional in-memory presentation
+timing capture, see [Windows startup and frame delivery](WINDOWS_STARTUP_TIMING.md).
+
 This worktree exists to create enough uncapped headroom for lower-power hosts,
 including the original Xbox, without weakening the faithful SNES hardware
 model. Performance is measured as uncapped frames per second, not as the

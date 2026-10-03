@@ -32,7 +32,7 @@ def _scaffold(tmp: pathlib.Path, *extra: str) -> pathlib.Path:
 
 
 def _run(*args: str, cwd=None) -> subprocess.CompletedProcess:
-    return subprocess.run(["python3", str(GENERATE), *args], cwd=cwd, text=True,
+    return subprocess.run([sys.executable, str(GENERATE), *args], cwd=cwd, text=True,
                           stdout=subprocess.PIPE, stderr=subprocess.PIPE)
 
 

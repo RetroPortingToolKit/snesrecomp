@@ -4,12 +4,17 @@
 /*
  * SNES rollback host (SNES_NET_MODE=rollback).
  *
- * Layering, matching lib/retcomm-rbengine/docs/host_integration.md:
+ * Layering (lib/recomp-net/docs/rollback.md, "Episode driver"):
  *
  *   snes_netplay (facade, mode gate)
- *     ├── snes_netplay_rb        this file — snapshots, digests, resim, episode wire
- *     ├── retcomm-rbengine       invent policy, input history, hash_confirm, snap ring
- *     └── recomp-net             RNetSession tips + RNetRbSession episode FSM
+ *     ├── snes_netplay_rb        this file — the engine vtable: snapshots,
+ *     │                          digests, pad layout, one tick, resim window
+ *     ├── recomp-net             the episode DRIVER (rb_driver.h: admit,
+ *     │                          reconcile, open/follow/seal/replay/verify/
+ *     │                          commit, tip-hold/extend, watchdogs, boot and
+ *     │                          mod-set gates) over RNetSession tips, the
+ *     │                          RNetRbSession core, input history, hash_confirm
+ *     └── retcomm-rbengine       snap ring, monotonic clock
  *
  * The delay-sync path never calls anything here, and rollback never changes
  * how delay-sync admits — `SNES_NET_MODE=delay` (or a lobby peer that does not
@@ -34,7 +39,13 @@
 #include <stdint.h>
 
 #include "recomp_net/recomp_net.h"
-#include "retcomm_rbengine/retcomm_rbengine.h"
+#include "recomp_net/rb_driver.h"
+#include "recomp_net/hash_confirm.h"
+#include "recomp_net/input_hist.h"
+#include "recomp_net/rb_post.h"
+#include "recomp_net/sched.h"
+#include "retcomm_rbengine/mono_ms.h"
+#include "retcomm_rbengine/snap_ring.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -66,6 +77,10 @@ typedef struct SnesNetplayRbBindings {
 int  snes_netplay_rb_enabled(void);
 /* Title default when SNES_NET_MODE is unset (env overrides both ways). */
 void snes_netplay_rb_set_default(int on);
+/* A desktop host's complete simulation tick, including raster IRQ/HDMA work
+ * it normally performs after RtlRunFrame. Never present/sleep/sample here.
+ * NULL retains the legacy RtlRunFrame-only replay. Register before start. */
+void snes_netplay_rb_set_replay_frame(void (*run)(uint32_t inputs, uint32_t tick));
 
 void snes_netplay_rb_bind(const SnesNetplayRbBindings *b);
 int  snes_netplay_rb_start(void);
@@ -83,6 +98,12 @@ int  snes_netplay_rb_poll_admit(void);
  * emit FRAME_COMMIT, advance the session clock, and service any episode
  * that the newly arrived wire opened. */
 void snes_netplay_rb_finish_frame(void);
+
+/* 1 once the driver's coordinated stop (armed by SIGUSR1) has DRAINED or hit
+ * its bound; the host then exits. See snes_netplay_quiesced(). */
+int  snes_netplay_rb_quiesced(void);
+/* 1 while that stop is in progress. */
+int  snes_netplay_rb_draining(void);
 
 /* Local pad for the tick being staged (12 SNES button bits, active high). */
 void snes_netplay_rb_stage_local(uint16_t buttons);
@@ -131,6 +152,9 @@ uint32_t snes_netplay_rb_confirmed_through(void);
 uint32_t snes_netplay_rb_confirmed_remaining(void);
 int      snes_netplay_rb_episode_active(void);
 const char *snes_netplay_rb_stall_tag(void);
+/* Why the driver refused this match (boot_digest_mismatch, mod_set_mismatch,
+ * mod_set_not_agreed), NULL if it did not. See snes_netplay_refusal(). */
+const char *snes_netplay_rb_refusal(void);
 /* Last observed digest fork: 1 if one has happened, with the partition name
  * and tick. Partition naming comes from snes_state_digest_part_name. */
 int  snes_netplay_rb_last_fork(uint32_t *tick, const char **partition);

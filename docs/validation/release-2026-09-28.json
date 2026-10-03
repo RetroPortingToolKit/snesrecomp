@@ -1,0 +1,515 @@
+{
+  "schema": "snesrecomp release qualification v1",
+  "date": "2026-09-28",
+  "engine": "2855081c174d89c968ab6c89a637a972d7c4b84c",
+  "owner_acceptance": {
+    "smw": "passed",
+    "zelda": "passed",
+    "sm": "passed",
+    "mmx": "passed"
+  },
+  "sm_audio_acceptance": "Owner listening check passed; deeper investigation waived. Timing differences remain documented.",
+  "tests": {
+    "python_linux": {"passed": 646},
+    "c_runtime_linux": "passed; optional DSP-1 firmware test skipped without firmware",
+    "python_windows": {
+      "passed": 642,
+      "skipped": 2,
+      "failed": 2,
+      "failures": [
+        "POSIX execute-permission assertion on Windows",
+        "MSYS/native path spelling in scaffold ROM cache assertion"
+      ]
+    },
+    "focused_generator_capture": 512,
+    "final_native_generator_python": 468,
+    "rust_library": 88,
+    "rust_binary": 6,
+    "rust_format_and_clippy": "passed",
+    "packaged_cli_with_disassembly_layout": "passed"
+  },
+  "titles": {
+    "smw": {
+      "routes": {
+        "ridley9-attract-expanded": {
+          "matches_approved_evidence_and_costs": true,
+          "instructions": {
+            "snes_cpu": 34286251
+          },
+          "warnings": [],
+          "runtime_failures": {
+            "interpreter_step_cap": 0,
+            "scheduler_bail": 0,
+            "apu_sync_timeout": 0
+          },
+          "evidence_sha256": {
+            "trace.jsonl": "af86557187069eb90fbcf6639aac5b5be403d6ef1cb9690a81179f5d58ea1a84",
+            "frames/frame_005997_wram.bin": "2fa4c424951cd5e0ba9e13e60c31e0758a5e42ec4eaa74cb6d88f3fc0787744c",
+            "frames/frame_005997.bmp": "845ff7552534e0bb0c5d76f5d64b19f464923e5beccba0ef1065b4cc51c9827d",
+            "frames/frame_005997_vram.bin": "f463a75939b66bd45abb0902a214026ad77190d8fe82b1973bd5258242fa7e70",
+            "frames/frame_005997_cgram.bin": "07bc81081c2b39afe79c5ec0b6f54463315dadce73a910539508e0fb5309acf3",
+            "frames/frame_005997_ppu.json": "a82f2fad730ec850530add78b73442ce72ea82315ae6cd6583c2ea2f6efe3b5d",
+            "frames/frame_005998_wram.bin": "72f469b4ab9f973b0c875b02abfb6795ca473190ceb8303e47fb869c755c56c7",
+            "frames/frame_005998.bmp": "845ff7552534e0bb0c5d76f5d64b19f464923e5beccba0ef1065b4cc51c9827d",
+            "frames/frame_005998_vram.bin": "1483bb58675cb21bc2949d30fc1867a4723cda5985a58cfcb387bb115cffe171",
+            "frames/frame_005998_cgram.bin": "ade9cd66d273acc58f86afd717d57304a5a7f388e325cc86878f26a9199328e7",
+            "frames/frame_005998_ppu.json": "4d06343d5957f1522c58817bbdf242fbba028a4e9d0335d1579387db3ec64f2e",
+            "frames/frame_005999_wram.bin": "59c9a6d019900363c1341ce5e353dde065eba3f090e782cfd0c10a8ff7ffced5",
+            "frames/frame_005999.bmp": "cd33fdf9cc8263ae5351aa0fb5cd651312f9c0697848f6d25fc9253479153748",
+            "frames/frame_005999_vram.bin": "d7cdccec58905ba1a43d75c25cf8a16011896f62bb2cabeb58441f3544857555",
+            "frames/frame_005999_cgram.bin": "ade9cd66d273acc58f86afd717d57304a5a7f388e325cc86878f26a9199328e7",
+            "frames/frame_005999_ppu.json": "14788525dc8b2edcde0d48815b8ca6e4ec6d11618abe2f67938d0efbd827a43c"
+          },
+          "identity": {
+            "rom_sha256": "0838e531fe22c077528febe14cb3ff7c492f1f5fa8de354192bdff7137c27f5b",
+            "module_id": "main",
+            "program_digest": "d71e9db1ef5a206439f72e4b659ecfca3e138047ffd3aec4d53d96b9ce6cd39d",
+            "build_digest": "4488e63b76fef45a28e1b71f9ebbe836b596d84a33fffb7000024233156a1d2b",
+            "generation_digest": "82967af57219975d5f7481c480e080fcc3f4ab3bae4adcd8e6294eb38d309b1b",
+            "mapper": "lorom"
+          },
+          "case_digest": "3594d86dfaeab2d439eb511f5ca2000badc5db411886c72ebd5c5c46bb0691f4",
+          "duplicate_ingest_idempotent": true,
+          "binary_and_program_identity_verified": true
+        },
+        "ridley9-basic-expanded": {
+          "matches_approved_evidence_and_costs": true,
+          "instructions": {
+            "snes_cpu": 33505489
+          },
+          "warnings": [],
+          "runtime_failures": {
+            "interpreter_step_cap": 0,
+            "scheduler_bail": 0,
+            "apu_sync_timeout": 0
+          },
+          "evidence_sha256": {
+            "trace.jsonl": "47397e62f1c9d493f4efa855674aeb5ef478a89d446088b36f4e28ccea9da642",
+            "frames/frame_005997_wram.bin": "69a50c75b6ca9b4fbb5d20deebe436367dc8905a2ffb9c0087476b5a6060a991",
+            "frames/frame_005997.bmp": "c74c701fec8cecc6a386036ef2202b0e7a1daa46ed9b357c18195513c43d4822",
+            "frames/frame_005997_vram.bin": "120a32742a806bce1e1e3b57b59ed97d5668bff5927d3af961038e442df46249",
+            "frames/frame_005997_cgram.bin": "740a6d3c3d9ec96239fe8d2e4e76b8658584b4f1593b5df4e601a9b928b25b3f",
+            "frames/frame_005997_ppu.json": "8bfd3066961b8d46341499bbb3f32c7819c183ab80d7c6bd90bb429a324febb1",
+            "frames/frame_005998_wram.bin": "b24b565712ac71404ce12522b1eee0da00199486c5b98bdb49f359ccbf9a30da",
+            "frames/frame_005998.bmp": "a934dcf8789b69be61a0b23bedb698f330a2c901fc1c99dd1e65a4424eb83bf5",
+            "frames/frame_005998_vram.bin": "120a32742a806bce1e1e3b57b59ed97d5668bff5927d3af961038e442df46249",
+            "frames/frame_005998_cgram.bin": "df0f99feaf568a95d6a6488ca3053dfaa0d0b17c324bf094881911833f7ec2fe",
+            "frames/frame_005998_ppu.json": "35ebe62cb9b0e7b7a97b021463ad8153bcda496a6bdce78254b770b09184e80f",
+            "frames/frame_005999_wram.bin": "3ebc5f76f9e022df7ed59f82155d6e772b4d4989e8b777d71b8624ffd85bb311",
+            "frames/frame_005999.bmp": "b94dbc6cc074f922bb02683fdaae5f017145dcebad535500728c1cff5cf00312",
+            "frames/frame_005999_vram.bin": "748ab3c02072f046f7180ce2ddefd4ac912c672a263cfa1c9dfba9b171b7290c",
+            "frames/frame_005999_cgram.bin": "df0f99feaf568a95d6a6488ca3053dfaa0d0b17c324bf094881911833f7ec2fe",
+            "frames/frame_005999_ppu.json": "ae454ce442f13a6c46cf015d25e9be529e6ba471f1f6b73889ca91da1567068e"
+          },
+          "identity": {
+            "rom_sha256": "0838e531fe22c077528febe14cb3ff7c492f1f5fa8de354192bdff7137c27f5b",
+            "module_id": "main",
+            "program_digest": "d71e9db1ef5a206439f72e4b659ecfca3e138047ffd3aec4d53d96b9ce6cd39d",
+            "build_digest": "4488e63b76fef45a28e1b71f9ebbe836b596d84a33fffb7000024233156a1d2b",
+            "generation_digest": "82967af57219975d5f7481c480e080fcc3f4ab3bae4adcd8e6294eb38d309b1b",
+            "mapper": "lorom"
+          },
+          "case_digest": "cb627922ed4291b2b1367ab439a9a204a454d38f67090ef8a70462ea234ff336",
+          "duplicate_ingest_idempotent": true,
+          "binary_and_program_identity_verified": true
+        }
+      },
+      "program_manifest_sha256": "d71e9db1ef5a206439f72e4b659ecfca3e138047ffd3aec4d53d96b9ce6cd39d",
+      "audit": {
+        "schema": "snesrecomp disassembly audit v1",
+        "scope": "emitter decode conformance; not execution equivalence",
+        "observed_variants": 3426,
+        "invalid_variants": 0,
+        "variants_with_unknown_instructions": 1,
+        "instruction_instances_by_class": {
+          "match": 106764,
+          "unknown": 130
+        },
+        "variants_by_failure_class": {
+          "unknown": 1
+        },
+        "authority_instructions": 62465,
+        "covered_authority_instructions": 59707,
+        "rom_sha256": "0838e531fe22c077528febe14cb3ff7c492f1f5fa8de354192bdff7137c27f5b",
+        "program_manifest_sha256": "d71e9db1ef5a206439f72e4b659ecfca3e138047ffd3aec4d53d96b9ce6cd39d",
+        "authority_sha256": "9aa67b37518f4d9db5b2c02b052d36280092a01d790371fd4706cb31656aa43d"
+      },
+      "layout_sha256": "a4224aea1c46745c1bdf908bd587c38525e7f89b81c2b85000985806bf89d8be"
+    },
+    "zelda": {
+      "routes": {
+        "ridley9-attract-expanded": {
+          "matches_approved_evidence_and_costs": true,
+          "instructions": {
+            "snes_cpu": 1785257
+          },
+          "warnings": [],
+          "runtime_failures": {
+            "interpreter_step_cap": 0,
+            "scheduler_bail": 0,
+            "apu_sync_timeout": 0
+          },
+          "evidence_sha256": {
+            "trace.jsonl": "34f7921ea7c9a04a7958c5c3596982b2a740d6be579d8e14f9fef633675dcb01",
+            "frames/frame_005997_wram.bin": "3a034a46976121fd4e964dd4227f184978acd0338f96540e294ed1ce0ad2c619",
+            "frames/frame_005997.bmp": "0b3036667eaacc2ecc6ce443b9bda000018ff22420239d19792f009c0d5bcc8d",
+            "frames/frame_005997_vram.bin": "eddaf148577f44d7c07db87198e8f56c0825db186ae7289b03da26610b5f74c7",
+            "frames/frame_005997_cgram.bin": "5793c474698532a261b5176d819ddd8ec3cf870a7ce26f72eb07fdda585da374",
+            "frames/frame_005997_ppu.json": "70d96694a1829fadb89c00409726b420d7fa280b608ef1148e7a554b45f9792e",
+            "frames/frame_005998_wram.bin": "8899c280e206c1e3ee7c755d7f3745a3dbb69eabe3d9d72a9975254a60a4ab37",
+            "frames/frame_005998.bmp": "0b3036667eaacc2ecc6ce443b9bda000018ff22420239d19792f009c0d5bcc8d",
+            "frames/frame_005998_vram.bin": "eddaf148577f44d7c07db87198e8f56c0825db186ae7289b03da26610b5f74c7",
+            "frames/frame_005998_cgram.bin": "5793c474698532a261b5176d819ddd8ec3cf870a7ce26f72eb07fdda585da374",
+            "frames/frame_005998_ppu.json": "3a59d523ec7e9053df6d254d5139bee8eb7c8b49286c833469ed6281e5a57e96",
+            "frames/frame_005999_wram.bin": "c5c9e56c1f229b9024ab800d44fc231e31083de11be44c217fcfe5264bda5227",
+            "frames/frame_005999.bmp": "0bfa760a5ca1058f7d93ecb1cfbb1971a0770e2f00bd7cb9fd01e165a8725f0f",
+            "frames/frame_005999_vram.bin": "8eb9079846bab1d70f2f4fcf17e1a1e91fc7ea50763e2f8c9980f690d034e91d",
+            "frames/frame_005999_cgram.bin": "5793c474698532a261b5176d819ddd8ec3cf870a7ce26f72eb07fdda585da374",
+            "frames/frame_005999_ppu.json": "83b91e057364da46581a1e273ae97c46a50b0570dff3575f2b5f071d6f0b633a"
+          },
+          "identity": {
+            "rom_sha256": "66871d66be19ad2c34c927d6b14cd8eb6fc3181965b6e517cb361f7316009cfb",
+            "module_id": "main",
+            "program_digest": "fc263267483638371aa9723dfb8d3c0fa05856921325b373bc32a0853ac011d9",
+            "build_digest": "490e689cff2e646406773058b15b99d2c29a1ca1beaf9c66db186f4524e192a8",
+            "generation_digest": "695113c60004a47d24f4900f76d21f740a0f27cd595bef3cff808963efee408b",
+            "mapper": "lorom"
+          },
+          "case_digest": "a664eb44ff36dac9065fd6f5e42bba099a867c09bdc36d2f336088a2bf924c43",
+          "duplicate_ingest_idempotent": true,
+          "binary_and_program_identity_verified": true
+        },
+        "ridley9-basic-expanded": {
+          "matches_approved_evidence_and_costs": true,
+          "instructions": {
+            "snes_cpu": 4521187
+          },
+          "warnings": [],
+          "runtime_failures": {
+            "interpreter_step_cap": 0,
+            "scheduler_bail": 0,
+            "apu_sync_timeout": 0
+          },
+          "evidence_sha256": {
+            "trace.jsonl": "7640c0f3e2bbedd3a5813479fc33e4d9305327f2c3a57bcd63e1f9baa4905e0c",
+            "frames/frame_005997_wram.bin": "1b70221c1cf014b1b221bd6085622c4b73b4954f4821eb4aab3c18e0921ce784",
+            "frames/frame_005997.bmp": "81a3bc943f791e1b9c2549829462da7359f029b330f331cff0506d7c201ddb9b",
+            "frames/frame_005997_vram.bin": "8746d15d147c1b246c6d5540f75aa9b880ec04467c52f777c3611977aba23e31",
+            "frames/frame_005997_cgram.bin": "7f8808f2448d20d1dcd807c0cf216b3ff0cefb98d85df40e97a19f6527c38b38",
+            "frames/frame_005997_ppu.json": "f3847f3e995075be20048ffeca6295e3b768a0a12c4ef96c518ec243584570f0",
+            "frames/frame_005998_wram.bin": "f3cf9dacab2f938e0ce3911f98a77195d85add0d7eabda8f8ba4eba8ce155be1",
+            "frames/frame_005998.bmp": "81a3bc943f791e1b9c2549829462da7359f029b330f331cff0506d7c201ddb9b",
+            "frames/frame_005998_vram.bin": "0b0ad08a6dbf24ae8bd061532b5aee5e1dc92834111d5b7c3c7c27b7d0cffac4",
+            "frames/frame_005998_cgram.bin": "7f8808f2448d20d1dcd807c0cf216b3ff0cefb98d85df40e97a19f6527c38b38",
+            "frames/frame_005998_ppu.json": "fc2dfa165572d952f5234196abcbd41698be6cf3888eb37796b57f50816f00de",
+            "frames/frame_005999_wram.bin": "50864920601a2f61c8d61bcb7717c4a0f2dea1a33702d3726d057ec69cc432e3",
+            "frames/frame_005999.bmp": "81a3bc943f791e1b9c2549829462da7359f029b330f331cff0506d7c201ddb9b",
+            "frames/frame_005999_vram.bin": "0b0ad08a6dbf24ae8bd061532b5aee5e1dc92834111d5b7c3c7c27b7d0cffac4",
+            "frames/frame_005999_cgram.bin": "7f8808f2448d20d1dcd807c0cf216b3ff0cefb98d85df40e97a19f6527c38b38",
+            "frames/frame_005999_ppu.json": "5a9edb2c087512d8de245b24627d2da04ce833f0a95ea819fbc9ed18bd3bd551"
+          },
+          "identity": {
+            "rom_sha256": "66871d66be19ad2c34c927d6b14cd8eb6fc3181965b6e517cb361f7316009cfb",
+            "module_id": "main",
+            "program_digest": "fc263267483638371aa9723dfb8d3c0fa05856921325b373bc32a0853ac011d9",
+            "build_digest": "490e689cff2e646406773058b15b99d2c29a1ca1beaf9c66db186f4524e192a8",
+            "generation_digest": "695113c60004a47d24f4900f76d21f740a0f27cd595bef3cff808963efee408b",
+            "mapper": "lorom"
+          },
+          "case_digest": "363f3093b35f9985da3c5ff87ca6881e6f0c7b6f7151d5b45f99c6cc34ab9160",
+          "duplicate_ingest_idempotent": true,
+          "binary_and_program_identity_verified": true
+        }
+      },
+      "program_manifest_sha256": "fc263267483638371aa9723dfb8d3c0fa05856921325b373bc32a0853ac011d9",
+      "audit": {
+        "schema": "snesrecomp disassembly audit v1",
+        "scope": "emitter decode conformance; not execution equivalence",
+        "observed_variants": 6217,
+        "invalid_variants": 0,
+        "variants_with_unknown_instructions": 0,
+        "instruction_instances_by_class": {
+          "match": 197106
+        },
+        "variants_by_failure_class": {},
+        "authority_instructions": 125734,
+        "covered_authority_instructions": 113358,
+        "rom_sha256": "66871d66be19ad2c34c927d6b14cd8eb6fc3181965b6e517cb361f7316009cfb",
+        "program_manifest_sha256": "fc263267483638371aa9723dfb8d3c0fa05856921325b373bc32a0853ac011d9",
+        "authority_sha256": "bc4ad0bbe69bae741ac26e60df52e88b9cf1050575282ba20b0941268345743a"
+      },
+      "layout_sha256": "1ef14c6b8c1094d98bed8b06b3175908aec29eb55f0f4b51c6147a2ce781b682"
+    },
+    "sm": {
+      "routes": {
+        "ridley9-attract-expanded": {
+          "matches_approved_evidence_and_costs": true,
+          "instructions": {
+            "snes_cpu": 5943095
+          },
+          "warnings": [],
+          "runtime_failures": {
+            "interpreter_step_cap": 0,
+            "scheduler_bail": 0,
+            "apu_sync_timeout": 0
+          },
+          "evidence_sha256": {
+            "trace.jsonl": "3eb7ab9c63ef908090f273c8beb0674b23bfadcdfcdb7221a789043d611ca623",
+            "frames/frame_005997_wram.bin": "e07343bfee7091e511a32f5633745cd6781648f1411cd01307f874560b900a5a",
+            "frames/frame_005997.bmp": "ff0d603554b92b5f047f8447160204ca6c6a2798a67726d1f5a7a6a32d420d6a",
+            "frames/frame_005997_vram.bin": "99a1031db49ac9a55c79a84a9d631b26f59f99cfde0fc804429914a89774de5b",
+            "frames/frame_005997_cgram.bin": "c9c22b942a1c9dc49f6924f59b0956b45789bec9be9dea88fada2b9c5ae7499f",
+            "frames/frame_005997_ppu.json": "31afb44da67761cc04bebed2faad3380dece126a3424d98c2337d77146a047c9",
+            "frames/frame_005998_wram.bin": "6e0b6fbbae3a83b9e9c2b5e781c108426f6866de00de262b359f97e3720f34ee",
+            "frames/frame_005998.bmp": "0d5a515b2275e9c23cacdb698c1a582eb8499976381b8af3d904d11ae35b2a1c",
+            "frames/frame_005998_vram.bin": "99a1031db49ac9a55c79a84a9d631b26f59f99cfde0fc804429914a89774de5b",
+            "frames/frame_005998_cgram.bin": "c9c22b942a1c9dc49f6924f59b0956b45789bec9be9dea88fada2b9c5ae7499f",
+            "frames/frame_005998_ppu.json": "397c94873ef5d870a4b4af8d6b0b0eacd677518afa65d1b2b415cb11fe4c0965",
+            "frames/frame_005999_wram.bin": "55e9eef99bd2e31e2da02d9322000a0a5aac47618429e3d8bcc184b7b7c236fc",
+            "frames/frame_005999.bmp": "a456e0ff4ac918d663307d8183bc8d3f797747751db85845ae7b511eb6980c79",
+            "frames/frame_005999_vram.bin": "d6c274fa897142602f5bf8db2c422054d485e062ec79162538d2ba981c165027",
+            "frames/frame_005999_cgram.bin": "c9c22b942a1c9dc49f6924f59b0956b45789bec9be9dea88fada2b9c5ae7499f",
+            "frames/frame_005999_ppu.json": "ba3150fb27ee37a4148c61d87f35ba8afee95a467e0daaecda4dd3659f5e6f8c",
+            "cpu.csv": "2b7aeda50050312e4f03e7664ef0bad7eebe9637bbdd3b6372a08bae266edb42"
+          },
+          "identity": {
+            "rom_sha256": "12b77c4bc9c1832cee8881244659065ee1d84c70c3d29e6eaf92e6798cc2ca72",
+            "module_id": "main",
+            "program_digest": "261df2a8d6937a6e7cb8911ac183ff7390f84dde9cb39346661f77d9ced3c8ea",
+            "build_digest": "345c4c353f6d7d78a614f16c739e639884ca616f9094317a46a409c05c4bd752",
+            "generation_digest": "affbe0f51b7cf79be82a5887066c8499df0cb4f2985a00daffdc11b38ec0c06a",
+            "mapper": "lorom"
+          },
+          "case_digest": "c2ba21d7eebf1e9fde1fbc72df53c16d7523d605b12e31a19674586f7c12e594",
+          "duplicate_ingest_idempotent": true,
+          "binary_and_program_identity_verified": true
+        },
+        "ridley9-basic-expanded": {
+          "matches_approved_evidence_and_costs": true,
+          "instructions": {
+            "snes_cpu": 5020876
+          },
+          "warnings": [],
+          "runtime_failures": {
+            "interpreter_step_cap": 0,
+            "scheduler_bail": 0,
+            "apu_sync_timeout": 0
+          },
+          "evidence_sha256": {
+            "trace.jsonl": "cca4fee016774c2fc9723e5b1a7c2393db2658a52b0857249858a46bf611d781",
+            "frames/frame_005997_wram.bin": "977fba3e3e7659e81bbf48d88d06020bace2e4fd114e2c67c674786d8e106d32",
+            "frames/frame_005997.bmp": "83ad6659abfdcea9b4fd2928ad11a9ff4068cb6c1f6c1e2c082bb00f1c0d492d",
+            "frames/frame_005997_vram.bin": "373af1f59122f55e108e7a282276d517534d5fc3a44fb23ae6699d69281d26c6",
+            "frames/frame_005997_cgram.bin": "ffa89d31572408b93cd69cca86a7a61a32cf944da98eb710f5de7a0c3a6f6c8a",
+            "frames/frame_005997_ppu.json": "d8599eba2b8a5907f03e1a35338a92d7ca836ce89c52f68389527e1e5d809e25",
+            "frames/frame_005998_wram.bin": "ade0d833e5e5c05e49e0879596b07084c99c0a73e3d48a9b3578108c82bfc77d",
+            "frames/frame_005998.bmp": "eb75ea710ffe264a9da557c68965b3e4904b7eecc4a31c075f3d039045c4b223",
+            "frames/frame_005998_vram.bin": "373af1f59122f55e108e7a282276d517534d5fc3a44fb23ae6699d69281d26c6",
+            "frames/frame_005998_cgram.bin": "ffa89d31572408b93cd69cca86a7a61a32cf944da98eb710f5de7a0c3a6f6c8a",
+            "frames/frame_005998_ppu.json": "fe403437c4bd6c723b2ea304a861ddf45982296468fbf3f62f258498cb442d2f",
+            "frames/frame_005999_wram.bin": "8395752770d2918e050dfdd0e6786c38bee3c84e06ecb0e653beed3ae98946f1",
+            "frames/frame_005999.bmp": "516102ab379fa1ba43b952698408532f64534a7bac23962ae11e46a9d21555bd",
+            "frames/frame_005999_vram.bin": "373af1f59122f55e108e7a282276d517534d5fc3a44fb23ae6699d69281d26c6",
+            "frames/frame_005999_cgram.bin": "ffa89d31572408b93cd69cca86a7a61a32cf944da98eb710f5de7a0c3a6f6c8a",
+            "frames/frame_005999_ppu.json": "fb42047d0a33be477633e90b52bcdb683ca1069f6ced4a082370f4ef20100b70",
+            "cpu.csv": "39d5725f44636b627da7d02511c67802610da34ad104ec30edef3f1a298ed8ed"
+          },
+          "identity": {
+            "rom_sha256": "12b77c4bc9c1832cee8881244659065ee1d84c70c3d29e6eaf92e6798cc2ca72",
+            "module_id": "main",
+            "program_digest": "261df2a8d6937a6e7cb8911ac183ff7390f84dde9cb39346661f77d9ced3c8ea",
+            "build_digest": "345c4c353f6d7d78a614f16c739e639884ca616f9094317a46a409c05c4bd752",
+            "generation_digest": "affbe0f51b7cf79be82a5887066c8499df0cb4f2985a00daffdc11b38ec0c06a",
+            "mapper": "lorom"
+          },
+          "case_digest": "4d556128db4b3bedc2fac9807cc7b1c7a0facf98a420adedf427a4d7903301ab",
+          "duplicate_ingest_idempotent": true,
+          "binary_and_program_identity_verified": true
+        },
+        "ridley-final-normal": {
+          "matches_approved_evidence_and_costs": true,
+          "instructions": {
+            "snes_cpu": 14980387
+          },
+          "warnings": [
+            "guest execution failed: apu_sync_timeout (1 occurrences)"
+          ],
+          "runtime_failures": {
+            "interpreter_step_cap": 0,
+            "scheduler_bail": 0,
+            "apu_sync_timeout": 1
+          },
+          "evidence_sha256": {
+            "trace.jsonl": "ab2d2b0745b8c18cd72acbe84b8698de0b31ab118d29dad446101be3c14e49c2",
+            "cpu.csv": "59e17238e73158de74e16329395be0e68fa1d4b2b9754d12bf2f22d4a1b55d0d",
+            "ceres-start.wram.bin": "5a45d09ec4b9c6384af3d38fac3bd879da596acd05718247c368457eeeb77913",
+            "ceres-start.fb.bmp": "815d6c8d04e671a2e8ceefe5a58f70d54eb8d14d109d87620e117a0d76ed9b25",
+            "ceres-start.regs.json": "ab79a8e1a68a805f1be2224b5fe4a68d8704165353ad416d36e03e1e2660c969",
+            "after-left.wram.bin": "bf04ddb9a4a4a5c6b63cf5ca814a742061fed37e418b99c1ed0c9e0a7105a669",
+            "after-left.fb.bmp": "3afb04d32bae2d8e983b1153e1a34a5a7877f96ee0cf7ef6c66091e94d51c8fb",
+            "after-left.regs.json": "1d56d9748385259e35e7366c52173200faa3b5ac109edcd77ffc459db909eebe",
+            "final.wram.bin": "05a34300ba1cb7c68a673e283022b76430cbbb44d5adf28ec9c282e0834f138c",
+            "final.fb.bmp": "1110345ef64332b67fa9eccd16cea18b21bd5533f5c1f3504bb2ed08ea708469",
+            "final.regs.json": "b9dd848a508871ebc2d98bf661033e01e97b0c60a4f5f23aa44318e934ca879a"
+          },
+          "identity": {
+            "rom_sha256": "12b77c4bc9c1832cee8881244659065ee1d84c70c3d29e6eaf92e6798cc2ca72",
+            "module_id": "main",
+            "program_digest": "261df2a8d6937a6e7cb8911ac183ff7390f84dde9cb39346661f77d9ced3c8ea",
+            "build_digest": "345c4c353f6d7d78a614f16c739e639884ca616f9094317a46a409c05c4bd752",
+            "generation_digest": "affbe0f51b7cf79be82a5887066c8499df0cb4f2985a00daffdc11b38ec0c06a",
+            "mapper": "lorom"
+          },
+          "case_digest": "38c99339e4f4b116435ae62876c1954c918164fb6711512a76c150b07f9f772b",
+          "duplicate_ingest_idempotent": true,
+          "binary_and_program_identity_verified": true
+        },
+        "ridley-final-turbo": {
+          "matches_approved_evidence_and_costs": true,
+          "instructions": {
+            "snes_cpu": 14980387
+          },
+          "warnings": [
+            "guest execution failed: apu_sync_timeout (1 occurrences)"
+          ],
+          "runtime_failures": {
+            "interpreter_step_cap": 0,
+            "scheduler_bail": 0,
+            "apu_sync_timeout": 1
+          },
+          "evidence_sha256": {
+            "trace.jsonl": "ab2d2b0745b8c18cd72acbe84b8698de0b31ab118d29dad446101be3c14e49c2",
+            "cpu.csv": "59e17238e73158de74e16329395be0e68fa1d4b2b9754d12bf2f22d4a1b55d0d",
+            "ceres-start.wram.bin": "5a45d09ec4b9c6384af3d38fac3bd879da596acd05718247c368457eeeb77913",
+            "ceres-start.fb.bmp": "815d6c8d04e671a2e8ceefe5a58f70d54eb8d14d109d87620e117a0d76ed9b25",
+            "ceres-start.regs.json": "ab79a8e1a68a805f1be2224b5fe4a68d8704165353ad416d36e03e1e2660c969",
+            "after-left.wram.bin": "bf04ddb9a4a4a5c6b63cf5ca814a742061fed37e418b99c1ed0c9e0a7105a669",
+            "after-left.fb.bmp": "3afb04d32bae2d8e983b1153e1a34a5a7877f96ee0cf7ef6c66091e94d51c8fb",
+            "after-left.regs.json": "1d56d9748385259e35e7366c52173200faa3b5ac109edcd77ffc459db909eebe",
+            "final.wram.bin": "05a34300ba1cb7c68a673e283022b76430cbbb44d5adf28ec9c282e0834f138c",
+            "final.fb.bmp": "1110345ef64332b67fa9eccd16cea18b21bd5533f5c1f3504bb2ed08ea708469",
+            "final.regs.json": "b9dd848a508871ebc2d98bf661033e01e97b0c60a4f5f23aa44318e934ca879a"
+          },
+          "identity": {
+            "rom_sha256": "12b77c4bc9c1832cee8881244659065ee1d84c70c3d29e6eaf92e6798cc2ca72",
+            "module_id": "main",
+            "program_digest": "261df2a8d6937a6e7cb8911ac183ff7390f84dde9cb39346661f77d9ced3c8ea",
+            "build_digest": "345c4c353f6d7d78a614f16c739e639884ca616f9094317a46a409c05c4bd752",
+            "generation_digest": "affbe0f51b7cf79be82a5887066c8499df0cb4f2985a00daffdc11b38ec0c06a",
+            "mapper": "lorom"
+          },
+          "case_digest": "4d8efaa12b7edc37fe64028e01bb9da1dfeae732cd25ba4687ffcc22ec5408e5",
+          "duplicate_ingest_idempotent": true,
+          "binary_and_program_identity_verified": true
+        }
+      },
+      "program_manifest_sha256": "261df2a8d6937a6e7cb8911ac183ff7390f84dde9cb39346661f77d9ced3c8ea",
+      "audit": {
+        "schema": "snesrecomp disassembly audit v1",
+        "scope": "emitter decode conformance; not execution equivalence",
+        "observed_variants": 14621,
+        "invalid_variants": 0,
+        "variants_with_unknown_instructions": 0,
+        "instruction_instances_by_class": {
+          "match": 303690
+        },
+        "variants_by_failure_class": {},
+        "authority_instructions": 132318,
+        "covered_authority_instructions": 103624,
+        "rom_sha256": "12b77c4bc9c1832cee8881244659065ee1d84c70c3d29e6eaf92e6798cc2ca72",
+        "program_manifest_sha256": "261df2a8d6937a6e7cb8911ac183ff7390f84dde9cb39346661f77d9ced3c8ea",
+        "authority_sha256": "da69f285d5a4007dd9117ec90c45b0cdb19daaba5ceafecd62e15ee3dc98d37b"
+      },
+      "layout_sha256": "9a517fe85a588f42ae88764e27ec40ee76d01d08aaf694ec6a8ac99416abe137"
+    },
+    "mmx": {
+      "routes": {
+        "current-attract-canonical": {
+          "matches_approved_evidence_and_costs": true,
+          "instructions": {
+            "snes_cpu": 10985081
+          },
+          "warnings": [],
+          "runtime_failures": {
+            "interpreter_step_cap": 0,
+            "scheduler_bail": 0,
+            "apu_sync_timeout": 0
+          },
+          "evidence_sha256": {
+            "trace.jsonl": "cbc83de87d7d4cc8f0964a8be3266662ff979aef02eb5aaa8f04860da9e9ea29",
+            "cpu.csv": "3b739ac50c7b87c6442e266f0fa81499961b2fa0f5d2ecf047f28b98e5df4877",
+            "frames/frame_011997_wram.bin": "aed180960ec08b11d139c1d7345d28c550ac044a4c4a91174d82c45059e2c6ed",
+            "frames/frame_011997.bmp": "3ae979b228c2fc9e6b31959a3775fec6fff3b958746a50d0cb1f76a35394bce3",
+            "frames/frame_011997_vram.bin": "3d91e714f66c64199722ab9192c7e74ae1d823da1ad6e2eff5600033ad9c3cb3",
+            "frames/frame_011997_cgram.bin": "90e7068c820027e63ceb0642c4c9efa0005d3a8e76373831d421b4af7bc5d43c",
+            "frames/frame_011997_ppu.json": "b50e3776b949616ba9df91a9cfc1f6ece3364597d928bc9850650eaf24a906c8",
+            "frames/frame_011998_wram.bin": "81d4aaf503d933b0e7a9f8402bf6ff4dcf9fdb188d05dd85dbd4f553b8cf3a0b",
+            "frames/frame_011998.bmp": "c80745b388e5ff0ecffbf1bce6f0bea20073156cfbc2dcff42a90f7fb04cdc83",
+            "frames/frame_011998_vram.bin": "3d91e714f66c64199722ab9192c7e74ae1d823da1ad6e2eff5600033ad9c3cb3",
+            "frames/frame_011998_cgram.bin": "90e7068c820027e63ceb0642c4c9efa0005d3a8e76373831d421b4af7bc5d43c",
+            "frames/frame_011998_ppu.json": "06544870574856818c383475de8dc234137393f11adbd3d0f43bca971e0a92ad",
+            "frames/frame_011999_wram.bin": "9f741d74a162eadac39065a97919560d0f0f350a729d26cbafe2950d488e1fde",
+            "frames/frame_011999.bmp": "feedc01e6e91e03da56bdd78f9f63e8f666ea5e43994a06cb8b4462f487fe22b",
+            "frames/frame_011999_vram.bin": "3d91e714f66c64199722ab9192c7e74ae1d823da1ad6e2eff5600033ad9c3cb3",
+            "frames/frame_011999_cgram.bin": "336080565abf6d127e25ce99c7d38ff56c474a6933dff572b4ecff2adc5d505d",
+            "frames/frame_011999_ppu.json": "7db46b2b1381f0530814c00b7ceb538e3b1bbb3b1ec26d92449ea3e4a76d0416"
+          },
+          "identity": {
+            "rom_sha256": "b8f70a6e7fb93819f79693578887e2c11e196bdf1ac6ddc7cb924b1ad0be2d32",
+            "module_id": "main",
+            "program_digest": "16b3b768480c56cfcdb3ddfc2dbb797dd1f091b7d9a7ec68ca1cc15f503a9f2a",
+            "build_digest": "62ce07d5e087aa837a35ca81b6d4552d58274c2680372ed77e431e54b706ba33",
+            "generation_digest": "949e0f3e3336dbf2f009dc82866f6ea7c2d894367c761ef71dd803e8960ee55c",
+            "mapper": "lorom"
+          },
+          "case_digest": "5f7b96bb50fb68eaa8768507d5472ca64b07cf37ab7b6561cc272e500637af71",
+          "duplicate_ingest_idempotent": true,
+          "binary_and_program_identity_verified": true
+        },
+        "current-highway-canonical": {
+          "matches_approved_evidence_and_costs": true,
+          "instructions": {
+            "snes_cpu": 13985348
+          },
+          "warnings": [],
+          "runtime_failures": {
+            "interpreter_step_cap": 0,
+            "scheduler_bail": 0,
+            "apu_sync_timeout": 0
+          },
+          "evidence_sha256": {
+            "trace.jsonl": "18007a3419ed6d49ad3c0f62004907308c48ba77d2c744daf5f7ab1fb08a2042",
+            "cpu.csv": "465caae9ae57e34ef97553cb0564274f6ac5cd8169578d0af2b6e20ddb58cc73",
+            "frames/frame_011997_wram.bin": "191d3198fd9616c68db029a0109cebcda57e148e5ca4ec78120e45c6be3c1196",
+            "frames/frame_011997.bmp": "5ba705b333d16b10da11a14f5685c3279aa85f2a64d968582d63cb1f3a39022c",
+            "frames/frame_011997_vram.bin": "a37a1fedc547f5ed6856ad4f7b2b948e617e7f711b1829b9b6027c4b9adcdb9e",
+            "frames/frame_011997_cgram.bin": "75025f9d1c126bf04d3ee46e97fe2512f695eb35a071438119384eb2bf99d647",
+            "frames/frame_011997_ppu.json": "5f2fedd51de971f38d945ab03a14be2745fdf7d5d4baa61f64e1aad636e54b85",
+            "frames/frame_011998_wram.bin": "0657dae12dbc3cbaf86c6db1de0d71ac5762ad7ceb728f45d218983497dfaf73",
+            "frames/frame_011998.bmp": "5ba705b333d16b10da11a14f5685c3279aa85f2a64d968582d63cb1f3a39022c",
+            "frames/frame_011998_vram.bin": "a37a1fedc547f5ed6856ad4f7b2b948e617e7f711b1829b9b6027c4b9adcdb9e",
+            "frames/frame_011998_cgram.bin": "75025f9d1c126bf04d3ee46e97fe2512f695eb35a071438119384eb2bf99d647",
+            "frames/frame_011998_ppu.json": "fc4f34b998f981f002d0af9283bdc2527970aabd19b8fe4237d5220541d5e31a",
+            "frames/frame_011999_wram.bin": "269432b459ad724fe8e84fb10f706169b3db67fb78c5c8201c41d38479966899",
+            "frames/frame_011999.bmp": "5ba705b333d16b10da11a14f5685c3279aa85f2a64d968582d63cb1f3a39022c",
+            "frames/frame_011999_vram.bin": "a37a1fedc547f5ed6856ad4f7b2b948e617e7f711b1829b9b6027c4b9adcdb9e",
+            "frames/frame_011999_cgram.bin": "75025f9d1c126bf04d3ee46e97fe2512f695eb35a071438119384eb2bf99d647",
+            "frames/frame_011999_ppu.json": "df0d21b63236a2739a7741165bdc22d29d8398796b51b01fa97713fc8f6855e5"
+          },
+          "identity": {
+            "rom_sha256": "b8f70a6e7fb93819f79693578887e2c11e196bdf1ac6ddc7cb924b1ad0be2d32",
+            "module_id": "main",
+            "program_digest": "16b3b768480c56cfcdb3ddfc2dbb797dd1f091b7d9a7ec68ca1cc15f503a9f2a",
+            "build_digest": "62ce07d5e087aa837a35ca81b6d4552d58274c2680372ed77e431e54b706ba33",
+            "generation_digest": "949e0f3e3336dbf2f009dc82866f6ea7c2d894367c761ef71dd803e8960ee55c",
+            "mapper": "lorom"
+          },
+          "case_digest": "512844b1ec105e6975e8e0a717c6d32eb773c79ce77e489481e599ddf997c56b",
+          "duplicate_ingest_idempotent": true,
+          "binary_and_program_identity_verified": true
+        }
+      },
+      "program_manifest_sha256": "16b3b768480c56cfcdb3ddfc2dbb797dd1f091b7d9a7ec68ca1cc15f503a9f2a"
+    }
+  }
+}

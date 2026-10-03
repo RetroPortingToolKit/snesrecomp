@@ -15,6 +15,22 @@ restore, and PB drifts. Centralizing here keeps the call-site
 shape in one place.
 """
 from typing import List
+from snes_cycles import region_speed
+
+
+def runtime_code_speed(pc24: int):
+    """Keep code-region cycle weighting correct through bank-bit-7 mirrors.
+
+    The generated body's bank is not the live PBR. In particular a slow-bank
+    body dispatched through FastROM must use the live bank and MEMSEL.
+    """
+    low = pc24 & 0x7FFFFF
+    slow, low_fast = region_speed(low, 0), region_speed(low, 1)
+    high_slow, high_fast = region_speed(low | 0x800000, 0), region_speed(low | 0x800000, 1)
+    if slow == low_fast == high_slow == high_fast:
+        return str(slow), slow
+    assert slow == low_fast == high_slow
+    return f"((g_memsel && (cpu->PB & 0x80)) ? {high_fast} : {slow})", None
 
 
 # ── Stack push/pop micro-pattern helpers (DRY_REFACTOR follow-up C) ────
@@ -133,12 +149,15 @@ def modify_p_via_mirrors(mask: int, kind: str) -> List[str]:
 
 
 def pb_save_restore_envelope(
-    target_bank: int,
+    target_bank: int | None,
     body: List[str],
     *,
     trace_pc24: int = 0,
 ) -> List[str]:
-    """Wrap a RecompReturn-producing body in the canonical JSL PB envelope.
+    """Wrap a call, changing PB only for a long transfer.
+
+    ``target_bank=None`` denotes a short transfer: it preserves the live PB,
+    including when the generated body executes through a cartridge mirror.
 
     ``body`` must declare or assign ``RecompReturn _r``. Statements are raw C
     lines with indentation relative to the envelope; callers add the envelope's
@@ -160,13 +179,19 @@ def pb_save_restore_envelope(
     explicit pop (which would double-pop).
     """
     trace_pc = f"0x{trace_pc24 & 0xFFFFFF:06x}u"
-    return [
+    bank_enter = [] if target_bank is None else [
         "uint8 _saved_pb = cpu->PB;",
         f"cpu_trace_pb_change(cpu, {trace_pc}, _saved_pb, {target_bank:#04x}, CPU_TR_JSL);",
         f"cpu->PB = {target_bank:#04x};",
-        *body,
+    ]
+    bank_leave = [] if target_bank is None else [
         f"cpu_trace_pb_change(cpu, {trace_pc}, cpu->PB, _saved_pb, CPU_TR_RTL);",
         "cpu->PB = _saved_pb;",
+    ]
+    return [
+        *bank_enter,
+        *body,
+        *bank_leave,
         "if (_r != RECOMP_RETURN_NORMAL) {",
         "  cpu_trace_event(cpu, 0, CPU_TR_NLR_PROPAGATE, (uint8)_r, 0);",
         # Mark this exit as SKIP-PROPAGATION so the stack-drift
@@ -179,7 +204,7 @@ def pb_save_restore_envelope(
 
 
 def call_with_pb_save(
-    target_bank: int,
+    target_bank: int | None,
     callee_name: str,
     *,
     trace_pc24: int = 0,

@@ -67,6 +67,11 @@ snes_mod_runtime_launcher_provider_c(void);
 const char* snes_mod_runtime_last_error_c(void);
 int snes_mod_runtime_feature_enabled_c(const char* package_id,
                                        const char* feature_id);
+/* The committed path of an [[external_rom]]/[[resource]] the player selected
+ * for a feature, or 0 (and an empty string) when none is selected. This is the
+ * engine-owned answer content_variant.c resolves donor ROMs through; a plugin
+ * that re-parses state.toml by hand is doing the runtime's job twice. */
+
 /* Verdicts for snes_mod_runtime_check_set_c. Values match the wire codes in
  * the netplay protocol, but are declared here so the mod runtime does not have
  * to know what a packet is -- the netplay layer owns that mapping. */
@@ -225,6 +230,16 @@ int snes_mod_runtime_exempted_packages_c(char* out, uint32_t cap);
 int snes_mod_runtime_unapproved_cosmetics_c(char* out, uint32_t cap);
 
 int snes_mod_runtime_effective_set_c(char* out, uint32_t cap);
+
+/* Stage a lobby's selections without replacing the owner's offline plan.
+ * Idempotent, not nested. Resources remain local and persist normally.
+ * End restores selections/validation; call before activation, never mid-game. */
+int snes_mod_runtime_begin_temporary_c(void);
+void snes_mod_runtime_end_temporary_c(void);
+
+/* Resolve an admitted feature's configured resource without truncation. */
+int snes_mod_runtime_resource_path_c(const char* package_id, const char* feature_id,
+                                      const char* resource_id, char* out, uint32_t cap);
 
 int snes_mod_runtime_feature_option_value_c(const char* package_id,
                                             const char* feature_id,

@@ -232,6 +232,12 @@ def detect_and_route(parsed, rom: bytes,
                 callee_exit_mx[key] = (m_val & 1, x_val & 1)
                 seeded_keys.add(key)
 
+        for b_id, addr16, em, ex, m_val, x_val in getattr(
+                cfg, 'declared_exit_mx_at_per_variant', ()):
+            key = ((b_id << 16) | addr16, em, ex)
+            callee_exit_mx[key] = (m_val, x_val)
+            seeded_keys.add(key)
+
     # Iterative fixpoint with re-derivation. Each pass walks every
     # cfg entry × every (em, ex); decodes under the current
     # callee_exit_mx; updates the entry if the derived exit differs

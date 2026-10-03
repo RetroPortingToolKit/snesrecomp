@@ -255,7 +255,7 @@ def _compute_dominance_frontier(
     return {n: frozenset(s) for n, s in df_sets.items()}
 
 
-def build_cfg(graph: FunctionDecodeGraph) -> V2CFG:
+def build_cfg(graph: FunctionDecodeGraph, *, instruction_blocks=False) -> V2CFG:
     """Build a V2CFG from a v2-decoded function graph.
 
     Block keys are DecodeKeys (pc, m, x). Same pc with different
@@ -267,7 +267,7 @@ def build_cfg(graph: FunctionDecodeGraph) -> V2CFG:
         for s in di.successors:
             preds[s].append(key)
 
-    leaders = _identify_leaders(graph, preds)
+    leaders = set(graph.insns) if instruction_blocks else _identify_leaders(graph, preds)
     blocks = _build_blocks(graph, leaders)
     idom = _compute_dominators(blocks, graph.entry)
     df = _compute_dominance_frontier(blocks, idom)

@@ -111,11 +111,20 @@ pub struct BankCfg {
     /// Exact 24-bit executable function boundaries which must remain LLE.
     pub force_lle: BTreeSet<u32>,
     pub exclude_ranges: Vec<(u32, u32)>,
+    pub authority_insns: BTreeMap<u32, Vec<u8>>,
+    pub authority_data: Vec<(u32, u32)>,
     pub data_regions: Vec<(u32, u32, u32)>, // (bank, start, end)
     pub reloc_regions: Vec<RelocRegion>,
     pub ram_routines: Vec<RamRoutine>,
     pub exit_mx_at: Vec<(u8, u32, u8, u8)>, // (bank, addr16, m, x)
     pub exit_mx_at_per_variant: Vec<(u8, u32, u8, u8, u8, u8)>,
+    /// `exit_mx_set` directives: (bank, addr16, entry_m, entry_x, exit widths).
+    /// Declares that a callee entered at one variant returns in MORE THAN ONE
+    /// width depending on the path taken -- which neither `exit_mx_at` (one
+    /// width, broadcast to every variant) nor `exit_mx_at_per_variant` (one
+    /// width per variant) can express. Feeds `callee_exit_mx_modes`, which the
+    /// decoder already forks the post-call continuation on.
+    pub exit_mx_set: Vec<(u8, u32, u8, u8, Vec<(u8, u8)>)>,
     pub auto_vectors: bool,
     pub indirect_dispatch: Vec<IndirectDispatch>,
     pub inline_dispatch_loops: BTreeSet<u32>,
@@ -241,6 +250,50 @@ pub fn parse_bank_cfg(text: &str, path: &str) -> Result<BankCfg, String> {
         }
         if head == "auto_vectors" {
             cfg.auto_vectors = true;
+            continue;
+        }
+        if head == "authority_data" {
+            if tokens.len() != 3 {
+                return Err(format!(
+                    "{path}: authority_data needs <start> <end_exclusive>"
+                ));
+            }
+            let start = parse_hex(tokens[1])?;
+            let end = parse_hex(tokens[2])?;
+            if start >= end || end > 0x10000 {
+                return Err(format!("{path}: invalid authority_data interval"));
+            }
+            cfg.authority_data.push((start, end));
+            continue;
+        }
+        if head == "authority_insn" {
+            if tokens.len() != 3 {
+                return Err(format!("{path}: authority_insn needs <pc16> <hexbytes>"));
+            }
+            let start = parse_hex(tokens[1])?;
+            let hex = tokens[2];
+            if !hex.is_ascii()
+                || hex.len() % 2 != 0
+                || !(2..=8).contains(&hex.len())
+                || start + (hex.len() / 2) as u32 > 0x10000
+            {
+                return Err(format!("{path}: invalid instruction authority"));
+            }
+            let raw: Vec<u8> = (0..hex.len())
+                .step_by(2)
+                .map(|i| {
+                    u8::from_str_radix(&hex[i..i + 2], 16)
+                        .map_err(|e| format!("{path}: invalid authority bytes: {e}"))
+                })
+                .collect::<Result<_, _>>()?;
+            if cfg
+                .authority_insns
+                .get(&start)
+                .is_some_and(|old| old != &raw)
+            {
+                return Err(format!("{path}: conflicting instruction authority"));
+            }
+            cfg.authority_insns.insert(start, raw);
             continue;
         }
         if head == "entry_mx_at" {
@@ -739,6 +792,92 @@ pub fn parse_bank_cfg(text: &str, path: &str) -> Result<BankCfg, String> {
             }
             continue;
         }
+        // exit_mx_variant <addr24> <entry_m> <entry_x> <exit_m> <exit_x>
+        if head == "exit_mx_variant" {
+            if tokens.len() != 6 {
+                return Err(format!(
+                    "{path}: exit_mx_variant needs <addr24> <entry_m> <entry_x> <exit_m> <exit_x>"
+                ));
+            }
+            let addr = parse_hex(tokens[1])?;
+            let widths: Result<Vec<u8>, _> = tokens[2..].iter().map(|v| v.parse::<u8>()).collect();
+            let widths = widths.map_err(|_| format!("{path}: invalid exit_mx_variant widths"))?;
+            if addr > 0xffffff || widths.iter().any(|&w| w > 1) {
+                return Err(format!(
+                    "{path}: exit_mx_variant needs a 24-bit address and 0/1 widths"
+                ));
+            }
+            let item = (
+                (addr >> 16) as u8,
+                addr & 0xffff,
+                widths[0],
+                widths[1],
+                widths[2],
+                widths[3],
+            );
+            for old in &cfg.exit_mx_at_per_variant {
+                if (old.0, old.1, old.2, old.3) == (item.0, item.1, item.2, item.3)
+                    && (old.4, old.5) != (item.4, item.5)
+                {
+                    return Err(format!("{path}: conflicting exit_mx_variant"));
+                }
+            }
+            if !cfg.exit_mx_at_per_variant.contains(&item) {
+                cfg.exit_mx_at_per_variant.push(item);
+            }
+            continue;
+        }
+
+        // exit_mx_set <hex_24bit_addr> <entry MmXn> <exit MmXn>[,<exit MmXn>...]
+        //
+        // A callee that returns in several widths from a single entry variant.
+        // SimCity 02:8000 is the motivating case: entered only at m0x0, it
+        // returns in m0x1 or m1x1 because 02:803C jumps into a shared tail
+        // ending at a different RTL from its own.
+        //
+        //   exit_mx_set 028000 M0X0 M0X1,M1X1
+        if head == "exit_mx_set" {
+            if tokens.len() < 4 {
+                return Err(format!(
+                    "{path}: exit_mx_set needs <addr24> <entry MmXn> <exit MmXn>[,...], got: {stripped:?}"
+                ));
+            }
+            let addr_24 = parse_hex(tokens[1])
+                .map_err(|e| format!("{path}: exit_mx_set bad address: {e}"))?;
+            let entry = parse_mx(tokens[2]).ok_or_else(|| {
+                format!(
+                    "{path}: exit_mx_set bad entry variant {:?} (want M0X0..M1X1)",
+                    tokens[2]
+                )
+            })?;
+            // Join the tail before splitting so both `M0X1,M1X1` and
+            // `M0X1, M1X1` parse -- the cfg tokenizer splits on whitespace,
+            // so a space after the comma would otherwise produce an empty
+            // element and a baffling error message.
+            let exit_list = tokens[3..].join("");
+            let mut exits: Vec<(u8, u8)> = Vec::new();
+            for part in exit_list.split(',') {
+                let mx = parse_mx(part.trim()).ok_or_else(|| {
+                    format!("{path}: exit_mx_set bad exit variant {part:?} (want M0X0..M1X1)")
+                })?;
+                if !exits.contains(&mx) {
+                    exits.push(mx);
+                }
+            }
+            if exits.len() < 2 {
+                return Err(format!(
+                    "{path}: exit_mx_set needs two or more distinct exit widths in {stripped:?}; use exit_mx_at for a single one"
+                ));
+            }
+            cfg.exit_mx_set.push((
+                ((addr_24 >> 16) & 0xFF) as u8,
+                addr_24 & 0xFFFF,
+                entry.0,
+                entry.1,
+                exits,
+            ));
+            continue;
+        }
         // reloc <ram_bank> <ram_addr> <rom_bank> <rom_off> <len>
         if head == "reloc" {
             if tokens.len() != 6 {
@@ -824,6 +963,18 @@ pub fn parse_bank_cfg(text: &str, path: &str) -> Result<BankCfg, String> {
     if cfg.bank < 0 {
         return Err(format!("{path}: missing 'bank = NN' line"));
     }
+
+    // Inline contracts seed the consumed table; standalone directives win.
+    let inline_exits: Vec<_> = cfg
+        .entries
+        .iter()
+        .filter_map(|entry| {
+            entry
+                .exit_mx
+                .map(|(m, x)| (cfg.bank as u8, entry.start & 0xffff, m, x))
+        })
+        .collect();
+    cfg.exit_mx_at.splice(0..0, inline_exits);
 
     for entry in &mut cfg.entries {
         if let Some(&(m, x)) = entry_mx_at.get(&(entry.start & 0xFFFF)) {
@@ -1012,6 +1163,66 @@ mod tests {
     }
 
     #[test]
+    fn exit_mx_set_parses_a_multi_width_exit() {
+        let cfg = parse_bank_cfg(
+            "bank = 02
+\
+             exit_mx_set 028000 M0X0 M0X1,M1X1
+\
+             exit_mx_set 00c3f9 m0x0 M0X0, M0X1
+",
+            "t",
+        )
+        .unwrap();
+        assert_eq!(cfg.exit_mx_set.len(), 2);
+        let (bank, addr16, em, ex, ref exits) = cfg.exit_mx_set[0];
+        assert_eq!((bank, addr16, em, ex), (0x02, 0x8000, 0, 0));
+        assert_eq!(exits, &vec![(0, 1), (1, 1)]);
+        // lower case and a space after the comma are both accepted
+        let (bank1, addr1, _, _, ref exits1) = cfg.exit_mx_set[1];
+        assert_eq!((bank1, addr1), (0x00, 0xc3f9));
+        assert_eq!(exits1, &vec![(0, 0), (0, 1)]);
+    }
+
+    #[test]
+    fn exit_mx_set_rejects_a_single_width() {
+        // A one-element set is an exact fact wearing a set's clothes; it
+        // belongs in exit_mx_at, and silently accepting it here would give
+        // two spellings for one thing.
+        let err = parse_bank_cfg(
+            "bank = 02
+exit_mx_set 028000 M0X0 M0X1
+",
+            "t",
+        )
+        .unwrap_err();
+        assert!(err.contains("exit_mx_at"), "unhelpful message: {err}");
+    }
+
+    #[test]
+    fn exit_mx_set_rejects_malformed_variants() {
+        for line in [
+            "exit_mx_set 028000 M0X0
+", // no exit list
+            "exit_mx_set 028000 Q0X0 M0X1,M1X1
+", // bad entry variant
+            "exit_mx_set 028000 M0X0 M0X1,M2X1
+", // bad exit variant
+            "exit_mx_set zzzz M0X0 M0X1,M1X1
+", // bad address
+        ] {
+            let src = format!(
+                "bank = 02
+{line}"
+            );
+            assert!(
+                parse_bank_cfg(&src, "t").is_err(),
+                "should have been rejected: {line}"
+            );
+        }
+    }
+
+    #[test]
     fn dkc2_pointer_tail_modes_parse() {
         let cfg = parse_bank_cfg(
             "bank = B3\n\
@@ -1109,5 +1320,20 @@ mod tests {
         let cfg = parse_bank_cfg("bank = 00\nforce_lle 038DA0\n", "t").unwrap();
         assert_eq!(cfg.force_lle, BTreeSet::from([0x038DA0]));
         assert!(parse_bank_cfg("bank = 00\nforce_lle 038DA0\nforce_lle 038DA0\n", "t").is_err());
+    }
+
+    #[test]
+    fn declared_exit_contracts_are_consumable_and_strict() {
+        let cfg = parse_bank_cfg("bank = 00\nfunc Root 8000 exit_mx:1,1\nexit_mx_at 008000 0 0\nexit_mx_variant 008000 1 0 0 1\n", "t").unwrap();
+        assert_eq!(cfg.exit_mx_at, vec![(0, 0x8000, 1, 1), (0, 0x8000, 0, 0)]);
+        assert_eq!(cfg.exit_mx_at_per_variant, vec![(0, 0x8000, 1, 0, 0, 1)]);
+        for line in [
+            "exit_mx_variant 008000 1 0 0",
+            "exit_mx_variant 008000 1 0 0 2",
+            "exit_mx_variant 1000000 1 0 0 1",
+            "exit_mx_variant 008000 1 0 0 1\nexit_mx_variant 008000 1 0 1 1",
+        ] {
+            assert!(parse_bank_cfg(&format!("bank = 00\n{line}\n"), "t").is_err());
+        }
     }
 }

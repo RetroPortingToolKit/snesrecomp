@@ -79,5 +79,5 @@ def test_popped_call_ptrtail_inherits_context_installed_by_terminal_caller():
         "cpu_tailcall_inherit_return_context("
         "(uint16)(_entry_s + 2u), 3);" not in src)
     assert (
-        "interp_tier_dispatch_tail(cpu, 0x009000u, 0x008000u, "
+        "interp_tier_dispatch_tail(cpu, (((uint32)cpu->PB << 16) | 0x9000u), 0x008000u, "
         "_entry_s, _hrv)" in src)

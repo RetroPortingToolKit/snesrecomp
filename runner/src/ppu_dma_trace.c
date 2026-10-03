@@ -31,6 +31,9 @@ typedef struct {
   uint8_t  bAdr;    /* B-bus dest reg low byte: 18/19=VRAM,22=CGRAM,04=OAM */
   uint16_t aAdr;
   uint16_t size;    /* 0 encodes a full 0x10000 transfer            */
+  int16_t  line;    /* raster line it affects (ppu_wlog_position)   */
+  uint8_t  phase;   /* 0 = CPU half, 1 = raster walk                */
+  uint16_t dest;    /* VRAM word / CGRAM index / OAM address        */
 } DmaEvent;
 
 typedef struct {
@@ -45,6 +48,10 @@ typedef struct {
   uint16_t s_reg;      /* 65816 stack pointer at end-of-frame       */
   uint8_t  game_state; /* $7E:0998 (SM kGameState_*)                */
   uint8_t  game_mode;  /* $7E:0100 (SM GameMode)                    */
+  uint16_t nmi_count;  /* vblank interrupts delivered this frame    */
+  uint16_t irq_count;  /* raster interrupts delivered this frame    */
+  uint16_t irq_cpu;    /* ...of which, during the host's CPU half   */
+  uint16_t irq_raster; /* ...of which, during the host's raster walk*/
   uint16_t wram_probe[PPUDMA_WRAM_PROBE_MAX]; /* see ppudma_wram_probe */
 } PpuSnap;
 
@@ -76,6 +83,25 @@ static uint64_t s_dma_widx;
 static PpuSnap  s_ppu_ring[PPU_RING_LEN];
 static uint64_t s_ppu_widx;
 static uint16_t s_dma_this_frame;
+static uint16_t s_nmi_this_frame;
+static uint16_t s_irq_this_frame;
+static uint16_t s_irq_cpu_this_frame;
+static uint16_t s_irq_raster_this_frame;
+static int      s_frame_phase;   /* 0 = CPU half, 1 = raster walk */
+
+void ppudma_set_frame_phase(int in_raster_walk) {
+  s_frame_phase = in_raster_walk ? 1 : 0;
+}
+
+void ppudma_note_interrupt(int is_nmi) {
+  if (is_nmi) {
+    if (s_nmi_this_frame < 0xFFFF) s_nmi_this_frame++;
+    return;
+  }
+  if (s_irq_this_frame < 0xFFFF) s_irq_this_frame++;
+  if (s_frame_phase) { if (s_irq_raster_this_frame < 0xFFFF) s_irq_raster_this_frame++; }
+  else               { if (s_irq_cpu_this_frame    < 0xFFFF) s_irq_cpu_this_frame++; }
+}
 
 static int env_int(const char *name) {
   const char *v = getenv(name);
@@ -94,6 +120,18 @@ void ppudma_record_dma(int channel, int fromB, uint8_t aBank, uint16_t aAdr,
   e->bAdr    = bAdr;
   e->aAdr    = aAdr;
   e->size    = size;
+  {
+    uint32_t wframe;
+    ppu_wlog_position(&wframe, &e->line);
+    e->frame = (int)wframe;
+  }
+  e->phase   = (uint8_t)s_frame_phase;
+  e->dest    = 0;
+  if (g_ppu && !fromB) {
+    if (bAdr == 0x18 || bAdr == 0x19) e->dest = g_ppu->vramPointer;
+    else if (bAdr == 0x22)            e->dest = g_ppu->cgramPointer;
+    else if (bAdr == 0x04)            e->dest = g_ppu->oamAdr;
+  }
   s_dma_widx++;
   if (!fromB) s_dma_this_frame++;
 
@@ -109,7 +147,8 @@ void ppudma_record_dma(int channel, int fromB, uint8_t aBank, uint16_t aAdr,
 
 void ppudma_frame_snapshot(int frame) {
   Ppu *p = g_ppu;
-  if (!p) { s_dma_this_frame = 0; return; }
+  if (!p) { s_dma_this_frame = 0;
+             s_nmi_this_frame = 0; s_irq_this_frame = 0; return; }
 
   PpuSnap *s = &s_ppu_ring[s_ppu_widx % PPU_RING_LEN];
   s->frame   = frame;
@@ -127,6 +166,10 @@ void ppudma_frame_snapshot(int frame) {
   s->vram_nz = vnz;
 
   s->dma_a2b = s_dma_this_frame;
+  s->nmi_count = s_nmi_this_frame;
+  s->irq_count = s_irq_this_frame;
+  s->irq_cpu = s_irq_cpu_this_frame;
+  s->irq_raster = s_irq_raster_this_frame;
   s->s_reg = g_cpu.S;
   s->game_state = g_ram[0x0998];   /* $7E:0998 */
   s->game_mode  = g_ram[0x0100];   /* $7E:0100 */
@@ -169,6 +212,92 @@ void ppudma_frame_snapshot(int frame) {
   }
 
   s_dma_this_frame = 0;
+  s_nmi_this_frame = 0;
+  s_irq_this_frame = 0;
+  s_irq_cpu_this_frame = 0;
+  s_irq_raster_this_frame = 0;
+}
+
+/* Live read-back of the per-frame ring for the debug server.
+ *
+ * The ring has always recorded this; until now the only way to see it was the
+ * post-mortem report, i.e. after the process died. That is the wrong shape for
+ * "which PPU register is oscillating while the game runs" -- a question that
+ * wants the last N frames of RECORDED history, on demand, from a live process.
+ * Returns 0 past the end of the retained window. */
+int ppudma_frame_at(uint64_t back, PpuFrameInfo *out) {
+  if (!out) return 0;
+  uint64_t have = s_ppu_widx < (uint64_t)PPU_RING_LEN
+                      ? s_ppu_widx : (uint64_t)PPU_RING_LEN;
+  if (back >= have) return 0;
+  const PpuSnap *s = &s_ppu_ring[(s_ppu_widx - 1 - back) % PPU_RING_LEN];
+  out->frame     = s->frame;
+  out->inidisp   = s->inidisp;
+  out->tm        = s->tm;
+  out->ts        = s->ts;
+  out->bgmode    = s->bgmode;
+  out->cgram_nz  = s->cgram_nz;
+  out->vram_nz   = s->vram_nz;
+  out->dma_a2b   = s->dma_a2b;
+  out->s_reg     = s->s_reg;
+  out->game_mode = s->game_mode;
+  out->nmi_count = s->nmi_count;
+  out->irq_count = s->irq_count;
+  out->irq_cpu = s->irq_cpu;
+  out->irq_raster = s->irq_raster;
+  return 1;
+}
+
+uint64_t ppudma_frame_count(void) { return s_ppu_widx; }
+
+static void dma_info(const DmaEvent *e, PpuDmaInfo *out) {
+  out->frame   = e->frame;
+  out->line    = e->line;
+  out->phase   = e->phase;
+  out->channel = e->channel;
+  out->fromB   = e->fromB;
+  out->aBank   = e->aBank;
+  out->bAdr    = e->bAdr;
+  out->aAdr    = e->aAdr;
+  out->dest    = e->dest;
+  out->size    = e->size ? e->size : 0x10000u;
+}
+
+int ppudma_dma_at(uint64_t back, PpuDmaInfo *out) {
+  if (!out) return 0;
+  uint64_t have = s_dma_widx < (uint64_t)DMA_RING_LEN
+                      ? s_dma_widx : (uint64_t)DMA_RING_LEN;
+  if (back >= have) return 0;
+  dma_info(&s_dma_ring[(s_dma_widx - 1 - back) % DMA_RING_LEN], out);
+  return 1;
+}
+
+uint64_t ppudma_dma_count(void) { return s_dma_widx; }
+
+int ppudma_dma_collect(uint32_t frame, PpuDmaInfo *out, int cap, int *lost) {
+  uint64_t n = s_dma_widx < (uint64_t)DMA_RING_LEN
+                   ? s_dma_widx : (uint64_t)DMA_RING_LEN;
+  uint64_t first = s_dma_widx - n;
+  int count = 0;
+  if (lost) {
+    const DmaEvent *o = &s_dma_ring[first % DMA_RING_LEN];
+    *lost = n == DMA_RING_LEN &&
+            ((uint32_t)o->frame > frame - 1u ||
+             ((uint32_t)o->frame == frame - 1u && o->line >= kPpuWlogPreRaster) ||
+             (uint32_t)o->frame == frame);
+  }
+  for (uint64_t i = first; i != s_dma_widx && count < cap; i++) {
+    const DmaEvent *e = &s_dma_ring[i % DMA_RING_LEN];
+    if ((uint32_t)e->frame == frame - 1u && e->line >= kPpuWlogPreRaster) {
+      dma_info(e, &out[count]);
+      out[count].frame = (int)frame;
+      out[count].line = -1;
+      count++;
+    } else if ((uint32_t)e->frame == frame && e->line < kPpuWlogPreRaster) {
+      dma_info(e, &out[count++]);
+    }
+  }
+  return count;
 }
 
 void ppudma_dump_json(FILE *f) {
@@ -219,12 +348,13 @@ void ppudma_dump_json(FILE *f) {
     uint64_t off = dw - dn + i;
     const DmaEvent *e = &s_dma_ring[off % DMA_RING_LEN];
     fprintf(f,
-      "%s{\"seq\":%u,\"frame\":%d,\"ch\":%u,\"dir\":\"%s\","
-      "\"src\":%u,\"dst_reg\":%u,\"size\":%u}",
-      (i ? "," : ""), (unsigned)e->seq, e->frame, (unsigned)e->channel,
+      "%s{\"seq\":%u,\"frame\":%d,\"line\":%d,\"phase\":%u,\"ch\":%u,"
+      "\"dir\":\"%s\",\"src\":%u,\"dst_reg\":%u,\"dest\":%u,\"size\":%u}",
+      (i ? "," : ""), (unsigned)e->seq, e->frame, (int)e->line,
+      (unsigned)e->phase, (unsigned)e->channel,
       e->fromB ? "B2A" : "A2B",
       (unsigned)(((uint32_t)e->aBank << 16) | e->aAdr),
-      (unsigned)(0x2100 | e->bAdr),
+      (unsigned)(0x2100 | e->bAdr), (unsigned)e->dest,
       (unsigned)(e->size ? e->size : 0x10000u));
   }
   fprintf(f, "]},\n");
@@ -246,10 +376,42 @@ void ppudma_frame_snapshot(int frame) {
   (void)frame;
 }
 
+void ppudma_note_interrupt(int is_nmi) {
+  (void)is_nmi;
+}
+
+void ppudma_set_frame_phase(int in_raster_walk) {
+  (void)in_raster_walk;
+}
+
 void ppudma_dump_json(FILE *f) {
   fprintf(f, "  \"ppu_frames\": {\"disabled\":true,\"snaps\":[]},\n");
   fprintf(f, "  \"wram_probes\": {\"disabled\":true},\n");
   fprintf(f, "  \"dma_events\": {\"disabled\":true,\"events\":[]},\n");
+}
+
+int ppudma_frame_at(uint64_t back, PpuFrameInfo *out) {
+  (void)back;
+  (void)out;
+  return 0;
+}
+
+uint64_t ppudma_frame_count(void) { return 0; }
+
+int ppudma_dma_at(uint64_t back, PpuDmaInfo *out) {
+  (void)back;
+  (void)out;
+  return 0;
+}
+
+uint64_t ppudma_dma_count(void) { return 0; }
+
+int ppudma_dma_collect(uint32_t frame, PpuDmaInfo *out, int cap, int *lost) {
+  (void)frame;
+  (void)out;
+  (void)cap;
+  if (lost) *lost = 0;
+  return 0;
 }
 
 #endif

@@ -6,6 +6,12 @@
  *
  *   snesref <libretro-core> <rom.sfc>
  *
+ * Deterministic scene capture: SNESREF_SCRIPT (wait/press/poke/until/dump/
+ * quit grammar shared with the recomp host) + SNESREF_DUMP_DIR; layer
+ * isolation via SNESREF_LAYERS. With the patched snes9x core
+ * (libretro/snesref_debug.cpp) dumps also carry CGRAM, OAM, register state
+ * and the always-on per-scanline PPU write journal. See README.md.
+ *
  * Keys (match the recomp keybinds): arrows=D-pad, Z=B(jump), X=A, A=Y(fire),
  *   S=X, C=L, V=R, Enter=Start, RShift=Select.
  *   Shift+F1-F9 = save state slot       F1-F9 = load state slot
@@ -24,6 +30,8 @@
 #include <cstdlib>
 #include <cstring>
 #include <vector>
+#include <string>
+#include <map>
 #include "libretro.h"
 
 // ---- portable dynamic-core loading + core function pointers ----
@@ -84,6 +92,32 @@ LR(retro_load_game) LR(retro_unload_game) LR(retro_run)
 LR(retro_serialize_size) LR(retro_serialize) LR(retro_unserialize)
 LR(retro_get_memory_data) LR(retro_get_memory_size)
 #undef LR
+static void (*p_retro_reset)(void);
+
+// ---- optional snesref debug exports (patched snes9x core; see README) ----
+// Resolved with core_symbol(); a stock core simply lacks them and the dump
+// skips cgram/oam/regs/ppuw with a warning.
+struct SnesrefPpuwEntry {      // must match libretro/snesref_debug.cpp
+    uint32_t frame;
+    uint16_t vcounter;
+    uint16_t hcounter;         // dots 0..339
+    uint16_t addr;
+    uint8_t  value;
+    uint8_t  source;           // 0 cpu, 1 dma, 2 hdma
+};
+static unsigned (*p_dbg_version)(void);
+static void     (*p_dbg_set_frame)(uint32_t);
+static size_t   (*p_dbg_cgram)(uint8_t*, size_t);
+static size_t   (*p_dbg_oam)(uint8_t*, size_t);
+static size_t   (*p_dbg_regs_json)(char*, size_t);
+static size_t   (*p_dbg_ppuw_entry_size)(void);
+static size_t   (*p_dbg_ppuw_capacity)(void);
+static uint64_t (*p_dbg_ppuw_head)(void);
+static size_t   (*p_dbg_ppuw_read)(uint64_t, size_t, void*, uint64_t*);
+
+template<class T> static void bind_opt(T& fn, const char* name) {
+    fn = reinterpret_cast<T>(core_symbol(g_core, name));
+}
 
 template<class T> static void bind(T& fn, const char* name) {
     fn = reinterpret_cast<T>(core_symbol(g_core, name));
@@ -221,9 +255,11 @@ static bool dump_system_ram() {
     return ok;
 }
 
+static uint16_t g_script_frame_mask = 0;   // set by script_tick() each frame
+
 static void update_scripted_input() {
     if (!g_scripted_input) return;
-    uint16_t next = 0;
+    uint16_t next = g_script_frame_mask;
     for (const InputEvent& event : g_input_events) {
         if (g_frame >= event.start && g_frame - event.start < event.duration)
             next |= event.mask;
@@ -339,9 +375,162 @@ static void dspreg_trace_tick() {
     if (g_dsp_log && (g_frame % 30)==0) fflush(g_dsp_log);
 }
 
+// ---- core options: layer isolation / color math / clipping ----
+// SNESREF_LAYERS=<hex>: bit0=BG1 bit1=BG2 bit2=BG3 bit3=BG4 bit4=OBJ (default
+// 1F). Mapped to snes9x's snes9x_layer_1..5 (layer_5 = sprites, see
+// Settings.BG_Forced bit 4). SNESREF_NO_COLORMATH=1 -> snes9x_gfx_transp
+// disabled; SNESREF_NO_CLIP=1 -> snes9x_gfx_clip disabled. Other keys are
+// left unanswered so the core uses its defaults.
+static unsigned g_layer_mask = 0x1f;
+static bool g_no_colormath = false;
+static bool g_no_clip = false;
+
+static bool env_flag(const char* name) {
+    const char* v = getenv(name);
+    return v && v[0] && v[0] != '0';
+}
+
+static bool parse_core_option_env() {
+    const char* v = getenv("SNESREF_LAYERS");
+    if (v && v[0]) {
+        char* end = nullptr;
+        unsigned long m = strtoul(v, &end, 16);
+        if (!end || *end || m > 0x1f) {
+            fprintf(stderr, "invalid SNESREF_LAYERS '%s' (expected hex 0..1F)\n", v);
+            return false;
+        }
+        g_layer_mask = (unsigned)m;
+    }
+    g_no_colormath = env_flag("SNESREF_NO_COLORMATH");
+    g_no_clip = env_flag("SNESREF_NO_CLIP");
+    return true;
+}
+
+// Every option the core declares is answered with its declared default (as
+// RetroArch does). Leaving options unanswered is NOT equivalent: snes9x's
+// libretro port only initializes some settings from GET_VARIABLE -- e.g.
+// Settings.SuperFXClockMultiplier stays 0 without an answer for
+// snes9x_overclock_superfx, which freezes the GSU (Yoshi's Island hangs at
+// frame 71 with the screen force-blanked).
+// SNESREF_CORE_OPTIONS="key=value;key=value" overrides any option generically.
+static std::map<std::string, std::string> g_opt_defaults;
+static std::map<std::string, std::string> g_opt_overrides;
+
+static void register_option_default(const char* key, const char* def) {
+    if (key && def) g_opt_defaults[key] = def;
+}
+
+static void register_legacy_variables(const retro_variable* vars) {
+    // "Description; default|other|..."
+    for (; vars && vars->key; vars++) {
+        const char* v = vars->value ? strchr(vars->value, ';') : nullptr;
+        if (!v) continue;
+        v++;
+        while (*v == ' ') v++;
+        std::string def(v, strcspn(v, "|"));
+        register_option_default(vars->key, def.c_str());
+    }
+}
+
+template<class Def> static void register_option_defs(const Def* d) {
+    for (; d && d->key; d++) {
+        const char* def = d->default_value;
+        bool found = false;
+        for (int i = 0; def && i < RETRO_NUM_CORE_OPTION_VALUES_MAX && d->values[i].value; i++)
+            if (!strcmp(d->values[i].value, def)) { found = true; break; }
+        if (!found) def = d->values[0].value;   // libretro: fall back to the first value
+        register_option_default(d->key, def);
+    }
+}
+
+static bool parse_core_options_override() {
+    const char* s = getenv("SNESREF_CORE_OPTIONS");
+    if (!s || !s[0]) return true;
+    std::string all(s);
+    size_t pos = 0;
+    while (pos <= all.size()) {
+        size_t end = all.find(';', pos);
+        if (end == std::string::npos) end = all.size();
+        std::string kv = all.substr(pos, end - pos);
+        if (!kv.empty()) {
+            size_t eq = kv.find('=');
+            if (eq == std::string::npos || eq == 0) {
+                fprintf(stderr, "invalid SNESREF_CORE_OPTIONS entry '%s' (expected key=value)\n", kv.c_str());
+                return false;
+            }
+            g_opt_overrides[kv.substr(0, eq)] = kv.substr(eq + 1);
+        }
+        pos = end + 1;
+    }
+    return true;
+}
+
+static bool answer_variable_impl(retro_variable* var);
+
+// Answers GET_VARIABLE and logs (once per key) every answer that differs
+// from the core's declared default, so an override is visibly in effect.
+static bool answer_variable(retro_variable* var) {
+    bool ok = answer_variable_impl(var);
+    if (ok && var && var->key && var->value) {
+        static std::map<std::string, std::string> logged;
+        auto d = g_opt_defaults.find(var->key);
+        if ((d == g_opt_defaults.end() || d->second != var->value) && logged[var->key] != var->value) {
+            logged[var->key] = var->value;
+            printf("core option %s=%s (default %s)\n", var->key, var->value,
+                   d == g_opt_defaults.end() ? "undeclared" : d->second.c_str());
+        }
+    }
+    return ok;
+}
+
+static bool answer_variable_impl(retro_variable* var) {
+    if (!var || !var->key) return false;
+    static const char* const kLayerKeys[5] = {
+        "snes9x_layer_1", "snes9x_layer_2", "snes9x_layer_3",
+        "snes9x_layer_4", "snes9x_layer_5" };
+    for (int i = 0; i < 5; i++) {
+        if (!strcmp(var->key, kLayerKeys[i])) {
+            var->value = (g_layer_mask & (1u << i)) ? "enabled" : "disabled";
+            return true;
+        }
+    }
+    if (!strcmp(var->key, "snes9x_gfx_transp")) {
+        var->value = g_no_colormath ? "disabled" : "enabled";
+        return true;
+    }
+    if (!strcmp(var->key, "snes9x_gfx_clip")) {
+        var->value = g_no_clip ? "disabled" : "enabled";
+        return true;
+    }
+    auto o = g_opt_overrides.find(var->key);
+    if (o != g_opt_overrides.end()) { var->value = o->second.c_str(); return true; }
+    auto d = g_opt_defaults.find(var->key);
+    if (d != g_opt_defaults.end()) { var->value = d->second.c_str(); return true; }
+    return false;
+}
+
 // ---- libretro callbacks ----
 static bool cb_environment(unsigned cmd, void* data) {
     switch (cmd) {
+        case RETRO_ENVIRONMENT_GET_VARIABLE: return answer_variable((retro_variable*)data);
+        case RETRO_ENVIRONMENT_GET_CORE_OPTIONS_VERSION: *(unsigned*)data = 2; return true;
+        case RETRO_ENVIRONMENT_SET_VARIABLES:
+            register_legacy_variables((const retro_variable*)data); return true;
+        case RETRO_ENVIRONMENT_SET_CORE_OPTIONS:
+            register_option_defs((const retro_core_option_definition*)data); return true;
+        case RETRO_ENVIRONMENT_SET_CORE_OPTIONS_INTL: {
+            const retro_core_options_intl* in = (const retro_core_options_intl*)data;
+            if (in) register_option_defs((const retro_core_option_definition*)in->us);
+            return true; }
+        case RETRO_ENVIRONMENT_SET_CORE_OPTIONS_V2: {
+            const retro_core_options_v2* v2 = (const retro_core_options_v2*)data;
+            if (v2) register_option_defs((const retro_core_option_v2_definition*)v2->definitions);
+            return true; }
+        case RETRO_ENVIRONMENT_SET_CORE_OPTIONS_V2_INTL: {
+            const retro_core_options_v2_intl* in = (const retro_core_options_v2_intl*)data;
+            if (in && in->us) register_option_defs((const retro_core_option_v2_definition*)in->us->definitions);
+            return true; }
+        case RETRO_ENVIRONMENT_SET_CORE_OPTIONS_DISPLAY: return true;
         case RETRO_ENVIRONMENT_GET_CAN_DUPE: *(bool*)data = true; return true;
         case RETRO_ENVIRONMENT_SET_PIXEL_FORMAT: g_fmt = *(const retro_pixel_format*)data; return true;
         case RETRO_ENVIRONMENT_GET_SYSTEM_DIRECTORY: *(const char**)data = "."; return true;
@@ -415,8 +604,41 @@ static void maybe_dump_frame(const void* data, unsigned w, unsigned h, size_t pi
     }
     fclose(f);
 }
+// Last presented frame, converted to BGRX (for script `dump`). Kept as a copy
+// because the core's buffer is only valid during the callback.
+static std::vector<uint8_t> g_fb_bgrx;
+static unsigned g_fb_w = 0, g_fb_h = 0;
+static uint32_t g_fb_frame = 0;        // frame number (1-based retro_run) it came from
+static retro_pixel_format g_fb_src_fmt = RETRO_PIXEL_FORMAT_0RGB1555;
+
+static void capture_frame(const void* data, unsigned w, unsigned h, size_t pitch) {
+    g_fb_bgrx.resize((size_t)w * h * 4);
+    const unsigned char* p = (const unsigned char*)data;
+    for (unsigned y = 0; y < h; y++) {
+        const unsigned char* sr = p + (size_t)y * pitch;
+        unsigned char* dr = &g_fb_bgrx[(size_t)y * w * 4];
+        for (unsigned x = 0; x < w; x++) {
+            unsigned char B, G, R;
+            if (g_fmt == RETRO_PIXEL_FORMAT_XRGB8888) {
+                B = sr[x*4+0]; G = sr[x*4+1]; R = sr[x*4+2];
+            } else if (g_fmt == RETRO_PIXEL_FORMAT_RGB565) {
+                unsigned v = sr[x*2+0] | (sr[x*2+1] << 8);
+                unsigned r5=(v>>11)&0x1f, g6=(v>>5)&0x3f, b5=v&0x1f;
+                R=(unsigned char)((r5<<3)|(r5>>2)); G=(unsigned char)((g6<<2)|(g6>>4)); B=(unsigned char)((b5<<3)|(b5>>2));
+            } else {
+                unsigned v = sr[x*2+0] | (sr[x*2+1] << 8);
+                unsigned r5=(v>>10)&0x1f, g5=(v>>5)&0x1f, b5=v&0x1f;
+                R=(unsigned char)((r5<<3)|(r5>>2)); G=(unsigned char)((g5<<3)|(g5>>2)); B=(unsigned char)((b5<<3)|(b5>>2));
+            }
+            dr[x*4+0]=B; dr[x*4+1]=G; dr[x*4+2]=R; dr[x*4+3]=0;
+        }
+    }
+    g_fb_w = w; g_fb_h = h; g_fb_frame = g_frame + 1; g_fb_src_fmt = g_fmt;
+}
+
 static void cb_video(const void* data, unsigned w, unsigned h, size_t pitch) {
     if (data && w && h) {
+        capture_frame(data, w, h, pitch);
         maybe_dump_frame(data, w, h, pitch);
         if (g_headless) return;
         ensure_texture(w,h);
@@ -521,6 +743,433 @@ static int16_t cb_input_state(unsigned port, unsigned device, unsigned index, un
     return 0;
 }
 
+// ---- state dump (script `dump <tag>`) ----
+// Writes, into SNESREF_DUMP_DIR (default cwd), the state of the frame just
+// completed: <tag>.fb.bmp/.fb.bgrx/.wram.bin/.vram.bin/.sram.bin/.info.json,
+// plus (patched core only) .cgram.bin/.oam.bin/.regs.json/.ppuw.tsv.
+static const char* g_core_name = "?";
+static const char* g_core_version = "?";
+
+static const char* dump_dir() {
+    const char* d = getenv("SNESREF_DUMP_DIR");
+    return (d && d[0]) ? d : ".";
+}
+
+static bool write_file(const char* tag, const char* ext, const void* data, size_t n) {
+    char path[1024];
+    snprintf(path, sizeof path, "%s/%s.%s", dump_dir(), tag, ext);
+    FILE* f = fopen(path, "wb");
+    if (!f) { fprintf(stderr, "dump: cannot write %s\n", path); return false; }
+    bool ok = n == 0 || fwrite(data, 1, n, f) == n;
+    if (fclose(f) != 0) ok = false;
+    if (!ok) fprintf(stderr, "dump: short write %s\n", path);
+    return ok;
+}
+
+static bool write_bmp24(const char* tag) {
+    const unsigned w = g_fb_w, h = g_fb_h;
+    const unsigned row = (w * 3 + 3) & ~3u;
+    const uint32_t img = row * h, off = 54, fsz = off + img;
+    std::vector<uint8_t> b(fsz, 0);
+    auto le32 = [&](size_t o, uint32_t v) { b[o]=(uint8_t)v; b[o+1]=(uint8_t)(v>>8); b[o+2]=(uint8_t)(v>>16); b[o+3]=(uint8_t)(v>>24); };
+    auto le16 = [&](size_t o, uint16_t v) { b[o]=(uint8_t)v; b[o+1]=(uint8_t)(v>>8); };
+    b[0]='B'; b[1]='M'; le32(2, fsz); le32(10, off);
+    le32(14, 40); le32(18, w); le32(22, h); le16(26, 1); le16(28, 24); le32(34, img);
+    le32(38, 2835); le32(42, 2835);
+    for (unsigned y = 0; y < h; y++) {
+        const uint8_t* s = &g_fb_bgrx[(size_t)(h - 1 - y) * w * 4];   // bottom-up
+        uint8_t* d = &b[off + (size_t)y * row];
+        for (unsigned x = 0; x < w; x++) { d[x*3]=s[x*4]; d[x*3+1]=s[x*4+1]; d[x*3+2]=s[x*4+2]; }
+    }
+    return write_file(tag, "fb.bmp", b.data(), b.size());
+}
+
+static bool dump_memory(const char* tag, const char* ext, unsigned id, size_t* out_size) {
+    void* p = p_retro_get_memory_data(id);
+    size_t n = p_retro_get_memory_size(id);
+    if (out_size) *out_size = p ? n : 0;
+    if (!p || !n) { fprintf(stderr, "dump: core exposes no memory id %u (%s) -- skipped\n", id, ext); return false; }
+    return write_file(tag, ext, p, n);
+}
+
+static const char* fmt_name(retro_pixel_format f) {
+    switch (f) {
+        case RETRO_PIXEL_FORMAT_XRGB8888: return "XRGB8888";
+        case RETRO_PIXEL_FORMAT_RGB565:   return "RGB565";
+        default:                          return "0RGB1555";
+    }
+}
+
+static void dump_ppuw(const char* tag, uint32_t frame, long long* out_count, bool* out_truncated) {
+    *out_count = -1; *out_truncated = false;
+    if (!p_dbg_ppuw_head || !p_dbg_ppuw_read || !p_dbg_ppuw_entry_size || !p_dbg_ppuw_capacity) {
+        fprintf(stderr, "dump: core lacks snesref_dbg_ppuw_* -- %s.ppuw.tsv skipped\n", tag);
+        return;
+    }
+    if (p_dbg_ppuw_entry_size() != sizeof(SnesrefPpuwEntry)) {
+        fprintf(stderr, "dump: ppuw entry size mismatch (core %zu, frontend %zu) -- skipped\n",
+                p_dbg_ppuw_entry_size(), sizeof(SnesrefPpuwEntry));
+        return;
+    }
+    // Query the always-on ring backward from head for entries tagged `frame`.
+    const uint64_t head = p_dbg_ppuw_head();
+    const uint64_t cap = p_dbg_ppuw_capacity();
+    const uint64_t oldest = head > cap ? head - cap : 0;
+    std::vector<SnesrefPpuwEntry> chunk(65536), found;
+    uint64_t end = head;
+    bool done = false;
+    while (!done && end > oldest) {
+        uint64_t start = end > oldest + chunk.size() ? end - chunk.size() : oldest;
+        uint64_t first = 0;
+        size_t n = p_dbg_ppuw_read(start, (size_t)(end - start), chunk.data(), &first);
+        if (n == 0) break;
+        for (size_t i = n; i-- > 0;) {
+            const SnesrefPpuwEntry& e = chunk[i];
+            if (e.frame == frame) found.push_back(e);
+            else if (e.frame < frame) { done = true; break; }
+        }
+        end = first;
+    }
+    if (!done && !found.empty() && end <= oldest && oldest > 0) *out_truncated = true;
+    char path[1024];
+    snprintf(path, sizeof path, "%s/%s.ppuw.tsv", dump_dir(), tag);
+    FILE* f = fopen(path, "wb");
+    if (!f) { fprintf(stderr, "dump: cannot write %s\n", path); return; }
+    fprintf(f, "#frame\tvcounter\thcounter\taddr\tvalue\tsource\n");
+    if (*out_truncated) fprintf(f, "#truncated: ring evicted the start of this frame\n");
+    static const char* const kSrc[3] = { "cpu", "dma", "hdma" };
+    for (size_t i = found.size(); i-- > 0;) {
+        const SnesrefPpuwEntry& e = found[i];
+        fprintf(f, "%u\t%u\t%u\t%04X\t%02X\t%s\n", e.frame, e.vcounter, e.hcounter, e.addr, e.value,
+                e.source < 3 ? kSrc[e.source] : "?");
+    }
+    fclose(f);
+    *out_count = (long long)found.size();
+}
+
+static void do_dump(const char* tag) {
+    const uint32_t frame = g_frame;   // the frame just completed (1-based)
+    bool fb_ok = false;
+    if (g_fb_w && g_fb_h && !g_fb_bgrx.empty()) {
+        fb_ok = write_file(tag, "fb.bgrx", g_fb_bgrx.data(), g_fb_bgrx.size()) && write_bmp24(tag);
+        if (g_fb_frame != frame)
+            fprintf(stderr, "dump %s: framebuffer is from frame %u (core duped frame %u)\n", tag, g_fb_frame, frame);
+    } else {
+        fprintf(stderr, "dump %s: no video frame yet -- fb skipped\n", tag);
+    }
+    size_t wram_n = 0, vram_n = 0, sram_n = 0;
+    dump_memory(tag, "wram.bin", RETRO_MEMORY_SYSTEM_RAM, &wram_n);
+    dump_memory(tag, "vram.bin", RETRO_MEMORY_VIDEO_RAM, &vram_n);
+    dump_memory(tag, "sram.bin", RETRO_MEMORY_SAVE_RAM, &sram_n);
+
+    bool have_dbg = p_dbg_cgram && p_dbg_oam && p_dbg_regs_json;
+    if (have_dbg) {
+        uint8_t cg[512]; size_t n = p_dbg_cgram(cg, sizeof cg);
+        if (n == sizeof cg) write_file(tag, "cgram.bin", cg, n);
+        uint8_t oam[544]; n = p_dbg_oam(oam, sizeof oam);
+        if (n == sizeof oam) write_file(tag, "oam.bin", oam, n);
+        std::vector<char> js(1 << 16);
+        n = p_dbg_regs_json(js.data(), js.size());
+        if (n > js.size()) { js.resize(n); n = p_dbg_regs_json(js.data(), js.size()); }
+        if (n <= js.size()) write_file(tag, "regs.json", js.data(), n - 1);
+    } else {
+        fprintf(stderr, "dump %s: core lacks snesref_dbg_* exports -- cgram/oam/regs skipped\n", tag);
+    }
+    long long ppuw_n = -1; bool trunc = false;
+    dump_ppuw(tag, frame, &ppuw_n, &trunc);
+
+    char info[2048];
+    int len = snprintf(info, sizeof info,
+        "{\n\"tag\":\"%s\",\n\"frame\":%u,\n\"fb_frame\":%u,\n\"fb_width\":%u,\n\"fb_height\":%u,\n"
+        "\"fb_core_pixel_format\":\"%s\",\n\"fb_dump_format\":\"BGRX8888\",\n"
+        "\"core_name\":\"%s\",\n\"core_version\":\"%s\",\n\"snesref_dbg_version\":%u,\n"
+        "\"layer_mask\":\"%02X\",\n\"no_colormath\":%s,\n\"no_clip\":%s,\n"
+        "\"wram_size\":%zu,\n\"vram_size\":%zu,\n\"sram_size\":%zu,\n\"ppuw_entries\":%lld,\n\"ppuw_truncated\":%s\n}\n",
+        tag, frame, fb_ok ? g_fb_frame : 0, fb_ok ? g_fb_w : 0, fb_ok ? g_fb_h : 0, fmt_name(fb_ok ? g_fb_src_fmt : g_fmt),
+        g_core_name, g_core_version, p_dbg_version ? p_dbg_version() : 0,
+        g_layer_mask, g_no_colormath ? "true" : "false", g_no_clip ? "true" : "false",
+        wram_n, vram_n, sram_n, ppuw_n, trunc ? "true" : "false");
+    if (len > 0) write_file(tag, "info.json", info, (size_t)len < sizeof info ? (size_t)len : sizeof info - 1);
+    printf("script f=%u dump %s fb=%ux%u %s sram=%zu ppuw=%lld%s\n", frame, tag,
+           fb_ok ? g_fb_w : 0, fb_ok ? g_fb_h : 0, fmt_name(fb_ok ? g_fb_src_fmt : g_fmt), sram_n, ppuw_n,
+           trunc ? " (truncated)" : "");
+    fflush(stdout);
+}
+
+// ---- scene-keyed script (SNESREF_SCRIPT) ----
+// Grammar and per-frame semantics are shared with the recomp host
+// (runner/src/desktop/host_main.c TickScript) so one file drives both:
+//   wait N                     N idle frames, accumulated into the next command
+//   press <b[+b|,b...]> [N]    hold for N frames (default 1)
+//   poke <addr> <hex>          write WRAM bytes on one frame
+//   pokefor <addr> <hex> N     write WRAM bytes on N frames
+//   forcepoke <addr> <hex>     write WRAM bytes every frame from the next on
+//   loadstate N / reset        loadstate: ignored with a warning; reset: retro_reset
+//   until <addr> <op> <hex> [timeout]    op == or !=, 8-bit WRAM byte
+//   until16 <addr> <op> <hex> [timeout]  16-bit little-endian
+//   dump <tag>                 write state of the frame just completed
+//   quit                       exit 0
+// Hold-type commands (press/poke/pokefor/forcepoke/loadstate/reset) run for
+// their hold frames and are followed by ONE idle frame. until (when true),
+// dump and quit take zero frames; a false until costs one idle frame per
+// re-check. Timeout (default 36000 frames) -> error, exit code 3.
+enum ScriptOp { SC_PRESS, SC_POKE, SC_FORCEPOKE, SC_LOADSTATE, SC_RESET, SC_UNTIL, SC_DUMP, SC_QUIT };
+struct ScriptCmd {
+    ScriptOp op;
+    int line;
+    int wait;          // idle frames before this command
+    int hold;          // hold-type frame count
+    uint16_t mask;
+    uint32_t addr;
+    std::vector<uint8_t> bytes;
+    bool is16, ne;
+    uint32_t value;
+    long timeout;
+    std::string text;  // original command text for the log
+};
+static std::vector<ScriptCmd> g_script;
+static size_t g_sc_idx = 0;
+static int  g_sc_phase = 1;          // 1 = waiting, 0 = holding
+static long g_sc_counter = 0;
+static long g_sc_waited = 0;         // frames spent in a false until
+static bool g_sc_started = false;
+static bool g_sc_end_reported = false;
+static int  g_script_exit = -1;      // >=0 -> stop the run with this exit code
+static bool g_script_active = false;
+struct ForcePoke { uint32_t addr; std::vector<uint8_t> bytes; };
+static std::vector<ForcePoke> g_force_pokes;
+
+static bool parse_hex_u32(const char* s, uint32_t* out) {
+    if (s[0] == '$') s++;
+    else if (s[0] == '0' && (s[1] == 'x' || s[1] == 'X')) s += 2;
+    if (!*s) return false;
+    char* end = nullptr;
+    unsigned long v = strtoul(s, &end, 16);
+    if (!end || *end) return false;
+    *out = (uint32_t)v;
+    return true;
+}
+
+static bool parse_buttons(const char* s, uint16_t* out) {
+    uint16_t m = 0;
+    const char* p = s;
+    while (*p) {
+        size_t len = strcspn(p, "+,|");
+        char part[32];
+        if (len == 0 || len >= sizeof part) return false;
+        memcpy(part, p, len); part[len] = 0;
+        for (char* c = part; *c; c++) if (*c >= 'A' && *c <= 'Z') *c = (char)(*c - 'A' + 'a');
+        static const struct { const char* n; uint16_t b; } kB[] = {
+            {"b",0x001},{"y",0x002},{"select",0x004},{"start",0x008},{"up",0x010},{"down",0x020},
+            {"left",0x040},{"right",0x080},{"a",0x100},{"x",0x200},{"l",0x400},{"r",0x800} };
+        bool ok = false;
+        for (auto& k : kB) if (!strcmp(part, k.n)) { m |= k.b; ok = true; break; }
+        if (!ok) { fprintf(stderr, "script: unknown button '%s'\n", part); return false; }
+        p += len;
+        if (*p) p++;
+    }
+    *out = m;
+    return true;
+}
+
+static bool parse_hex_bytes(uint32_t addr, const char* hex, std::vector<uint8_t>* out) {
+    size_t n = strlen(hex);
+    if (n == 0 || (n & 1) || addr + n / 2 > 0x20000u) return false;
+    out->clear();
+    for (size_t i = 0; i < n; i += 2) {
+        char t[3] = { hex[i], hex[i+1], 0 };
+        char* end = nullptr;
+        unsigned long v = strtoul(t, &end, 16);
+        if (!end || *end) return false;
+        out->push_back((uint8_t)v);
+    }
+    return true;
+}
+
+static bool load_script(const char* path) {
+    FILE* f = fopen(path, "r");
+    if (!f) { fprintf(stderr, "script: cannot open '%s'\n", path); return false; }
+    char line[512];
+    int ln = 0, pending_wait = 0;
+    bool ok = true;
+    while (fgets(line, sizeof line, f)) {
+        ln++;
+        char* c = strchr(line, '#'); if (c) *c = 0;
+        char tok[5][256] = {};
+        int nt = sscanf(line, "%255s %255s %255s %255s %255s", tok[0], tok[1], tok[2], tok[3], tok[4]);
+        if (nt < 1) continue;
+        for (char* p = tok[0]; *p; p++) if (*p >= 'A' && *p <= 'Z') *p = (char)(*p - 'A' + 'a');
+        ScriptCmd e{};
+        e.line = ln; e.hold = 1; e.timeout = 36000;
+        { std::string t; for (int i = 0; i < nt; i++) { if (i) t += ' '; t += tok[i]; } e.text = t; }
+        const char* cmd = tok[0];
+        bool bad = false;
+        if (!strcmp(cmd, "wait")) {
+            int n = (nt >= 2) ? atoi(tok[1]) : 0;
+            if (n < 0) bad = true; else pending_wait += n;
+            if (!bad) continue;
+        } else if (!strcmp(cmd, "press")) {
+            e.op = SC_PRESS;
+            if (nt < 2 || !parse_buttons(tok[1], &e.mask)) bad = true;
+            if (nt >= 3) e.hold = atoi(tok[2]);
+            if (e.hold < 1) bad = true;
+        } else if (!strcmp(cmd, "poke") || !strcmp(cmd, "pokefor") || !strcmp(cmd, "forcepoke")) {
+            e.op = !strcmp(cmd, "forcepoke") ? SC_FORCEPOKE : SC_POKE;
+            if (nt < 3 || !parse_hex_u32(tok[1], &e.addr) || !parse_hex_bytes(e.addr, tok[2], &e.bytes)) bad = true;
+            if (!strcmp(cmd, "pokefor")) {
+                if (nt < 4) bad = true; else e.hold = atoi(tok[3]);
+                if (e.hold < 1) e.hold = 1;
+            }
+        } else if (!strcmp(cmd, "loadstate")) {
+            e.op = SC_LOADSTATE;
+        } else if (!strcmp(cmd, "reset")) {
+            e.op = SC_RESET;
+        } else if (!strcmp(cmd, "until") || !strcmp(cmd, "until16")) {
+            e.op = SC_UNTIL;
+            e.is16 = !strcmp(cmd, "until16");
+            if (nt < 4 || !parse_hex_u32(tok[1], &e.addr) || !parse_hex_u32(tok[3], &e.value)) bad = true;
+            else if (!strcmp(tok[2], "==")) e.ne = false;
+            else if (!strcmp(tok[2], "!=")) e.ne = true;
+            else bad = true;
+            if (!bad && e.addr + (e.is16 ? 2u : 1u) > 0x20000u) bad = true;
+            if (!bad && e.value > (e.is16 ? 0xffffu : 0xffu)) bad = true;
+            if (nt >= 5) { char* end = nullptr; e.timeout = strtol(tok[4], &end, 10); if (!end || *end || e.timeout < 0) bad = true; }
+        } else if (!strcmp(cmd, "dump")) {
+            e.op = SC_DUMP;
+            if (nt < 2) bad = true;
+            e.text = tok[1];
+            for (const char* p = tok[1]; *p; p++)
+                if (*p == '/' || *p == '\\' || *p == ':') bad = true;
+            if (!bad) e.text = std::string("dump ") + tok[1];
+        } else if (!strcmp(cmd, "quit")) {
+            e.op = SC_QUIT;
+        } else {
+            fprintf(stderr, "script %s:%d: unknown command '%s'\n", path, ln, cmd);
+            ok = false; continue;
+        }
+        if (bad) { fprintf(stderr, "script %s:%d: malformed '%s'\n", path, ln, e.text.c_str()); ok = false; continue; }
+        e.wait = pending_wait; pending_wait = 0;
+        g_script.push_back(std::move(e));
+    }
+    fclose(f);
+    if (!ok) return false;
+    if (pending_wait)
+        fprintf(stderr, "script: trailing 'wait %d' has no following command (ignored, as on the recomp host)\n", pending_wait);
+    g_sc_idx = 0; g_sc_phase = 1;
+    g_sc_counter = g_script.empty() ? 0 : g_script[0].wait;
+    g_script_active = true;
+    fprintf(stderr, "script: loaded %zu command(s) from %s\n", g_script.size(), path);
+    return true;
+}
+
+static void script_advance() {
+    g_sc_idx++;
+    g_sc_phase = 1; g_sc_waited = 0; g_sc_started = false;
+    g_sc_counter = g_sc_idx < g_script.size() ? g_script[g_sc_idx].wait : 0;
+}
+
+// Called at each frame boundary (before retro_run); returns this frame's mask.
+static uint16_t script_tick() {
+    uint8_t* ram = (uint8_t*)p_retro_get_memory_data(RETRO_MEMORY_SYSTEM_RAM);
+    size_t ram_n = p_retro_get_memory_size(RETRO_MEMORY_SYSTEM_RAM);
+    for (const ForcePoke& fp : g_force_pokes)
+        if (ram && fp.addr + fp.bytes.size() <= ram_n) memcpy(ram + fp.addr, fp.bytes.data(), fp.bytes.size());
+    for (;;) {
+        if (g_sc_idx >= g_script.size()) {
+            if (!g_sc_end_reported) {
+                g_sc_end_reported = true;
+                printf("script f=%u end\n", g_frame); fflush(stdout);
+            }
+            return 0;
+        }
+        ScriptCmd& c = g_script[g_sc_idx];
+        if (g_sc_phase == 1) {
+            if (g_sc_counter > 0) {
+                if (g_sc_counter == c.wait) { printf("script f=%u wait %d\n", g_frame, c.wait); fflush(stdout); }
+                g_sc_counter--;
+                return 0;
+            }
+            g_sc_phase = 0; g_sc_counter = c.hold; g_sc_started = false;
+        }
+        switch (c.op) {
+            case SC_UNTIL: {
+                bool ok = false;
+                uint32_t v = 0;
+                if (ram && c.addr + (c.is16 ? 2u : 1u) <= ram_n) {
+                    v = ram[c.addr] | (c.is16 ? (uint32_t)ram[c.addr + 1] << 8 : 0u);
+                    ok = c.ne ? (v != c.value) : (v == c.value);
+                }
+                if (ok) {
+                    printf("script f=%u %s ok (waited %ld)\n", g_frame, c.text.c_str(), g_sc_waited); fflush(stdout);
+                    script_advance();
+                    continue;
+                }
+                if (g_sc_waited >= c.timeout) {
+                    fprintf(stderr, "script f=%u %s TIMEOUT after %ld frames (value=%0*X)\n",
+                            g_frame, c.text.c_str(), g_sc_waited, c.is16 ? 4 : 2, v);
+                    printf("script f=%u %s TIMEOUT\n", g_frame, c.text.c_str()); fflush(stdout);
+                    g_script_exit = 3;
+                    return 0;
+                }
+                g_sc_waited++;
+                return 0;
+            }
+            case SC_DUMP:
+                do_dump(c.text.c_str() + 5);
+                script_advance();
+                continue;
+            case SC_QUIT:
+                printf("script f=%u quit\n", g_frame); fflush(stdout);
+                g_script_exit = 0;
+                return 0;
+            default: break;
+        }
+        // hold-type
+        if (g_sc_counter > 0) {
+            if (!g_sc_started) { g_sc_started = true; printf("script f=%u %s\n", g_frame, c.text.c_str()); fflush(stdout); }
+            g_sc_counter--;
+            switch (c.op) {
+                case SC_PRESS: return c.mask;
+                case SC_POKE:
+                    if (ram && c.addr + c.bytes.size() <= ram_n) memcpy(ram + c.addr, c.bytes.data(), c.bytes.size());
+                    return 0;
+                case SC_FORCEPOKE:
+                    g_force_pokes.push_back({ c.addr, c.bytes });
+                    return 0;
+                case SC_LOADSTATE:
+                    fprintf(stderr, "script f=%u: loadstate ignored by snesref (frames still consumed)\n", g_frame);
+                    return 0;
+                case SC_RESET:
+                    if (p_retro_reset) p_retro_reset();
+                    else fprintf(stderr, "script f=%u: core has no retro_reset\n", g_frame);
+                    return 0;
+                default: return 0;
+            }
+        }
+        script_advance();   // trailing idle frame after a hold-type command
+        return 0;
+    }
+}
+
+static bool load_sram_in() {
+    const char* path = getenv("SNESREF_SRAM_IN");
+    if (!path || !path[0]) return true;
+    void* p = p_retro_get_memory_data(RETRO_MEMORY_SAVE_RAM);
+    size_t n = p_retro_get_memory_size(RETRO_MEMORY_SAVE_RAM);
+    if (!p || !n) { fprintf(stderr, "SNESREF_SRAM_IN: core exposes no SAVE_RAM\n"); return false; }
+    FILE* f = fopen(path, "rb");
+    if (!f) { fprintf(stderr, "SNESREF_SRAM_IN: cannot open %s\n", path); return false; }
+    std::vector<uint8_t> buf(n, 0);
+    size_t got = fread(buf.data(), 1, n, f);
+    int extra = fgetc(f);
+    fclose(f);
+    if (got != n || extra != EOF)
+        fprintf(stderr, "SNESREF_SRAM_IN: file size differs from SAVE_RAM (%zu bytes); loaded %zu\n", n, got);
+    memcpy(p, buf.data(), got);
+    fprintf(stderr, "[memory] loaded %zu SRAM bytes from %s\n", got, path);
+    return true;
+}
+
 // ---- save state (9 slots): Shift+Fn = save slot n, Fn = load slot n ----
 static void slot_path(int slot, char* out, size_t n) { snprintf(out, n, "mmx_state_%d.bin", slot); }
 
@@ -560,6 +1209,12 @@ int main(int argc, char** argv) {
     g_headless = headless;
     { const char* input = getenv("SNESREF_INPUT_FILE");
       if (input && input[0] && !load_input_file(input)) return 6; }
+    { const char* script = getenv("SNESREF_SCRIPT");
+      if (script && script[0]) {
+          if (!load_script(script)) return 6;
+          g_scripted_input = true;
+      } }
+    if (!parse_core_option_env() || !parse_core_options_override()) return 6;
 
     g_core = core_open(corePath);
     if (!g_core) {
@@ -584,13 +1239,35 @@ int main(int argc, char** argv) {
     bind(p_retro_serialize,"retro_serialize"); bind(p_retro_unserialize,"retro_unserialize");
     bind(p_retro_get_memory_data,"retro_get_memory_data");
     bind(p_retro_get_memory_size,"retro_get_memory_size");
+    bind_opt(p_retro_reset,"retro_reset");
+    bind_opt(p_dbg_version,"snesref_dbg_version");
+    bind_opt(p_dbg_set_frame,"snesref_dbg_set_frame");
+    bind_opt(p_dbg_cgram,"snesref_dbg_cgram");
+    bind_opt(p_dbg_oam,"snesref_dbg_oam");
+    bind_opt(p_dbg_regs_json,"snesref_dbg_regs_json");
+    bind_opt(p_dbg_ppuw_entry_size,"snesref_dbg_ppuw_entry_size");
+    bind_opt(p_dbg_ppuw_capacity,"snesref_dbg_ppuw_capacity");
+    bind_opt(p_dbg_ppuw_head,"snesref_dbg_ppuw_head");
+    bind_opt(p_dbg_ppuw_read,"snesref_dbg_ppuw_read");
+    if (p_dbg_version)
+        printf("snesref debug exports: v%u, ppuw ring %zu entries\n", p_dbg_version(),
+               p_dbg_ppuw_capacity ? p_dbg_ppuw_capacity() : (size_t)0);
+    else
+        fprintf(stderr, "warning: core has no snesref_dbg_* exports (stock core); "
+                        "cgram/oam/regs/ppuw dumps will be skipped\n");
 
     p_retro_set_environment(cb_environment);
     p_retro_init();
 
     retro_system_info si; memset(&si,0,sizeof si); p_retro_get_system_info(&si);
-    printf("core: %s %s  need_fullpath=%d\n", si.library_name?si.library_name:"?",
-           si.library_version?si.library_version:"?", si.need_fullpath);
+    g_core_name = si.library_name ? si.library_name : "?";
+    g_core_version = si.library_version ? si.library_version : "?";
+    printf("core: %s %s  need_fullpath=%d\n", g_core_name, g_core_version, si.need_fullpath);
+    printf("layers=%02X no_colormath=%d no_clip=%d core_options=%zu declared, %zu overridden\n",
+           g_layer_mask, (int)g_no_colormath, (int)g_no_clip, g_opt_defaults.size(), g_opt_overrides.size());
+    for (auto& kv : g_opt_overrides)
+        if (!g_opt_defaults.count(kv.first))
+            fprintf(stderr, "warning: SNESREF_CORE_OPTIONS key '%s' is not declared by the core\n", kv.first.c_str());
 
     retro_game_info gi; memset(&gi,0,sizeof gi); gi.path=romPath;
     std::vector<uint8_t> rom;
@@ -607,6 +1284,11 @@ int main(int argc, char** argv) {
     p_retro_set_input_state(cb_input_state);
     if (!p_retro_load_game(&gi)) { fprintf(stderr,"retro_load_game failed\n"); return 4; }
     if (!initialize_system_ram()) return 7;
+    if (!load_sram_in()) return 7;
+    { size_t sn = p_retro_get_memory_size(RETRO_MEMORY_SAVE_RAM);
+      printf("memory: wram=%zu vram=%zu sram=%zu\n",
+             p_retro_get_memory_size(RETRO_MEMORY_SYSTEM_RAM),
+             p_retro_get_memory_size(RETRO_MEMORY_VIDEO_RAM), sn); }
     p_retro_set_controller_port_device(0, RETRO_DEVICE_JOYPAD);
 
     retro_system_av_info av; memset(&av,0,sizeof av); p_retro_get_system_av_info(&av);
@@ -672,7 +1354,17 @@ int main(int argc, char** argv) {
                 }
             }
         }
+        if (g_script_active) {
+            g_script_frame_mask = script_tick();
+            if (g_script_exit >= 0) break;
+            if (g_sc_idx >= g_script.size() && headless && quit_frames <= 0 && !getenv("SNESREF_FRAMES")) {
+                printf("script f=%u end of script without quit -- exiting (headless)\n", g_frame);
+                g_script_exit = 0;
+                break;
+            }
+        }
         update_scripted_input();
+        if (p_dbg_set_frame) p_dbg_set_frame(g_frame + 1);   // journal tag = this run's frame number
         p_retro_run();
         g_frame++;
         trace_tick();
@@ -707,5 +1399,6 @@ int main(int argc, char** argv) {
     wav_close();
     p_retro_unload_game(); p_retro_deinit();
     SDL_Quit(); core_close(g_core);
-    return 0;
+    fflush(stdout);
+    return g_script_exit > 0 ? g_script_exit : 0;
 }

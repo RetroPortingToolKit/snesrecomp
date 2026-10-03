@@ -32,6 +32,9 @@ static inline int  snes_netplay_rb_poll_admit(void) { return 0; }
 static inline void snes_netplay_rb_finish_frame(void) {}
 static inline void snes_netplay_rb_stage_local(uint16_t buttons) { (void)buttons; }
 static inline uint32_t snes_netplay_rb_sim_tick(void) { return 0; }
+static inline int  snes_netplay_rb_quiesced(void) { return 0; }
+static inline int  snes_netplay_rb_draining(void) { return 0; }
+static inline const char *snes_netplay_rb_refusal(void) { return NULL; }
 #endif
 #include "common_rtl.h"
 #include "common_cpu_infra.h"
@@ -123,6 +126,8 @@ void snes_netplay_set_sync_byte_hooks(SnesNetplayCaptureSyncBytes capture,
 #if !defined(SNESRECOMP_NET)
 
 int  snes_netplay_rollback_active(void) { return 0; }
+int  snes_netplay_quiesced(void) { return 0; }
+int  snes_netplay_draining(void) { return 0; }
 
 int  snes_netplay_active(void) { return 0; }
 int  snes_netplay_is_running(void) { return 0; }
@@ -173,6 +178,7 @@ static int g_return_to_lobby_stub;
 void snes_netplay_request_return_to_lobby(void) { g_return_to_lobby_stub = 1; }
 int  snes_netplay_return_to_lobby_requested(void) { return g_return_to_lobby_stub; }
 void snes_netplay_clear_return_to_lobby(void) { g_return_to_lobby_stub = 0; }
+const char *snes_netplay_refusal(void) { return NULL; }
 
 int  snes_netplay_is_host(void) { return 0; }
 int  snes_netplay_request_save(int slot)
@@ -461,6 +467,11 @@ static int resolve_use_ice(const SnesNetplayConfig *cfg)
     int in_motk_room = 0;
 
     if (cfg->transport == 2) return 0; /* force LAN */
+    /* Host relay (2026-10-01): the server launched transport "host" -- the
+     * host binds its advertised port and every guest dials it. That is the
+     * LAN transport (accept-first / hub), chosen by the server after each
+     * guest proved the path, so neither ICE nor the relay applies. */
+    if (cfg->transport_host) return 0;
 
     /* The lobby server owns the transport, and when it allocates a UDP input
      * relay it says so: op:"launch" carries relay_endpoint, both endpoints are
@@ -515,6 +526,21 @@ static int resolve_use_ice(const SnesNetplayConfig *cfg)
 int snes_netplay_rollback_active(void)
 {
     return g_np_rollback && g_np.active;
+}
+
+int snes_netplay_quiesced(void)
+{
+    return snes_netplay_rollback_active() && snes_netplay_rb_quiesced();
+}
+
+int snes_netplay_draining(void)
+{
+    return snes_netplay_rollback_active() && snes_netplay_rb_draining();
+}
+
+const char *snes_netplay_refusal(void)
+{
+    return snes_netplay_rollback_active() ? snes_netplay_rb_refusal() : NULL;
 }
 
 int snes_netplay_active(void)
@@ -904,7 +930,16 @@ int snes_netplay_start(const SnesNetplayConfig *cfg)
     }
 
     if (!use_ice) {
-        if (rnet_session_start_lan(g_np.session, cfg->bind_hostport, cfg->peer_hostport) != 0) {
+        /* Host relay with 3+ seats: the host is the hub (recomp-net fans the
+         * guests' rows out); every guest dials it. Two seats stay the plain
+         * pair (host accept-first). LAN rooms are two seats and unaffected. */
+        const int peer_empty = !cfg->peer_hostport || !cfg->peer_hostport[0];
+        const int use_hub = cfg->transport_host && rcfg.local_slot == 0 &&
+                            rcfg.slot_count >= 3 && peer_empty;
+        const int rc = use_hub
+            ? rnet_session_start_lan_hub(g_np.session, cfg->bind_hostport)
+            : rnet_session_start_lan(g_np.session, cfg->bind_hostport, cfg->peer_hostport);
+        if (rc != 0) {
             rnet_session_destroy(g_np.session);
             g_np.session = NULL;
             return -3;
@@ -1784,6 +1819,11 @@ int snes_netplay_poll_admit(void)
 
     np_pump_session();
     if (!rnet_session_is_running(g_np.session)) {
+        /* Rollback's coordinated stop must still be pumped here: a peer that
+         * drained first leaves, its BYE stops this session, and the driver
+         * finishes our drain from what is left in the queue. Returns STALL. */
+        if (g_np_rollback)
+            (void)snes_netplay_rb_poll_admit();
         snes_netplay_diag_tick();
         return 0;
     }

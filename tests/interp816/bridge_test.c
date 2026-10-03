@@ -40,6 +40,8 @@ static int      g_aot_double_rewrite;
 static int      g_aot_crosses_interp_owner;
 static int      g_aot_skips_interp_owner;
 static int      g_aot_deadline_unwind;
+static int      g_aot_nested_deadline;
+static int      g_after_nested_deadline;
 static int      g_aot_gap_walks_into_wait;
 static int      g_owner_target_result;
 static int      g_aot_tail_chain_probe;
@@ -74,6 +76,8 @@ void RtlApuLock(void) {}
 void RtlApuUnlock(void) {}
 
 void snes_refresh_charge(void) {}
+/* Per-frame NMI/IRQ tally (ppu_dma_trace.c in the real runner). */
+void ppudma_note_interrupt(int is_nmi) { (void)is_nmi; }
 uint32_t cpu_region_speed(uint32_t addr24) {
     return (uint32_t)snes_region_speed(addr24, g_memsel);
 }
@@ -91,6 +95,7 @@ uint8_t sdd1_read(Sdd1 *sdd1, uint16_t addr) {
 const char *g_last_recomp_func = "(none)";
 static const char *g_push_log[16];
 static int g_push_count = 0;
+static int g_interp_push_count = 0;
 static int g_push_depth = 0;
 static int g_pop_underflow = 0;
 /* Model the real push/pop on g_recomp_stack_top too (common_cpu_infra.c
@@ -100,6 +105,10 @@ static int g_pop_underflow = 0;
  * stub that never advanced the top, that whole branch was untestable and
  * S8d below could not fail. */
 static CpuState g_c;
+static void redirect_to_return(CpuState *cpu, uint32_t pc) {
+    (void)cpu; (void)pc;
+    interp_bridge_pre_opcode_redirect(0x008500);
+}
 void RecompStackPush(const char *name) {
     if (g_push_count < 16) g_push_log[g_push_count] = name;
     g_push_count++;
@@ -108,6 +117,10 @@ void RecompStackPush(const char *name) {
         g_cpu_entry_s[g_recomp_stack_top] = g_c.S;
         g_recomp_stack_top++;
     }
+}
+void RecompStackPushInterpreter(const char *name) {
+    ++g_interp_push_count;
+    RecompStackPush(name);
 }
 void RecompStackPop(void) {
     if (g_push_depth <= 0) g_pop_underflow = 1;
@@ -154,7 +167,7 @@ int cpu_dispatch_has_entry(CpuState *cpu, uint32 pc24) {
     (void)cpu;
     pc24 &= 0xFFFFFF;
     return pc24 == FAKE_AOT ||
-           ((g_aot_double_rewrite || g_aot_crosses_interp_owner) &&
+           ((g_aot_double_rewrite || g_aot_crosses_interp_owner || g_aot_nested_deadline) &&
             pc24 == FAKE_AOT_2);
 }
 static int g_abandon_called;
@@ -181,6 +194,22 @@ RecompReturn cpu_dispatch_pc(CpuState *cpu, uint32 pc24, uint16 miss_restore) {
 RecompReturn cpu_dispatch_pc_paired(CpuState *cpu, uint32 pc24,
                                     uint8 frame_size) {
     cpu->host_return_valid = frame_size;
+    if (g_aot_nested_deadline && pc24 == FAKE_AOT) {
+        RecompReturn result = interp_tier_dispatch_balanced(
+            cpu, 0x008300, FAKE_AOT, cpu->S, frame_size, false);
+        if (result != RECOMP_RETURN_NORMAL) return result;
+        /* This continuation must never run after the inner deadline. */
+        ++g_after_nested_deadline;
+        cpu->A = 0xdead;
+        if (interp_bridge_lle_master_deadline_reached(cpu))
+            return interp_bridge_lle_yield_unwind(cpu, 0x008104);
+        return result;
+    }
+    if (g_aot_nested_deadline && pc24 == FAKE_AOT_2) {
+        cpu->master_cycles = 200;
+        if (interp_bridge_lle_master_deadline_reached(cpu))
+            return interp_bridge_lle_yield_unwind(cpu, FAKE_AOT_2);
+    }
     if (g_aot_skips_interp_owner && (pc24 & 0xFFFFFF) == FAKE_AOT) {
         /* Model interpreter outer -> interpreter inner -> compiled root ->
          * compiled child. The child manually discards the generated child and
@@ -208,7 +237,7 @@ RecompReturn cpu_dispatch_pc_paired(CpuState *cpu, uint32 pc24,
          * into the program's cooperative wait primitive. */
         g_aot_called++;
         return interp_tier_dispatch_balanced(cpu, 0x008300, 0x008000,
-                                             cpu->S, frame_size);
+                                             cpu->S, frame_size, false);
     }
     if (g_aot_deadline_unwind && (pc24 & 0xFFFFFF) == FAKE_AOT) {
         g_aot_called++;
@@ -428,6 +457,7 @@ int main(void) {
       load(0x8000, c, sizeof c);
       cpu_push_jsr_return_frame(&g_c);
       g_push_count = 0; g_push_depth = 0; g_pop_underflow = 0;
+      g_interp_push_count = 0;
       const char *func_before = g_last_recomp_func;
       int rc = interp_bridge_run(&g_c, 0x008000);
       printf("S2 pure interp routine\n");
@@ -439,6 +469,8 @@ int main(void) {
        * on exit, and restored g_last_recomp_func. */
       CHECK(g_push_count >= 1, "push_count=%d exp >=1 (interp scope pushed)",
             g_push_count);
+      CHECK(g_interp_push_count == g_push_count,
+            "interpreter attribution must use observer scopes");
       CHECK(g_push_count >= 1 && g_push_log[0] &&
             strcmp(g_push_log[0], "interp@$008000") == 0,
             "pushed name '%s' exp 'interp@$008000'",
@@ -488,7 +520,7 @@ int main(void) {
       cpu_push_jsr_return_frame(&g_c);       /* inherited caller frame (hrv=2) */
       uint16 entry_s = g_c.S;                /* function entry S = after caller's push */
       RecompReturn r = interp_tier_dispatch_balanced(&g_c, 0x008000, 0x00C0DE,
-                                                     entry_s, 2);
+                                                     entry_s, 2, false);
       printf("S5 interp_tier_dispatch_balanced (clean -> interpret, no abandon)\n");
       CHECK(r == RECOMP_RETURN_NORMAL, "r=%d exp NORMAL", (int)r);
       CHECK((g_c.A & 0xFF) == 0x0C, "A.lo=%02X exp 0C (interpreted)", g_c.A & 0xFF);
@@ -507,7 +539,7 @@ int main(void) {
       cpu_push_jsr_return_frame(&g_c);       /* current function's frame */
       uint16 entry_s = g_c.S;
       RecompReturn r = interp_tier_dispatch_balanced(&g_c, 0x008000, 0x00C0DE,
-                                                     entry_s, 2);
+                                                     entry_s, 2, false);
       printf("S5b balanced tail propagates interpreted non-local return\n");
       CHECK(r == RECOMP_RETURN_SKIP_1, "r=%d exp SKIP_1", (int)r);
       CHECK(g_abandon_called == 0, "abandon_called=%d exp 0 (clean interp)", g_abandon_called);
@@ -755,6 +787,49 @@ int main(void) {
             (unsigned)interp_bridge_lle_resume_pc());
       g_aot_gap_walks_into_wait = 0; }
 
+    /* S8f: a secondary counter wait inside nested fallback must unwind just
+     * like the primary scheduler wait. Model SM's PHP; SEP; LDA counter;
+     * CMP counter; BEQ; PLP, with both operand widths. Resume after a host
+     * counter update and prove the real epilogue and caller execute once. */
+    for (int wide = 0; wide < 2; ++wide) {
+      memset(RAM, 0, MEMSZ); init_cpu(); g_aot_called = 0; g_abandon_called = 0;
+      g_c.emulation = 0;
+      g_aot_gap_walks_into_wait = 1;
+      uint8_t scheduler[] = {
+          0x22,0x00,0x81,0x00,                 /* JSL fake compiled root */
+          0xA9,0x5A, 0x85,0x21,               /* observable continuation */
+          0xAD,0x20,0x00, 0xD0,0xFB            /* primary wait */
+      };
+      uint8_t gap[] = {
+          0x08, 0xE2,0x20,                    /* PHP; SEP #$20 */
+          0xAD,0x10,0x00,                    /* LDA counter */
+          0xCD,0x10,0x00, 0xF0,0xFB,         /* CMP counter; BEQ CMP */
+          0x28, 0x6B                         /* PLP; RTL */
+      };
+      if (wide) gap[1] = 0xC2;                /* REP #$20 */
+      load(0x8000, scheduler, sizeof scheduler);
+      load(0x8300, gap, sizeof gap);
+      RAM[0x10] = 0x34; RAM[0x11] = 0x12;
+      const uint8_t original_p = g_c.P;
+      int rc = interp_bridge_run_loop(&g_c, 0x008000, 0x008008, 0x20, 0);
+      printf("S8f nested %d-bit counter wait preserves guest continuation\n", wide ? 16 : 8);
+      CHECK(rc == 1 && !g_abandon_called, "counter wait must yield without abandon");
+      CHECK(interp_bridge_lle_resume_pc() == 0x008306,
+            "resume=$%06X exp $008306", (unsigned)interp_bridge_lle_resume_pc());
+      CHECK(g_c.S == 0x01FB && RAM[0x21] == 0,
+            "guest JSL/PHP retained, caller not yet executed: S=%04X", g_c.S);
+      CHECK(RAM[0x01FC] == original_p, "PHP must retain original status");
+      RAM[wide ? 0x11 : 0x10]++;              /* asynchronous counter change */
+      rc = interp_bridge_run_loop(&g_c, interp_bridge_lle_resume_pc(),
+                                   0x008008, 0x20, 0);
+      CHECK(rc == 1 && g_c.S == 0x01FF && RAM[0x21] == 0x5A,
+            "counter change must resume real PLP/RTL and caller: S=%04X", g_c.S);
+      CHECK((g_c.P & 0x30) == (original_p & 0x30), "PLP restores widths");
+      CHECK(g_aot_called == 1 && g_abandon_called == 0,
+            "nested AOT body must not be re-entered or abandoned");
+      g_aot_gap_walks_into_wait = 0;
+    }
+
     /* S8b: an AOT root reached from the LLE scheduler can non-locally return
      * through its own compiled host frame while still landing normally in the
      * interpreted scheduler. SKIP_1 is consumed at that mixed-tier boundary;
@@ -806,6 +881,30 @@ int main(void) {
             (unsigned)interp_bridge_lle_resume_pc());
       interp_bridge_set_master_deadline(0);
       g_aot_deadline_unwind = 0; }
+
+    /* A deadline inside scheduler -> AOT -> gap -> AOT belongs to the host,
+     * not the nested gap's immediate bounce owner. Retain PHP/JSL and resume
+     * the exact inner PC before any outer compiled continuation executes. */
+    { memset(RAM, 0, MEMSZ); init_cpu();
+      g_aot_nested_deadline = 1; g_after_nested_deadline = 0;
+      uint8_t scheduler[] = {0x22,0x00,0x81,0x00,0xa9,0x5a,0xad,0x20,0x00,0xd0,0xfb};
+      uint8_t nested[] = {0x08,0x22,0x00,0x82,0x00,0x28,0x6b};
+      load(0x8000,scheduler,sizeof scheduler);load(0x8300,nested,sizeof nested);
+      RAM[FAKE_AOT_2]=0x6b;
+      interp_bridge_set_master_deadline(100);
+      int rc=interp_bridge_run_loop(&g_c,0x8000,0x8006,0x20,0);
+      uint32_t resume=interp_bridge_lle_resume_pc();
+      printf("S8g nested deadline preserves inner PC and guest stack\n");
+      CHECK(rc==1 && resume==FAKE_AOT_2,"rc=%d resume=%06X exp 1/008200",rc,resume);
+      CHECK(g_after_nested_deadline==0 && g_c.A==0,"outer continuation ran after deadline");
+      CHECK(g_c.S==0x1f8,"S=%04X exp 01F8 (both JSLs and PHP retained)",g_c.S);
+      interp_bridge_set_master_deadline(0);g_aot_nested_deadline=0;
+      if(resume==FAKE_AOT_2) {
+        rc=interp_bridge_run_loop(&g_c,resume,0x8006,0x20,0);
+        CHECK(rc==1 && g_c.S==0x1ff && (g_c.A&255)==0x5a,
+              "resumed RTL/PLP/RTL must restore stack and reach caller");
+      }
+    }
 
     /* S9: the same rewrite below the paired AOT root belongs to a compiled
      * ancestor, not directly to the scheduler interpreter.  Finish that
@@ -940,7 +1039,65 @@ int main(void) {
       CHECK(g_c.S == 0x01FF,
             "S=%04X exp 01FF (inner JSR and outer JSL consumed)", g_c.S); }
 
-    /* S14: composition is ordered/idempotent; redirection stops old-PC hooks
+    /* S14: redirecting an ordinary instruction or a call directly to RTS
+     * must decode RTS anew and consume exactly the inherited return frame. */
+    for (unsigned i = 0; i < 2; ++i) {
+      memset(RAM, 0, MEMSZ); init_cpu(); g_aot_called = 0;
+      uint8_t c[] = {i ? 0x20 : 0xA9, 0x00, 0x81, 0x60};
+      load(0x8400, c, sizeof c); RAM[0x8500] = 0x60;
+      cpu_push_jsr_return_frame(&g_c);
+      interp_bridge_set_pre_opcode_hook(0x008400, redirect_to_return);
+      int rc = interp_bridge_run(&g_c, 0x008400);
+      interp_bridge_set_pre_opcode_hook(0, NULL);
+      printf("S14 hook redirects %s to terminal RTS\n", i ? "JSR" : "LDA");
+      CHECK(rc == 1 && g_c.S == 0x01FF, "rc=%d S=%04X", rc, g_c.S);
+      CHECK(g_aot_called == 0, "abandoned call dispatched %d times", g_aot_called);
+    }
+    /* Explicit capture semantics survive a generated low-bank mirror and
+     * distinguish an ordinary continuation whose entry equals its site. */
+    for (unsigned tail = 0; tail < 2; ++tail) {
+      memset(RAM, 0, MEMSZ); init_cpu(); g_post_return_skip = 0;
+      g_c.emulation = 0; g_c.PB = 0xA6; cpu_mirrors_to_p(&g_c);
+      uint8_t jump[] = {0xDC,0x00,0x10}; /* JML [$1000] */
+      uint8_t body[] = {0xA9,0x07,0x60}; /* LDA #7 ; RTS */
+      load(0xA69000, jump, sizeof jump); load(0xA69100, body, sizeof body);
+      RAM[0x1000] = 0x00; RAM[0x1001] = 0x91; RAM[0x1002] = 0xA6;
+      cpu_push_jsr_return_frame(&g_c);
+      RecompReturn r = tail
+          ? interp_tier_dispatch_tail_ex(&g_c, 0xA69000, 0x269000, g_c.S, 2, true)
+          : interp_tier_dispatch_balanced(&g_c, 0xA69000, 0x269000, g_c.S, 2, true);
+      CHECK(r == RECOMP_RETURN_NORMAL && g_c.S == 0x01FF && g_c.A == 7,
+            "mirrored indirect tail=%u r=%d S=%04X A=%04X", tail, r, g_c.S, g_c.A);
+    }
+    { memset(RAM, 0, MEMSZ); init_cpu(); g_post_return_skip = 0;
+      g_c.emulation = 0; g_c.PB = 0xA6; cpu_mirrors_to_p(&g_c);
+      uint8_t body[] = {0xA9,0x07,0x60};
+      load(0xA69200, body, sizeof body); cpu_push_jsr_return_frame(&g_c);
+      RecompReturn r = interp_tier_dispatch_balanced(
+          &g_c, 0xA69200, 0xA69200, g_c.S, 2, false);
+      CHECK(r == RECOMP_RETURN_NORMAL && g_c.S == 0x01FF && g_c.A == 7,
+            "ordinary continuation r=%d S=%04X A=%04X", r, g_c.S, g_c.A);
+    }
+    tier2_capture_flush();
+    { FILE *f = fopen(journal, "rb"); char line[8192];
+      int jump = 0, continuation = 0, false_target = 0;
+      while (f && fgets(line, sizeof line, f)) {
+        if (strstr(line, "\"site_pc24\":\"0xA69000\"") &&
+            strstr(line, "\"target_pc24\":\"0xA69100\"") &&
+            strstr(line, "\"site_kind\":\"indirect_goto\"") &&
+            strstr(line, "\"completed_hits\":1")) jump = 1;
+        if (strstr(line, "\"site_pc24\":\"0xA69200\"") &&
+            strstr(line, "\"target_pc24\":\"0xA69200\"") &&
+            strstr(line, "\"site_kind\":\"indirect_dispatch\"") &&
+            strstr(line, "\"completed_hits\":1")) continuation = 1;
+        if (strstr(line, "\"target_pc24\":\"0xA69202\"")) false_target = 1;
+      }
+      if (f) fclose(f);
+      CHECK(jump, "journal must retain live jump PC and resolved destination");
+      CHECK(continuation, "journal must retain ordinary continuation entry");
+      CHECK(!false_target, "first instruction fall-through is not a discovered entry");
+    }
+    /* S15: composition is ordered/idempotent; redirection stops old-PC hooks
      * and classifies the destination opcode, including its return boundary. */
     { memset(RAM,0,MEMSZ);init_cpu();g_aot_called=0;
       interp_bridge_set_pre_opcode_hook(0,NULL);
@@ -964,7 +1121,6 @@ int main(void) {
       CHECK(rc==1 && g_c.S==0x01ff,"redirected RTS is classified as return");
       interp_bridge_set_pre_opcode_hook(0,NULL);
     }
-
     printf("\n==== interp_bridge Phase-1: %d/%d checks passed ====\n", g_check - g_fail, g_check);
     if (g_fail) { printf("RESULT: FAIL (%d)\n", g_fail); return 1; }
     tier2_capture_close();

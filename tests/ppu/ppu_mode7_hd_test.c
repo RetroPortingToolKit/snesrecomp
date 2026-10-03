@@ -198,12 +198,71 @@ static void test_sampler(void) {
   CHECK(fabs(t.origin_x - 290.0 / 256) < 1e-12);
   CHECK(SnesMode7HdSign13(0x1fff) == -1);
 }
+static void test_bounded_sampler(void) {
+  setup();
+  for (unsigned i = 0; i < 0x8000; ++i) p.vram[i] = (uint16_t)(i * 251u + i / 17u);
+  static const double coordinates[] = {-2147483646.75, -1073741824.25,
+      -1024.125, -1.5, -1, -0.125, -0.0, 0.125, 7.999, 1023.999, 1024, 2147483646.75};
+  for (unsigned i = 0; i < countof(coordinates); ++i)
+    for (unsigned j = 0; j < countof(coordinates); ++j) {
+      double x = coordinates[i], y = coordinates[j];
+      CHECK(SnesMode7HdSpanFits(x, y, x, y, INT_MAX));
+      int tx = SnesMode7HdFloorInt(x), ty = SnesMode7HdFloorInt(y);
+      CHECK(tx == floor(x) && ty == floor(y));
+      SnesMode7HdTexel texel = {floor(x), floor(y)};
+      for (unsigned control = 0; control < 256; control += 64)
+        for (int tile = -1; tile <= 257; tile += 129)
+          CHECK(SnesMode7HdFetchInt((uint8_t)control, p.vram, tx, ty, tile) ==
+                SnesMode7HdFetch((uint8_t)control, p.vram, texel, tile));
+    }
+  CHECK(!SnesMode7HdSpanFits(0, 0, INT_MAX, 0, INT_MAX));
+  CHECK(!SnesMode7HdSpanFits(INT_MIN, 0, 0, 0, INT_MAX));
+  CHECK(!SnesMode7HdSpanFits(0, 0, 0, 0, 0));
+  CHECK(!SnesMode7HdSpanFits(0, NAN, 1, 1, INT_MAX));
+  CHECK(!SnesMode7HdSpanFits(0, 0, INFINITY, 1, INT_MAX));
+  CHECK(!SnesMode7HdSpanFits(-1e100, 0, 1, 1, INT_MAX));
+  CHECK(!SnesMode7HdSpanFits(0, 0, 1024, 1, 1024));
+  /* Custom course tiles obey the same outside-map rules as the native map. */
+  CHECK(SnesMode7HdFetchInt(0x80, p.vram, -1, 0, 37) == 0);
+  CHECK(SnesMode7HdFetchInt(0xc0, p.vram, -1, 0, 37) == (p.vram[7] >> 8));
+  CHECK(SnesMode7HdFetchInt(0, p.vram, -1, 0, 37) == (p.vram[37*64+7] >> 8));
+}
+static void test_fractional_scanout(void) {
+  /* Compare the optimized scanout to the general scalar sampler at every
+   * fractional sample, including repeated texels across native columns,
+   * negative/large coordinates, flips and all three outside-map behaviors. */
+  static const unsigned controls[] = {0, 1, 2, 3, 0x80, 0xc0};
+  static const int slopes[] = {64, 257, -257, 32767};
+  for (unsigned control = 0; control < countof(controls); ++control)
+    for (unsigned slope = 0; slope < countof(slopes); ++slope)
+      for (unsigned scale = 2; scale <= 4; ++scale) {
+        setup(); PpuSetExtraSpace(&p, 16); bind(288, scale);
+        for (unsigned i = 0; i < 0x8000; ++i) p.vram[i] = (uint16_t)(i * 251u + i / 17u);
+        p.m7sel = (uint8_t)controls[control];
+        p.m7matrix[0] = (int16_t)slopes[slope]; p.m7matrix[2] = -129;
+        p.m7matrix[1] = 37; p.m7matrix[3] = 511;
+        p.m7matrix[4] = 0x1fff; p.m7matrix[5] = 1023;
+        for (unsigned line = 1; line <= HEIGHT; ++line) {
+          ppu_runLine(&p, (int)line);
+          SnesMode7HdTransform t = SnesMode7HdMakeTransform(p.m7matrix, p.m7sel, line);
+          for (unsigned sy = 0; sy < scale; ++sy)
+            for (unsigned x = 0; x < 288 * scale; ++x) {
+              double position = (int)(x / scale) - 16 + (double)(x % scale) / scale;
+              unsigned index = SnesMode7HdSample(&t, p.vram, position, (double)sy / scale);
+              CHECK(hd[1 + ((line-1)*scale+sy)*PITCH+x] == rgb(index));
+            }
+        }
+        check_guards(288, scale, HEIGHT);
+      }
+}
 int main(void) {
   test_detail_and_isolation();
   test_fallbacks_and_capacity();
   test_transparency_and_sprites();
   test_composition_and_raster_state();
   test_sampler();
-  puts("HD Mode 7: detail, isolation, bounds, fallbacks, sprites, raster state and 512 composition cases passed");
+  test_bounded_sampler();
+  test_fractional_scanout();
+  puts("HD Mode 7: detail, isolation, bounds, fallbacks, sprites, raster state, fractional scanout and 512 composition cases passed");
   return 0;
 }

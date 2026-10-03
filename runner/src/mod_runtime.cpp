@@ -1,4 +1,6 @@
 #include "mod_runtime.h"
+#include "content_variant.h"
+#include "snes/tier2_capture.h"
 
 #include "crc32.h"
 #include "sha256.h"
@@ -29,6 +31,7 @@ namespace {
 
 constexpr uint64_t kMaxArchiveBytes = 256ull * 1024ull * 1024ull;
 constexpr uint32_t kMaxArchiveFiles = 4096;
+constexpr const char* kCoveragePackage = "snesrecomp.diagnostics.coverage";
 constexpr const char* kMsu1ResourceIdentity = "snes.msu1.pack";
 
 enum class OptionType {
@@ -102,13 +105,46 @@ struct Resource {
     std::string format;
     std::string identity;
     std::string normalized_sha1;
+    std::string normalized_sha256;
+    std::string shared_key;
     std::string file_patterns;
     std::string file_description;
     uint64_t size = 0;
     bool required = true;
+    /* Engine-verified identity of the file's image (copier header stripped).
+     * Unlike normalized_sha1, which only a plugin may act on, this digest is
+     * checked by the runtime before any content variant runs the image. */
+    std::string sha256;
+};
+
+/* A content variant declared by a package: see content_variant.h. */
+struct VariantRow {
+    std::string feature_id;
+    std::string id;
+    std::string display_name;
+    std::string module_id;
+    std::string save_namespace;
+    std::string selector_group;
+    int64_t selector_order = 0;
+    bool has_selector_screen = false;
+    uint32_t selector_wram_addr = 0;
+    uint8_t selector_wram_value = 0;
+    std::string source_rom;          // [[external_rom]] id, "" = launched ROM
+    std::string patch;               // [[patch]] id, "" = none
+    std::vector<std::pair<uint32_t, uint8_t>> boot_pokes;
+    uint32_t boot_entry = 0;
+};
+
+/* An IPS/BPS applied in memory to a variant's verified source image. */
+struct PatchRow {
+    std::string feature_id;
+    std::string id;
+    std::string file;                // relative to the package version dir
+    std::string target_sha256;       // digest of the patched image
 };
 
 struct Package {
+    bool builtin_diagnostic = false; /* only constructed by the executable */
     uint32_t format_version = 0;
     std::string id;
     std::string version;
@@ -121,6 +157,8 @@ struct Package {
     std::vector<Feature> features;
     std::vector<Option> options;
     std::vector<Resource> resources;
+    std::vector<VariantRow> variants;
+    std::vector<PatchRow> patches;
 };
 
 struct FeatureSelection {
@@ -206,6 +244,9 @@ struct Runtime {
     std::string rom_sha256;
     std::map<std::string, std::map<std::string, Package>> packages;
     std::map<std::string, PackageSelection> selections;
+    std::map<std::string, PackageSelection> offline_selections;
+    bool temporary_selection = false;
+    std::map<std::string, std::string> shared_resources;
     Validation validation;
     Validation committed;
     std::string error;
@@ -397,6 +438,65 @@ bool resource_is_directory(const Resource& resource) {
     return resource.format == "directory" || resource.format == "folder";
 }
 
+bool parse_hex_u32(const std::string& text, uint32_t& out) {
+    std::string t = trim(text);
+    if (t.size() >= 2 && (t[0] == '"' || t[0] == '\'')) {
+        std::string inner;
+        if (!parse_string(t, inner)) return false;
+        t = trim(inner);
+    }
+    if (t.empty()) return false;
+    try {
+        size_t used = 0;
+        unsigned long long v = std::stoull(t, &used, 0);
+        if (used != t.size() || v > 0xFFFFFFFFull) return false;
+        out = (uint32_t)v;
+        return true;
+    } catch (...) {
+        return false;
+    }
+}
+
+/* "0x0100=0x08" -> (0x0100, 0x08). The address is a WRAM offset. */
+bool parse_wram_predicate(const std::string& text, uint32_t& addr, uint8_t& value) {
+    const size_t eq = text.find('=');
+    if (eq == std::string::npos) return false;
+    uint32_t a = 0, v = 0;
+    if (!parse_hex_u32(text.substr(0, eq), a) ||
+        !parse_hex_u32(text.substr(eq + 1), v))
+        return false;
+    if (a >= 0x20000u || v > 0xFFu) return false;
+    addr = a;
+    value = (uint8_t)v;
+    return true;
+}
+
+/* "0x7FFF00=0x02,0x7FFF01=0x00" -> 24-bit bus addresses and byte values. */
+bool parse_boot_pokes(const std::string& text,
+                      std::vector<std::pair<uint32_t, uint8_t>>& out) {
+    out.clear();
+    size_t start = 0;
+    while (start <= text.size()) {
+        size_t comma = text.find(',', start);
+        std::string item = trim(text.substr(
+            start, comma == std::string::npos ? std::string::npos : comma - start));
+        if (!item.empty()) {
+            const size_t eq = item.find('=');
+            if (eq == std::string::npos) return false;
+            uint32_t a = 0, v = 0;
+            if (!parse_hex_u32(item.substr(0, eq), a) ||
+                !parse_hex_u32(item.substr(eq + 1), v) ||
+                a > 0xFFFFFFu || v > 0xFFu)
+                return false;
+            out.emplace_back(a, (uint8_t)v);
+            if (out.size() > 8) return false;
+        }
+        if (comma == std::string::npos) break;
+        start = comma + 1;
+    }
+    return true;
+}
+
 bool read_manifest(const fs::path& path, Package& out, std::string* error) {
     std::ifstream file(path);
     if (!file) {
@@ -412,8 +512,12 @@ bool read_manifest(const fs::path& path, Package& out, std::string* error) {
         Choice,
         Plugin,
         Resource,
+        Variant,
+        Patch,
     };
     Section section = Section::Package;
+    VariantRow* variant = nullptr;
+    PatchRow* patch = nullptr;
     Target* target = nullptr;
     Feature* feature = nullptr;
     Option* option = nullptr;
@@ -457,6 +561,8 @@ bool read_manifest(const fs::path& path, Package& out, std::string* error) {
             option = nullptr;
             choice = nullptr;
             resource = nullptr;
+            variant = nullptr;
+            patch = nullptr;
             if (name == "target") {
                 section = Section::Target;
                 out.targets.emplace_back();
@@ -484,6 +590,14 @@ bool read_manifest(const fs::path& path, Package& out, std::string* error) {
                 section = Section::Resource;
                 out.resources.emplace_back();
                 resource = &out.resources.back();
+            } else if (name == "variant") {
+                section = Section::Variant;
+                out.variants.emplace_back();
+                variant = &out.variants.back();
+            } else if (name == "patch") {
+                section = Section::Patch;
+                out.patches.emplace_back();
+                patch = &out.patches.back();
             } else {
                 set_error(error, "unsupported manifest section [[" + name + "]]");
                 return false;
@@ -608,6 +722,9 @@ bool read_manifest(const fs::path& path, Package& out, std::string* error) {
                 else if (key == "format") parsed = string_field(resource->format);
                 else if (key == "identity") parsed = string_field(resource->identity);
                 else if (key == "normalized_sha1") parsed = string_field(resource->normalized_sha1);
+                else if (key == "sha256") parsed = string_field(resource->sha256);
+                else if (key == "normalized_sha256") parsed = string_field(resource->normalized_sha256);
+                else if (key == "shared_key") parsed = string_field(resource->shared_key);
                 else if (key == "file_patterns") parsed = string_field(resource->file_patterns);
                 else if (key == "file_description") parsed = string_field(resource->file_description);
                 else if (key == "size") {
@@ -617,6 +734,45 @@ bool read_manifest(const fs::path& path, Package& out, std::string* error) {
                     parsed = parse_bool(value, bool_value);
                     if (parsed) resource->required = bool_value;
                 } else known = false;
+                break;
+            case Section::Variant:
+                variant = out.variants.empty() ? nullptr : &out.variants.back();
+                if (!variant) parsed = false;
+                else if (key == "feature") parsed = string_field(variant->feature_id);
+                else if (key == "id") parsed = string_field(variant->id);
+                else if (key == "display_name") parsed = string_field(variant->display_name);
+                else if (key == "module") parsed = string_field(variant->module_id);
+                else if (key == "save_namespace") parsed = string_field(variant->save_namespace);
+                else if (key == "selector_group") parsed = string_field(variant->selector_group);
+                else if (key == "selector_order") {
+                    parsed = parse_int(value, int_value);
+                    if (parsed) variant->selector_order = int_value;
+                } else if (key == "selector_wram") {
+                    // "0x0100=0x08": the WRAM byte (offset from $7E0000) and
+                    // the value it holds on the screen where the picker shows.
+                    parsed = parse_string(value, string_value) &&
+                             parse_wram_predicate(string_value,
+                                                  variant->selector_wram_addr,
+                                                  variant->selector_wram_value);
+                    if (parsed) variant->has_selector_screen = true;
+                } else if (key == "source_rom") parsed = string_field(variant->source_rom);
+                else if (key == "patch") parsed = string_field(variant->patch);
+                else if (key == "boot_pokes") {
+                    parsed = parse_string(value, string_value) &&
+                             parse_boot_pokes(string_value, variant->boot_pokes);
+                } else if (key == "boot_entry") {
+                    parsed = parse_hex_u32(value, variant->boot_entry) &&
+                             variant->boot_entry <= 0xFFFFFFu;
+                } else known = false;
+                break;
+            case Section::Patch:
+                patch = out.patches.empty() ? nullptr : &out.patches.back();
+                if (!patch) parsed = false;
+                else if (key == "feature") parsed = string_field(patch->feature_id);
+                else if (key == "id") parsed = string_field(patch->id);
+                else if (key == "file") parsed = string_field(patch->file);
+                else if (key == "target_sha256") parsed = string_field(patch->target_sha256);
+                else known = false;
                 break;
         }
         if (!known || !parsed) {
@@ -669,6 +825,11 @@ bool read_manifest(const fs::path& path, Package& out, std::string* error) {
     }
     std::set<std::pair<std::string, std::string>> resource_ids;
     for (Resource& item : out.resources) {
+        if ((!item.shared_key.empty() && !valid_id(item.shared_key)) ||
+            (!item.normalized_sha256.empty() && !valid_sha256(item.normalized_sha256))) {
+            set_error(error, "manifest has an invalid shared resource key or sha256");
+            return false;
+        }
         if (!find_feature(out, item.feature_id) || !valid_id(item.id) ||
             item.label.empty() ||
             !resource_ids.insert({item.feature_id, item.id}).second) {
@@ -678,6 +839,10 @@ bool read_manifest(const fs::path& path, Package& out, std::string* error) {
         if (!item.normalized_sha1.empty() &&
             !valid_sha1(item.normalized_sha1)) {
             set_error(error, "manifest has an invalid resource sha1");
+            return false;
+        }
+        if (!item.sha256.empty() && !valid_sha256(item.sha256)) {
+            set_error(error, "manifest has an invalid resource sha256");
             return false;
         }
         if (item.format == "n64") {
@@ -690,6 +855,49 @@ bool read_manifest(const fs::path& path, Package& out, std::string* error) {
             item.file_patterns = "*";
         if (item.file_description.empty() && !resource_is_directory(item))
             item.file_description = "Owner resource";
+    }
+    std::set<std::pair<std::string, std::string>> patch_ids;
+    for (const PatchRow& item : out.patches) {
+        const bool escapes = item.file.empty() ||
+                             item.file.find("..") != std::string::npos ||
+                             item.file[0] == '/' || item.file[0] == '\\' ||
+                             item.file.find(':') != std::string::npos;
+        if (!find_feature(out, item.feature_id) || !valid_id(item.id) || escapes ||
+            !patch_ids.insert({item.feature_id, item.id}).second) {
+            set_error(error, "manifest has an invalid patch");
+            return false;
+        }
+        if (!item.target_sha256.empty() && !valid_sha256(item.target_sha256)) {
+            set_error(error, "manifest has an invalid patch target_sha256");
+            return false;
+        }
+    }
+    std::set<std::string> variant_ids;
+    for (VariantRow& item : out.variants) {
+        if (!find_feature(out, item.feature_id) || !valid_id(item.id) ||
+            item.module_id.empty() || !variant_ids.insert(item.id).second) {
+            set_error(error, "manifest has an invalid or duplicate variant");
+            return false;
+        }
+        if (item.display_name.empty()) item.display_name = item.id;
+        if (item.save_namespace.empty()) item.save_namespace = item.id;
+        if (!item.source_rom.empty() &&
+            !find_resource(out, item.feature_id, item.source_rom)) {
+            set_error(error, "variant '" + item.id +
+                             "' names a source_rom that is not an external_rom "
+                             "of its feature");
+            return false;
+        }
+        if (!item.patch.empty() &&
+            std::none_of(out.patches.begin(), out.patches.end(),
+                         [&](const PatchRow& p) {
+                             return p.feature_id == item.feature_id &&
+                                    p.id == item.patch;
+                         })) {
+            set_error(error, "variant '" + item.id +
+                             "' names a patch that is not declared by its feature");
+            return false;
+        }
     }
     return true;
 }
@@ -722,7 +930,39 @@ bool feature_enabled(Runtime& runtime, const Package& package,
     FeatureSelection& selection = package_state.features[feature.id];
     if (!selection.has_enabled)
         selection.enabled = feature.default_enabled;
+    if (package.builtin_diagnostic) {
+        tier2_capture_set_selection(selection.enabled);
+        return tier2_capture_enabled() != 0;
+    }
     return selection.enabled;
+}
+
+/* Features claiming the same trusted plugin cannot run together (validate
+ * reports them as a conflict), so selecting one is a choice between them:
+ * enabling it deselects every other enabled claimant. */
+void deselect_plugin_rivals(Runtime& runtime, const Package& package,
+                            const Feature& feature) {
+    for (const auto& [id, versions] : runtime.packages) {
+        (void)versions;
+        const Package* other = selected_package(runtime, id);
+        if (!other) continue;
+        for (const Feature& rival : other->features) {
+            if (other->id == package.id && rival.id == feature.id) continue;
+            const bool shared = std::any_of(
+                rival.plugins.begin(), rival.plugins.end(),
+                [&](const std::string& plugin) {
+                    return std::find(feature.plugins.begin(),
+                                     feature.plugins.end(),
+                                     plugin) != feature.plugins.end();
+                });
+            if (!shared || !feature_enabled(runtime, *other, rival)) continue;
+            FeatureSelection& selection =
+                package_selection(runtime, *other).features[rival.id];
+            selection.enabled = false;
+            selection.has_enabled = true;
+            if (other->builtin_diagnostic) tier2_capture_set_selection(0);
+        }
+    }
 }
 
 /* Deterministic content digest of an installed package, memoised.
@@ -907,6 +1147,7 @@ bool claim_admissible(Runtime& runtime, const Package& package,
  */
 bool feature_exempt(Runtime& runtime, const Package& package,
                     const Feature& feature) {
+    if (package.builtin_diagnostic) return true;
     if (!claim_admissible(runtime, package, feature)) return false;
     return cosmetic_allowed(runtime, package);
 }
@@ -923,6 +1164,25 @@ std::string option_value(Runtime& runtime, const Package& package,
 std::string resource_path(Runtime& runtime, const Package& package,
                           const Feature& feature,
                           const Resource& resource) {
+    if (!resource.shared_key.empty()) {
+        const auto shared = runtime.shared_resources.find(resource.shared_key);
+        if (shared != runtime.shared_resources.end()) return shared->second;
+        /* Migrate a previously per-feature selection once. New edits and
+         * persistence have one canonical value, including an explicit clear. */
+        for (const auto& [id, versions] : runtime.packages) {
+            const Package* p = selected_package(runtime, id);
+            if (!p) continue;
+            for (const auto& r : p->resources) if (r.shared_key == resource.shared_key) {
+                const auto& paths = package_selection(runtime, *p).features[r.feature_id].resources;
+                const auto old = paths.find(r.id);
+                if (old != paths.end() && !old->second.empty()) {
+                    runtime.shared_resources[resource.shared_key] = old->second;
+                    return old->second;
+                }
+            }
+        }
+        return {};
+    }
     PackageSelection& package_state = package_selection(runtime, package);
     FeatureSelection& selection = package_state.features[feature.id];
     const auto value = selection.resources.find(resource.id);
@@ -930,6 +1190,7 @@ std::string resource_path(Runtime& runtime, const Package& package,
                                                 value->second;
 }
 
+bool sha256_file(const fs::path& path, std::string& out, std::string* error);
 bool validate_resource_file(const Resource& resource,
                             const std::string& path_text,
                             std::string* status) {
@@ -959,6 +1220,26 @@ bool validate_resource_file(const Resource& resource,
             if (status) *status = "File size does not match";
             return false;
         }
+    }
+    if (!resource.normalized_sha256.empty()) {
+        struct HashMemo { uintmax_t size; fs::file_time_type time; std::string hash; };
+        static std::map<std::string, HashMemo> memo;
+        const auto size = fs::file_size(path, ec);
+        if (ec || size > 64 * 1024 * 1024) { if (status) *status = "ROM size is invalid"; return false; }
+        const auto time = fs::last_write_time(path, ec);
+        if (ec) { if (status) *status = "Cannot read ROM"; return false; }
+        auto found = memo.find(path_text);
+        if (found == memo.end() || found->second.size != size || found->second.time != time) {
+            std::string hash, error;
+            if (!sha256_file(path, hash, &error)) { if (status) *status = "Cannot read ROM"; return false; }
+            found = memo.insert_or_assign(path_text, HashMemo{size,time,hash}).first;
+        }
+        if (found->second.hash != resource.normalized_sha256) {
+            if (status) *status = "Wrong ROM: select the original supported version";
+            return false;
+        }
+        if (status) *status = "ROM verified";
+        return true;
     }
     if (status) {
         *status = resource.normalized_sha1.empty()
@@ -1136,6 +1417,10 @@ bool scan(Runtime& runtime, std::string* error) {
                                  manifest.string());
                 return false;
             }
+            if (package.id == kCoveragePackage) {
+                set_error(error, "Coverage Capture is an engine-owned mod; it cannot be replaced by a package.");
+                return false;
+            }
             package.root = version_dir.path();
             runtime.packages[package.id][package.version] = std::move(package);
         }
@@ -1145,11 +1430,28 @@ bool scan(Runtime& runtime, std::string* error) {
         set_error(error, "cannot scan mods directory: " + ec.message());
         return false;
     }
+    Package diagnostic;
+    diagnostic.builtin_diagnostic = true;
+    diagnostic.id = kCoveragePackage;
+    diagnostic.version = "1.0.0";
+    diagnostic.name = "Developer diagnostics";
+    diagnostic.author = "snesrecomp";
+    diagnostic.description = "Local diagnostics shared by every SNES game.";
+    diagnostic.targets.push_back({runtime.game_id, runtime.rom_sha256});
+    Feature capture;
+    capture.id = "capture";
+    capture.name = "Coverage Capture";
+    capture.group = "Developer";
+    capture.description = "Record interpreted code and AOT candidates to local files. "
+                          "Checkpoints are saved automatically during play and on exit.";
+    diagnostic.features.push_back(capture);
+    runtime.packages[diagnostic.id][diagnostic.version] = std::move(diagnostic);
     return true;
 }
 
 bool load_state(Runtime& runtime, std::string* error) {
     runtime.selections.clear();
+    runtime.shared_resources.clear();
     const fs::path path = runtime.root / "state.toml";
     if (!fs::exists(path)) return true;
     std::ifstream file(path);
@@ -1157,7 +1459,7 @@ bool load_state(Runtime& runtime, std::string* error) {
         set_error(error, "cannot read mod state");
         return false;
     }
-    enum class Section { Root, Package, Feature, Values, Resource };
+    enum class Section { Root, Package, Feature, Values, Resource, SharedResource };
     Section section = Section::Root;
     std::string current_package;
     std::string current_feature;
@@ -1166,6 +1468,11 @@ bool load_state(Runtime& runtime, std::string* error) {
     while (std::getline(file, raw)) {
         const std::string line = trim(strip_comment(raw));
         if (line.empty()) continue;
+        if (line == "[[shared_resource]]") {
+            section = Section::SharedResource;
+            current_resource.clear();
+            continue;
+        }
         if (line == "[[package]]") {
             section = Section::Package;
             current_package.clear();
@@ -1229,6 +1536,12 @@ bool load_state(Runtime& runtime, std::string* error) {
                 .features[current_feature].values[key] = parsed;
             continue;
         }
+        if (section == Section::SharedResource) {
+            if (key == "id") parse_string(value, current_resource);
+            else if (key == "path" && !current_resource.empty() && parse_string(value, parsed))
+                runtime.shared_resources[current_resource] = parsed;
+            continue;
+        }
         if (section == Section::Resource) {
             if (key == "package_id" && parse_string(value, current_package)) {
                 runtime.selections[current_package];
@@ -1281,6 +1594,14 @@ std::string quote_toml(const std::string& value) {
 }
 
 bool save_state(Runtime& runtime, std::string* error) {
+    /* A lobby's plan lasts only for that session. Owner-selected ROM paths
+     * are still local durable preferences, never part of the network plan. */
+    auto saved = runtime.temporary_selection ? runtime.offline_selections : runtime.selections;
+    if (runtime.temporary_selection) {
+        for (const auto& [id, package] : runtime.selections)
+            for (const auto& [fid, feature] : package.features)
+                saved[id].features[fid].resources = feature.resources;
+    }
     std::error_code ec;
     fs::create_directories(runtime.root, ec);
     const fs::path temp = runtime.root / "state.toml.tmp";
@@ -1291,11 +1612,14 @@ bool save_state(Runtime& runtime, std::string* error) {
         return false;
     }
     file << "format_version = 1\n";
-    for (const auto& [package_id, selection] : runtime.selections) {
+    for (const auto& [key, path] : runtime.shared_resources)
+        file << "\n[[shared_resource]]\nid = " << quote_toml(key)
+             << "\npath = " << quote_toml(path) << "\n";
+    for (const auto& [package_id, selection] : saved) {
         file << "\n[[package]]\nid = " << quote_toml(package_id)
              << "\nversion = " << quote_toml(selection.version) << "\n";
     }
-    for (const auto& [package_id, selection] : runtime.selections) {
+    for (const auto& [package_id, selection] : saved) {
         for (const auto& [feature_id, feature] : selection.features) {
             file << "\n[[feature]]\npackage_id = " << quote_toml(package_id)
                  << "\nid = " << quote_toml(feature_id)
@@ -2047,14 +2371,22 @@ std::vector<FeatureRef> selected_features(Runtime& runtime) {
     return result;
 }
 
+std::vector<const Package*> visible_packages(Runtime& runtime) {
+    auto packages = selected_packages(runtime);
+    packages.erase(std::remove_if(packages.begin(), packages.end(), [](const Package* p) {
+        return p->builtin_diagnostic && !tier2_capture_exposed() && !tier2_capture_enabled();
+    }), packages.end());
+    return packages;
+}
+
 int provider_package_count(void*) {
-    return (int)selected_packages(state()).size();
+    return (int)visible_packages(state()).size();
 }
 
 int provider_package_get(void*, int index,
                          RecompLauncherCModPackage* out) {
     if (!out || index < 0) return 0;
-    const auto packages = selected_packages(state());
+    const auto packages = visible_packages(state());
     if ((size_t)index >= packages.size()) return 0;
     const Package& package = *packages[(size_t)index];
     std::memset(out, 0, sizeof(*out));
@@ -2064,7 +2396,7 @@ int provider_package_get(void*, int index,
     copy_text(out->author, package.author);
     copy_text(out->description, package.description);
     copy_text(out->license, package.license);
-    out->removable = 1;
+    out->removable = !package.builtin_diagnostic;
     out->option_count = 0;
     for (const Feature& feature : package.features) {
         if (feature_enabled(state(), package, feature)) out->enabled = 1;
@@ -2146,6 +2478,7 @@ int provider_remove(void*, const char* package_id,
                     const char* version) {
     if (!package_id || !version) return 0;
     const Package* selected = selected_package(state(), package_id);
+    if (selected && selected->builtin_diagnostic) return 0;
     if (selected && selected->version == version &&
         std::any_of(selected->features.begin(), selected->features.end(),
                     [&](const Feature& feature) {
@@ -2180,6 +2513,7 @@ int provider_enable(void*, const char* package_id, int enabled) {
             package_selection(state(), *package).features[feature.id];
         selection.enabled = enabled != 0;
         selection.has_enabled = true;
+        if (enabled) deselect_plugin_rivals(state(), *package, feature);
     }
     refresh_validation();
     state().error.clear();
@@ -2243,6 +2577,9 @@ int provider_feature_get(void*, int index,
     copy_text(out->description, feature.description);
     copy_text(out->group, feature.group);
     out->enabled = feature_enabled(state(), package, feature);
+    if (package.builtin_diagnostic) {
+        out->hidden = !tier2_capture_exposed();
+    }
     out->option_count = (int)std::count_if(
         package.options.begin(), package.options.end(),
         [&](const Option& option) {
@@ -2257,6 +2594,11 @@ int provider_feature_get(void*, int index,
         });
     copy_text(out->status, out->has_error ? "Needs attention" :
                    (out->enabled ? "Enabled" : "Disabled"));
+    if (package.builtin_diagnostic) {
+        std::string status = out->enabled ? "Capturing" : "Disabled";
+        status += " ("; status += tier2_capture_setting_source(); status += ")";
+        copy_text(out->status, status);
+    }
     return 1;
 }
 
@@ -2316,11 +2658,14 @@ int provider_feature_enable(void*, const char* package_id,
                             const char* feature_id, int enabled) {
     if (!package_id || !feature_id) return 0;
     const Package* package = selected_package(state(), package_id);
-    if (!package || !find_feature(*package, feature_id)) return 0;
+    const Feature* feature = package ? find_feature(*package, feature_id) : nullptr;
+    if (!feature) return 0;
     FeatureSelection& selection =
         package_selection(state(), *package).features[feature_id];
     selection.enabled = enabled != 0;
     selection.has_enabled = true;
+    if (package->builtin_diagnostic) tier2_capture_set_selection(enabled);
+    if (enabled) deselect_plugin_rivals(state(), *package, *feature);
     refresh_validation();
     state().error.clear();
     return 1;
@@ -2434,9 +2779,9 @@ int provider_feature_resource_set_path(void*, const char* package_id,
     if (!package || !find_feature(*package, feature_id) ||
         !find_resource(*package, feature_id, resource_id))
         return 0;
-    package_selection(state(), *package)
-        .features[feature_id]
-        .resources[resource_id] = path;
+    const Resource* resource = find_resource(*package, feature_id, resource_id);
+    if (!resource->shared_key.empty()) state().shared_resources[resource->shared_key] = path;
+    else package_selection(state(), *package).features[feature_id].resources[resource_id] = path;
     refresh_validation();
     state().error.clear();
     return 1;
@@ -2474,6 +2819,79 @@ RecompLauncherCModProvider provider = {
 };
 #endif
 
+bool hex_to_bytes(const std::string& hex, uint8_t* out, size_t out_len) {
+    if (hex.size() != out_len * 2) return false;
+    for (size_t i = 0; i < out_len; ++i) {
+        unsigned v = 0;
+        for (int k = 0; k < 2; ++k) {
+            const char c = hex[i * 2 + (size_t)k];
+            v <<= 4;
+            if (c >= '0' && c <= '9') v |= (unsigned)(c - '0');
+            else if (c >= 'a' && c <= 'f') v |= (unsigned)(c - 'a' + 10);
+            else if (c >= 'A' && c <= 'F') v |= (unsigned)(c - 'A' + 10);
+            else return false;
+        }
+        out[i] = (uint8_t)v;
+    }
+    return true;
+}
+
+void copy_c(char* dst, size_t cap, const std::string& src) {
+    std::snprintf(dst, cap, "%s", src.c_str());
+}
+
+/* Hand every package-declared [[variant]] to the content-variant registry.
+ * Availability (feature enabled, ROM selected and hashing right, patch
+ * applying) is the registry's job at refresh time; this only declares. */
+void publish_variants(Runtime& runtime) {
+    snes_variant_clear_declared();
+    for (const auto& [package_id, versions] : runtime.packages) {
+        const Package* package = selected_package(runtime, package_id);
+        if (!package) continue;
+        for (const VariantRow& row : package->variants) {
+            SnesVariantDecl decl;
+            std::memset(&decl, 0, sizeof(decl));
+            copy_c(decl.id, sizeof(decl.id), row.id);
+            copy_c(decl.display_name, sizeof(decl.display_name), row.display_name);
+            copy_c(decl.module_id, sizeof(decl.module_id), row.module_id);
+            copy_c(decl.save_namespace, sizeof(decl.save_namespace), row.save_namespace);
+            copy_c(decl.selector_group, sizeof(decl.selector_group), row.selector_group);
+            decl.selector_order = (int)row.selector_order;
+            decl.has_selector_screen = row.has_selector_screen ? 1 : 0;
+            decl.selector_wram_addr = row.selector_wram_addr;
+            decl.selector_wram_value = row.selector_wram_value;
+            copy_c(decl.package_id, sizeof(decl.package_id), package->id);
+            copy_c(decl.feature_id, sizeof(decl.feature_id), row.feature_id);
+            copy_c(decl.source_rom_id, sizeof(decl.source_rom_id), row.source_rom);
+            if (!row.source_rom.empty()) {
+                const Resource* res = find_resource(*package, row.feature_id, row.source_rom);
+                if (res && !res->sha256.empty() &&
+                    hex_to_bytes(res->sha256, decl.source_sha256, 32))
+                    decl.has_source_sha256 = 1;
+            }
+            if (!row.patch.empty()) {
+                for (const PatchRow& patch : package->patches) {
+                    if (patch.feature_id != row.feature_id || patch.id != row.patch) continue;
+                    const fs::path path = package->root / patch.file;
+                    copy_c(decl.patch_path, sizeof(decl.patch_path), path.string());
+                    if (!patch.target_sha256.empty() &&
+                        hex_to_bytes(patch.target_sha256, decl.patch_target_sha256, 32))
+                        decl.has_patch_target_sha256 = 1;
+                }
+            }
+            decl.boot.poke_count = 0;
+            for (const auto& [addr, value] : row.boot_pokes) {
+                if (decl.boot.poke_count >= SNES_BOOT_POLICY_MAX_POKES) break;
+                decl.boot.pokes[decl.boot.poke_count].addr24 = addr;
+                decl.boot.pokes[decl.boot.poke_count].value = value;
+                decl.boot.poke_count++;
+            }
+            decl.boot.entry_pc24 = row.boot_entry;
+            snes_variant_register_declared(&decl);
+        }
+    }
+}
+
 }  // namespace
 
 bool mod_runtime_initialize(const fs::path& root,
@@ -2495,6 +2913,7 @@ bool mod_runtime_initialize(const fs::path& root,
         return false;
     }
     runtime.validation = validate(runtime);
+    publish_variants(runtime);
     runtime.initialized = true;
     runtime.error.clear();
     return true;
@@ -2531,6 +2950,8 @@ bool mod_runtime_commit(const fs::path& rom_path, std::string* error) {
         set_error(error, runtime.error);
         return false;
     }
+    /* Selections (package versions) may have changed; re-declare. */
+    publish_variants(runtime);
     runtime.error.clear();
     return true;
 }
@@ -3237,6 +3658,7 @@ extern "C" int snes_mod_runtime_installed_rows_c(SnesModPkgRow* out, int max) {
         for (const auto& by_version : by_id.second) {
             if (n >= max) return n;
             const SNESRecomp::Package& package = by_version.second;
+            if (package.builtin_diagnostic) continue;
             SnesModPkgRow row;
             std::memset(&row, 0, sizeof(row));
             if (!row_field(row.id, sizeof(row.id), by_id.first) ||
@@ -3470,4 +3892,50 @@ snes_mod_runtime_launcher_provider_c(void) {
 #else
     return nullptr;
 #endif
+}
+
+extern "C" int snes_mod_runtime_begin_temporary_c(void) {
+    auto& runtime = SNESRecomp::state();
+    if (!runtime.initialized) return 0;
+    if (!runtime.temporary_selection) {
+        runtime.offline_selections = runtime.selections;
+        runtime.temporary_selection = true;
+    }
+    return 1;
+}
+
+extern "C" void snes_mod_runtime_end_temporary_c(void) {
+    auto& runtime = SNESRecomp::state();
+    if (!runtime.temporary_selection) return;
+    for (const auto& [id, package] : runtime.selections)
+        for (const auto& [fid, feature] : package.features)
+            runtime.offline_selections[id].features[fid].resources = feature.resources;
+    runtime.selections = std::move(runtime.offline_selections);
+    runtime.temporary_selection = false;
+    runtime.committed = {};
+    runtime.cosmetic_allow.clear();
+    SNESRecomp::refresh_validation();
+}
+
+extern "C" int snes_mod_runtime_resource_path_c(const char* package_id,
+                                                const char* feature_id,
+                                                const char* resource_id,
+                                                char* out, uint32_t cap) {
+    if (out && cap) out[0] = '\0';
+    if (!package_id || !feature_id || !resource_id || !out || cap == 0) return 0;
+    SNESRecomp::Runtime& runtime = SNESRecomp::state();
+    if (!runtime.initialized) return 0;
+    const SNESRecomp::Package* package =
+        SNESRecomp::selected_package(runtime, package_id);
+    if (!package) return 0;
+    const SNESRecomp::Feature* feature =
+        SNESRecomp::find_feature(*package, feature_id);
+    const SNESRecomp::Resource* resource =
+        SNESRecomp::find_resource(*package, feature_id, resource_id);
+    if (!feature || !resource) return 0;
+    const std::string path =
+        SNESRecomp::resource_path(runtime, *package, *feature, *resource);
+    if (path.empty() || path.size() >= cap) return 0;
+    std::snprintf(out, cap, "%s", path.c_str());
+    return 1;
 }

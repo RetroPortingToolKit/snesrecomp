@@ -34,16 +34,17 @@ from v2.decoder import (  # noqa: E402
 )
 from v2.cfg import V2Block, V2CFG, build_cfg  # noqa: E402
 from v2.lowering import lower  # noqa: E402
-from v2.codegen import emit_op  # noqa: E402
+from v2.codegen import emit_op, _transfer_target_expr  # noqa: E402
 from v2.naming import (  # noqa: E402
     default_func_name as _default_func_name,
     variant_suffix as _variant_suffix,
 )
 from snes_cycles import (  # noqa: E402
-    block_static_cycles, instr_runtime_charges, region_speed,
+    block_static_cycles, instr_runtime_charges,
 )
 from snes65816 import (  # noqa: E402
     ABS_X as _MODE_ABS_X, ABS_Y as _MODE_ABS_Y, IMM as _MODE_IMM,
+    get_rom_mapping, ROM_MAP_SA1, rom_offset,
 )
 from v2.ir import (  # noqa: E402
     IROp, IRBlock, Value,
@@ -82,23 +83,9 @@ def _block_cycle_const(pairs) -> int:
 
 
 def _block_speed(bank: int, pc: int):
-    """Master-clocks-per-CPU-cycle for the CODE region of a block at (bank, pc).
-
-    Returns (expr, const) where `expr` is a C expression yielding the speed and
-    `const` is the int value when it's memsel-independent (then expr == str(int)),
-    else None and expr is the runtime `(g_memsel ? 6 : 8)` form. Per Axis-5
-    off-cue: the SPC is paced in master clocks, so each block's CPU-cycle charge
-    is weighted by its code region's access speed (snes_cycles.region_speed).
-    Only $80-$FF:$8000-$FFFF (WS2 LoROM) and $C0-$FF (WS2 HiROM) depend on the
-    live FastROM bit; everything else (all of a SlowROM game like SMW) is a
-    constant resolved here at gen time."""
-    addr24 = ((bank & 0xFF) << 16) | (pc & 0xFFFF)
-    s_slow = region_speed(addr24, 0)
-    s_fast = region_speed(addr24, 1)
-    if s_slow == s_fast:
-        return (str(s_slow), s_slow)
-    # memsel-dependent: fast when $420D bit 0 set, slow otherwise.
-    return (f"(g_memsel ? {s_fast} : {s_slow})", None)
+    """Code-region cycle weighting, using live PBR for mirrored bodies."""
+    from v2.emitter_helpers import runtime_code_speed
+    return runtime_code_speed(((bank & 0xFF) << 16) | (pc & 0xFFFF))
 
 
 def _dynamic_charge_lines(insn, speed_expr: str = "8") -> List[str]:
@@ -117,7 +104,7 @@ def _dynamic_charge_lines(insn, speed_expr: str = "8") -> List[str]:
     op = getattr(insn, 'opcode', None)
     if op is None:
         return []
-    charges = instr_runtime_charges(op)
+    charges = instr_runtime_charges(op, getattr(insn, 'x_flag', 1))
     out: List[str] = []
     if 'dp' in charges:
         out.append(
@@ -295,7 +282,7 @@ def scan_tail_call_stack_delta(
     except Exception:
         return {}
 
-    cfg = build_cfg(graph)
+    cfg = build_cfg(graph, instruction_blocks=get_rom_mapping() == ROM_MAP_SA1)
     if cfg.entry not in cfg.blocks:
         return {}
 
@@ -402,7 +389,7 @@ def scan_rts_stack_deltas(
     except Exception:
         return None
 
-    cfg = build_cfg(graph)
+    cfg = build_cfg(graph, instruction_blocks=get_rom_mapping() == ROM_MAP_SA1)
     if cfg.entry not in cfg.blocks:
         return None
 
@@ -620,7 +607,7 @@ def emit_function(rom: bytes, bank: int, start: int,
     # cfg directive, no auto-recovery). v2_regen hard-fails on any.
     if unresolved_indirect_collector is not None:
         unresolved_indirect_collector.extend(graph.unresolved_indirects)
-    cfg = build_cfg(graph)
+    cfg = build_cfg(graph, instruction_blocks=get_rom_mapping() == ROM_MAP_SA1)
 
     # A tight, side-effect-free memory poll cannot execute atomically under
     # the LLE frame scheduler: the value it observes is commonly changed by
@@ -800,7 +787,7 @@ def emit_function(rom: bytes, bank: int, start: int,
         return (
             f"{prefix}{{ cpu->host_return_valid = _hrv; "
             f"RecompReturn _tc = interp_tier_dispatch_tail(cpu, "
-            f"0x{target_pc24 & 0xFFFFFF:06X}u, "
+            f"{_transfer_target_expr(target_pc24, False)}, "
             f"0x{site_pc24 & 0xFFFFFF:06X}u, _entry_s, _hrv); "
             f"RecompStackPop(); return _tc; }}  {comment}"
         )
@@ -1834,9 +1821,9 @@ def emit_function(rom: bytes, bank: int, start: int,
                                         f"(void)cpu_trace_dispatch_oob(cpu, "
                                         f"0x{site_pc24:06x}, 0xFFFF);")
                                     lines.append(
-                                        f"{{ RecompReturn _r = interp_tier_dispatch_balanced(cpu, "
-                                        f"0x{site_pc24:06x}u, 0x{site_pc24:06x}u, "
-                                        f"_entry_s, _hrv); RecompStackPop(); return _r; }} "
+                                        f"{{ RecompReturn _r = interp_tier_dispatch_tail_ex(cpu, "
+                                        f"{_transfer_target_expr(site_pc24, False)}, 0x{site_pc24:06x}u, "
+                                        f"_entry_s, _hrv, true); RecompStackPop(); return _r; }} "
                                         f"/* balanced_interp_dispatch */")
                             else:
                                 lines.append(
@@ -1866,8 +1853,8 @@ def emit_function(rom: bytes, bank: int, start: int,
                             # stack-safe abandon, never worse. docs/MULTI_TIER.md
                             lines.append(
                                 f"return interp_tier_dispatch_balanced(cpu, "
-                                f"0x{site_pc24:06x}u, 0x{site_pc24:06x}u, "
-                                f"_entry_s, _hrv); "
+                                f"{_transfer_target_expr(site_pc24, False)}, 0x{site_pc24:06x}u, "
+                                f"_entry_s, _hrv, true); "
                                 f"/* unresolved IndirectGoto -> interpreter tier */")
                         block_terminated = True
                 elif isinstance(op, (PushReg, PushEffectiveAddress)) and getattr(
@@ -2014,8 +2001,8 @@ def emit_function(rom: bytes, bank: int, start: int,
                                           for insn, _ in pairs)) & 0xFFFF
                 fall_pc24 = ((bank & 0xFF) << 16) | fall_pc16
                 lines.append(
-                    f"return interp_tier_dispatch_balanced(cpu, 0x{fall_pc24:06x}u, "
-                    f"0x{fall_pc24:06x}u, _entry_s, _hrv); "
+                    f"return interp_tier_dispatch_balanced(cpu, {_transfer_target_expr(fall_pc24, False)}, "
+                    f"0x{fall_pc24:06x}u, _entry_s, _hrv, false); "
                     f"/* truncated (no successor): interpret continuation, balanced */")
         block_lines[key] = lines
 
@@ -2038,14 +2025,14 @@ def emit_function(rom: bytes, bank: int, start: int,
     src.append('  if (interp_bridge_lle_master_deadline_reached(cpu)) {')
     src.append('    RecompStackPopYield();')
     src.append(
-        f'    return interp_bridge_lle_yield_unwind(cpu, 0x{fn_entry_pc:06X}u);'
+        f'    return interp_bridge_lle_yield_unwind(cpu, {_transfer_target_expr(fn_entry_pc, False)});'
     )
     src.append('  }')
     if has_lle_memory_poll:
         src.append('  if (interp_bridge_in_lle_scheduler()) {')
         src.append('    RecompStackPopYield();')
         src.append(
-            f'    return interp_bridge_lle_yield_unwind(cpu, 0x{fn_entry_pc:06X}u);'
+            f'    return interp_bridge_lle_yield_unwind(cpu, {_transfer_target_expr(fn_entry_pc, False)});'
         )
         src.append('  }')
     # Function-local NLR pending-skip — NOT cpu state. NLR-pattern blocks
@@ -2099,7 +2086,7 @@ def emit_function(rom: bytes, bank: int, start: int,
         src.append(
             f'  if (rtl_aot_node_denied(0x{fn_entry_pc:06X}u)) {{ '
             f'RecompStackPop(); return interp_tier_dispatch_balanced('
-            f'cpu, 0x{fn_entry_pc:06X}u, 0x{fn_entry_pc:06X}u, _entry_s, _hrv); }}')
+            f'cpu, {_transfer_target_expr(fn_entry_pc, False)}, 0x{fn_entry_pc:06X}u, _entry_s, _hrv, false); }}')
     src.append(f'  uint32 _host_return_pc24 = 0xFFFFFFFFu;')
     src.append(f'  if (_hrv == 2 || _hrv == 3) {{')
     src.append(f'    uint16 _host_rpcl = cpu_read8(cpu, 0x00, (uint16)(_entry_s + 1u));')
@@ -2126,6 +2113,18 @@ def emit_function(rom: bytes, bank: int, start: int,
         # Cheap (counter bump + branch); v1 emitted at loop headers, v2
         # gets it at every block since we don't yet identify back-edges.
         src.append(f'    WatchdogCheck();')
+        # SA-1 MMC registers can remap code while a routine is live. Each
+        # instruction is a block, so a mapper write cannot leave a stale
+        # compiled continuation executing the previous ROM bytes. Check
+        # before charging cycles; the interpreter owns a rejected fetch.
+        if get_rom_mapping() == ROM_MAP_SA1:
+            insn = cfg.blocks[key].insns[0].insn
+            offset = rom_offset(bank, key.pc & 0xFFFF)
+            src.append(
+                f'    if (!cpu_aot_rom_mapping_matches(0x{block_pc24:06X}u, '
+                f'0x{offset:X}u, {insn.length}u)) {{ RecompStackPop(); '
+                f'return interp_tier_dispatch_balanced(cpu, {_transfer_target_expr(block_pc24, False)}, '
+                f'0x{block_pc24:06X}u, _entry_s, _hrv, false); }}')
         # Profile-guided AOT may keep the CPU inside one generated function
         # across a frame boundary. Every CFG block starts at an architectural
         # instruction boundary, so it is safe to unwind here and resume this
@@ -2135,7 +2134,7 @@ def emit_function(rom: bytes, bank: int, start: int,
         src.append('      RecompStackPopYield();')
         src.append(
             f'      return interp_bridge_lle_yield_unwind('
-            f'cpu, 0x{block_pc24:06X}u);')
+            f'cpu, {_transfer_target_expr(block_pc24, False)});')
         src.append('    }')
         # Cartridge coprocessors observe CPU bus accesses no earlier than this
         # architectural block boundary. The aggregate static charge below

@@ -22,6 +22,8 @@ struct Cart {
 
   uint8_t* rom;
   uint32_t romSize;
+  /* Headerless source bytes, before power-of-two bus mirroring. Host metadata. */
+  uint32_t romImageSize;
   uint8_t* ram;
   uint32_t ramSize;
   const uint64_t* masterClock;
@@ -62,6 +64,17 @@ static inline bool cart_has_dsp1(const Cart* cart) {
 static inline bool cart_is_cx4_window(const Cart* cart, uint8_t bank,
                                       uint16_t adr) {
   return cart && cart->type == CART_CX4 && adr >= 0x6000 && adr < 0x8000 &&
+         (bank < 0x40 || (bank >= 0x80 && bank < 0xc0));
+}
+
+/* Game Pak RAM's second CPU-visible view on a SuperFX board: banks
+ * $00-$3F / $80-$BF, $6000-$7FFF, an 8 KB mirror of the first 8 KB of GSU RAM
+ * (the $70-$71 banks are the full view). Titles that keep CPU-side state in
+ * Game Pak RAM address it here, through the data bank, rather than long. */
+static inline bool cart_is_superfx_ram_window(const Cart* cart, uint8_t bank,
+                                              uint16_t adr) {
+  return cart && cart->type == CART_SUPERFX && cart->superfx &&
+         adr >= 0x6000 && adr < 0x8000 &&
          (bank < 0x40 || (bank >= 0x80 && bank < 0xc0));
 }
 

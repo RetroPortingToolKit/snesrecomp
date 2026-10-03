@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import pathlib
 import subprocess
@@ -73,6 +74,20 @@ def main() -> int:
         # packaged binary answers that contract: a package that ships the CLI
         # without the SDK modules it dispatches through, or without
         # v2_sync_funcs_h, fails here instead of in a player's rebuild.
+        # Qualified titles also ship byte-free disassembly layouts. Exercise
+        # their automatic materialization in the frozen CLI, not just Python.
+        (output / "config" / "disassembly-layout.json").write_text(json.dumps({
+            "schema": "snesrecomp disassembly layout v1",
+            "rom_sha256": hashlib.sha256(rom).hexdigest(),
+            "probe_entry_modes": True,
+            "instructions": [["0x008000", 1]],
+        }), encoding="utf-8")
+        # Scaffold symbols need both the imported helper and its source file
+        # (the generator hashes it). Exercise this together with the temporary
+        # authority overlay so the original cfg/header still receive the name.
+        (output / "config" / "symbols.toml").write_text(
+            '[[func]]\nname = "FixtureReset"\naddr = "8000"\n'
+            'bank = 0\nemit = true\n', encoding="utf-8")
         generate = subprocess.run([
             str(executable), "generate",
             "--rom", str(rom_path),
@@ -104,6 +119,10 @@ def main() -> int:
                     f"packaged generate missing phase {phase!r}: {phases}")
         if not any(e.get("event") == "result" and e.get("ok") for e in events):
             raise RuntimeError(f"packaged generate missing result event: {events}")
+        cfg = (output / "config" / "bank00.cfg").read_text(encoding="utf-8")
+        header = (output / "config" / "funcs.h").read_text(encoding="utf-8")
+        if "func FixtureReset 8000" not in cfg or "void FixtureReset(" not in header:
+            raise RuntimeError("packaged generate did not synchronize symbols.toml")
     print("packaged CLI smoke test passed")
     return 0
 

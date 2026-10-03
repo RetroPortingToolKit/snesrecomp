@@ -62,7 +62,8 @@ def generate(
     no_host_root_scan: bool = False,
     source_roots: Optional[Sequence[pathlib.Path]] = None,
     profile_manifests: Optional[Sequence[pathlib.Path]] = None,
-    analysis_backend: str = "auto",
+    legacy_profile_rom_sha256: Optional[str] = None,
+    analysis_backend: str = "native",
     expected_crc32: Optional[str] = None,
     expected_sha256: Optional[str] = None,
     progress: Optional[ProgressReporter] = None,
@@ -118,6 +119,8 @@ def generate(
     for manifest in profile_manifests or ():
         emit_args.extend(
             ["--profile-manifest", str(pathlib.Path(manifest).resolve())])
+    if legacy_profile_rom_sha256:
+        emit_args.extend(["--legacy-profile-rom-sha256", legacy_profile_rom_sha256])
 
     def run_captured(tool, arguments: Sequence[str]) -> int:
         """Run a tools.* main(), keeping stdout JSONL-clean when needed."""
@@ -234,6 +237,7 @@ def generate_command(args: argparse.Namespace, progress: ProgressReporter) -> in
                 _resolve_under(project_root, m)
                 for m in getattr(args, "profile_manifest", []) or []
             ],
+            legacy_profile_rom_sha256=getattr(args, "legacy_profile_rom_sha256", None),
             analysis_backend=args.analysis_backend,
             expected_crc32=args.expected_crc32,
             expected_sha256=args.expected_sha256,
@@ -309,10 +313,15 @@ def add_generate_parser(subparsers) -> None:
              "(repeatable); clean call landings only, bails excluded",
     )
     generate_parser.add_argument(
+        "--legacy-profile-rom-sha256",
+        help="explicitly associate an unbound v1 profile with this ROM SHA-256",
+    )
+    generate_parser.add_argument(
         "--analysis-backend",
-        choices=("auto", "python", "native"),
-        default="auto",
-        help="whole-program analyzer (default: auto)",
+        choices=("auto", "native", "python"),
+        default="native",
+        help="accepted for compatibility: the native analyzer is the only "
+             "one (auto means native; python is an error)",
     )
     add_identity_args(generate_parser)
     generate_parser.add_argument(

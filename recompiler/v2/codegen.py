@@ -33,7 +33,6 @@ for p in (str(_THIS_DIR), str(_RECOMPILER_DIR)):
         sys.path.insert(0, p)
 
 from typing import Dict, List, Optional, Tuple  # noqa: E402
-from snes_cycles import region_speed  # noqa: E402
 from v2.naming import variant_suffix as _variant_suffix  # noqa: E402
 
 # Resolver: 24-bit address (bank << 16 | pc) -> friendly C function name.
@@ -266,7 +265,7 @@ def resolve_variant_owner(addr_24: int) -> int:
     if _VALID_VARIANTS.get(a):
         return a
     bank = (a >> 16) & 0xFF
-    if bank < 0x40 or 0x80 <= bank < 0xC0:
+    if rom_bank_mirror(bank) is not None:
         mirror = a ^ 0x800000
         if _VALID_VARIANTS.get(mirror):
             return mirror
@@ -300,6 +299,11 @@ def has_exact_variant(addr_24: int, m: int, x: int) -> bool:
     assumes all four bodies will be emitted. Once a target has a survivor
     set, width identity is exact: a sibling is never a correctness fallback.
     """
+    if _VALID_VARIANTS_AUTHORITATIVE:
+        # Direct calls name this raw PC's body. A ROM mirror can have a
+        # different cfg boundary or an LLE-only disposition; its survivor
+        # must not authorize a symbol that was never emitted at this PC.
+        return ((m & 1), (x & 1)) in _VALID_VARIANTS.get(addr_24 & 0xFFFFFF, ())
     return ((m & 1), (x & 1)) in set(valid_variant_list(addr_24))
 
 
@@ -405,6 +409,8 @@ def get_emitted_name(pc24: int):
     return _EMITTED_NAMES.get(pc24 & 0xFFFFFF)
 
 
+from snes65816 import rom_bank_mirror
+
 def set_name_resolver(name_map: Dict[int, str]) -> None:
     """Replace the call-target name resolver. Pass an empty dict to clear.
 
@@ -429,7 +435,7 @@ def set_name_resolver(name_map: Dict[int, str]) -> None:
     for pc24, name in name_map.items():
         expanded[pc24] = name
         bank = (pc24 >> 16) & 0xFF
-        if bank < 0x40 or 0x80 <= bank < 0xC0:
+        if rom_bank_mirror(bank) is not None:
             mirror_bank = bank ^ 0x80
             mirror_pc24 = (mirror_bank << 16) | (pc24 & 0xFFFF)
             # Don't overwrite explicit entries for the mirror bank.
@@ -1377,6 +1383,13 @@ def _live_dispatch_target_expr(insn) -> Optional[str]:
             f"| (uint32)cpu_read16(cpu, cpu->PB, {offset}))")
 
 
+def _transfer_target_expr(pc24: int, long: bool) -> str:
+    """Short transfers keep PBR even when their C body belongs to a mirror."""
+    if long:
+        return f"0x{pc24 & 0xFFFFFF:06x}u"
+    return f"(((uint32)cpu->PB << 16) | 0x{pc24 & 0xFFFF:04x}u)"
+
+
 def _emit_indirect_dispatch(insn) -> List[str]:
     """Emit a real switch for an indirect JMP/JML/JSR whose static
     target list the decoder recovered (via cfg `indirect_dispatch` or
@@ -1503,6 +1516,10 @@ def _emit_indirect_dispatch(insn) -> List[str]:
     # register as-is to load one byte per parallel table.
     idx_field = 'X' if idx_reg == 'X' else 'Y'
     entry_size = 3 if kind == 'long' else 2
+    # Byte distance from the instruction's operand to entry 0 of the table.
+    # Normally 0; non-zero when the decoder proved (from the cfg data_region
+    # overlay) that the table begins after the operand byte.
+    index_bias = int(getattr(insn, 'dispatch_index_bias', 0) or 0)
     table_bases = tuple(getattr(insn, 'dispatch_table_bases', ()) or ())
     if getattr(insn, 'dispatch_local_goto', False):
         ptr = insn.operand & 0xFFFF
@@ -1625,13 +1642,13 @@ def _emit_indirect_dispatch(insn) -> List[str]:
                     _UNRESOLVED_CALL_TARGETS.add((tgt_addr, em, ex))
                     name = f"{base_name}{suffix}"
                     env = emitter_helpers.call_with_pb_save(
-                        target_bank, name, trace_pc24=site_pc24)
+                        target_bank if kind == 'long' else None, name, trace_pc24=site_pc24)
                     for stmt in env:
                         lines.append(f"      {stmt}")
                 else:
                     lines.append(
                         f"      return interp_tier_dispatch_tail(cpu, "
-                        f"0x{tgt_addr:06x}u, 0x{site_pc24:06x}u, "
+                        f"{_transfer_target_expr(tgt_addr, kind == 'long')}, 0x{site_pc24:06x}u, "
                         f"_entry_s, _hrv); /* authoritative LLE M1X1 */")
             else:
                 # General indirect dispatch: runtime (m, x) dispatch
@@ -1674,15 +1691,15 @@ def _emit_indirect_dispatch(insn) -> List[str]:
                 body += variant_dispatch_case_lines(
                     tgt_addr, base_name, indent="  ", pre_call=_pre,
                     lle_fallback=(
-                        f"interp_tier_run_call_frame(cpu, 0x{tgt_addr:06x}u, "
+                        f"interp_tier_run_call_frame(cpu, {_transfer_target_expr(tgt_addr, kind == 'long')}, "
                         f"0x{site_pc24:06x}u, {_lle_frame}, NULL)"
                         if is_jsr or is_call else
-                        f"interp_tier_dispatch_tail(cpu, 0x{tgt_addr:06x}u, "
+                        f"interp_tier_dispatch_tail(cpu, {_transfer_target_expr(tgt_addr, kind == 'long')}, "
                         f"0x{site_pc24:06x}u, _entry_s, _hrv)"))
                 body.append("}")
                 if is_jsr or is_call:
                     env = emitter_helpers.pb_save_restore_envelope(
-                        target_bank, body, trace_pc24=site_pc24)
+                        target_bank if kind == 'long' else None, body, trace_pc24=site_pc24)
                     for stmt in env:
                         lines.append(f"      {stmt}")
                 else:
@@ -1746,6 +1763,22 @@ def _emit_indirect_dispatch(insn) -> List[str]:
         lines.append(
             f"  uint16 _idx = (uint16)(cpu->{idx_field} & 0xFFFF);"
             "  /* parallel byte tables: register already holds logical index */"
+        )
+    elif index_bias:
+        # The table does not start at the operand: entry 0 lives `index_bias`
+        # bytes further on, so the selector is biased by that much (Yoshi's
+        # Island names its own RTL byte as the operand and indexes with a
+        # state that steps 1, 3, 5, ...). Subtract before dividing. A
+        # selector below the bias wraps to a huge unsigned index, fails the
+        # `_idx >= _disp_n` guard below, and takes the live-pointer
+        # interpreter path — which is what the hardware would have done with
+        # whatever those bytes are.
+        biased = widths.masked(
+            f"(uint16)(cpu->{idx_field} - {index_bias})", 2)
+        lines.append(
+            f"  uint16 _idx = (uint16)({biased} / {entry_size});"
+            f"  /* entry_size={entry_size} ({kind}); table starts {index_bias} "
+            f"byte(s) past the operand, so {idx_field} is a biased byte offset */"
         )
     else:
         lines.append(
@@ -1833,7 +1866,7 @@ def _emit_indirect_dispatch(insn) -> List[str]:
                 _UNRESOLVED_CALL_TARGETS.add((tgt_addr, em, ex))
                 name = f"{base_name}{suffix}"
                 env = emitter_helpers.call_with_pb_save(
-                    target_bank, name, trace_pc24=site_pc24)
+                    target_bank if kind == 'long' else None, name, trace_pc24=site_pc24)
                 for stmt in env:
                     if (not (is_jsr or is_call)
                             and stmt.endswith(f"{name}(cpu);")):
@@ -1843,7 +1876,7 @@ def _emit_indirect_dispatch(insn) -> List[str]:
             else:
                 lines.append(
                     f"      return interp_tier_dispatch_tail(cpu, "
-                    f"0x{tgt_addr:06x}u, 0x{site_pc24:06x}u, "
+                    f"{_transfer_target_expr(tgt_addr, kind == 'long')}, 0x{site_pc24:06x}u, "
                     f"_entry_s, _hrv); /* authoritative LLE M1X1 */")
         else:
             # General indirect dispatch: runtime (m, x) dispatch inside
@@ -1871,15 +1904,15 @@ def _emit_indirect_dispatch(insn) -> List[str]:
             body += variant_dispatch_case_lines(
                 tgt_addr, base_name, indent="  ", pre_call=_pre,
                 lle_fallback=(
-                    f"interp_tier_run_call_frame(cpu, 0x{tgt_addr:06x}u, "
+                    f"interp_tier_run_call_frame(cpu, {_transfer_target_expr(tgt_addr, kind == 'long')}, "
                     f"0x{site_pc24:06x}u, {_lle_frame}, NULL)"
                     if is_jsr or is_call else
-                    f"interp_tier_dispatch_tail(cpu, 0x{tgt_addr:06x}u, "
+                    f"interp_tier_dispatch_tail(cpu, {_transfer_target_expr(tgt_addr, kind == 'long')}, "
                     f"0x{site_pc24:06x}u, _entry_s, _hrv)"))
             body.append("}")
             if is_jsr or is_call:
                 env = emitter_helpers.pb_save_restore_envelope(
-                    target_bank, body, trace_pc24=site_pc24)
+                    target_bank if kind == 'long' else None, body, trace_pc24=site_pc24)
                 for stmt in env:
                     lines.append(f"      {stmt}")
             else:
@@ -2077,7 +2110,7 @@ def _emit_dispatch(insn) -> List[str]:
             _UNRESOLVED_CALL_TARGETS.add((tgt_addr, em, ex))
             name = f"{base_name}{suffix}"
             env = emitter_helpers.call_with_pb_save(
-                target_bank, name, trace_pc24=site_pc24)
+                target_bank if kind == 'long' else None, name, trace_pc24=site_pc24)
             for stmt in env:
                 lines.append(f"      {stmt}")
         else:
@@ -2089,7 +2122,7 @@ def _emit_dispatch(insn) -> List[str]:
             # sibling decoded at a different M/X width.
             lines.append(
                 f"      return interp_tier_dispatch_tail(cpu, "
-                f"0x{tgt_addr:06x}u, 0x{site_pc24:06x}u, "
+                f"{_transfer_target_expr(tgt_addr, kind == 'long')}, 0x{site_pc24:06x}u, "
                 f"_entry_s, _hrv); /* authoritative LLE M1X1 */")
         lines.append("    } break;")
     lines.append("    default: break;")
@@ -2120,10 +2153,12 @@ def _emit_return_frame_push(op: 'Call') -> List[str]:
     # = the pushed frame SIZE (JSR -> 2, JSL -> 3; see cpu_state.h).
     if op.long:
         ret16 = ((site + 3) & 0xFFFF) if site is not None else 0xFFFF
-        pbr = ((site >> 16) & 0xFF) if site is not None else 0xFF
+        # A body may execute through a ROM mirror. JSL pushes the live PBR,
+        # not the bank used to name/decode that body (W65C816S table 5-7, 4c).
+        pbr = "cpu->PB" if site is not None else "0xff"
         return [
             "  /* JSL return frame -> cpu->S (Option-1) */",
-            f"  cpu_write8(cpu, 0x00, cpu->S, 0x{pbr:02x}); cpu->S = (uint16)(cpu->S - 1);",
+            f"  cpu_write8(cpu, 0x00, cpu->S, {pbr}); cpu->S = (uint16)(cpu->S - 1);",
             f"  cpu_write8(cpu, 0x00, cpu->S, 0x{(ret16 >> 8) & 0xFF:02x}); cpu->S = (uint16)(cpu->S - 1);",
             f"  cpu_write8(cpu, 0x00, cpu->S, 0x{ret16 & 0xFF:02x}); cpu->S = (uint16)(cpu->S - 1);",
             "  cpu->host_return_valid = 3;  /* paired host caller, JSL frame */",
@@ -2209,7 +2244,7 @@ def _emit_call(op: Call) -> List[str]:
         lines = ["{ /* no-return JSR: preserve frame and enter exceptional LLE path */"]
         lines += _emit_return_frame_push(op)
         lines += [
-            f"  return interp_tier_dispatch_tail(cpu, 0x{addr:06x}u, "
+            f"  return interp_tier_dispatch_tail(cpu, {_transfer_target_expr(addr, op.long)}, "
             f"{call_trace_pc}, _entry_s, _hrv);",
             "}",
         ]
@@ -2238,7 +2273,7 @@ def _emit_call(op: Call) -> List[str]:
                 "cpu_tailcall_inherit_return_context(_entry_s, _hrv);"
             ],
             lle_fallback=(
-                f"interp_tier_dispatch_tail(cpu, 0x{addr:06x}u, "
+                f"interp_tier_dispatch_tail(cpu, {_transfer_target_expr(addr, op.long)}, "
                 f"{call_trace_pc}, _entry_s, _hrv)"))
         lines.extend([
             "  }",
@@ -2296,7 +2331,7 @@ def _emit_call(op: Call) -> List[str]:
         body += variant_dispatch_case_lines(
             addr, base_name, indent="  ",
             lle_fallback=(
-                f"interp_tier_run_call_frame(cpu, 0x{addr:06x}u, "
+                f"interp_tier_run_call_frame(cpu, {_transfer_target_expr(addr, op.long)}, "
                 f"{call_trace_pc}, 3, NULL)"))
         body.append("}")
         env = emitter_helpers.pb_save_restore_envelope(
@@ -2317,7 +2352,7 @@ def _emit_call(op: Call) -> List[str]:
     lines += variant_dispatch_case_lines(
         addr, base_name,
         lle_fallback=(
-            f"interp_tier_run_call_frame(cpu, 0x{addr:06x}u, "
+            f"interp_tier_run_call_frame(cpu, {_transfer_target_expr(addr, op.long)}, "
             f"{call_trace_pc}, 2, NULL)"))
     lines.extend([
         "  }",
@@ -2556,7 +2591,7 @@ def _emit_stop(op: Stop) -> List[str]:
         return [
             "/* WAI: quiesce without guest-returning through live call frames */",
             "if (interp_bridge_in_lle_scheduler()) {",
-            f"  return interp_bridge_lle_yield_unwind(cpu, 0x{resume:06x}u);",
+            f"  return interp_bridge_lle_yield_unwind(cpu, {_transfer_target_expr(resume, False)});",
             "}",
         ]
     return ["/* STP: halt — runtime hook */"]
@@ -2572,7 +2607,7 @@ def _emit_break(op: Break) -> List[str]:
     kind = "COP" if op.cop else "BRK"
     return [
         f"/* {kind}: execute exact software interrupt in authoritative LLE */",
-        f"return interp_tier_dispatch_tail(cpu, 0x{site:06x}u, "
+        f"return interp_tier_dispatch_tail(cpu, {_transfer_target_expr(site, False)}, "
         f"0x{site:06x}u, _entry_s, _hrv);",
     ]
 
@@ -2608,10 +2643,7 @@ def _emit_blockmove(op: BlockMove) -> List[str]:
     delta = "+1" if op.direction == "mvn" else "-1"
     et = "CPU_TR_MVN" if op.direction == "mvn" else "CPU_TR_MVP"
     trace_pc = _trace_pc_arg()
-    slow_speed = region_speed(_CURRENT_SOURCE_PC24, 0)
-    fast_speed = region_speed(_CURRENT_SOURCE_PC24, 1)
-    speed_expr = (str(slow_speed) if slow_speed == fast_speed else
-                  f"(g_memsel ? {fast_speed} : {slow_speed})")
+    speed_expr, _ = emitter_helpers.runtime_code_speed(_CURRENT_SOURCE_PC24)
     return [
         "{",
         f"  uint8 _src_b = {op.src_bank:#04x};",
@@ -2633,7 +2665,7 @@ def _emit_blockmove(op: BlockMove) -> List[str]:
         "    cpu->A = (uint16)(cpu->A - 1);",
         "    if (cpu->A != 0xFFFF) {",
         "      if (interp_bridge_lle_master_deadline_reached(cpu)) {",
-        f"        return interp_bridge_lle_yield_unwind(cpu, {trace_pc});",
+        f"        return interp_bridge_lle_yield_unwind(cpu, {_transfer_target_expr(_CURRENT_SOURCE_PC24, False)});",
         "      }",
         "      cpu->cycles += 7;",
         f"      cpu->master_cycles += 7 * {speed_expr};",

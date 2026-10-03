@@ -1,6 +1,12 @@
+#ifdef _WIN32
+#include <io.h>
+#else
+#include <unistd.h>
+#endif
 #include "common_rtl.h"
 #include "apu_frame_clock.h"
 #include "common_cpu_infra.h"
+#include "snes/interp_bridge.h"
 #include <setjmp.h>
 #include <time.h>
 #include <stdlib.h>
@@ -8,8 +14,10 @@
 #include <limits.h>
 #ifdef _WIN32
 #include <direct.h>
+#include <io.h>
 #else
 #include <sys/stat.h>
+#include <unistd.h>
 #endif
 #include "recomp_hw.h"
 #include "framedump.h"
@@ -252,6 +260,7 @@ void rtl_apu_restore_pacing(uint64_t frame_start_master, uint8_t frame_time_vali
  * guest time and must not become permanent A/V latency. The short ramp joins
  * the last delivered sample to the first current sample without a hard edge. */
 #define RTL_AUDIO_RECOVERY_RAMP 128u
+#define RTL_AUDIO_TARGET_NATIVES 2136u /* 4 native blocks, ~67 ms cushion */
 static bool g_audio_fast_forward;
 static uint32_t g_audio_recovery_frames;
 static uint32_t g_audio_recovery_remaining;
@@ -310,7 +319,7 @@ static uint64_t fp_fnv1a(const uint8_t *p, size_t n) {
  * v8: multitap chunk (seats, IOBit lines, per-bank shift counters, latched
  *     automatic-read words). Older files load with no multitap configured,
  *     which is the pre-multitap two-pad machine exactly. */
-#define RTL_SAV_VERSION 9u /* Super FX architectural state in cart_saveload. */
+#define RTL_SAV_VERSION 10u /* RDNMI pending latch; v9 added Super FX state. */
 /* 4 and 5 described a Snes tail layout this struct no longer has; see
  * snes_saveload(). Loading one would mis-map the interrupt fields, so
  * they are rejected by the header check instead. */
@@ -448,6 +457,23 @@ void rtl_reset_host_pacing(void) {
 static uint64_t s_state_generation;
 uint64_t RtlStateGeneration(void) { return s_state_generation; }
 
+/* create_spc_player is optional (host_main.h): a title without one leaves
+ * g_spc_player NULL and the guest re-uploads its own APU program after
+ * snes_reset, so there is no player to re-initialize. */
+static void rtl_reset_audio_state(void) {
+  RtlApuLock();
+  g_audio_fast_forward = false;
+  rtl_reset_audio_delivery();
+  g_audio_recovery_frames = 0;
+  g_audio_recovery_remaining = 0;
+  g_audio_recovery_anchor_l = 0;
+  g_audio_recovery_anchor_r = 0;
+  g_audio_last_output_l = 0;
+  g_audio_last_output_r = 0;
+  if (g_spc_player) g_spc_player->initialize(g_spc_player);
+  RtlApuUnlock();
+}
+
 void RtlReset(int mode) {
   ++s_state_generation;
   rtl_reset_host_pacing();
@@ -458,17 +484,10 @@ void RtlReset(int mode) {
   if (!(mode & 1))
     memset(g_sram, 0, g_sram_size);
 
-  RtlApuLock();
-  g_audio_fast_forward = false;
-  rtl_reset_audio_delivery();
-  g_audio_recovery_frames = 0;
-  g_audio_recovery_remaining = 0;
-  g_audio_recovery_anchor_l = 0;
-  g_audio_recovery_anchor_r = 0;
-  g_audio_last_output_l = 0;
-  g_audio_last_output_r = 0;
-  g_spc_player->initialize(g_spc_player);
-  RtlApuUnlock();
+  rtl_reset_audio_state();
+  /* After the hardware, so the title reboots against the reset machine. */
+  if (g_rtl_game_info && g_rtl_game_info->hardware_reset)
+    g_rtl_game_info->hardware_reset();
 }
 
 /* Differential first-divergence trace (docs/MULTI_TIER.md §12a). Env-gated,
@@ -812,6 +831,7 @@ bool RtlRunFrame(uint32 inputs) {
 #endif
 
   snes_frame_counter++;
+  Tier2CoverageTick(snes_frame_counter);
   /* Every runner client gets the same guest-frame/APU coupling. Presentation
    * code may opt into fast-forward PCM recovery separately, but cannot omit
    * the emulation clock.
@@ -1648,6 +1668,7 @@ uint16 ReadRegWord(uint16 reg) {
 static void WriteVramWord(Ppu *ppu, uint16 value) {
   uint16_t adr = ppu->vramPointer;
   ppu->vram[adr & 0x7fff] = value;
+  ppu->vramWriteCount++;
   // Atomic 16-bit STA $2118 hits both VRAM bytes at this word; record
   // each as a byte event so the differ can compare against the
   // oracle's REGISTER_2118 + REGISTER_2119 byte sequence.
@@ -2147,10 +2168,12 @@ void RtlAudioSetFastForward(bool active) {
   if (!active && g_audio_recovery_frames != 0) {
     uint32_t available = g_snes->apu->dsp->sampleWrite -
                          g_snes->apu->dsp->sampleRead;
-    /* Keep two current blocks: one for the next callback and one scheduling
-     * cushion. Repeat at frame boundaries only while post-turbo CPU work is
-     * settling, then restore the ordinary FIFO unchanged. */
-    uint32_t discarded = dsp_trimSamples(g_snes->apu->dsp, 1068);
+    /* Preserve the consumer's startup cushion. A stage upload or starvation
+     * can re-enter priming during turbo; trimming below its threshold would
+     * prevent playback from ever restarting and perpetually renew recovery.
+     * Remove stale latency while allowing the same delivery gate to open. */
+    uint32_t discarded = dsp_trimSamples(g_snes->apu->dsp,
+                                          RTL_AUDIO_TARGET_NATIVES);
     if (discarded != 0) {
       audio_trace_on_fast_forward_discard(discarded,
                                            available - discarded);
@@ -2203,7 +2226,6 @@ void RtlAudioSetFastForward(bool active) {
  * half a percent cannot become a clock.
  */
 #define RTL_AUDIO_NATIVE_RATE    32040.0 /* SPC output rate: 1.024 MHz / 32   */
-#define RTL_AUDIO_TARGET_NATIVES 2136u /* 4 native blocks, ~67 ms cushion */
 #define RTL_AUDIO_SERVO_GAIN     0.05  /* gentle: full-scale error -> 5%, clamped */
 #define RTL_AUDIO_SERVO_MAX      0.005 /* +/-0.5% == ~8 cents, inaudible        */
 /* Occupancy is sampled at callback entry, but production arrives in 534-native
@@ -2513,22 +2535,55 @@ void RtlReadSram(void) {
   }
 }
 
-void RtlWriteSram(void) {
+int RtlTryWriteSram(void) {
   if (!g_sram || g_sram_size <= 0)
-    return;
-  char path[128], bak[140];
+    return 1;
+  char path[128], bak[140], tmp[140];
   RtlEnsureSaveDir();
   RtlSramFilePath(path, sizeof(path));
   snprintf(bak, sizeof(bak), "%s.bak", path);
-  rename(path, bak);
-  FILE *f = fopen(path, "wb");
-  if (f) {
-    fwrite(g_sram, 1, g_sram_size, f);
-    fclose(f);
-  } else {
-    fprintf(stderr, "Unable to write %s\n", path);
+  snprintf(tmp, sizeof(tmp), "%s.tmp", path);
+  FILE *f = fopen(tmp, "wb");
+  if (!f) {
+    fprintf(stderr, "Unable to write %s\n", tmp);
+    return 0;
   }
+  int ok = fwrite(g_sram, 1, g_sram_size, f) == (size_t)g_sram_size;
+  ok = ok && fflush(f) == 0;
+#ifdef _WIN32
+  ok = ok && _commit(_fileno(f)) == 0;
+#else
+  ok = ok && fsync(fileno(f)) == 0;
+#endif
+  ok = fclose(f) == 0 && ok;
+  if (!ok) {
+    fprintf(stderr, "Unable to write %s\n", tmp);
+    remove(tmp);
+    return 0;
+  }
+  /* Keep exactly one previous revision. A missing current file (first save
+   * in this namespace) is not an error. */
+  remove(bak);
+  FILE *cur = fopen(path, "rb");
+  if (cur) {
+    fclose(cur);
+    if (rename(path, bak) != 0) {
+      fprintf(stderr, "Unable to rotate %s to %s\n", path, bak);
+      remove(tmp);
+      return 0;
+    }
+  }
+  if (rename(tmp, path) != 0) {
+    fprintf(stderr, "Unable to publish %s\n", path);
+    /* Put the previous revision back so the namespace still has a file. */
+    rename(bak, path);
+    remove(tmp);
+    return 0;
+  }
+  return 1;
 }
+
+int RtlWriteSram(void) { return RtlTryWriteSram(); }
 
 static const uint8 *SimpleHdma_GetPtr(uint32 p) {
   uint8 bank = (uint8)(p >> 16);
@@ -2643,7 +2698,9 @@ void SimpleHdma_DoLine(SimpleHdma *c) {
         c->table++;
       /* ppu_write takes the B-bus offset ($00-$3F), not a $21xx CPU address. */
       uint8 reg = (uint8)(c->ppu_addr + bAdrOffsets[c->mode & 7][j]);
+      g_ppu_wlog_src = kPpuWlogHdma;
       ppu_write(g_ppu, reg, v);
+      g_ppu_wlog_src = kPpuWlogCpu;
       debug_server_on_reg_write((uint16)(0x2100u + reg), v);
     }
   }

@@ -13,6 +13,7 @@ pub enum RomMapping {
     #[default]
     LoRom,
     HiRom,
+    Sa1,
     Sdd1ExLoRom,
 }
 
@@ -39,6 +40,9 @@ fn header_score(data: &[u8], base: usize, expected_low_nibble: u8) -> i32 {
 }
 
 pub fn detect_rom_mapping(data: &[u8]) -> RomMapping {
+    if data.len() >= 0x8000 && data[0x7fd5] == 0x23 && matches!(data[0x7fd6], 0x34 | 0x35) {
+        return RomMapping::Sa1;
+    }
     let lorom_score = header_score(data, 0x7FC0, 0);
     let hirom_score = header_score(data, 0xFFC0, 1);
     if hirom_score > lorom_score {
@@ -52,7 +56,7 @@ pub fn detect_rom_mapping(data: &[u8]) -> RomMapping {
 
 pub fn vector_table_offset(data: &[u8]) -> usize {
     match detect_rom_mapping(data) {
-        RomMapping::LoRom | RomMapping::Sdd1ExLoRom => 0x7FE0,
+        RomMapping::LoRom | RomMapping::Sdd1ExLoRom | RomMapping::Sa1 => 0x7FE0,
         RomMapping::HiRom => 0xFFE0,
     }
 }
@@ -88,6 +92,18 @@ pub fn rom_offset(mapping: RomMapping, bank: u32, addr: u32) -> usize {
         "WRAM address has no ROM offset"
     );
     match mapping {
+        RomMapping::Sa1 => {
+            if bank >= 0xc0 {
+                return (((bank - 0xc0) << 16) | addr) as usize;
+            }
+            assert!(
+                (bank & 0x7f) < 0x40 && addr >= 0x8000,
+                "not a SA-1 ROM window"
+            );
+            ((if bank & 0x80 != 0 { 0x200000 } else { 0 })
+                | ((bank & 0x3f) << 15)
+                | (addr & 0x7fff)) as usize
+        }
         RomMapping::Sdd1ExLoRom if (0xC0..=0xFF).contains(&bank) => {
             let page = SDD1_MMC_DEFAULT_PAGES[((bank >> 4) & 3) as usize];
             let addr24 = ((bank as usize) << 16) | addr as usize;
@@ -112,6 +128,7 @@ pub fn is_rom_address(mapping: RomMapping, bank: u32, addr: u32) -> bool {
         return false;
     }
     match mapping {
+        RomMapping::Sa1 => bank >= 0xc0 || ((bank & 0x7f) < 0x40 && addr >= 0x8000),
         RomMapping::Sdd1ExLoRom if (0xC0..=0xFF).contains(&bank) => true,
         RomMapping::Sdd1ExLoRom | RomMapping::LoRom => {
             addr >= 0x8000 && !(0x40..0x80).contains(&bank)

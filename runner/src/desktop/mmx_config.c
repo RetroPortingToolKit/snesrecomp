@@ -81,6 +81,11 @@ void ConfigUseStateMenuDefaults(void) {
   kDefaultKbdControls[kKeys_SaveStateMenu] = _(SDLK_F7);
   kDefaultKbdControls[kKeys_Rewind] = _(SDLK_F8);
 }
+/* Ctrl+L collides with nothing in the table above. Unbound for a host that
+ * does not offer the in-game launcher, so its KeyMap is unchanged. */
+void ConfigUseInGameLauncherDefaults(void) {
+  kDefaultKbdControls[kKeys_OpenLauncher] = C(SDLK_l);
+}
 #undef _
 #undef A
 #undef C
@@ -100,7 +105,7 @@ static const KeyNameId kKeyNameId[] = {
   M(Load), M(Save),
   S(Fullscreen), S(Reset),
   S(Pause), S(PauseDimmed), S(Turbo), S(WindowBigger), S(WindowSmaller), S(VolumeUp), S(VolumeDown), S(DisplayPerf), S(ToggleRenderer), S(ToggleWidescreen),
-  S(SaveStateMenu), S(Rewind), S(Screenshot),
+  S(SaveStateMenu), S(Rewind), S(Screenshot), S(OpenLauncher),
 };
 #undef S
 #undef M
@@ -384,6 +389,7 @@ static int GetIniSection(const char *s) {
     return 9;
   if (StringEqualsNoCase(s, "[Rewind]"))
     return 10;
+  if (StringEqualsNoCase(s, "[Diagnostics]")) return 11;
   return -1;
 }
 
@@ -413,6 +419,14 @@ static bool ParsePlayerSource(int player, const char *value) {
 }
 
 static bool HandleIniConfig(int section, const char *key, char *value) {
+  if (section == 11) {
+    bool enabled;
+    if (!ParseBool(value, &enabled)) return false;
+    if (StringEqualsNoCase(key, "ExposeCoverageMod")) g_config.expose_coverage_mod = enabled;
+    else if (StringEqualsNoCase(key, "CoverageCapture")) g_config.coverage_capture = enabled;
+    else return false;
+    return true;
+  }
   if (section == 0) {
     for (int i = 0; i < countof(kKeyNameId); i++) {
       if (StringEqualsNoCase(key, kKeyNameId[i].name)) {
@@ -453,6 +467,9 @@ static bool HandleIniConfig(int section, const char *key, char *value) {
   } else if (section == 7) {
     if (StringEqualsNoCase(key, "RewindGesture")) {
       snprintf(g_config.rewind_gesture, sizeof(g_config.rewind_gesture), "%s", value);
+      return true;
+    } else if (StringEqualsNoCase(key, "LauncherGesture")) {
+      snprintf(g_config.launcher_gesture, sizeof(g_config.launcher_gesture), "%s", value);
       return true;
     } else if (StringEqualsNoCase(key, "SourceP1")) {
       return ParsePlayerSource(0, value);
@@ -629,6 +646,7 @@ static bool ParseOneConfigFile(const char *filename, int depth) {
 void ParseConfigFile(const char *filename) {
   g_config.enable_audio = true;
   g_config.vsync = kSnesVSync_On;
+  g_config.coverage_capture = -1;
   g_config.volume = 100;
   /* Audio defaults match the values shipped in config.ini's [Sound]
    * section. Without these a release with no config.ini next to the
@@ -684,6 +702,43 @@ void ParseConfigFile(const char *filename) {
  * ParseConfigFile here would clobber non-persisted fields like output_method
  * back to the file's stale values). Keyboard defaults are then re-registered
  * for entries the file doesn't mention, matching ParseConfigFile's order. */
+/* Re-read one section of `filename`, then of config.local.ini -- the order the
+ * host parsed them at boot, so a local override survives a reload. Nothing a
+ * binding section holds outlives parsing (keys resolve to codes immediately),
+ * so the buffers can be freed, unlike ParseConfigFile's memory_buffer, which
+ * strings like `shader` point into. `bindings_only` skips the scalar keys
+ * that share [GamepadMap] with the bindings. */
+static void ReloadSection(const char *filename, const char *section, int id,
+                          bool bindings_only) {
+  const char *files[2] = { filename ? filename : "config.ini", "config.local.ini" };
+  for (int f = 0; f < 2; f++) {
+    char *filedata = (char *)ReadWholeFile(files[f], NULL);
+    if (!filedata)
+      continue;
+    char *iter = filedata, *p;
+    int in_section = 0;
+    while ((p = NextLineStripComments(&iter)) != NULL) {
+      if (*p == 0)
+        continue;
+      if (*p == '[') {
+        in_section = StringEqualsNoCase(p, section);
+        continue;
+      }
+      if (!in_section)
+        continue;
+      char *v = SplitKeyValue(p);
+      if (!v)
+        continue;
+      if (bindings_only && (StringEqualsNoCase(p, "EnableGamepad1") ||
+                            StringEqualsNoCase(p, "EnableGamepad2") ||
+                            StringEqualsNoCase(p, "GamepadDeadzone")))
+        continue;
+      HandleIniConfig(id, p, v);
+    }
+    free(filedata);
+  }
+}
+
 void ConfigReloadKeyMap(const char *filename) {
   memset(keymap_hash_first, 0, sizeof(keymap_hash_first));
   free(keymap_hash);
@@ -692,30 +747,7 @@ void ConfigReloadKeyMap(const char *filename) {
   memset(has_keynameid, 0, sizeof(has_keynameid));
   g_config.has_keyboard_controls = 0;
 
-  if (filename == NULL)
-    filename = "config.ini";
-  char *filedata = (char *)ReadWholeFile(filename, NULL);
-  if (filedata) {
-    char *iter = filedata, *p;
-    int in_keymap = 0;
-    while ((p = NextLineStripComments(&iter)) != NULL) {
-      if (*p == 0)
-        continue;
-      if (*p == '[') {
-        in_keymap = StringEqualsNoCase(p, "[KeyMap]");
-        continue;
-      }
-      if (!in_keymap)
-        continue;
-      char *v = SplitKeyValue(p);
-      if (v)
-        HandleIniConfig(0, p, v);
-    }
-    /* Nothing from [KeyMap] outlives parsing (keys resolve to codes
-     * immediately), so the buffer can be freed — unlike ParseConfigFile's
-     * memory_buffer, which strings like `shader` point into. */
-    free(filedata);
-  }
+  ReloadSection(filename, "[KeyMap]", 0, false);
 
   /* Keyboard defaults for anything [KeyMap] didn't mention (the keyboard
    * half of RegisterDefaultKeys; the joypad half is deliberately not
@@ -726,6 +758,33 @@ void ConfigReloadKeyMap(const char *filename) {
       for (int j = 0; j < size; j++, k++)
         KeyMapHash_Add(kDefaultKbdControls[k], k);
     }
+  }
+}
+
+/* The [GamepadMap] counterpart of ConfigReloadKeyMap. The launcher's
+ * controller page writes the Controls / ControlsP2 lines (and any command
+ * bound to a pad button) straight into the file AFTER the host parsed it, so
+ * without this a rebind made in the launcher did nothing until the next run.
+ * Only the button bindings are re-read: EnableGamepadN and GamepadDeadzone
+ * are scalar settings the host already holds live, and re-reading them here
+ * would undo an edit the host has not written yet. */
+void ConfigReloadGamepadMap(const char *filename) {
+  memset(joymap_first, 0, sizeof(joymap_first));
+  free(joymap_ents);
+  joymap_ents = NULL;
+  joymap_size = 0;
+  has_assigned_joypad_controls = 0;
+
+  ReloadSection(filename, "[GamepadMap]", 5, true);
+
+  /* The joypad half of RegisterDefaultKeys. */
+  if (!(has_assigned_joypad_controls & 1)) {
+    for (int i = 0; i < countof(kDefaultGamepadCmds); i++)
+      GamepadMap_Add(kDefaultGamepadCmds[i], 0, kKeys_Controls + i);
+  }
+  if (!(has_assigned_joypad_controls & 2)) {
+    for (int i = 0; i < countof(kDefaultGamepadCmds); i++)
+      GamepadMap_Add(kDefaultGamepadCmds[i] + kGamepadBtn_Count, 0, kKeys_ControlsP2 + i);
   }
 }
 

@@ -61,6 +61,28 @@ out-of-map fill while removing intermediate hardware truncation. The generic
 PPU uses each scanline's own affine matrix; it does not infer perspective or
 smooth across raster boundaries.
 
+The PPU's optimized path checks an affine span's coordinate bounds once per
+output row, keeps resolved texels as integers and reuses a texture lookup when
+adjacent samples hit the same texel. Fractional offsets are precomputed;
+every sample still uses its original affine expression. These helpers are
+also available to custom renderers:
+
+- `SnesMode7HdSpanFits` checks both raw coordinate endpoints against an
+  exclusive positive integer limit. A host may use a tighter limit for its
+  own address calculations. Non-finite endpoints reject the fast path.
+- `SnesMode7HdFloorInt` is exact for coordinates within an accepted span.
+  Do not use it for an unchecked coordinate or outside that span.
+- `SnesMode7HdFetchInt` fetches a palette index from integer texels.
+- `SnesMode7HdLocate` and `SnesMode7HdFetch` provide the general whole-texel
+  path, including huge/non-finite host transforms. The existing
+  `SnesMode7HdSample` convenience API remains available.
+
+Both fetch helpers accept a tile override (`-1` uses the native tilemap).
+This lets a game supply streamed course data while sharing wrapping,
+transparency, tile-zero fill and character lookup. An override cannot bypass
+the SNES outside-map rules. Any caller's repeated-texel cache must be reset
+when its source picture, transform control or tile override changes.
+
 F-Zero's integration additionally interpolates transforms between adjacent
 scanlines of the same camera band, using its existing published frame data.
 It retains that game's course-streaming, sprites, HUD layout and independent
@@ -72,7 +94,11 @@ or custom renderer integration and game validation.
 `tests/ppu/ppu_mode7_hd_test.c` exercises analytic detail in both dimensions,
 disabled/native output and state isolation, guarded sizes/strides, fallback
 modes, transparency behind sprites, raster changes, host picture memory and
-512 combinations of colour math/windows/priority/overflow. It runs in
+512 combinations of colour math/windows/priority/overflow. Fractional
+scanout also compares every sample at scales
+2/3/4 against the general sampler, covering repeated texels, flips, negative
+coordinates and overflow; integer limits and tile overrides have explicit
+checks. With HD unbound the original scanout remains unchanged. It runs in
 `tests/ppu/run.ps1`. The composition regression's disabled-path digest matches
 the original renderer (`436319d369c4a1e3` at base `74be148`).
 

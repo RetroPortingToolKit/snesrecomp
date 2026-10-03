@@ -49,6 +49,19 @@ def test_owner_is_the_target_when_it_has_its_own_bodies():
         _reset()
 
 
+def test_direct_call_does_not_claim_a_body_only_emitted_at_the_mirror():
+    from v2.codegen import has_exact_variant
+    _install({0x118A49: frozenset({(0, 0)})},
+             {0x118A49: "DeclaredBody", 0x918A49: "bank_91_8A49"})
+    try:
+        assert has_exact_variant(0x118A49, 0, 0)
+        assert not has_exact_variant(0x918A49, 0, 0)
+        # Switch-based dispatch has its own owner/name resolution contract.
+        assert resolve_variant_owner(0x918A49) == 0x118A49
+    finally:
+        _reset()
+
+
 def test_owner_falls_through_to_the_mirror_when_the_target_has_none():
     _install({0x08B279: frozenset({(1, 1)})},
              {0x08B279: "FxTypeFunc_2_Lava"})

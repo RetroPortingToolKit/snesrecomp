@@ -5,7 +5,7 @@ This is the central correctness fix vs the v1 `decode_func` which
 silently drops one mode in `pending_flags`."""
 from _helpers import make_lorom_bank0  # noqa: E402
 
-# Top-level relative import OK because run_tests.py prepends tests/v2 to sys.path.
+# Top-level relative import OK because tests/conftest.py puts tests/v2 on sys.path.
 
 from v2.decoder import decode_function, DecodeKey  # noqa: E402
 

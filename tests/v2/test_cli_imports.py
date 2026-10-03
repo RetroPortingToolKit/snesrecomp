@@ -12,6 +12,8 @@ cheapest possible gate and it would have caught this one
 """
 import ast
 import pathlib
+import subprocess
+import sys
 
 REPO = pathlib.Path(__file__).resolve().parents[2]
 
@@ -22,6 +24,20 @@ ENTRY_POINTS = [
     "tools/new_project/probe_rom.py",
     "tools/new_project/setup_project.sh",   # shell: existence only
 ]
+
+
+def test_cli_starts_without_optional_toml_parser():
+    # Reproduce Python < 3.11 without tomli on every CI interpreter. The CLI
+    # must remain usable by cfg-only projects, including its help/verify paths.
+    result = subprocess.run([
+        sys.executable, "-c",
+        "import runpy, sys; "
+        "sys.modules['tomllib'] = None; sys.modules['tomli'] = None; "
+        "sys.argv = ['snesrecomp_cli.py', 'generate', '--help']; "
+        "runpy.run_path('snesrecomp_cli.py', run_name='__main__')",
+    ], cwd=REPO, capture_output=True, text=True)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "--cfg-dir" in result.stdout
 
 
 def test_entry_points_parse():

@@ -11,6 +11,7 @@ quoting rule or a field the other does not, these fail.
 import pathlib
 import shutil
 import subprocess
+import sys
 import tempfile
 
 import pytest
@@ -35,7 +36,7 @@ game_id         = fixture-jp
 def _python_header(tmp: pathlib.Path, identity: pathlib.Path) -> str:
     out = tmp / "py"
     subprocess.run(
-        ["python3", str(EMITTER), str(identity), "--header", str(out)],
+        [sys.executable, str(EMITTER), str(identity), "--header", str(out)],
         check=True, capture_output=True, text=True)
     return (out / "snesrecomp_rom_identity.h").read_text(encoding="utf-8")
 

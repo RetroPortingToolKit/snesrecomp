@@ -130,6 +130,17 @@ static FILE  *g_wlog_addr_fp = NULL;
 static uint16 g_wlog_addr_lo = 0xFFFF, g_wlog_addr_hi = 0x0000;
 static long   g_wlog_addr_n = 0, g_wlog_addr_cap = 2000000;
 static int    g_wlog_addr_state = 0;
+/* Optional halt-on-write: SNESRECOMP_WLOG_ADDR_HALT="OFF:MINVAL" (hex).
+ * When a logged write lands a byte with value >= MINVAL at g_ram offset
+ * OFF, print a loud line and exit(42) so the game's atexit post-mortem
+ * dumps the trace rings ending exactly at the offending write. */
+static long   g_wlog_halt_off = -1;
+static unsigned g_wlog_halt_min = 0;
+/* Interp step-ring dump, installed by interp_bridge.c's constructor when
+ * that TU is linked (small C-test binaries link cpu_state.c alone -- a
+ * direct extern call would break their link; PE weak symbols are a known
+ * trap here, so use an explicit hook). */
+void (*g_interp_recent_dump_hook)(int n, FILE *out) = NULL;
 static int    g_wlog_addr_enabled = -1;  /* -1 unknown, 0 off, 1 configured */
 
 static void wlog_addr_lazy(void) {
@@ -152,17 +163,27 @@ static void wlog_addr_lazy(void) {
     const char *c = getenv("SNESRECOMP_WLOG_ADDR_CAP");
     if (c && c[0]) g_wlog_addr_cap = strtol(c, NULL, 0);
     g_wlog_addr_state = getenv("SNESRECOMP_WLOG_STATE") != NULL;
+    const char *h = getenv("SNESRECOMP_WLOG_ADDR_HALT");
+    if (h && h[0]) {
+        unsigned hoff = 0, hmin = 0;
+        if (sscanf(h, "%x:%x", &hoff, &hmin) == 2) {
+            g_wlog_halt_off = (long)hoff;
+            g_wlog_halt_min = hmin;
+        }
+    }
 }
 
-static inline void wlog_addr_note(uint8 bank, uint16 addr, uint16 v, int width) {
+static void wlog_addr_note_via(uint8 bank, uint16 addr, uint16 v, int width,
+                               const char *via) {
     if (addr < g_wlog_addr_lo || addr > g_wlog_addr_hi) return;
     if (g_wlog_addr_n++ >= g_wlog_addr_cap) return;
     extern int snes_frame_counter;
     extern const char *g_last_recomp_func;
-    fprintf(g_wlog_addr_fp, "f%-6d %02X:%04X=%0*X w%d %s",
+    fprintf(g_wlog_addr_fp, "f%-6d %02X:%04X=%0*X w%d %s%s%s",
             snes_frame_counter, bank, addr, width * 2,
             (unsigned)(v & (width == 1 ? 0xFF : 0xFFFF)), width,
-            g_last_recomp_func ? g_last_recomp_func : "?");
+            g_last_recomp_func ? g_last_recomp_func : "?",
+            via ? " via=" : "", via ? via : "");
     if (g_wlog_addr_state)
         {
         extern uint32_t g_interp_wlog_pc24;
@@ -191,6 +212,42 @@ static inline void wlog_addr_note(uint8 bank, uint16 addr, uint16 v, int width) 
                 cpu_read8(&g_cpu, 0x00, (uint16)(g_cpu.D + 0x57)));
         }
     fputc('\n', g_wlog_addr_fp);
+    if (g_wlog_halt_off >= 0) {
+        int32_t off = cpu_wram_offset(bank, addr);
+        if (off >= 0) {
+            unsigned hit = 0, hv = 0;
+            if ((long)off == g_wlog_halt_off) { hv = (unsigned)(v & 0xFF); hit = 1; }
+            else if (width == 2 && (long)off + 1 == g_wlog_halt_off) { hv = (unsigned)((v >> 8) & 0xFF); hit = 1; }
+            if (hit && hv >= g_wlog_halt_min) {
+                extern uint32_t g_interp_wlog_pc24;
+                fprintf(stderr,
+                        "[wlog_addr] HALT: write of %02X to g_ram[%04lX] at frame=%d "
+                        "func=%s IPC=%06X -- exiting for post-mortem\n",
+                        hv, (unsigned long)g_wlog_halt_off, snes_frame_counter,
+                        g_last_recomp_func ? g_last_recomp_func : "?",
+                        (unsigned)(g_interp_wlog_pc24 & 0xFFFFFFu));
+                if (g_interp_recent_dump_hook)
+                    g_interp_recent_dump_hook(512, stderr);
+                fflush(NULL);
+                exit(42);
+            }
+        }
+    }
+}
+
+static inline void wlog_addr_note(uint8 bank, uint16 addr, uint16 v, int width) {
+    wlog_addr_note_via(bank, addr, v, width, NULL);
+}
+
+/* Direct-WRAM-store variant for the write paths that bypass cpu_write8/16:
+ * snes_write's two WRAM stores (DMA A-bus writes land there) and the WMDATA
+ * ($2180) B-bus store. Same env gate / addr filter / output as the bus hook,
+ * tagged with `via` so the log distinguishes DMA-engine writes from CPU bus
+ * writes. `wa` is the g_ram offset (0..0x1FFFF). */
+void wlog_addr_note_direct(uint32 wa, uint8 v, const char *via) {
+    uint8  bank = (wa >= 0x10000u) ? 0x7F : 0x7E;
+    uint16 addr = (uint16)(wa & 0xFFFFu);
+    wlog_addr_note_via(bank, addr, v, 1, via);
 }
 
 static inline void wlog_note(uint8 bank, uint16 addr, uint16 v, int width) {
@@ -904,6 +961,10 @@ void CpuDispatchLogDumpJson(FILE *f) {
  * mismatch (or a RAM body with no guard record — fail safe) suppresses the AOT
  * bounce so the interpreter floor runs the real bytes, and logs loudly. */
 static const DispatchEntry *s_program_dispatch;
+void cpu_select_interpreted_program(void) {
+    static const DispatchEntry empty[1] = {{0}};
+    cpu_select_program(empty, 0, NULL, 0);
+}
 static unsigned s_program_dispatch_count;
 static const RamRoutineGuard *s_program_guards;
 static unsigned s_program_guard_count;
@@ -1000,6 +1061,51 @@ static const DispatchEntry *_cpu_dispatch_find(uint32 pc24) {
     return NULL;
 }
 
+/* Cartridge mappings can make numerically similar banks refer to different
+ * bytes (SA-1, and banked S-DD1 windows). Probe pointers without bus effects. */
+int cpu_aot_rom_mapping_matches(uint32 pc24, uint32 offset, unsigned length) {
+    if (!g_snes || !g_snes->cart || !length || length > 4) return 0;
+    Cart *cart = g_snes->cart;
+    if (!cart->rom || offset >= (uint32)cart->romSize ||
+        length > (uint32)cart->romSize - offset) return 0;
+    for (unsigned i = 0; i < length; ++i) {
+        if (cart_getRomPtr(cart, (uint8)(pc24 >> 16), (uint16)(pc24 + i)) !=
+            cart->rom + offset + i) return 0;
+    }
+    return 1;
+}
+
+static int dispatch_has_rom_mirror(uint32 pc24) {
+    unsigned bank = pc24 >> 16;
+    if (!((bank < 0x40 || (bank >= 0x80 && bank < 0xC0)) && (pc24 & 0xFFFF) >= 0x8000)) return 0;
+    if (!g_snes || !g_snes->cart) return 1; /* isolated dispatch fixtures */
+    uint8 *a = cart_getRomPtr(g_snes->cart, bank, (uint16)pc24);
+    uint8 *b = cart_getRomPtr(g_snes->cart, bank ^ 0x80, (uint16)pc24);
+    return a && a == b;
+}
+
+const char *cpu_dispatch_entry_reason(uint32_t pc24, uint8_t mx) {
+    const DispatchEntry *row = _cpu_dispatch_find(pc24);
+    if (!row) {
+        if (dispatch_has_rom_mirror(pc24))
+            row = _cpu_dispatch_find(pc24 ^ 0x800000u);
+    }
+    if (!row) return "missing_entry";
+    if (!row->variant[mx & 3]) return "missing_exact_variant";
+    unsigned bank = pc24 >> 16;
+    if (bank == 0x7E || bank == 0x7F) {
+        const RamRoutineGuard *guard = _ram_guard_find(pc24);
+        if (!guard) return "ram_guard_missing";
+        uint32_t h = 2166136261u;
+        for (uint32_t i = 0; i < guard->len; ++i) {
+            h ^= g_ram[((bank - 0x7E) << 16) | ((pc24 + i) & 0xFFFF)];
+            h *= 16777619u;
+        }
+        if (h != guard->hash) return "ram_guard_mismatch";
+    }
+    return "compiled_entry_available_check_policy";
+}
+
 static RecompReturn (*_cpu_dispatch_lookup(CpuState *cpu, uint32 pc24))(CpuState *) {
     const DispatchEntry *row = _cpu_dispatch_find(pc24);
     if (row != NULL) {
@@ -1035,8 +1141,7 @@ RecompReturn cpu_dispatch_pc_from(CpuState *cpu, uint32 pc24,
          * Cfg may declare a function in one bank while the trampoline
          * popped (PB:PC) lands on the mirror. Try the other bank
          * before giving up — matches set_name_resolver's alias. */
-        uint8 bank = (uint8)((pc24 >> 16) & 0xFF);
-        if (bank < 0x40 || (bank >= 0x80 && bank < 0xC0)) {
+        if (dispatch_has_rom_mirror(pc24)) {
             const DispatchEntry *mirror_row = _cpu_dispatch_find(pc24 ^ 0x800000u);
             if (mirror_row != NULL) {
                 known_entry = 1;
@@ -1120,8 +1225,7 @@ RecompReturn cpu_dispatch_call_pc(CpuState *cpu, uint32 pc24,
     int via_mirror = 0;
     RecompReturn (*fp)(CpuState *) = _cpu_dispatch_lookup(cpu, pc24);
     if (fp == NULL) {
-        uint8 bank = (uint8)((pc24 >> 16) & 0xFF);
-        if (bank < 0x40 || (bank >= 0x80 && bank < 0xC0)) {
+        if (dispatch_has_rom_mirror(pc24)) {
             fp = _cpu_dispatch_lookup(cpu, pc24 ^ 0x800000u);
             if (fp != NULL) via_mirror = 1;
         }
@@ -1146,8 +1250,7 @@ RecompReturn cpu_dispatch_call_pc_pushed(CpuState *cpu, uint32 pc24,
     int via_mirror = 0;
     RecompReturn (*fp)(CpuState *) = _cpu_dispatch_lookup(cpu, pc24);
     if (fp == NULL) {
-        uint8 bank = (uint8)((pc24 >> 16) & 0xFF);
-        if (bank < 0x40 || (bank >= 0x80 && bank < 0xC0)) {
+        if (dispatch_has_rom_mirror(pc24)) {
             fp = _cpu_dispatch_lookup(cpu, pc24 ^ 0x800000u);
             if (fp != NULL) via_mirror = 1;
         }
@@ -1184,8 +1287,7 @@ RecompReturn cpu_dispatch_pc_paired(CpuState *cpu, uint32 pc24, uint8 frame_size
     int via_mirror = 0;
     RecompReturn (*fp)(CpuState *) = _cpu_dispatch_lookup(cpu, pc24);
     if (fp == NULL) {
-        uint8 bank = (uint8)((pc24 >> 16) & 0xFF);
-        if (bank < 0x40 || (bank >= 0x80 && bank < 0xC0)) {
+        if (dispatch_has_rom_mirror(pc24)) {
             fp = _cpu_dispatch_lookup(cpu, pc24 ^ 0x800000u);
             if (fp != NULL) via_mirror = 1;
         }
@@ -1202,8 +1304,7 @@ RecompReturn cpu_dispatch_pc_paired(CpuState *cpu, uint32 pc24, uint8 frame_size
 int cpu_dispatch_has_entry(CpuState *cpu, uint32 pc24) {
     pc24 &= 0xFFFFFFu;
     if (_cpu_dispatch_lookup(cpu, pc24) != NULL) return 1;
-    uint8 bank = (uint8)((pc24 >> 16) & 0xFF);
-    if (bank < 0x40 || (bank >= 0x80 && bank < 0xC0))
+    if (dispatch_has_rom_mirror(pc24))
         if (_cpu_dispatch_lookup(cpu, pc24 ^ 0x800000u) != NULL) return 1;
     return 0;
 }
@@ -1219,8 +1320,7 @@ uint8 cpu_dispatch_inline_arg_bytes(uint32 pc24) {
             else if (mid_pc > pc24) hi = mid;
             else return ACTIVE_DISPATCH[mid].inline_arg_bytes;
         }
-        uint8 bank = (uint8)(pc24 >> 16);
-        if (pass || !((bank < 0x40) || (bank >= 0x80 && bank < 0xC0)))
+        if (pass || !dispatch_has_rom_mirror(pc24))
             break;
         pc24 ^= 0x800000u;
     }

@@ -172,7 +172,7 @@ fi
 # "master" was hard-coded here once, and every netplay project cut with the
 # default failed to compile snes_host_lobby.c against a recomp-ui that had
 # never heard of the lobby mod-transfer callbacks.
-RECOMP_UI_REF=$(sed -n '1{s/[[:space:]]*$//;p}' "$SCRIPT_DIR/RECOMP_UI_REF" 2>/dev/null || true)
+RECOMP_UI_REF=$(sed -e 's/[[:space:]]*$//' -e 'q' "$SCRIPT_DIR/RECOMP_UI_REF" 2>/dev/null || true)
 [ -n "$RECOMP_UI_REF" ] || RECOMP_UI_REF="master"
 RECOMP_NET_REF=""; RBENGINE_REF=""
 # The framework URL comes from the checkout this script is running out of, so
@@ -759,7 +759,14 @@ EOF
 # path cache the host reads beside its executable, and the build stages
 # this copy there (snesrecomp_target_rom_cache), so the first launch opens
 # on the same dump instead of asking for one. Ignored by git.
-printf '%s\n' "$ROM_ABS" > rom.cfg
+# The desktop executable is native on Windows; an MSYS /c/... or /home/...
+# path only works inside the shell. Keep shell paths for shell operations,
+# but store a Windows path in the launcher's cache.
+ROM_CACHE=$ROM_ABS
+case "$(uname -s)" in
+    MINGW*|MSYS*|CYGWIN*) ROM_CACHE=$(cygpath -m "$ROM_ABS") ;;
+esac
+printf '%s\n' "$ROM_CACHE" > rom.cfg
 
 echo "== Seeding analysis config =="
 "$PYTHON" "$PROBE_ROM" "$ROM_ABS" --quiet --display-name "$NAME" \
@@ -829,7 +836,7 @@ fi
 # call (its lobby client compiles against recomp-ui's API), not this copy of
 # the wizard's -- unless --recomp-ui-ref said otherwise.
 if [ -z "${SET_RECOMP_UI_REF:-}" ] && [ -f snesrecomp/tools/new_project/RECOMP_UI_REF ]; then
-    _pinned_ui_ref=$(sed -n '1{s/[[:space:]]*$//;p}' snesrecomp/tools/new_project/RECOMP_UI_REF)
+    _pinned_ui_ref=$(sed -e 's/[[:space:]]*$//' -e 'q' snesrecomp/tools/new_project/RECOMP_UI_REF)
     if [ -n "$_pinned_ui_ref" ] && [ "$_pinned_ui_ref" != "$RECOMP_UI_REF" ]; then
         echo "== recomp-ui ref from the pinned framework: $_pinned_ui_ref (this wizard said $RECOMP_UI_REF) =="
         RECOMP_UI_REF=$_pinned_ui_ref

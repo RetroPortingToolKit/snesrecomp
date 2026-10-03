@@ -417,6 +417,13 @@ void   cpu_write16(CpuState *cpu, uint8 bank, uint16 addr, uint16 v);
  * interpreter's bridge shims use the plain accessors (they account
  * transfers themselves). */
 uint32_t  cpu_region_speed(uint32_t adr);
+/* SNESRECOMP_WLOG_ADDR hook for direct-WRAM stores that bypass cpu_write8/16
+ * (DMA A-bus writes in snes_write, WMDATA $2180). wa = g_ram offset. */
+void wlog_addr_note_direct(uint32_t wa, uint8_t v, const char *via);
+/* Optional interp step-ring dump used by the WLOG_ADDR_HALT path; installed
+ * by interp_bridge.c at load when that TU is linked, NULL otherwise. */
+#include <stdio.h>
+extern void (*g_interp_recent_dump_hook)(int n, FILE *out);
 uint8  cpu_read8_paced (CpuState *cpu, uint8 bank, uint16 addr);
 uint16 cpu_read16_paced(CpuState *cpu, uint8 bank, uint16 addr);
 void   cpu_write8_paced (CpuState *cpu, uint8 bank, uint16 addr, uint8  v);
@@ -579,6 +586,9 @@ extern const unsigned        g_ram_routine_guard_count;
  * Passing NULL restores the original generated program. Never call mid-frame. */
 void cpu_select_program(const DispatchEntry *dispatch, unsigned count,
                         const RamRoutineGuard *guards, unsigned guard_count);
+/* A code-changing resource without a compiled module must never fall back to
+ * the stock table (NULL means stock). Select an intentionally empty program. */
+void cpu_select_interpreted_program(void);
 
 uint8 cpu_dispatch_inline_arg_bytes(uint32 pc24);
 
@@ -628,6 +638,10 @@ RecompReturn cpu_dispatch_pc_paired(CpuState *cpu, uint32 pc24, uint8 frame_size
 /* Read-only exact-AOT probe used by interpreter bounce and RTS rewriting.
  * A known LLE-only row intentionally returns false. */
 int cpu_dispatch_has_entry(CpuState *cpu, uint32 pc24);
+/* Capture-only inspection. Does not perform bus reads or update guard counters. */
+const char *cpu_dispatch_entry_reason(uint32_t pc24, uint8_t mx);
+/* Side-effect-free fetch mapping guard for generated banked-ROM code. */
+int cpu_aot_rom_mapping_matches(uint32 pc24, uint32 rom_offset, unsigned length);
 
 /* Balanced abandon of the current function invocation at an UNRESOLVED
  * control-transfer site (unresolved indirect dispatch / OOB index,
@@ -670,14 +684,18 @@ int rtl_aot_node_denied(uint32 pc24);
  * cpu_push_interrupt_frame() frame, then return to the host scheduler. */
 RecompReturn interp_tier_dispatch_interrupt(CpuState *cpu,
                                             uint32 target_pc24);
+/* Explicit entry semantics for new generated code. from_indirect means the
+ * entry is the JMP/JML instruction itself, whose first landing is the target.
+ * Ordinary continuations must record their entry, even when target == site. */
 RecompReturn interp_tier_dispatch_balanced(CpuState *cpu, uint32 target_pc24,
-                                           uint32 site_pc24, uint16 entry_s,
-                                           uint8 hrv);
+    uint32 site_pc24, uint16 entry_s, uint8 hrv, bool from_indirect);
 /* Tail transfer that preserves the enclosing architectural boundary.  Normal
  * subroutines stop past entry_s; an interrupt handler stops at its RTI. */
 RecompReturn interp_tier_dispatch_tail(CpuState *cpu, uint32 target_pc24,
                                        uint32 site_pc24, uint16 entry_s,
                                        uint8 hrv);
+RecompReturn interp_tier_dispatch_tail_ex(CpuState *cpu, uint32 target_pc24,
+    uint32 site_pc24, uint16 entry_s, uint8 hrv, bool from_indirect);
 /* RTS/RTL trampoline reached a known function row whose live M/X variant has
  * no AOT body.  The prior frame is already popped, so execution unwinds past
  * the current cpu->S; a bounded bail restores the ordinary dispatch-miss S. */

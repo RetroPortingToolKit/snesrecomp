@@ -22,6 +22,14 @@
  *   L/R (shoulders):   C / V
  */
 
+/* Optional per-target defaults; other hosts retain the legacy C/V layout. */
+#ifndef RECOMP_DEFAULT_KEY_L
+#define RECOMP_DEFAULT_KEY_L SDL_SCANCODE_C
+#endif
+#ifndef RECOMP_DEFAULT_KEY_R
+#define RECOMP_DEFAULT_KEY_R SDL_SCANCODE_V
+#endif
+
 /* One literal for the default layout, shared by the boot state and the
  * launcher's Reset-to-Defaults (keybinds_reset_player). */
 #define KEYBINDS_DEFAULTS { \
@@ -30,8 +38,8 @@
         .b      = SDL_SCANCODE_Z, \
         .x      = SDL_SCANCODE_S, \
         .y      = SDL_SCANCODE_A, \
-        .l      = SDL_SCANCODE_C, \
-        .r      = SDL_SCANCODE_V, \
+        .l      = RECOMP_DEFAULT_KEY_L, \
+        .r      = RECOMP_DEFAULT_KEY_R, \
         .start  = SDL_SCANCODE_RETURN, \
         .select = SDL_SCANCODE_RSHIFT, \
         .up     = SDL_SCANCODE_UP, \
@@ -57,8 +65,8 @@
         .b      = SDL_SCANCODE_Z, \
         .x      = SDL_SCANCODE_S, \
         .y      = SDL_SCANCODE_A, \
-        .l      = SDL_SCANCODE_C, \
-        .r      = SDL_SCANCODE_V, \
+        .l      = RECOMP_DEFAULT_KEY_L, \
+        .r      = RECOMP_DEFAULT_KEY_R, \
         .start  = SDL_SCANCODE_RETURN, \
         .select = SDL_SCANCODE_RSHIFT, \
         .up     = SDL_SCANCODE_UP, \
@@ -228,6 +236,9 @@ static void load_ini(const char *path) {
 
 void keybinds_init(const char *exe_path) {
     derive_ini_path(exe_path);
+    /* Re-callable: the host reloads after an in-game launcher edited the file,
+     * and a binding the file no longer names must not survive from before. */
+    s_binds = s_default_binds;
     FILE *test = fopen(s_ini_path, "r");
     if (test) {
         fclose(test);

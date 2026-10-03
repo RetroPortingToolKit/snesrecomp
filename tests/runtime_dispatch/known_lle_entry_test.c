@@ -8,6 +8,7 @@
 #include "snes/cart.h"
 #include "snes/snes.h"
 #include "snes/superfx.h"
+#include "snes/sa1.h"
 
 /* cpu_state.c's optional write-state recorder reads the bridge log PC. The
  * production definition lives in interp_bridge.c, which this focused dispatch
@@ -28,6 +29,7 @@ int g_sram_size;
 uint64_t g_main_cpu_cycles_estimate;
 uint64_t g_apu_pace_cycles_estimate;
 Snes *g_snes;
+uint8 g_ram[0x20000];
 const RamRoutineGuard g_ram_routine_guards[] = {{0}};
 const unsigned g_ram_routine_guard_count = 0;
 
@@ -50,6 +52,10 @@ SuperFx *superfx_create(uint8_t *rom, uint32_t rom_size, uint8_t *ram,
 }
 void superfx_destroy(SuperFx *fx) { (void)fx; }
 void superfx_reset(SuperFx *fx) { (void)fx; }
+/* Cart serialization now consults these, although this LoROM dispatch test
+ * never saves a machine and deliberately does not link either subsystem. */
+uint32_t snes_saveload_get_version(void) { return 5; }
+void superfx_saveload(SuperFx *fx, struct SaveLoadInfo *sli) { (void)fx; (void)sli; }
 void superfx_sync(SuperFx *fx, uint64_t master_clock) {
     (void)fx; (void)master_clock;
 }
@@ -139,6 +145,22 @@ int main(void) {
     g_sram = sram;
     g_sram_size = (int)sizeof sram;
     cpu_state_init(&cpu, ram);
+
+    cart.type = CART_SA1;
+    cart.sa1 = sa1_create(g_test_rom, sizeof g_test_rom, sram, sizeof sram);
+    sa1_reset(cart.sa1);
+    fails += check(cpu_aot_rom_mapping_matches(0xc00000, 0, 4),
+                   "default SA-1 code fetch matches compiled ROM");
+    fails += check(!cpu_aot_rom_mapping_matches(0x808000, 0, 3),
+                   "SA-1 upper bank is not a LoROM mirror");
+    sa1_cpu_write(cart.sa1, 0, 0x2220, 1);
+    fails += check(!cpu_aot_rom_mapping_matches(0xc00000, 0, 4),
+                   "MMC remapping rejects stale compiled code");
+    fails += check(cpu_aot_rom_mapping_matches(0xc00000, 0x100000, 4),
+                   "mapping probe follows the selected page without bus reads");
+    sa1_destroy(cart.sa1);
+    cart.sa1 = NULL;
+    cart.type = CART_LOROM;
 
     /* SMK indexes $7F:5000 by $FA78, carrying into unmapped $80:4A78.
      * Its final operand byte leaves $7F on the data bus. */
@@ -270,6 +292,12 @@ int main(void) {
                    "alternate program cannot reach stock AOT table");
     fails += check(cpu_dispatch_inline_arg_bytes(0x008300u) == 3,
                    "inline arguments use active program metadata");
+    cpu_select_interpreted_program();
+    fails += check(!cpu_dispatch_has_entry(&cpu, 0x008100u) &&
+                   !cpu_dispatch_has_entry(&cpu, 0x008300u),
+                   "uncompiled content reaches neither stock nor alternate AOT");
+    fails += check(cpu_dispatch_inline_arg_bytes(0x008300u) == 0,
+                   "uncompiled content inherits no native inline metadata");
     cpu_select_program(NULL, 0, NULL, 0);
     fails += check(cpu_dispatch_has_entry(&cpu, 0x008100u),
                    "default program restores stock dispatch");
