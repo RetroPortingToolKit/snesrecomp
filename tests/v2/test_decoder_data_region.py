@@ -16,6 +16,7 @@ at the suspect entry and records a DispatchTargetSuppressed entry
 for the build report.
 """
 from _helpers import make_lorom_bank0  # noqa: E402
+import pytest
 
 from v2.decoder import (  # noqa: E402
     decode_function,
@@ -37,6 +38,26 @@ def test_addr_in_data_regions_basic():
 def test_addr_in_data_regions_no_regions_is_false():
     assert _addr_in_data_regions(None, 0, 0x9C60) is False
     assert _addr_in_data_regions([], 0, 0x9C60) is False
+
+
+@pytest.mark.parametrize('kind,stride', [('short', 2), ('long', 3)])
+def test_declared_inline_table_keeps_valid_slots_after_unused_data_target(kind, stride):
+    targets = [0x9000, 0x9c70, 0x9100, 0x9200]
+    # The final plausible pointer belongs to adjacent data, outside the table.
+    table = b''.join(t.to_bytes(stride, 'little') for t in targets)
+    rom = make_lorom_bank0({
+        0x8000: b'\x22\x00\xe0\x00' + table,
+        0x9000: b'\x60', 0x9100: b'\x60', 0x9200: b'\x60',
+        0x9c70: bytes(range(16)),
+    })
+    graph = decode_function(rom, 0, 0x8000, 1, 1,
+        dispatch_helpers={0x00e000: kind},
+        data_regions=[(0, 0x8004, 0x8004+3*stride), (0, 0x9c60, 0x9c8e)])
+    dispatch = next(di.insn for di in graph.insns.values() if di.insn.mnem == 'JSL')
+    assert dispatch.dispatch_entries == targets[:3]
+    assert len(graph.dispatch_targets_suppressed) == 1
+    assert graph.dispatch_targets_suppressed[0].table_index == 1
+    assert graph.dispatch_targets_suppressed[0].target_pc24 == 0x9c70
 
 
 def test_dispatch_table_stops_at_data_region_entry():

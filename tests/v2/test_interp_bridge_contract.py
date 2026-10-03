@@ -17,13 +17,16 @@ import os
 import pathlib
 import shutil
 import subprocess
+import tempfile
+
+import pytest
 
 REPO = pathlib.Path(__file__).resolve().parents[2]
 RUN_SH = REPO / 'tests' / 'interp816' / 'run.sh'
 
 
 def _skip(reason: str) -> None:
-    print(f"    SKIPPED: {reason}")
+    pytest.skip(reason)
 
 
 def test_interp816_and_bridge_contract():
@@ -31,7 +34,26 @@ def test_interp816_and_bridge_contract():
     if not RUN_SH.is_file():
         raise AssertionError(f"missing harness: {RUN_SH}")
     if os.name == 'nt':
-        _skip("run.sh is a POSIX shell harness")
+        compiler = pathlib.Path('C:/msys64/mingw64/bin/gcc.exe')
+        if not compiler.is_file():
+            _skip('MinGW GCC is not installed')
+            return
+        with tempfile.TemporaryDirectory(prefix='snes-bridge-') as directory:
+            flags = [str(compiler), '-std=c11', '-D_POSIX_C_SOURCE=200809L',
+                     '-DSNESRECOMP_TIER2_TEST=1', '-Wall', '-Wextra',
+                     '-Wno-unused-parameter', '-O1', '-I', 'runner/src',
+                     '-I', 'runner/src/snes']
+            groups = [
+                ['tests/interp816/interp816_test.c', 'runner/src/snes/interp816.c'],
+                ['tests/interp816/bridge_test.c', 'runner/src/snes/interp816.c',
+                 'runner/src/snes/interp_bridge.c', 'runner/src/snes/tier2_capture.c',
+                 'runner/src/sha256.c', 'runner/src/snes/cx4.c'],
+            ]
+            for index, sources in enumerate(groups):
+                exe = pathlib.Path(directory) / f'contract-{index}.exe'
+                subprocess.run(flags + sources + ['-lm', '-o', str(exe)],
+                               cwd=REPO, check=True, timeout=120)
+                subprocess.run([str(exe)], cwd=directory, check=True, timeout=120)
         return
     for tool in ('bash', 'gcc'):
         if shutil.which(tool) is None:
@@ -54,3 +76,6 @@ def test_interp816_and_bridge_contract():
         raise AssertionError(
             f"tests/interp816/run.sh exited {proc.returncode}\n{detail}\n"
             f"{proc.stderr[-1000:]}")
+
+if __name__ == '__main__':
+    test_interp816_and_bridge_contract()

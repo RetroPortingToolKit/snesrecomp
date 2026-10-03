@@ -396,6 +396,19 @@ static int s_pre_opcode_hook_count;
 static int s_pre_opcode_redirect_valid;
 static uint32_t s_pre_opcode_redirect_pc24;
 
+bool interp_bridge_add_pre_opcode_hook(uint32_t pc24, InterpPreOpcodeHook hook) {
+    if (!hook) return false;
+    const uint32_t key=pc24 & 0x7FFFFFu;
+    for (int i=0;i<s_pre_opcode_hook_count;++i)
+        if (s_pre_opcode_hooks[i].pc24==key && s_pre_opcode_hooks[i].hook==hook)
+            return true;
+    if (s_pre_opcode_hook_count>=kInterpPreOpcodeHookSlots) return false;
+    s_pre_opcode_hooks[s_pre_opcode_hook_count].pc24=key;
+    s_pre_opcode_hooks[s_pre_opcode_hook_count].hook=hook;
+    ++s_pre_opcode_hook_count;
+    return true;
+}
+
 void interp_bridge_set_pre_opcode_hook(uint32_t pc24,
                                        InterpPreOpcodeHook hook) {
     if (!hook) {
@@ -1646,8 +1659,8 @@ static int _interp_run_core(CpuState *cpu, uint32_t entry_pc24,
             qring[steps & 63]=now;
         }
         if (s_pre_opcode_hook_count > 0) {
-            int redirected = 0;
             const uint32_t key = pc_before & 0x7FFFFFu;
+            bool redirected = false;
             for (int hi = 0; hi < s_pre_opcode_hook_count; hi++) {
                 if (s_pre_opcode_hooks[hi].pc24 == key) {
                     sync_interp_to_cpu(&in, cpu);
@@ -1658,14 +1671,16 @@ static int _interp_run_core(CpuState *cpu, uint32_t entry_pc24,
                         in.k = (uint8_t)((s_pre_opcode_redirect_pc24 >> 16) & 0xFF);
                         in.pc = (uint16_t)(s_pre_opcode_redirect_pc24 & 0xFFFF);
                         s_pre_opcode_redirect_valid = 0;
-                        redirected = 1;
+                        redirected = true;
+                        break;
                     }
-                    break;
                 }
             }
-            /* Restart opcode decoding, including call/return bookkeeping.
-             * Continuing the hook-search loop executed the target with the
-             * old PC's opcode classification and could miss a terminal RTS. */
+            /* Restart opcode decoding at the destination, including
+             * call/return bookkeeping. A redirect completes handling for the
+             * original PC (later hooks composed on it do not run). Continuing
+             * with the old pc_before would execute one opcode and classify
+             * another, and could miss a terminal RTS. */
             if (redirected) continue;
         }
         /* Opt-in control-flow tripwire: game code normally executes from the
