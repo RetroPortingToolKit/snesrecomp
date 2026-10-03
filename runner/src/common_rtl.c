@@ -450,6 +450,23 @@ void rtl_reset_host_pacing(void) {
 static uint64_t s_state_generation;
 uint64_t RtlStateGeneration(void) { return s_state_generation; }
 
+/* create_spc_player is optional (host_main.h): a title without one leaves
+ * g_spc_player NULL and the guest re-uploads its own APU program after
+ * snes_reset, so there is no player to re-initialize. */
+static void rtl_reset_audio_state(void) {
+  RtlApuLock();
+  g_audio_fast_forward = false;
+  rtl_reset_audio_delivery();
+  g_audio_recovery_frames = 0;
+  g_audio_recovery_remaining = 0;
+  g_audio_recovery_anchor_l = 0;
+  g_audio_recovery_anchor_r = 0;
+  g_audio_last_output_l = 0;
+  g_audio_last_output_r = 0;
+  if (g_spc_player) g_spc_player->initialize(g_spc_player);
+  RtlApuUnlock();
+}
+
 void RtlReset(int mode) {
   ++s_state_generation;
   rtl_reset_host_pacing();
@@ -460,17 +477,7 @@ void RtlReset(int mode) {
   if (!(mode & 1))
     memset(g_sram, 0, g_sram_size);
 
-  RtlApuLock();
-  g_audio_fast_forward = false;
-  rtl_reset_audio_delivery();
-  g_audio_recovery_frames = 0;
-  g_audio_recovery_remaining = 0;
-  g_audio_recovery_anchor_l = 0;
-  g_audio_recovery_anchor_r = 0;
-  g_audio_last_output_l = 0;
-  g_audio_last_output_r = 0;
-  g_spc_player->initialize(g_spc_player);
-  RtlApuUnlock();
+  rtl_reset_audio_state();
   /* After the hardware, so the title reboots against the reset machine. */
   if (g_rtl_game_info && g_rtl_game_info->hardware_reset)
     g_rtl_game_info->hardware_reset();

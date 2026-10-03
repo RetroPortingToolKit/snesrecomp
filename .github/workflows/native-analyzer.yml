@@ -56,7 +56,10 @@ jobs:
           python tests/run_tests.py
       - name: Run C runtime tests
         if: runner.os == 'Linux'
-        run: bash tests/run_c_tests.sh
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y libsdl2-dev
+          bash tests/run_c_tests.sh
       - name: Run optional content-pack tests
         if: runner.os == 'Linux'
         run: |
