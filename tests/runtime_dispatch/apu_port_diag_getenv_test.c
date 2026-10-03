@@ -88,6 +88,10 @@ void cart_sync_coprocessors(Cart *cart, uint64_t master_clock) {
     (void)cart;
     (void)master_clock;
 }
+uint8_t *cart_getRomPtr(Cart *cart, uint8_t bank, uint16_t adr) {
+    (void)cart; (void)bank; (void)adr;
+    return NULL;
+}
 uint8_t sdd1_read(Sdd1 *sdd1, uint16_t addr) {
     (void)sdd1;
     (void)addr;
