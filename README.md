@@ -420,6 +420,9 @@ Useful technical references:
   tiers.
 - [`docs/LLE_FIRST_ANALYSIS.md`](docs/LLE_FIRST_ANALYSIS.md) — analysis policy
   and the low-level correctness floor.
+- [`docs/HLE_FUNC.md`](docs/HLE_FUNC.md) — replacing a recompiled routine
+  with a C function (`hle_func`) and the helper's stack, flag and timing
+  contract.
 - [`docs/TRIPWIRES.md`](docs/TRIPWIRES.md) — runtime checks for M/X state,
   dispatch, and control-flow failures.
 - [`docs/LAUNCHER_DESIGN.md`](docs/LAUNCHER_DESIGN.md) — shared launcher
