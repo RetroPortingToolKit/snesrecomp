@@ -36,6 +36,16 @@ void snes_host_app_apply_launch(const RecompLauncherCNetplayLaunch *net,
   /* Room-settled mode from recomp-ui (its model defaults rollback ON).
    * Before apply_env so SNES_NET_MODE stays the operator override. */
   out->net_cfg.rollback = net->rollback ? 1 : 0;
+  /* Seats follow the room's players for 3+ seat lobbies (player_count counts
+   * players only, spectators excluded). Left at the 2-seat default otherwise,
+   * so a 2-seat launch is unchanged. Before apply_env, like rollback above,
+   * so SNES_NET_SLOTS stays the operator override. The game's own limit has
+   * already won by now (a game's fill_launch refuses a room it cannot run;
+   * Mega Man X refuses anything but two players) and the engine's own check
+   * (seats > 2 needs a multitap) lives in snes_netplay_start, which refuses
+   * the launch rather than quietly running fewer seats than the room. */
+  if (net->player_count > 2 && net->player_count <= SNES_NETPLAY_MAX_SLOTS)
+    out->net_cfg.slot_count = net->player_count;
   snes_netplay_apply_env(&out->net_cfg);
   if (net->input_delay >= 0 && net->input_delay <= 20)
     out->net_cfg.input_delay = net->input_delay;

@@ -361,6 +361,39 @@ echo "=== netplay: host relay over ICE route + slot map ==="
     -o "$OUT/snes_netplay_route_test"
 "$OUT/snes_netplay_route_test"
 
+echo "=== netplay: launch player_count -> slot_count ==="
+# Compiles the real snes_host_app.c and the no-network build of snes_netplay.c
+# (real config_defaults / apply_env). Needs recomp-ui's recomp_launcher.h (a
+# header only) and SDL's headers; set RECOMP_UI_DIR to a recomp-ui checkout.
+# Skipped rather than failed where either is absent.
+HA_UI=""
+for d in "${RECOMP_UI_DIR:-}" "$ROOT/lib/recomp-ui" "$ROOT/recomp-ui" "$ROOT/../recomp-ui"; do
+    if [ -n "$d" ] && [ -f "$d/src/recomp_launcher.h" ]; then HA_UI="$d/src"; break; fi
+done
+HA_SDL_CFLAGS=""; HA_SDL_DEF=""; HA_SDL_OK=0
+if pkg-config --exists sdl3 2>/dev/null; then
+    HA_SDL_CFLAGS="$(pkg-config --cflags sdl3)"; HA_SDL_DEF="-DSNESRECOMP_SDL3=1"; HA_SDL_OK=1
+elif pkg-config --exists sdl2 2>/dev/null; then
+    HA_SDL_CFLAGS="$(pkg-config --cflags sdl2)"; HA_SDL_OK=1
+fi
+if [ -n "$HA_UI" ] && [ "$HA_SDL_OK" = 1 ]; then
+    # shellcheck disable=SC2086
+    "$CC" -std=c11 -Wall -Wextra -O1 -D_POSIX_C_SOURCE=200809L \
+        $HA_SDL_DEF $HA_SDL_CFLAGS \
+        -DSNES_HOST_HAS_RECOMP_UI=1 -DSNES_HAS_LOBBY_CLIENT=1 \
+        -ffunction-sections -fdata-sections \
+        -I "$ROOT/runner/src" -I "$ROOT/runner/src/netplay" \
+        -I "$ROOT/runner/src/lobby" -I "$ROOT/lib/recomp-net/include" \
+        -I "$HA_UI" \
+        "$ROOT/tests/netplay/snes_host_app_slots_test.c" \
+        "$ROOT/runner/src/netplay/snes_host_app.c" \
+        "$ROOT/runner/src/netplay/snes_netplay.c" \
+        $GC_SECTIONS_LINKER -o "$OUT/snes_host_app_slots_test"
+    "$OUT/snes_host_app_slots_test"
+else
+    echo "  (skipped: no recomp-ui checkout (RECOMP_UI_DIR) or SDL headers)"
+fi
+
 echo "=== keybinds: the runner-layout keyboard word ==="
 # Needs SDL headers for the scancode enum only (no window, no device). Skipped
 # rather than failed where they are absent, like the OSD test below.
@@ -390,7 +423,9 @@ echo "=== config.ini round trip (launcher-editable settings) ==="
 if [ -n "$KB_SDL_LIBS" ]; then
     # SDL_MAIN_HANDLED: config.h reaches SDL through sdl_compat.h, and SDL
     # would otherwise rename main() out from under this harness.
-    "$CC" -std=c11 -Wall -Wextra -O1 -DSDL_MAIN_HANDLED $KB_SDL_DEF $KB_SDL_CFLAGS \
+    # _POSIX_C_SOURCE: util.c uses strdup(), which -std=c11 hides (pre-existing;
+    # the earlier steps of this script already pass the same define).
+    "$CC" -std=c11 -Wall -Wextra -O1 -D_POSIX_C_SOURCE=200809L -DSDL_MAIN_HANDLED $KB_SDL_DEF $KB_SDL_CFLAGS \
         -I "$ROOT/runner/src" -I "$ROOT/runner/src/desktop" \
         "$ROOT/tests/host/config_roundtrip_test.c" \
         "$ROOT/runner/src/desktop/mmx_config.c" \
