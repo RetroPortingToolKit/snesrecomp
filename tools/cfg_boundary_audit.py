@@ -11,9 +11,15 @@ bytes inside a swallowed HDMA table decoded as `BNE` into a phantom block that
 corrupted a Mode 7 register, and a 31 KB message-box data region translated as
 code.
 
-This decodes each declared range from its entry point, follows local control
-flow, and reports ranges with a large unreachable tail. ROM and cfg are the
-only inputs -- no decomp listing, no per-game data -- so it runs for any port.
+This decodes each declared range from its entry point at its declared entry
+width, follows local control flow, and reports ranges with a large unreachable
+tail that the cfg has not already declared as data (`exclude_range`,
+`data_region`). ROM and cfg are the only inputs -- no decomp listing, no
+per-game data -- so it runs for any port. The cfg is read by the recompiler's
+own loader (recompiler/v2/cfg_loader.py), so `end:` / `entry_mx:` anywhere on
+the line, `end_at` / `entry_mx_at` overrides and comments mean exactly what
+they mean to the recompiler, and the ROM mapping (LoROM, HiROM, SA-1, S-DD1)
+is the one the recompiler detects.
 
 A finding is a CANDIDATE, not a verdict: a function reached only through an
 indirect dispatch, or one whose tail is a jump table the decoder handles
@@ -25,48 +31,82 @@ Usage:
 """
 import argparse
 import pathlib
-import re
 import sys
+from dataclasses import dataclass
+from typing import Iterable, List, Set, Tuple
 
-sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent / "recompiler"))
+_REPO = pathlib.Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(_REPO / "recompiler"))
 import snes65816 as s  # noqa: E402
+from v2.cfg_loader import load_bank_cfg  # noqa: E402
 
 TERMINAL = {"RTS", "RTL", "RTI", "STP"}
 COND_BRANCH = {"BCC", "BCS", "BEQ", "BNE", "BMI", "BPL", "BVC", "BVS"}
 UNCOND_LOCAL = {"BRA", "BRL"}
-FUNC_RE = re.compile(
-    r"^\s*func\s+(\S+)\s+([0-9a-fA-F]+)\s+end:([0-9a-fA-F]+)", re.I)
-BANK_RE = re.compile(r"^\s*bank\s*=\s*([0-9a-fA-F]+)", re.I)
+DIRECT_JMP_ABS = 0x4C   # JMP abs    -- target is the operand, same bank
+DIRECT_JML = 0x5C       # JML long   -- target is the operand
+# JMP (abs), JMP (abs,X) and JML [abs] name a POINTER, not a target: the
+# walk stops there, as it does at any transfer it cannot resolve statically.
 
 
-def reachable(rom, bank, start, end, entry_m=1, entry_x=1, budget=20000):
+@dataclass(frozen=True)
+class Finding:
+    undeclared: int     # unreachable tail bytes not declared as data
+    tail: int           # unreachable tail bytes in total
+    bank: int
+    name: str
+    start: int
+    end: int
+    reached: int        # bytes reachable from the entry inside the range
+    exhausted: bool     # the walk hit its step budget (coverage incomplete)
+
+
+def reachable(rom: bytes, bank: int, start: int, end: int,
+              entry_m: int = 1, entry_x: int = 1,
+              budget: int = 20000) -> Tuple[Set[int], bool]:
     """Bytes reachable from `start` without leaving [start, end).
 
-    Follows fall-through, conditional branches (both ways) and local
-    unconditional jumps; stops at RTS/RTL/RTI and at anything leaving the
-    range. Returns the set of covered addresses and the highest one seen.
+    Follows fall-through, conditional branches (both ways), BRA/BRL and
+    direct same-bank JMP/JML, tracking REP/SEP so immediates decode at the
+    right width; stops at RTS/RTL/RTI/STP, at an indirect jump, and at
+    anything leaving the range or the ROM. Returns the covered addresses and
+    whether the step budget ran out before the walk finished.
     """
-    seen = set()
+    seen: Set[int] = set()
     work = [(start, entry_m, entry_x)]
     steps = 0
-    while work and steps < budget:
+    while work:
         pc, m, x = work.pop()
-        while steps < budget:
+        while True:
+            if steps >= budget:
+                return seen, True
             steps += 1
             if not (start <= pc < end) or pc in seen:
                 break
-            ins = s.decode_insn(rom, s.lorom_offset(bank, pc), pc, bank, m, x)
+            if not s.is_rom_address(bank, pc):
+                break
+            off = s.rom_offset(bank, pc)
+            if off >= len(rom):
+                break
+            try:
+                ins = s.decode_insn(rom, off, pc, bank, m, x)
+            except IndexError:
+                break
             if ins is None:
                 break
             for i in range(ins.length):
                 seen.add(pc + i)
             mnem = ins.mnem.upper()
             if mnem == "REP":
-                if ins.operand & 0x20: m = 0
-                if ins.operand & 0x10: x = 0
+                if ins.operand & 0x20:
+                    m = 0
+                if ins.operand & 0x10:
+                    x = 0
             elif mnem == "SEP":
-                if ins.operand & 0x20: m = 1
-                if ins.operand & 0x10: x = 1
+                if ins.operand & 0x20:
+                    m = 1
+                if ins.operand & 0x10:
+                    x = 1
             if mnem in TERMINAL:
                 break
             if mnem in COND_BRANCH:
@@ -81,61 +121,92 @@ def reachable(rom, bank, start, end, entry_m=1, entry_x=1, budget=20000):
                     pc = tgt
                     continue
                 break
-            if mnem in ("JMP", "JML"):
+            if ins.opcode == DIRECT_JMP_ABS or ins.opcode == DIRECT_JML:
                 tgt = ins.operand & 0xFFFF
-                same_bank = (ins.operand >> 16) in (0, bank) or ins.length < 4
+                tbank = (ins.operand >> 16) & 0xFF
+                same_bank = (ins.opcode == DIRECT_JMP_ABS or tbank == bank
+                             or s.rom_bank_mirror(tbank) == bank)
                 if same_bank and start <= tgt < end:
                     pc = tgt
                     continue
                 break
+            if mnem in ("JMP", "JML"):
+                break
             pc += ins.length
-    return seen
+    return seen, False
 
 
-def main():
+def _declared_data(cfg) -> List[Tuple[int, int]]:
+    """This bank's declared data ranges, [lo, hi) local addresses."""
+    spans = [(lo & 0xFFFF, hi) for lo, hi in cfg.exclude_ranges]
+    spans += [(lo & 0xFFFF, hi) for b, lo, hi in cfg.data_regions
+              if b == cfg.bank]
+    return spans
+
+
+def _covered(lo: int, hi: int, spans: Iterable[Tuple[int, int]]) -> int:
+    """How many bytes of [lo, hi) the spans cover (overlaps counted once)."""
+    marks = bytearray(max(0, hi - lo))
+    for a, b in spans:
+        a, b = max(a, lo), min(b, hi)
+        for i in range(a, b):
+            marks[i - lo] = 1
+    return sum(marks)
+
+
+def audit(rom: bytes, cfg_paths: Iterable[pathlib.Path],
+          min_tail: int) -> Tuple[int, List[Finding]]:
+    findings: List[Finding] = []
+    total = 0
+    for path in cfg_paths:
+        cfg = load_bank_cfg(str(path))
+        if cfg.bank < 0:
+            continue
+        data = _declared_data(cfg)
+        for e in cfg.entries:
+            if e.end is None:
+                continue
+            start = e.start & 0xFFFF
+            end = min(e.end, 0x10000)
+            if end <= start or not s.is_rom_address(cfg.bank, start):
+                continue
+            total += 1
+            cov, exhausted = reachable(rom, cfg.bank, start, end,
+                                       e.entry_m, e.entry_x)
+            if not cov:
+                continue
+            tail_lo = max(cov) + 1
+            tail = end - tail_lo
+            undeclared = tail - _covered(tail_lo, end, data)
+            if undeclared >= min_tail:
+                findings.append(Finding(undeclared, tail, cfg.bank, e.name,
+                                        start, end, len(cov), exhausted))
+    findings.sort(key=lambda f: (-f.undeclared, f.bank, f.start))
+    return total, findings
+
+
+def main(argv=None) -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("rom")
     ap.add_argument("cfg_dir")
     ap.add_argument("--min-tail", default="0x40",
-                    help="report ranges whose unreachable tail is at least "
-                         "this many bytes (default 0x40)")
+                    help="report ranges whose undeclared unreachable tail is "
+                         "at least this many bytes (default 0x40)")
     ap.add_argument("--top", type=int, default=0,
                     help="print only the N worst (0 = all)")
-    args = ap.parse_args()
+    args = ap.parse_args(argv)
     min_tail = int(args.min_tail, 0)
     rom = s.load_rom(args.rom)
-
-    findings = []
-    total = 0
-    for cfg in sorted(pathlib.Path(args.cfg_dir).glob("bank*.cfg")):
-        bank = None
-        for line in cfg.read_text(errors="replace").splitlines():
-            b = BANK_RE.match(line)
-            if b:
-                bank = int(b.group(1), 16) | 0x80
-                continue
-            m = FUNC_RE.match(line)
-            if not m or bank is None:
-                continue
-            name, start, end = m.group(1), int(m.group(2), 16), int(m.group(3), 16)
-            if end <= start or start < 0x8000:
-                continue
-            total += 1
-            cov = reachable(rom, bank, start, min(end, 0x10000))
-            if not cov:
-                continue
-            tail = min(end, 0x10000) - (max(cov) + 1)
-            if tail >= min_tail:
-                findings.append((tail, bank, name, start, end, len(cov)))
-
-    findings.sort(reverse=True)
+    total, findings = audit(rom, sorted(pathlib.Path(args.cfg_dir).glob("bank*.cfg")),
+                            min_tail)
     shown = findings[:args.top] if args.top else findings
     print(f"{total} func declarations checked; "
-          f"{len(findings)} with an unreachable tail >= {min_tail:#x}\n")
+          f"{len(findings)} with an undeclared unreachable tail >= {min_tail:#x}\n")
     print(f"{'tail':>7}  {'bank':>4}  {'declared':>13}  {'reached':>7}  name")
-    for tail, bank, name, start, end, cov in shown:
-        print(f"{tail:#7x}  ${bank:02X}  ${start:04X}-${end:04X}  "
-              f"{cov:7d}  {name}")
+    for f in shown:
+        note = "  (walk budget exhausted)" if f.exhausted else ""
+        print(f"{f.undeclared:#7x}  ${f.bank:02X}  ${f.start:04X}-${f.end:04X}  "
+              f"{f.reached:7d}  {f.name}{note}")
     return 0
 
 
