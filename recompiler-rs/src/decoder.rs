@@ -374,6 +374,52 @@ fn addr_in_data_regions(data_regions: Option<&[(u32, u32, u32)]>, bank: u32, pc1
     false
 }
 
+/// The cfg `data_region` (bank, start, end_excl) covering (bank, pc16), or
+/// None. First match in declaration order; region fields compared as
+/// declared, like `_data_region_containing`.
+fn data_region_containing(
+    data_regions: Option<&[(u32, u32, u32)]>,
+    bank: u32,
+    pc16: u32,
+) -> Option<(u32, u32, u32)> {
+    let pc16 = pc16 & 0xFFFF;
+    data_regions?
+        .iter()
+        .copied()
+        .find(|&(b, s, e)| b == bank && s <= pc16 && pc16 < e)
+}
+
+/// The cfg `data_region` that STARTS exactly at (bank, pc16), or None. First
+/// match in declaration order. Port of `_data_region_starting_at`.
+fn data_region_starting_at(
+    data_regions: Option<&[(u32, u32, u32)]>,
+    bank: u32,
+    pc16: u32,
+) -> Option<(u32, u32, u32)> {
+    let pc16 = pc16 & 0xFFFF;
+    data_regions?
+        .iter()
+        .copied()
+        .find(|&(b, s, _)| b == bank && s == pc16)
+}
+
+/// Byte boundary of an inline (JSL/JML dispatch-helper) table declared by a
+/// cfg `data_region` that begins exactly at the table and spans a whole
+/// number of entries; the smallest such end wins. Port of the Python
+/// decoder's `table_end`.
+fn declared_inline_table_end(
+    data_regions: Option<&[(u32, u32, u32)]>,
+    bank: u32,
+    tbl_pc: u32,
+    entry_size: u32,
+) -> Option<u32> {
+    data_regions?
+        .iter()
+        .filter(|&&(b, s, e)| b == bank && s == tbl_pc && e > s && (e - s) % entry_size == 0)
+        .map(|&(_, _, e)| e)
+        .min()
+}
+
 // ── Auto-recovery for indirect dispatch ───────────────────────────────────
 
 /// Resolved indirect-dispatch authorisation (cfg directive or auto-recovered).
@@ -411,8 +457,30 @@ fn autorecover_indirect_xtable(
     let base = insn.operand & 0xFFFF;
     let entry_size: u32 = if is_long_dispatch(insn, &[]) { 3 } else { 2 };
     let max_entries = 256usize;
+    // The operand is the address the index is added to, not necessarily
+    // entry 0. Where the cfg `data_region` overlay proves the table starts
+    // after the operand byte (Yoshi's Island `JSR ($DE84,X)` with its table
+    // at $DE85), align the walk to the region; and bound it by the region's
+    // end, since an entry past a declared data span is code bytes read as a
+    // pointer. Port of the Python `index_bias` / `region_end` logic; the bias
+    // itself only matters to codegen, the aligned targets matter here.
+    let mut index_bias = 0u32;
+    let mut region_end: Option<u32> = None;
+    if let Some(region) = data_region_containing(data_regions, bank, base) {
+        region_end = Some(region.2);
+    } else {
+        for delta in 1..entry_size {
+            if let Some(region) =
+                data_region_starting_at(data_regions, bank, (base + delta) & 0xFFFF)
+            {
+                index_bias = delta;
+                region_end = Some(region.2);
+                break;
+            }
+        }
+    }
     let mut entries: Vec<u32> = Vec::new();
-    let mut tbl_pc = base;
+    let mut tbl_pc = (base + index_bias) & 0xFFFF;
     let mut nulls_in_a_row = 0;
     let code_boundary: Option<u32> = if base < (func_start & 0xFFFF) {
         Some(func_start & 0xFFFF)
@@ -426,6 +494,11 @@ fn autorecover_indirect_xtable(
         }
         if let Some(cb) = code_boundary {
             if tbl_pc >= cb {
+                break;
+            }
+        }
+        if let Some(re) = region_end {
+            if tbl_pc + entry_size > re {
                 break;
             }
         }
@@ -1001,7 +1074,19 @@ pub fn decode_function(
             let entry_size: u32 = if hk == "long" { 3 } else { 2 };
             let mut entries: Vec<u32> = Vec::new();
             let mut tbl_pc = (pc + insn.length as u32) & 0xFFFF;
+            // A data region beginning exactly at the inline table supplies
+            // its byte boundary. An unused slot targeting data inside that
+            // boundary is not the end of the table (SMW sprite $36 precedes
+            // valid sprites $37..$C8). Keep its index/target, while the
+            // normal data-region gate still prevents compiling that target as
+            // code. Port of the Python decoder's `table_end`.
+            let table_end = declared_inline_table_end(data_regions, bank, tbl_pc, entry_size);
             while entries.len() < 256 && tbl_pc + entry_size - 1 <= 0xFFFF {
+                if let Some(te) = table_end {
+                    if tbl_pc + entry_size > te {
+                        break;
+                    }
+                }
                 // Bound the inline dispatch table at the next declared function
                 // entry. A sibling entry marks the start of the following
                 // routine, so its bytes cannot also be table data; without this
@@ -1056,7 +1141,9 @@ pub fn decode_function(
                                 reason: "data_region".to_string(),
                                 table_index: entries.len() as u32,
                             });
-                        break;
+                        if table_end.is_none() {
+                            break;
+                        }
                     }
                     entries.push((eb << 16) | addr16);
                 } else {
@@ -1080,7 +1167,9 @@ pub fn decode_function(
                                 reason: "data_region".to_string(),
                                 table_index: entries.len() as u32,
                             });
-                        break;
+                        if table_end.is_none() {
+                            break;
+                        }
                     }
                     entries.push(addr16);
                 }
@@ -1184,9 +1273,17 @@ pub fn decode_function(
                 if rom_ok {
                     let tbl_off = try_rom_offset(mapping, bank, tbl_pc, reloc).unwrap();
                     let tgt16 = rom[tbl_off] as u32 | ((rom[tbl_off + 1] as u32) << 8);
+                    // A 24-bit `JML [abs]` pointer names its own bank; gate
+                    // the target where it actually lives (as the Python
+                    // decoder does), not in the site's bank.
+                    let tgt_bank = if need == 3 {
+                        rom[tbl_off + 2] as u32
+                    } else {
+                        bank
+                    };
                     if tgt16 >= 0x8000
-                        && !addr_in_data_regions(data_regions, bank, tgt16)
-                        && !dispatch_target_is_padding(rom, mapping, bank, tgt16, reloc)
+                        && !addr_in_data_regions(data_regions, tgt_bank, tgt16)
+                        && !dispatch_target_is_padding(rom, mapping, tgt_bank, tgt16, reloc)
                     {
                         auth = Some(Auth {
                             count: 1,
@@ -4474,5 +4571,230 @@ mod tests {
         let (m, x, s3) = post_state(&plp, m, x, &s2);
         assert_eq!((m, x), (0, 1)); // restored
         assert!(s3.is_empty());
+    }
+
+    /// 32 KiB LoROM bank-0 image; `blobs` maps local PC ($8000+) to bytes.
+    fn lorom_bank0(blobs: &[(u32, &[u8])]) -> Vec<u8> {
+        let mut rom = vec![0u8; 0x8000];
+        for &(pc, bytes) in blobs {
+            let off = (pc - 0x8000) as usize;
+            rom[off..off + bytes.len()].copy_from_slice(bytes);
+        }
+        rom
+    }
+
+    /// `JSL $00E000` followed by an inline table of `targets` at $8004.
+    fn inline_table_rom(stride: usize, targets: &[u32]) -> Vec<u8> {
+        let mut site = vec![0x22, 0x00, 0xE0, 0x00];
+        for &t in targets {
+            site.extend_from_slice(&t.to_le_bytes()[..stride]);
+        }
+        let data: Vec<u8> = (0u8..16).collect();
+        lorom_bank0(&[
+            (0x8000, &site),
+            (0x9000, &[0x60]),
+            (0x9100, &[0x60]),
+            (0x9200, &[0x60]),
+            (0x9C70, &data),
+        ])
+    }
+
+    fn inline_dispatch(
+        rom: &[u8],
+        kind: &str,
+        data_regions: &[(u32, u32, u32)],
+    ) -> (Vec<u32>, Vec<DispatchTargetSuppressed>) {
+        let helpers = HashMap::from([(0x00E000u32, kind.to_string())]);
+        let env = DecodeEnv {
+            dispatch_helpers: Some(&helpers),
+            data_regions: Some(data_regions),
+            ..DecodeEnv::default()
+        };
+        let graph = decode_function(rom, 0, 0x8000, 1, 1, None, &env);
+        let jsl = graph.get(&k(0x8000)).unwrap();
+        assert_eq!(jsl.insn.mnem, "JSL");
+        (
+            jsl.insn.dispatch_entries.clone().unwrap_or_default(),
+            graph.dispatch_targets_suppressed.clone(),
+        )
+    }
+
+    /// Mirror of tests/v2/test_decoder_data_region.py
+    /// `test_declared_inline_table_keeps_valid_slots_after_unused_data_target`:
+    /// an unused slot whose target is data does not end a table whose extent
+    /// a `data_region` declares, and a plausible pointer just past that
+    /// declared end is not read.
+    #[test]
+    fn declared_inline_table_keeps_valid_slots_after_unused_data_target() {
+        for (kind, stride) in [("short", 2usize), ("long", 3usize)] {
+            let targets = [0x9000, 0x9C70, 0x9100, 0x9200];
+            let rom = inline_table_rom(stride, &targets);
+            let regions = [(0, 0x8004, 0x8004 + 3 * stride as u32), (0, 0x9C60, 0x9C8E)];
+            let (entries, suppressed) = inline_dispatch(&rom, kind, &regions);
+            assert_eq!(entries, targets[..3].to_vec(), "{kind}");
+            assert_eq!(suppressed.len(), 1, "{kind}");
+            assert_eq!(suppressed[0].table_index, 1, "{kind}");
+            assert_eq!(suppressed[0].target_pc24, 0x9C70, "{kind}");
+            assert_eq!(suppressed[0].site_pc24, 0x8000, "{kind}");
+            assert_eq!(suppressed[0].reason, "data_region", "{kind}");
+        }
+    }
+
+    /// Without a declared table extent the first data-region target still
+    /// terminates the table (`test_dispatch_table_stops_at_data_region_entry`),
+    /// and a region that does not tile whole entries, does not start at the
+    /// table, or lies in another bank is not a declaration.
+    #[test]
+    fn undeclared_inline_table_still_stops_at_data_target() {
+        for (kind, stride) in [("short", 2usize), ("long", 3usize)] {
+            let targets = [0x9000, 0x9C70, 0x9100, 0x9200];
+            let rom = inline_table_rom(stride, &targets);
+            let len = 3 * stride as u32;
+            for table_region in [
+                None,
+                Some((0, 0x8004, 0x8004 + len + 1)),
+                Some((0, 0x8005, 0x8005 + len)),
+                Some((1, 0x8004, 0x8004 + len)),
+            ] {
+                let mut regions = vec![(0, 0x9C60, 0x9C8E)];
+                regions.extend(table_region);
+                let (entries, suppressed) = inline_dispatch(&rom, kind, &regions);
+                assert_eq!(entries, vec![0x9000], "{kind} {table_region:?}");
+                assert_eq!(suppressed.len(), 1, "{kind} {table_region:?}");
+                assert_eq!(suppressed[0].table_index, 1);
+            }
+        }
+    }
+
+    /// The smallest whole-entry region starting at the table bounds it.
+    #[test]
+    fn declared_inline_table_end_takes_smallest_whole_entry_region() {
+        let regions = [
+            (0, 0x8004, 0x800A),
+            (0, 0x8004, 0x8008),
+            (0, 0x8004, 0x8009),
+        ];
+        assert_eq!(
+            declared_inline_table_end(Some(&regions), 0, 0x8004, 2),
+            Some(0x8008)
+        );
+        assert_eq!(
+            declared_inline_table_end(Some(&regions), 0, 0x8004, 3),
+            Some(0x800A)
+        );
+        assert_eq!(declared_inline_table_end(None, 0, 0x8004, 2), None);
+        let rom = inline_table_rom(2, &[0x9000, 0x9100, 0x9200]);
+        let (entries, _) = inline_dispatch(&rom, "short", &regions);
+        assert_eq!(entries, vec![0x9000, 0x9100]);
+    }
+
+    /// Yoshi's Island `JSR ($800C,X)` whose table starts one byte past the
+    /// operand (tests/v2/test_decoder_dispatch_table_alignment.py).
+    fn yi_shaped_rom() -> Vec<u8> {
+        let mut code = vec![
+            0xAE, 0x0F, 0x0D, // $8005 LDX $0D0F
+            0xFC, 0x0C, 0x80, // $8008 JSR ($800C,X)
+            0xAB, // $800B PLB
+            0x6B, // $800C RTL (the operand byte)
+        ];
+        code.extend_from_slice(&[0x93, 0x90, 0xA9, 0x90, 0xD0, 0x90]);
+        let mut handler = vec![0xEAu8; 15];
+        handler.push(0x60);
+        lorom_bank0(&[
+            (0x8005, &code),
+            (0x9093, &handler),
+            (0x90A9, &handler),
+            (0x90D0, &handler),
+            (0x936B, &handler),
+            (0xA990, &handler),
+            (0xD090, &handler),
+        ])
+    }
+
+    fn yi_xtable(rom: &[u8], regions: Option<&[(u32, u32, u32)]>) -> Option<Vec<u32>> {
+        let insn = decode_insn(rom, 0x0008, 0x8008, 0, 1, 1).unwrap();
+        assert_eq!(insn.operand & 0xFFFF, 0x800C);
+        autorecover_indirect_xtable(rom, RomMapping::LoRom, 0, &insn, regions, &[], 0x8005)
+    }
+
+    #[test]
+    fn xtable_aligns_to_data_region_after_operand_byte() {
+        let region = [(0u32, 0x800Du32, 0x8013u32)];
+        assert_eq!(
+            yi_xtable(&yi_shaped_rom(), Some(&region)),
+            Some(vec![0x009093, 0x0090A9, 0x0090D0])
+        );
+        // Without the overlay the walk is one byte low and every decoy passes.
+        let misaligned = yi_xtable(&yi_shaped_rom(), None).unwrap();
+        assert!(misaligned.contains(&0x00936B), "{misaligned:X?}");
+        assert!(!misaligned.contains(&0x009093), "{misaligned:X?}");
+    }
+
+    #[test]
+    fn xtable_stops_at_declared_region_end() {
+        let mut rom = yi_shaped_rom();
+        rom[0x13] = 0xD0; // $8013/$8014 would read as a plausible $90D0
+        rom[0x14] = 0x90;
+        let region = [(0u32, 0x800Du32, 0x8013u32)];
+        assert_eq!(yi_xtable(&rom, Some(&region)).map(|e| e.len()), Some(3));
+    }
+
+    #[test]
+    fn xtable_at_operand_keeps_its_alignment() {
+        let mut handler = vec![0xEAu8; 15];
+        handler.push(0x60);
+        let rom = lorom_bank0(&[
+            (0x8000, &[0xFC, 0x00, 0x90]),
+            (0x9000, &[0x00, 0x91, 0x10, 0x91]),
+            (0x9100, &handler),
+            (0x9110, &handler),
+        ]);
+        let insn = decode_insn(&rom, 0, 0x8000, 0, 1, 1).unwrap();
+        let region = [(0u32, 0x9000u32, 0x9004u32)];
+        for regions in [None, Some(&region[..])] {
+            assert_eq!(
+                autorecover_indirect_xtable(
+                    &rom,
+                    RomMapping::LoRom,
+                    0,
+                    &insn,
+                    regions,
+                    &[],
+                    0x8000
+                ),
+                Some(vec![0x009100, 0x009110])
+            );
+        }
+    }
+
+    /// `JML [$9000]` reads a 24-bit pointer: the data-region gate applies in
+    /// the pointer's own bank, as in the Python decoder.
+    #[test]
+    fn single_target_long_indirect_gates_in_target_bank() {
+        let mut rom = lorom_bank0(&[(0x8000, &[0xDC, 0x00, 0x90]), (0x9000, &[0x00, 0xA0, 0x01])]);
+        rom.resize(0x10000, 0);
+        rom[0x8000 + 0x2000] = 0x60; // $01:A000 RTS
+        let site_bank_region = [(0u32, 0xA000u32, 0xA001u32)];
+        let env = DecodeEnv {
+            data_regions: Some(&site_bank_region),
+            ..DecodeEnv::default()
+        };
+        let graph = decode_function(&rom, 0, 0x8000, 1, 1, None, &env);
+        assert_eq!(
+            graph.get(&k(0x8000)).unwrap().insn.dispatch_entries,
+            Some(vec![0x01A000])
+        );
+        let target_bank_region = [(1u32, 0xA000u32, 0xA001u32)];
+        let env = DecodeEnv {
+            data_regions: Some(&target_bank_region),
+            ..DecodeEnv::default()
+        };
+        let graph = decode_function(&rom, 0, 0x8000, 1, 1, None, &env);
+        assert!(graph
+            .get(&k(0x8000))
+            .unwrap()
+            .insn
+            .dispatch_entries
+            .is_none());
     }
 }
