@@ -222,6 +222,10 @@ pub struct DecodeEnv<'a> {
     pub callee_exit_mx: Option<&'a HashMap<(u32, u8, u8), (u8, u8)>>,
     pub callee_exit_mx_modes: Option<&'a HashMap<(u32, u8, u8), Vec<(u8, u8)>>>,
     pub sibling_entry_pcs: Option<&'a std::collections::BTreeSet<u32>>,
+    /// 16-bit PCs in this bank replaced by a host implementation (cfg
+    /// `hle_func` / `hle_spc_upload`). Never decoded into another function:
+    /// every non-entry edge onto one is a boundary exit (tail transfer).
+    pub hle_entry_pcs: Option<&'a std::collections::BTreeSet<u32>>,
     pub reloc_regions: Option<&'a [RelocRegion]>,
     pub callee_inline_skip: Option<&'a HashMap<u32, i32>>,
     pub inline_dispatch_loop_pcs: Option<&'a std::collections::BTreeSet<u32>>,
@@ -916,6 +920,19 @@ pub fn decode_function(
         if let Some(end_v) = end {
             if pc >= end_v && edge_kind == "fall" && pred_pc >= 0 && (pred_pc as u32) < end_v {
                 let boundary = (addr24(bank, pred_pc as u32), key.clone());
+                if !graph.boundary_exits.contains(&boundary) {
+                    graph.boundary_exits.push(boundary);
+                }
+                continue;
+            }
+        }
+        // An HLE-replaced PC is never part of another function's body: every
+        // edge onto it (jump, fall-through, local computed goto, imported
+        // territory, inside an explicit end: range) is a tail transfer to its
+        // host stub. Mirrors the Python decoder's identical gate.
+        if let Some(hle) = env.hle_entry_pcs {
+            if edge_kind != "entry" && pc != (start & 0xFFFF) && hle.contains(&pc) {
+                let boundary = (addr24(bank, (pred_pc as u32) & 0xFFFF), key.clone());
                 if !graph.boundary_exits.contains(&boundary) {
                     graph.boundary_exits.push(boundary);
                 }
@@ -4174,6 +4191,38 @@ mod tests {
         assert!(jump.insn.dispatch_pointer_match);
         assert_eq!(jump.successors, vec![k(0x8009)]);
         assert!(graph.get(&k(0x8010)).is_none());
+    }
+
+    #[test]
+    fn hle_pc_is_a_boundary_for_fall_through_and_in_range_jumps() {
+        // $8000: NOP ; NOP falls into $8002 (hle). $8010: BRA $8002 from a
+        // function whose explicit end: range covers the hle PC.
+        let mut bytes = vec![0xEAu8; 0x14];
+        bytes[2] = 0xA9; // $8002: LDA #$01 ; RTS (replaced bytes)
+        bytes[3] = 0x01;
+        bytes[4] = 0x60;
+        bytes[0x10] = 0x80; // $8010: BRA $8002
+        bytes[0x11] = 0xF0;
+        let rom = rom_at_8000(&bytes);
+        let hle = std::collections::BTreeSet::from([0x8002u32]);
+        let env = DecodeEnv {
+            hle_entry_pcs: Some(&hle),
+            ..DecodeEnv::default()
+        };
+        let fall = decode_function(&rom, 0, 0x8000, 1, 1, None, &env);
+        assert!(fall.get(&k(0x8002)).is_none());
+        assert_eq!(fall.boundary_exits, vec![(0x008001, k(0x8002))]);
+        let ranged = decode_function(&rom, 0, 0x8010, 1, 1, Some(0x8014), &env);
+        assert!(ranged.get(&k(0x8002)).is_none());
+        assert_eq!(ranged.boundary_exits, vec![(0x008010, k(0x8002))]);
+        // The replaced routine's own decode (analysis of its ROM body) is
+        // not cut at its own entry.
+        let own = decode_function(&rom, 0, 0x8002, 1, 1, None, &env);
+        assert!(own.get(&k(0x8002)).is_some());
+        assert!(own.boundary_exits.is_empty());
+        // Without the HLE declaration the bytes are imported, as before.
+        let plain = decode_function(&rom, 0, 0x8000, 1, 1, None, &DecodeEnv::default());
+        assert!(plain.get(&k(0x8002)).is_some());
     }
 
     #[test]
