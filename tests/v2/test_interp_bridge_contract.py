@@ -19,12 +19,14 @@ import shutil
 import subprocess
 import tempfile
 
+import pytest
+
 REPO = pathlib.Path(__file__).resolve().parents[2]
 RUN_SH = REPO / 'tests' / 'interp816' / 'run.sh'
 
 
 def _skip(reason: str) -> None:
-    print(f"    SKIPPED: {reason}")
+    pytest.skip(reason)
 
 
 def test_interp816_and_bridge_contract():
@@ -45,7 +47,7 @@ def test_interp816_and_bridge_contract():
                 ['tests/interp816/interp816_test.c', 'runner/src/snes/interp816.c'],
                 ['tests/interp816/bridge_test.c', 'runner/src/snes/interp816.c',
                  'runner/src/snes/interp_bridge.c', 'runner/src/snes/tier2_capture.c',
-                 'runner/src/snes/cx4.c'],
+                 'runner/src/sha256.c', 'runner/src/snes/cx4.c'],
             ]
             for index, sources in enumerate(groups):
                 exe = pathlib.Path(directory) / f'contract-{index}.exe'
