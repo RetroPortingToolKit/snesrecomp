@@ -504,3 +504,20 @@ echo "=== Super FX PC hooks ==="
     "$ROOT/runner/src/snes/superfx.c" \
     -o "$OUT/superfx_pc_hook_test"
 "$OUT/superfx_pc_hook_test"
+
+# Both include common_rtl.c whole; -fwhole-program drops the host entry
+# points they do not exercise instead of linking the full runtime. Its
+# desktop config header needs SDL headers, not the library.
+RTL_UNIT_FLAGS="$(pkg-config --cflags sdl2) -std=c11 -O2 -flto -fwhole-program -ffunction-sections -fdata-sections -DSNESRECOMP_TRACE=0 -D_POSIX_C_SOURCE=200809L -I $ROOT/runner/src/desktop -I $ROOT/runner/src"
+
+echo "=== audio delivery + console reset ==="
+"$CC" $RTL_UNIT_FLAGS "$ROOT/tests/audio_delivery_test.c" \
+    "$ROOT/runner/src/snes/dsp.c" "$ROOT/runner/src/audio_trace.c" \
+    -Wl,--gc-sections -lm -o "$OUT/audio_delivery_test"
+"$OUT/audio_delivery_test"
+
+echo "=== DMA snapshot layouts ==="
+"$CC" $RTL_UNIT_FLAGS "$ROOT/tests/dma_snapshot_test.c" \
+    "$ROOT/runner/src/snes/dma.c" \
+    -Wl,--gc-sections -lm -o "$OUT/dma_snapshot_test"
+"$OUT/dma_snapshot_test"

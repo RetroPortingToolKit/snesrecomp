@@ -4,9 +4,12 @@
 #include <stdio.h>
 #include <math.h>
 #include "../runner/src/common_rtl.c"
-/* This test has one thread; only the production host supplies a real mutex. */
-void RtlApuLock(void) {}
-void RtlApuUnlock(void) {}
+/* This test has one thread; only the production host supplies a real mutex.
+ * Count the depth so a path that leaves the lock held is caught. */
+static int apu_lock_depth;
+void RtlApuLock(void) { ++apu_lock_depth; }
+void RtlApuUnlock(void) { --apu_lock_depth; }
+SpcPlayer *g_spc_player;
 
 static Dsp queue;
 Snes *g_snes;
@@ -112,8 +115,25 @@ static void turbo_stage_entry_recovery(void) {
     assert(g_audio_recovery_frames==0);
   }
 }
+static int player_inits;
+static void count_init(SpcPlayer *p) { (void)p; ++player_inits; }
+static void console_reset_audio(void) {
+  /* create_spc_player is optional: a reset must not touch a NULL player
+   * and must still release the APU lock and re-arm delivery priming. */
+  g_spc_player=NULL;
+  g_audio_fast_forward=true;g_audio_recovery_frames=7;s_render_priming=false;
+  rtl_reset_audio_state();
+  assert(apu_lock_depth==0);
+  assert(!g_audio_fast_forward && g_audio_recovery_frames==0 && s_render_priming);
+  static SpcPlayer player={.initialize=count_init};
+  g_spc_player=&player;
+  rtl_reset_audio_state();
+  assert(apu_lock_depth==0 && player_inits==1);
+  g_spc_player=NULL;
+}
 int main(void) {
   reset_and_rates();short_callback_recovery();turbo_stage_entry_recovery();
-  puts("audio delivery: reset/start priming, rates, starvation ramps, turbo recovery and producer isolation passed");
+  console_reset_audio();
+  puts("audio delivery: reset/start priming, rates, starvation ramps, turbo recovery, producer isolation and console reset passed");
   return 0;
 }
