@@ -2035,6 +2035,8 @@ def _decode_function_uncached(rom: bytes, bank: int, start: int,
     The PHB/PLB-balanced cross-fn-jump case is preserved because those
     targets are NOT named function entries — the inline-import path
     still applies. Only cfg-named entries get the tail-call routing.
+    The same set also ends a JSL/JML dispatch-helper inline table: a
+    sibling entry cannot also be table bytes.
     """
     entry_m &= 1
     entry_x &= 1
@@ -2205,7 +2207,28 @@ def _decode_function_uncached(rom: bytes, bank: int, start: int,
             entries = []
             entry_size = 3 if helper_kind == 'long' else 2
             tbl_pc = (pc + insn.length) & 0xFFFF
+            # A data region beginning exactly at the inline table supplies
+            # its byte boundary. An unused slot targeting data inside that
+            # boundary is not the end of the table (SMW sprite $36 precedes
+            # valid sprites $37..$C8). Keep its index/target, while the normal
+            # data-region gate still prevents compiling that target as code.
+            table_ends = [e for b, s, e in (data_regions or ())
+                          if b == bank and s == tbl_pc and e > s
+                          and (e-s) % entry_size == 0]
+            table_end = min(table_ends) if table_ends else None
             while len(entries) < 256 and tbl_pc + entry_size - 1 <= 0xFFFF:
+                if table_end is not None and tbl_pc + entry_size > table_end:
+                    break
+                # Bound the table at the next declared function entry: a
+                # sibling entry starts the following routine, so its bytes
+                # cannot also be table data (SMW ProcessPlayerAnimation
+                # `JSL ExecutePtr` at $00C595 has 14 entries; without this
+                # bound two more are read from PlayerState0B_RescuedPeach at
+                # $C5B5). Mirrors the native analyzer, so analysis and
+                # emission agree on the table length.
+                if (entries and sibling_entry_pcs is not None
+                        and (tbl_pc & 0xFFFF) in sibling_entry_pcs):
+                    break
                 try:
                     tbl_off = lorom_offset(bank, tbl_pc)
                 except AssertionError:
@@ -2257,7 +2280,8 @@ def _decode_function_uncached(rom: bytes, bank: int, start: int,
                                 reason='data_region',
                                 table_index=len(entries),
                             ))
-                        break
+                        if table_end is None:
+                            break
                     full_entry = (eb << 16) | addr16
                 else:
                     if addr16 == 0:
@@ -2276,7 +2300,8 @@ def _decode_function_uncached(rom: bytes, bank: int, start: int,
                                 reason='data_region',
                                 table_index=len(entries),
                             ))
-                        break
+                        if table_end is None:
+                            break
                     full_entry = (bank << 16) | addr16
                 # NOTE: do NOT bound the entry value by the dispatching
                 # function's [start, end) range. The TABLE bytes live in

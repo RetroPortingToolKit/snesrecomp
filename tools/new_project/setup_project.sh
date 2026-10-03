@@ -1079,7 +1079,7 @@ if [ -n "$FRAMEWORK_GAPS" ]; then
     echo "  # the pinned framework is missing what this project needs (above);"
     echo "  # fix that first, then:"
 fi
-[ "$GENERATED" -eq 1 ] || echo "  bash tools/regen.sh --rom '$ROM_ABS'"
+[ "$GENERATED" -eq 1 ] || echo "  bash tools/regen.sh   # uses the ROM recorded in rom.cfg"
 [ "$BUILT" -eq 1 ] || echo "  cmake -S . -B build -DCMAKE_BUILD_TYPE=Release && cmake --build build -j"
 if [ "$GITHUB_RECOVERY" -eq 1 ]; then
     echo "  gh repo create $GITHUB_OWNER/$GITHUB_REPO --$GITHUB_VISIBILITY --source . --remote=origin"
