@@ -83,6 +83,46 @@ def read_rom(path: pathlib.Path) -> bytes:
     return raw
 
 
+def resolve_project_rom(project_root: pathlib.Path, names: list[str],
+                        explicit: str | None = None) -> pathlib.Path:
+    """The ROM a scaffolded project generates from, or raise ValueError.
+
+    Order: an explicit path, then SNESRECOMP_ROM, then a known filename at
+    the project root, then the project's rom.cfg -- the path the setup
+    wizard recorded (and the build stages beside the executable for the
+    launcher). One resolver here, so a project's regen script does not carry
+    its own copy of the search to fall behind.
+    """
+    def accept(value: str, source: str) -> pathlib.Path:
+        path = pathlib.Path(value)
+        if not path.is_absolute():
+            path = project_root / path
+        if not path.is_file():
+            raise ValueError(f"{source} names a ROM that does not exist: {value}")
+        return path
+
+    if explicit:
+        return accept(explicit, "--rom")
+    env = os.environ.get("SNESRECOMP_ROM", "")
+    if env:
+        return accept(env, "SNESRECOMP_ROM")
+    for name in names:
+        if (project_root / name).is_file():
+            return project_root / name
+    cache = project_root / "rom.cfg"
+    if cache.is_file():
+        lines = cache.read_text(encoding="utf-8").splitlines()
+        if lines and lines[0].strip():
+            return accept(lines[0].strip(), str(cache))
+    raise ValueError("no ROM found")
+
+
+def resolve_rom_command(arguments: argparse.Namespace) -> int:
+    print(resolve_project_rom(pathlib.Path(arguments.project_root).resolve(),
+                              arguments.name or [], arguments.rom))
+    return 0
+
+
 def resolve_analyzer(backend: str) -> str:
     """Point the emitter at the native analyzer, the only analyzer there is.
 
@@ -294,6 +334,14 @@ def parser() -> argparse.ArgumentParser:
 
     add_generate_parser(commands)
     add_verify_parser(commands)
+
+    resolve = commands.add_parser(
+        "resolve-rom", help="print the ROM a scaffolded project generates from")
+    resolve.add_argument("--project-root", required=True)
+    resolve.add_argument("--rom", help="explicit ROM path (wins over everything)")
+    resolve.add_argument("--name", action="append",
+                         help="known ROM filename at the project root (repeatable)")
+    resolve.set_defaults(handler=resolve_rom_command)
 
     return result
 

@@ -654,3 +654,64 @@ def test_the_desktop_host_arms_the_header_shadowing_guard():
     assert "version" in runner[runner.index(
         "set(SNESRECOMP_STDLIB_EXTENSIONLESS_HEADERS"):], \
         "<version> dropped from the shadowing list -- it is the one that bit"
+
+
+# Through the same `sh` the scaffold runs under: on Windows a bare `bash`
+# can resolve to WSL, which does not see this environment.
+_REGEN = ["sh", "-c", "exec bash tools/regen.sh"]
+
+
+def test_regen_finds_the_rom_the_wizard_recorded():
+    """#130: the wizard records the ROM in rom.cfg and the launcher uses it,
+    so regen.sh must too -- the ROM is not at the repo root, and nobody has
+    passed --rom or set SNESRECOMP_ROM."""
+    with tempfile.TemporaryDirectory() as directory:
+        project = _scaffold(pathlib.Path(directory))
+        assert (project / "rom.cfg").is_file()
+        env = dict(os.environ, SNESRECOMP_ROOT=REPO_ROOT.as_posix(),
+                   PYTHON=pathlib.Path(sys.executable).as_posix())
+        env.pop("SNESRECOMP_ROM", None)
+        result = subprocess.run(
+            _REGEN, cwd=project, env=env, text=True,
+            stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+        assert result.returncode == 0, result.stdout
+        assert "fixture.sfc" in result.stdout, result.stdout
+        assert any((project / "src" / "gen").glob("*.c")), result.stdout
+
+        (project / "rom.cfg").unlink()
+        result = subprocess.run(
+            _REGEN, cwd=project, env=env, text=True,
+            stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+        assert result.returncode != 0
+        assert "rom.cfg" in result.stdout, result.stdout
+
+
+def _resolve(root, *names, explicit=None):
+    sys.path.insert(0, str(REPO_ROOT))
+    import snesrecomp_cli
+    return snesrecomp_cli.resolve_project_rom(root, list(names), explicit)
+
+
+def test_project_rom_search_order(tmp_path, monkeypatch):
+    monkeypatch.delenv("SNESRECOMP_ROM", raising=False)
+    for name in ("explicit.sfc", "env.sfc", "game.sfc", "cached.sfc"):
+        (tmp_path / name).write_bytes(b"\0")
+    (tmp_path / "rom.cfg").write_text("cached.sfc\n")      # relative to root
+    assert _resolve(tmp_path, "game.sfc") == tmp_path / "game.sfc"
+    assert _resolve(tmp_path, "absent.sfc") == tmp_path / "cached.sfc"
+    monkeypatch.setenv("SNESRECOMP_ROM", str(tmp_path / "env.sfc"))
+    assert _resolve(tmp_path, "game.sfc") == tmp_path / "env.sfc"
+    assert _resolve(tmp_path, "game.sfc", explicit=str(tmp_path / "explicit.sfc")) \
+        == tmp_path / "explicit.sfc"
+
+
+def test_project_rom_errors_name_their_source(tmp_path, monkeypatch):
+    monkeypatch.delenv("SNESRECOMP_ROM", raising=False)
+    with pytest.raises(ValueError, match="no ROM found"):
+        _resolve(tmp_path, "game.sfc")
+    (tmp_path / "rom.cfg").write_text(str(tmp_path / "moved.sfc") + "\n")
+    with pytest.raises(ValueError, match="rom.cfg"):
+        _resolve(tmp_path, "game.sfc")
+    monkeypatch.setenv("SNESRECOMP_ROM", str(tmp_path / "gone.sfc"))
+    with pytest.raises(ValueError, match="SNESRECOMP_ROM"):
+        _resolve(tmp_path, "game.sfc")

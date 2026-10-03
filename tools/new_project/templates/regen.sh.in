@@ -7,10 +7,11 @@
 # there is one place to change when a revision changes.
 #
 # Flags:
-#   --rom <path>  ROM to generate from. Defaults to a known filename at the
-#                 repo root, but the ROM does not have to live in the repo —
-#                 keeping it on your own drive is the better habit, and
-#                 SNESRECOMP_ROM sets it once for a shell.
+#   --rom <path>  ROM to generate from. Defaults to SNESRECOMP_ROM, a known
+#                 filename at the repo root, then the path in rom.cfg (which
+#                 the setup wizard writes). The ROM does not have to live in
+#                 the repo — keeping it on your own drive is the better
+#                 habit, and SNESRECOMP_ROM sets it once for a shell.
 #   --no-verify   skip the ROM digest check (for a revision this project has
 #                 not been pinned to yet — expect the generated C to differ)
 #   --cfg-roots   seed analysis from every func declaration in recomp/*.cfg
@@ -23,7 +24,7 @@ cd "$ROOT"
 
 VERIFY=1
 CFG_ROOTS=0
-ROM="${SNESRECOMP_ROM:-}"
+ROM=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --rom) ROM=$2; shift 2 ;;
@@ -53,19 +54,18 @@ IDENTITY="$SNESRECOMP_ROOT/tools/rom_identity.py"
 EXPECTED_CRC32="${SNESRECOMP_EXPECTED_CRC32:-$("$PYTHON" "$IDENTITY" "$ROOT/rom_identity.txt" --get expected_crc32)}"
 EXPECTED_SHA256="${SNESRECOMP_EXPECTED_SHA256:-$("$PYTHON" "$IDENTITY" "$ROOT/rom_identity.txt" --get expected_sha256)}"
 
-# --rom / SNESRECOMP_ROM win; otherwise look for a known name at the root.
-if [ -z "$ROM" ]; then
-  for cand in "@ROM_FILE@" "@ROM_SLUG@.sfc" "@ROM_SLUG@.smc"; do
-    if [ -f "$cand" ]; then ROM="$cand"; break; fi
-  done
-fi
-if [ -z "$ROM" ] || [ ! -f "$ROM" ]; then
-  echo "regen.sh: no ROM found." >&2
-  echo "          Pass --rom /path/to/@ROM_FILE@, set SNESRECOMP_ROM, or put" >&2
-  echo "          it at the repo root. You must legally own a copy of" >&2
-  echo "          @DISPLAY_NAME@." >&2
+# The framework owns the search: --rom, then SNESRECOMP_ROM, then a known
+# name at the root, then rom.cfg (the path the setup wizard recorded).
+RESOLVE=(resolve-rom --project-root "$ROOT"
+         --name "@ROM_FILE@" --name "@ROM_SLUG@.sfc" --name "@ROM_SLUG@.smc")
+if [ -n "$ROM" ]; then RESOLVE+=(--rom "$ROM"); fi
+if ! ROM=$("$PYTHON" "$CLI" "${RESOLVE[@]}"); then
+  echo "regen.sh: pass --rom /path/to/@ROM_FILE@, set SNESRECOMP_ROM, put it" >&2
+  echo "          at the repo root, or record its path in rom.cfg. You must" >&2
+  echo "          legally own a copy of @DISPLAY_NAME@." >&2
   exit 1
 fi
+ROM=${ROM%$'\r'}  # Windows Python ends lines with CRLF
 
 VERIFY_ARGS=()
 if [ "$VERIFY" -eq 1 ]; then
