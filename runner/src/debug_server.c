@@ -2787,6 +2787,150 @@ static void cmd_vwring_get(const char *args) {
     send_line(buf);
 }
 
+/* ── Interpreter ring queries ─────────────────────────────────────────────
+ * Both rings record from process start in every build (interp_bridge.c);
+ * these commands only read them. Arguments are space-separated key=value:
+ *
+ *   interp_edges [n=N] [to=PC|LO-HI] [from=PC|LO-HI] [kind=NAME] [nonrom=1]
+ *       Newest N (default 64, max 4096) matching control transfers, oldest
+ *       first. `to=` answers "who arrived here, and how" -- including the nth
+ *       arrival: each distinct (from,to,kind) is one record with a count and
+ *       frame span. `nonrom=1` keeps only transfers whose target is neither
+ *       ROM nor WRAM under the loaded cart's mapping (registers, open bus,
+ *       unmapped space): the first fetch of an off-rails slide.
+ *   resume_ring [n=N] [site=NAME]
+ *       Newest N (default 64, max 1024) writes of the LLE resume PC and of
+ *       the pending yield-unwind PC, old -> new, with the writing site. */
+static int dbg_kv(const char *args, const char *key, char *out, size_t cap) {
+    if (!args) return 0;
+    const size_t kl = strlen(key);
+    for (const char *p = args; *p; ) {
+        while (*p == ' ') p++;
+        if (!strncmp(p, key, kl) && p[kl] == '=') {
+            const char *v = p + kl + 1;
+            size_t n = strcspn(v, " ");
+            if (n >= cap) n = cap - 1;
+            memcpy(out, v, n);
+            out[n] = 0;
+            return 1;
+        }
+        p += strcspn(p, " ");
+    }
+    return 0;
+}
+
+static void dbg_pc_range(const char *args, const char *key,
+                         uint32_t *lo, uint32_t *hi) {
+    char v[40];
+    *lo = 0; *hi = 0xFFFFFFu;
+    if (!dbg_kv(args, key, v, sizeof v)) return;
+    unsigned long a = 0, b = 0;
+    if (sscanf(v, "%lx-%lx", &a, &b) == 2) { *lo = (uint32_t)a; *hi = (uint32_t)b; }
+    else if (sscanf(v, "%lx", &a) == 1) { *lo = *hi = (uint32_t)a; }
+}
+
+/* Could the CPU legitimately fetch an opcode at pc24? ROM under the cart's
+ * mapping, or WRAM (banks $7E/$7F and the low-8K mirror). Coprocessor RAM
+ * mapped elsewhere (SA-1 I-RAM, BW-RAM) reads as "not" -- a filter for a
+ * human to triage, never a verdict. */
+static int dbg_pc_is_code_space(uint32_t pc24) {
+    const uint8_t bank = (uint8_t)(pc24 >> 16);
+    const uint16_t addr = (uint16_t)pc24;
+    if (bank == 0x7E || bank == 0x7F) return 1;
+    if ((bank < 0x40 || (bank >= 0x80 && bank < 0xC0)) && addr < 0x2000)
+        return 1;
+    return g_snes && g_snes->cart && cart_getRomPtr(g_snes->cart, bank, addr);
+}
+
+static void cmd_interp_edges(const char *args) {
+    char v[40];
+    unsigned n = 64;
+    if (dbg_kv(args, "n", v, sizeof v)) n = (unsigned)strtoul(v, NULL, 0);
+    if (n == 0 || n > 4096) n = 4096;
+    uint32_t to_lo, to_hi, from_lo, from_hi;
+    dbg_pc_range(args, "to", &to_lo, &to_hi);
+    dbg_pc_range(args, "from", &from_lo, &from_hi);
+    int kind = 0;
+    if (dbg_kv(args, "kind", v, sizeof v)) {
+        for (int k = 1; k < INTERP_EDGE_KIND_COUNT; k++)
+            if (!strcmp(v, interp_bridge_edge_kind_name(k))) kind = k;
+        if (!kind) { send_fmt("{\"error\":\"unknown kind %s\"}", v); return; }
+    }
+    const int nonrom = dbg_kv(args, "nonrom", v, sizeof v) && v[0] != '0';
+
+    static InterpEdge sel[4096];
+    unsigned found = 0;
+    const uint64_t total = interp_bridge_edge_total();
+    const uint64_t cap = (uint64_t)interp_bridge_edge_capacity();
+    const uint64_t oldest = total > cap ? total - cap : 0;
+    for (uint64_t seq = total; seq > oldest && found < n; seq--) {
+        InterpEdge e;
+        if (!interp_bridge_edge_get(seq - 1, &e)) break;
+        if (e.to_pc24 < to_lo || e.to_pc24 > to_hi) continue;
+        if (e.from_pc24 < from_lo || e.from_pc24 > from_hi) continue;
+        if (kind && e.kind != kind) continue;
+        if (nonrom && dbg_pc_is_code_space(e.to_pc24)) continue;
+        sel[found++] = e;
+    }
+    static char buf[786432];
+    int pos = snprintf(buf, sizeof buf,
+        "{\"total\":%llu,\"capacity\":%llu,\"matched\":%u,\"edges\":[",
+        (unsigned long long)total, (unsigned long long)cap, found);
+    for (unsigned i = 0; i < found && pos < (int)sizeof buf - 256; i++) {
+        const InterpEdge *e = &sel[found - 1 - i];  /* oldest first */
+        pos += snprintf(buf + pos, sizeof buf - (size_t)pos,
+            "%s{\"from\":\"0x%06x\",\"to\":\"0x%06x\",\"kind\":\"%s\","
+            "\"op\":\"0x%02x\",\"sp\":\"0x%04x\",\"count\":%u,"
+            "\"first_frame\":%d,\"last_frame\":%d}",
+            i ? "," : "", (unsigned)e->from_pc24, (unsigned)e->to_pc24,
+            interp_bridge_edge_kind_name(e->kind), e->op, (unsigned)e->sp,
+            (unsigned)e->count, e->first_frame, e->last_frame);
+    }
+    snprintf(buf + pos, sizeof buf - (size_t)pos, "]}");
+    send_line(buf);
+}
+
+static void cmd_resume_ring(const char *args) {
+    char v[40];
+    unsigned n = 64;
+    if (dbg_kv(args, "n", v, sizeof v)) n = (unsigned)strtoul(v, NULL, 0);
+    if (n == 0 || n > 1024) n = 1024;
+    int site = -1;
+    if (dbg_kv(args, "site", v, sizeof v)) {
+        for (int k = 0; k < INTERP_RESUME_SITE_COUNT; k++)
+            if (!strcmp(v, interp_bridge_resume_site_name(k))) site = k;
+        if (site < 0) { send_fmt("{\"error\":\"unknown site %s\"}", v); return; }
+    }
+    static InterpResumeEvent sel[1024];
+    unsigned found = 0;
+    const uint64_t total = interp_bridge_resume_total();
+    const uint64_t cap = (uint64_t)interp_bridge_resume_capacity();
+    const uint64_t oldest = total > cap ? total - cap : 0;
+    for (uint64_t seq = total; seq > oldest && found < n; seq--) {
+        InterpResumeEvent e;
+        if (!interp_bridge_resume_get(seq - 1, &e)) break;
+        if (site >= 0 && e.site != site) continue;
+        sel[found++] = e;
+    }
+    static char buf[262144];
+    int pos = snprintf(buf, sizeof buf,
+        "{\"total\":%llu,\"capacity\":%llu,\"matched\":%u,\"writes\":[",
+        (unsigned long long)total, (unsigned long long)cap, found);
+    for (unsigned i = 0; i < found && pos < (int)sizeof buf - 256; i++) {
+        const InterpResumeEvent *e = &sel[found - 1 - i];
+        pos += snprintf(buf + pos, sizeof buf - (size_t)pos,
+            "%s{\"frame\":%d,\"site\":\"%s\",\"kind\":\"%s\","
+            "\"old\":\"0x%06x\",\"new\":\"0x%06x\",\"sp\":\"0x%04x\","
+            "\"bridge_depth\":%d,\"sched_depth\":%d}",
+            i ? "," : "", e->frame, interp_bridge_resume_site_name(e->site),
+            interp_bridge_resume_kind_name(e->kind), (unsigned)e->old_pc24,
+            (unsigned)e->new_pc24, (unsigned)e->sp, (int)e->bridge_depth,
+            (int)e->sched_depth);
+    }
+    snprintf(buf + pos, sizeof buf - (size_t)pos, "]}");
+    send_line(buf);
+}
+
 /* ws_shadow_stats — always-on widescreen margin observability, per layer:
  * activity, the latched world/scroll keys, and the cumulative margin
  * lookup hit/miss counters split by side (west = left gutter). Counters
@@ -4710,6 +4854,14 @@ typedef struct PpuLineDebugState {
     uint16_t wbgobjlog;
     uint8_t screen_enabled[2], screen_windowed[2];
     uint8_t cgwsel, cgadsub;
+    /* $2105 as the line begins, and what the renderer that actually drew the
+     * line did with it. Two fields rather than one because a game can toggle
+     * the BG mode mid-frame by HDMA, so "the mode at line start" and "the mode
+     * this line was drawn in" are separable questions -- and when the two
+     * renderers disagree about a frame, which of them read which value is the
+     * whole answer. `drawn_valid` stays 0 on a line no renderer reached. */
+    uint8_t bgmode;
+    uint8_t drawn_mode, drawn_renderer, drawn_valid;
 } PpuLineDebugState;
 
 static PpuLineDebugState s_ppu_lines[225];
@@ -4743,6 +4895,18 @@ void debug_server_on_ppu_line(int line) {
            sizeof(s->screen_windowed));
     s->cgwsel = p->cgwsel;
     s->cgadsub = p->cgadsub;
+    s->bgmode = p->bgmode;
+    s->drawn_valid = 0;
+}
+
+void debug_server_on_ppu_line_drawn(int line, int renderer, unsigned bgmode) {
+    if (line < 0 ||
+        line >= (int)(sizeof(s_ppu_lines) / sizeof(s_ppu_lines[0])))
+        return;
+    PpuLineDebugState *s = &s_ppu_lines[line];
+    s->drawn_mode = (uint8_t)bgmode;
+    s->drawn_renderer = (uint8_t)renderer;
+    s->drawn_valid = 1;
 }
 
 void debug_server_on_ppu_window(int line, int layer, const int16_t *edges,
@@ -4813,7 +4977,9 @@ static void cmd_ppu_lines(const char *args) {
             "\"windowsel\":\"0x%08x\",\"wbgobjlog\":\"0x%04x\","
             "\"enabled\":[\"0x%02x\",\"0x%02x\"],"
             "\"windowed\":[\"0x%02x\",\"0x%02x\"],"
-            "\"cgwsel\":\"0x%02x\",\"cgadsub\":\"0x%02x\"}",
+            "\"cgwsel\":\"0x%02x\",\"cgadsub\":\"0x%02x\","
+            "\"bgmode\":\"0x%02x\",\"mode\":%u,"
+            "\"drawn\":%s,\"drawn_mode\":%d,\"renderer\":\"%s\"}",
             emitted++ ? "," : "", line, s->frame,
             s->w1l, s->w1r, s->w2l, s->w2r,
             s->hscroll[0], s->hscroll[1], s->hscroll[2], s->hscroll[3],
@@ -4821,7 +4987,12 @@ static void cmd_ppu_lines(const char *args) {
             s->windowsel, s->wbgobjlog,
             s->screen_enabled[0], s->screen_enabled[1],
             s->screen_windowed[0], s->screen_windowed[1],
-            s->cgwsel, s->cgadsub);
+            s->cgwsel, s->cgadsub,
+            s->bgmode, (unsigned)(s->bgmode & 7),
+            s->drawn_valid ? "true" : "false",
+            s->drawn_valid ? (int)(s->drawn_mode & 7) : -1,
+            !s->drawn_valid ? "none"
+                            : (s->drawn_renderer ? "new" : "legacy"));
     }
     snprintf(buf + pos, sizeof(buf) - (size_t)pos,
              "],\"emitted\":%d}", emitted);
@@ -8489,6 +8660,8 @@ static const CmdEntry s_commands[] = {
     {"get_reg_trace", cmd_get_reg_trace},
     {"trace_vram",    cmd_trace_vram},
     {"vwring_get",    cmd_vwring_get},
+    {"interp_edges",  cmd_interp_edges},
+    {"resume_ring",   cmd_resume_ring},
     {"ws_shadow_stats", cmd_ws_shadow_stats},
     {"dump_shadow", cmd_dump_shadow},
     {"trace_vram_reset", cmd_trace_vram_reset},

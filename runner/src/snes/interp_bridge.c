@@ -566,8 +566,14 @@ static int interp_owner_crossed(uint16_t post_s) {
  * and must first finish/skip that ancestor in the ordinary nested tier path.
  * Saved/restored around each bounce because bridge runs nest. */
 static int      s_interp_bounce_recomp_base = -1;
-/* Env-gated write-log observability: current interpreter opcode PC, published
- * immediately before execution when SNESRECOMP_WLOG_STATE is armed. */
+/* PC of the opcode the interpreter is executing, published immediately before
+ * it executes; 0 while compiled code runs (cleared at every bounce into an
+ * AOT body and when a bridge frame returns to its compiled caller). Write-site
+ * attribution reads it: the WRAM-watch recorder (cpu_trace.c), the address
+ * write-log (cpu_state.c) and the off-rails report (common_rtl.c). Compiled
+ * code keeps no per-instruction PC, so 0 there means "attribute to the block",
+ * never a stale interpreter PC. Always published -- one store per step, next
+ * to the step ring's -- so attribution never depends on what was armed. */
 uint32_t g_interp_wlog_pc24 = 0;
 static uint32_t s_lle_bounce_exclusions[16];
 static size_t   s_lle_bounce_exclusion_count;
@@ -632,26 +638,137 @@ int rtl_aot_node_denied(uint32 pc24) {
                    sizeof key, interp_file_target_cmp) != NULL;
 }
 
+/* ── Always-on LLE resume-PC ring ──────────────────────────────────────
+ * There is ONE resume PC (s_lle_resume_pc24) and one pending unwind PC
+ * (s_lle_unwind_pc24), and more than a dozen sites that write them. When a
+ * poll deep inside a routine yields, the PC it records can be overwritten by
+ * a later yield on the way out (the scheduler's own WaitForNMI, say), and the
+ * guest then resumes somewhere that never finishes the abandoned routine --
+ * anything that routine held behind a PHP is lost. Telling "the inner PC was
+ * never recorded" from "it was recorded and then clobbered" needs the history
+ * of every assignment, old -> new, with the site that made it.
+ *
+ * Every write goes through lle_resume_set()/lle_unwind_arm() and lands here,
+ * continuously, in every build: a late observer reads it backward (debug
+ * server `resume_ring`, or the interp dump at a halt/trap) instead of
+ * deciding before the run which assignments to print. */
+#define INTERP_RESUME_RING_LEN 1024
+static InterpResumeEvent g_resume_ring[INTERP_RESUME_RING_LEN];
+static uint64_t g_resume_ring_n = 0;
+
+static const char *const k_resume_site_names[INTERP_RESUME_SITE_COUNT] = {
+    [INTERP_RESUME_SITE_IRQ_PENDING]     = "irq_pending",
+    [INTERP_RESUME_SITE_DEADLINE]        = "deadline",
+    [INTERP_RESUME_SITE_D9_IRQ]          = "d9_irq",
+    [INTERP_RESUME_SITE_D9_DEADLINE]     = "d9_deadline",
+    [INTERP_RESUME_SITE_QUIESCENT]       = "quiescent",
+    [INTERP_RESUME_SITE_POLL_BRANCH]     = "poll_branch",
+    [INTERP_RESUME_SITE_STABLE_POLL]     = "stable_poll",
+    [INTERP_RESUME_SITE_JOYPAD_WAIT]     = "joypad_wait",
+    [INTERP_RESUME_SITE_NESTED_HANDOFF]  = "nested_handoff",
+    [INTERP_RESUME_SITE_YIELD_FLAG]      = "yield_flag",
+    [INTERP_RESUME_SITE_WAI]             = "wai",
+    [INTERP_RESUME_SITE_DEADLINE_UNWIND] = "deadline_unwind",
+    [INTERP_RESUME_SITE_YIELD_UNWIND]    = "yield_unwind",
+    [INTERP_RESUME_SITE_YIELD_PRIMITIVE] = "yield_primitive",
+    [INTERP_RESUME_SITE_STEP_CAP]        = "step_cap",
+    [INTERP_RESUME_SITE_EXTERNAL]        = "external",
+    [INTERP_RESUME_SITE_ROLLBACK]        = "rollback",
+};
+static const char *const k_resume_kind_names[] = {
+    "set", "unwind_arm", "unwind_consume", "restore",
+};
+
+const char *interp_bridge_resume_site_name(int site) {
+    return (site >= 0 && site < INTERP_RESUME_SITE_COUNT &&
+            k_resume_site_names[site]) ? k_resume_site_names[site] : "?";
+}
+const char *interp_bridge_resume_kind_name(int kind) {
+    return (kind >= 0 &&
+            kind < (int)(sizeof k_resume_kind_names / sizeof *k_resume_kind_names))
+               ? k_resume_kind_names[kind] : "?";
+}
+
+static void resume_ring_note(int site, int kind, uint32_t old_pc24,
+                             uint32_t new_pc24, uint16_t sp) {
+    extern int snes_frame_counter;
+    InterpResumeEvent *e =
+        &g_resume_ring[g_resume_ring_n++ & (INTERP_RESUME_RING_LEN - 1)];
+    e->old_pc24 = old_pc24 & 0xFFFFFFu;
+    e->new_pc24 = new_pc24 & 0xFFFFFFu;
+    e->frame = snes_frame_counter;
+    e->sp = sp;
+    e->site = (uint8_t)site;
+    e->kind = (uint8_t)kind;
+    e->bridge_depth = (int8_t)s_interp_bridge_depth;
+    e->sched_depth = (int8_t)s_lle_sched_depth;
+}
+
+uint64_t interp_bridge_resume_total(void) { return g_resume_ring_n; }
+int interp_bridge_resume_capacity(void) { return INTERP_RESUME_RING_LEN; }
+int interp_bridge_resume_get(uint64_t seq, InterpResumeEvent *out) {
+    if (!out || seq >= g_resume_ring_n ||
+        g_resume_ring_n - seq > INTERP_RESUME_RING_LEN)
+        return 0;
+    *out = g_resume_ring[seq & (INTERP_RESUME_RING_LEN - 1)];
+    return 1;
+}
+
+void interp_bridge_dump_resume_ring(int n, FILE *out) {
+    if (!out) out = stderr;
+    const uint64_t have = g_resume_ring_n < INTERP_RESUME_RING_LEN
+                              ? g_resume_ring_n : INTERP_RESUME_RING_LEN;
+    if (n <= 0 || (uint64_t)n > have) n = (int)have;
+    fprintf(out, "[interp_resume] last %d resume-PC writes (of %llu total):\n",
+            n, (unsigned long long)g_resume_ring_n);
+    for (uint64_t seq = g_resume_ring_n - (uint64_t)n; seq < g_resume_ring_n; seq++) {
+        const InterpResumeEvent *e =
+            &g_resume_ring[seq & (INTERP_RESUME_RING_LEN - 1)];
+        fprintf(out, "  f%-6d %-15s %-14s $%06X -> $%06X sp=%04X depth=%d sched=%d\n",
+                e->frame, interp_bridge_resume_site_name(e->site),
+                interp_bridge_resume_kind_name(e->kind),
+                (unsigned)e->old_pc24, (unsigned)e->new_pc24, (unsigned)e->sp,
+                (int)e->bridge_depth, (int)e->sched_depth);
+    }
+}
+
+/* Publish the PC the owning scheduler resumes at. */
+static void lle_resume_set(uint32_t pc24, int site, uint16_t sp) {
+    resume_ring_note(site, INTERP_RESUME_KIND_SET, s_lle_resume_pc24, pc24, sp);
+    s_lle_resume_pc24 = pc24;
+}
+
+/* Arm a yield unwind that an outer frame consumes (resumes at pc24). */
+static void lle_unwind_arm(uint32_t pc24, int owner_depth, int is_deadline,
+                           int site, uint16_t sp) {
+    resume_ring_note(site, INTERP_RESUME_KIND_UNWIND_ARM,
+                     s_lle_unwind_active ? s_lle_unwind_pc24 : 0, pc24, sp);
+    s_lle_unwind_active = 1;
+    s_lle_unwind_pc24 = pc24 & 0xFFFFFFu;
+    s_lle_unwind_owner_depth = owner_depth;
+    s_lle_unwind_is_deadline = is_deadline;
+}
+
 int interp_bridge_in_lle_scheduler(void) { return s_lle_sched_depth > 0; }
 /* A hardware wait can be reached inside an AOT body's nested fallback, not
  * just in the outer scheduler. Preserve the guest continuation and hand it
  * outward through the existing paired-call unwind until the host can run. */
 static int bridge_cooperative_yield(CpuState *cpu, const Interp816 *in,
-                                    uint32_t pc24, uint32_t yield_pc) {
+                                    uint32_t pc24, uint32_t yield_pc,
+                                    int site) {
     if (yield_pc) {
-        s_lle_resume_pc24 = pc24;
+        lle_resume_set(pc24, site, in->sp);
     } else {
-        s_lle_unwind_active = 1;
-        s_lle_unwind_pc24 = pc24;
-        s_lle_unwind_owner_depth = s_interp_bridge_depth - 1;
-        s_lle_unwind_is_deadline = 0;
+        lle_unwind_arm(pc24, s_interp_bridge_depth - 1, 0, site, in->sp);
     }
     sync_interp_to_cpu(in, cpu);
     bridge_apu_flush(cpu);
     return 1;
 }
 uint32 interp_bridge_lle_resume_pc(void) { return s_lle_resume_pc24; }
-void interp_bridge_set_lle_resume_pc(uint32_t pc) { s_lle_resume_pc24 = pc; }
+void interp_bridge_set_lle_resume_pc(uint32_t pc) {
+    lle_resume_set(pc, INTERP_RESUME_SITE_EXTERNAL, 0);
+}
 
 /* ── rollback state (see interp_bridge.h) ─────────────────────────────── */
 
@@ -704,6 +821,11 @@ void interp_bridge_rb_state_load(const void *in) {
     s_interp_bus_master           = s->bus_master;
     s_interp_bus_cycles           = s->bus_cycles;
     s_interp_bus_timing_active    = s->bus_timing_active;
+    /* Rollback loads can run many times a frame under netplay; only a load
+     * that actually moves the resume PC is worth a slot. */
+    if (s->lle_resume_pc24 != s_lle_resume_pc24)
+        resume_ring_note(INTERP_RESUME_SITE_ROLLBACK, INTERP_RESUME_KIND_RESTORE,
+                         s_lle_resume_pc24, s->lle_resume_pc24, 0);
     s_lle_resume_pc24             = s->lle_resume_pc24;
     s_lle_wai_yield               = s->lle_wai_yield;
     s_lle_master_deadline         = s->lle_master_deadline;
@@ -816,10 +938,9 @@ RecompReturn interp_bridge_lle_yield_unwind(CpuState *cpu, uint32 resume_pc24) {
      * the NEXT emitted function entered (the next bounce) can't adopt a
      * stale _entry_s/_hrv. */
     cpu_take_tailcall_return_context(NULL, NULL);
-    s_lle_unwind_active = 1;
-    s_lle_unwind_pc24   = resume_pc24 & 0xFFFFFFu;
-    s_lle_unwind_owner_depth = s_interp_bounce_owner_depth;
-    s_lle_unwind_is_deadline = s_lle_next_unwind_is_deadline;
+    lle_unwind_arm(resume_pc24, s_interp_bounce_owner_depth,
+                   s_lle_next_unwind_is_deadline,
+                   INTERP_RESUME_SITE_YIELD_PRIMITIVE, cpu ? cpu->S : 0);
     s_lle_next_unwind_is_deadline = 0;
     return (RecompReturn)RECOMP_RETURN_LLE_UNWIND_BASE;
 }
@@ -1017,6 +1138,147 @@ void interp_bridge_dump_recent_steps(int n, FILE *out) {
     }
 }
 
+/* ── Always-on interpreter control-flow edge ring ──────────────────────
+ * The step ring above answers "what ran last", which stops being useful the
+ * moment the guest spins: 8192 steps of a two-instruction poll leave nothing
+ * of the path that reached it, and a bail or halt reports only the spin.
+ * This ring records control transfers instead -- a taken branch, a jump, a
+ * call, a return, a BRK/COP vector, an interrupt or resume landing, a bounce
+ * into compiled code, an entry into the bridge -- and folds a transfer that
+ * repeats one of the last INTERP_EDGE_FOLD records into that record's count.
+ * A spin costs one record per distinct transfer in its loop however long it
+ * runs, so the arrival stays readable after the fact.
+ *
+ * Questions previously answered by arming a catch before the run (dump the
+ * ring at the first / nth arrival at a PC; dump it when execution first
+ * fetches from register or open-bus space) are queries over this ring: an
+ * arrival is an edge whose to_pc24 is that PC. Debug-server `interp_edges`
+ * filters it; halts and traps dump its tail.
+ *
+ * Detection is by discontinuity, so it needs no per-opcode hooks: each step
+ * knows where the previous opcode would have fallen through to, and a PC
+ * anywhere else is an edge from that opcode. */
+#define INTERP_EDGE_RING_LEN 16384
+#define INTERP_EDGE_FOLD 8
+static InterpEdge g_interp_edges[INTERP_EDGE_RING_LEN];
+static uint64_t g_interp_edges_n = 0;
+
+/* 65816 instruction length at M=1/X=1; the eight accumulator immediates grow
+ * by one when M=0 and the four index immediates when X=0. Generated from
+ * recompiler/snes65816.py's opcode table. */
+static const uint8_t k_interp_op_len[256] = {
+    2, 2, 2, 2, 2, 2, 2, 2, 1, 2, 1, 1, 3, 3, 3, 4,  /* 0_ */
+    2, 2, 2, 2, 2, 2, 2, 2, 1, 3, 1, 1, 3, 3, 3, 4,  /* 1_ */
+    3, 2, 4, 2, 2, 2, 2, 2, 1, 2, 1, 1, 3, 3, 3, 4,  /* 2_ */
+    2, 2, 2, 2, 2, 2, 2, 2, 1, 3, 1, 1, 3, 3, 3, 4,  /* 3_ */
+    1, 2, 2, 2, 3, 2, 2, 2, 1, 2, 1, 1, 3, 3, 3, 4,  /* 4_ */
+    2, 2, 2, 2, 3, 2, 2, 2, 1, 3, 1, 1, 4, 3, 3, 4,  /* 5_ */
+    1, 2, 3, 2, 2, 2, 2, 2, 1, 2, 1, 1, 3, 3, 3, 4,  /* 6_ */
+    2, 2, 2, 2, 2, 2, 2, 2, 1, 3, 1, 1, 3, 3, 3, 4,  /* 7_ */
+    2, 2, 3, 2, 2, 2, 2, 2, 1, 2, 1, 1, 3, 3, 3, 4,  /* 8_ */
+    2, 2, 2, 2, 2, 2, 2, 2, 1, 3, 1, 1, 3, 3, 3, 4,  /* 9_ */
+    2, 2, 2, 2, 2, 2, 2, 2, 1, 2, 1, 1, 3, 3, 3, 4,  /* A_ */
+    2, 2, 2, 2, 2, 2, 2, 2, 1, 3, 1, 1, 3, 3, 3, 4,  /* B_ */
+    2, 2, 2, 2, 2, 2, 2, 2, 1, 2, 1, 1, 3, 3, 3, 4,  /* C_ */
+    2, 2, 2, 2, 2, 2, 2, 2, 1, 3, 1, 1, 3, 3, 3, 4,  /* D_ */
+    2, 2, 2, 2, 2, 2, 2, 2, 1, 2, 1, 1, 3, 3, 3, 4,  /* E_ */
+    2, 2, 2, 2, 3, 2, 2, 2, 1, 3, 1, 1, 3, 3, 3, 4,  /* F_ */
+};
+
+static unsigned interp_op_len(uint8_t op, int mf, int xf) {
+    unsigned len = k_interp_op_len[op];
+    if (!mf && (op & 0x1F) == 0x09) len++;          /* ORA/AND/EOR/ADC/BIT/LDA/CMP/SBC #imm */
+    if (!xf && (op == 0xA0 || op == 0xA2 || op == 0xC0 || op == 0xE0)) len++;
+    return len;
+}
+
+/* Where an opcode that does not transfer control falls through to. Program
+ * counter increments wrap within the bank on the 65816. */
+static uint32_t interp_fallthrough_pc(uint32_t pc24, uint8_t op, int mf, int xf) {
+    return (pc24 & 0xFF0000u) |
+           (uint16_t)((uint16_t)pc24 + interp_op_len(op, mf, xf));
+}
+
+static uint8_t interp_edge_kind_for_op(uint8_t op) {
+    switch (op) {
+    case 0x10: case 0x30: case 0x50: case 0x70: case 0x90: case 0xB0:
+    case 0xD0: case 0xF0: case 0x80: case 0x82: return INTERP_EDGE_BRANCH;
+    case 0x4C: case 0x5C: case 0x6C: case 0x7C: case 0xDC: return INTERP_EDGE_JUMP;
+    case 0x20: case 0x22: case 0xFC: return INTERP_EDGE_CALL;
+    case 0x60: case 0x6B: case 0x40: return INTERP_EDGE_RETURN;
+    case 0x00: case 0x02: return INTERP_EDGE_VECTOR;
+    default: return INTERP_EDGE_EXTERNAL;
+    }
+}
+
+static void interp_edge_note(uint32_t from_pc24, uint32_t to_pc24,
+                             uint8_t kind, uint8_t op, uint16_t sp) {
+    extern int snes_frame_counter;
+    from_pc24 &= 0xFFFFFFu;
+    to_pc24 &= 0xFFFFFFu;
+    const uint64_t n = g_interp_edges_n;
+    const uint64_t back = n < INTERP_EDGE_FOLD ? n : INTERP_EDGE_FOLD;
+    for (uint64_t i = 1; i <= back; i++) {
+        InterpEdge *e = &g_interp_edges[(n - i) & (INTERP_EDGE_RING_LEN - 1)];
+        if (e->to_pc24 == to_pc24 && e->from_pc24 == from_pc24 &&
+            e->kind == kind) {
+            e->count++;
+            e->last_frame = snes_frame_counter;
+            return;
+        }
+    }
+    InterpEdge *e = &g_interp_edges[n & (INTERP_EDGE_RING_LEN - 1)];
+    e->from_pc24 = from_pc24;
+    e->to_pc24 = to_pc24;
+    e->first_frame = e->last_frame = snes_frame_counter;
+    e->count = 1;
+    e->sp = sp;
+    e->kind = kind;
+    e->op = op;
+    g_interp_edges_n = n + 1;
+}
+
+uint64_t interp_bridge_edge_total(void) { return g_interp_edges_n; }
+int interp_bridge_edge_capacity(void) { return INTERP_EDGE_RING_LEN; }
+int interp_bridge_edge_get(uint64_t seq, InterpEdge *out) {
+    if (!out || seq >= g_interp_edges_n ||
+        g_interp_edges_n - seq > INTERP_EDGE_RING_LEN)
+        return 0;
+    *out = g_interp_edges[seq & (INTERP_EDGE_RING_LEN - 1)];
+    return 1;
+}
+
+const char *interp_bridge_edge_kind_name(int kind) {
+    static const char *const names[INTERP_EDGE_KIND_COUNT] = {
+        "?", "branch", "jump", "call", "return", "vector", "external",
+        "aot_call", "entry",
+    };
+    return (kind > 0 && kind < INTERP_EDGE_KIND_COUNT) ? names[kind] : "?";
+}
+
+void interp_bridge_dump_recent_edges(int n, FILE *out) {
+    if (!out) out = stderr;
+    const uint64_t have = g_interp_edges_n < INTERP_EDGE_RING_LEN
+                              ? g_interp_edges_n : INTERP_EDGE_RING_LEN;
+    if (n <= 0 || (uint64_t)n > have) n = (int)have;
+    fprintf(out, "[interp_edges] last %d control transfers (of %llu recorded):\n",
+            n, (unsigned long long)g_interp_edges_n);
+    for (uint64_t seq = g_interp_edges_n - (uint64_t)n; seq < g_interp_edges_n; seq++) {
+        const InterpEdge *e = &g_interp_edges[seq & (INTERP_EDGE_RING_LEN - 1)];
+        fprintf(out, "  f%-6d..%-6d %-8s $%06X -> $%06X op=%02X sp=%04X x%u\n",
+                e->first_frame, e->last_frame,
+                interp_bridge_edge_kind_name(e->kind),
+                (unsigned)e->from_pc24, (unsigned)e->to_pc24, e->op,
+                (unsigned)e->sp, (unsigned)e->count);
+    }
+}
+
+void interp_bridge_dump_recent(int n, FILE *out) {
+    interp_bridge_dump_recent_steps(n, out);
+    interp_bridge_dump_recent_edges(n / 4 > 0 ? n / 4 : n, out);
+    interp_bridge_dump_resume_ring(64, out);
+}
+
 /* Install the ring dump as cpu_state.c's halt-path hook (explicit hook, not
  * a PE weak symbol — see cpu_state.c). Runs at image load.
  *
@@ -1042,7 +1304,7 @@ __attribute__((constructor))
 static void itrace_install_dump_hook(void)
 #endif
 {
-    g_interp_recent_dump_hook = interp_bridge_dump_recent_steps;
+    g_interp_recent_dump_hook = interp_bridge_dump_recent;
 }
 
 /* Tier-2 coverage table (definitions below, § gap manifest): shared by the
@@ -1240,6 +1502,12 @@ static int _interp_run_core(CpuState *cpu, uint32_t entry_pc24,
         dtrace = getenv("SNESRECOMP_INTERP_DTRACE") ? 1 : 0;
     ITraceEnt head[8], ring[256];
     long itn = 0;
+    /* Edge-ring cursor: the opcode last executed by THIS frame and where it
+     * falls through to. A nested frame keeps its own, so a bounce never
+     * looks like a transfer in the frame that made it. */
+    uint32_t edge_from = 0, edge_expect = entry_pc24 & 0xFFFFFFu;
+    uint8_t edge_op = 0;
+    interp_edge_note(0, entry_pc24, INTERP_EDGE_ENTRY, 0, (uint16_t)cpu->S);
 
     typedef struct QuiescentState {
         uint32_t pc;
@@ -1340,14 +1608,14 @@ static int _interp_run_core(CpuState *cpu, uint32_t entry_pc24,
               cx4_irq_pending(g_snes->cart->cx4)) ||
              (g_snes->cart && g_snes->cart->sa1 &&
               sa1_cpu_irq_pending(g_snes->cart->sa1)))) {
-            s_lle_resume_pc24=pc_before;
+            lle_resume_set(pc_before, INTERP_RESUME_SITE_IRQ_PENDING, in.sp);
             sync_interp_to_cpu(&in,cpu);
             bridge_apu_flush(cpu);
             return 1;
         }
         if (auto_quiescent && s_lle_master_deadline &&
             cpu->master_cycles >= s_lle_master_deadline) {
-            s_lle_resume_pc24=pc_before;
+            lle_resume_set(pc_before, INTERP_RESUME_SITE_DEADLINE, in.sp);
             sync_interp_to_cpu(&in,cpu);
             bridge_apu_flush(cpu);
             return 1;
@@ -1371,14 +1639,14 @@ static int _interp_run_core(CpuState *cpu, uint32_t entry_pc24,
             if (s_d9_bytes_ok) {
                 for (;;) {
                     if (auto_quiescent && !in.i && g_snes && g_snes->inIrq) {
-                        s_lle_resume_pc24 = ((uint32_t)in.k << 16) | in.pc;
+                        lle_resume_set(((uint32_t)in.k << 16) | in.pc, INTERP_RESUME_SITE_D9_IRQ, in.sp);
                         sync_interp_to_cpu(&in, cpu);
                         bridge_apu_flush(cpu);
                         return 1;
                     }
                     if (auto_quiescent && s_lle_master_deadline &&
                         cpu->master_cycles >= s_lle_master_deadline) {
-                        s_lle_resume_pc24 = ((uint32_t)in.k << 16) | in.pc;
+                        lle_resume_set(((uint32_t)in.k << 16) | in.pc, INTERP_RESUME_SITE_D9_DEADLINE, in.sp);
                         sync_interp_to_cpu(&in, cpu);
                         bridge_apu_flush(cpu);
                         return 1;
@@ -1414,14 +1682,14 @@ static int _interp_run_core(CpuState *cpu, uint32_t entry_pc24,
                         cart_sync_coprocessors(g_snes->cart, cpu->master_cycles);
                     cpu->coprocessor_master_cycles = cpu->master_cycles;
                     if (auto_quiescent && !in.i && g_snes && g_snes->inIrq) {
-                        s_lle_resume_pc24 = 0xC084B4u;
+                        lle_resume_set(0xC084B4u, INTERP_RESUME_SITE_D9_IRQ, in.sp);
                         sync_interp_to_cpu(&in, cpu);
                         bridge_apu_flush(cpu);
                         return 1;
                     }
                     if (auto_quiescent && s_lle_master_deadline &&
                         cpu->master_cycles >= s_lle_master_deadline) {
-                        s_lle_resume_pc24 = 0xC084B4u;
+                        lle_resume_set(0xC084B4u, INTERP_RESUME_SITE_D9_DEADLINE, in.sp);
                         sync_interp_to_cpu(&in, cpu);
                         bridge_apu_flush(cpu);
                         return 1;
@@ -1642,7 +1910,8 @@ static int _interp_run_core(CpuState *cpu, uint32_t entry_pc24,
                          * and could starve rendering.  Live MMIO polls are not
                          * mistaken for this path: continuous_read_epoch changes
                          * on every such read. */
-                        s_lle_resume_pc24=pc_before;
+                        lle_resume_set(pc_before,
+                                       INTERP_RESUME_SITE_QUIESCENT, in.sp);
                         s_lle_quiescent_yield = 1;
                         /* Flush accumulated SPC time BEFORE yielding so the
                          * SPC700 processes any pending port writes (Star Ocean
@@ -1759,7 +2028,8 @@ static int _interp_run_core(CpuState *cpu, uint32_t entry_pc24,
             const int _branch_taken =
                 _poll_branch == 0x30 ? _negative : !_negative;
             if (_branch_taken) {
-                return bridge_cooperative_yield(cpu, &in, pc_before, yield_pc);
+                return bridge_cooperative_yield(cpu, &in, pc_before, yield_pc,
+                                                INTERP_RESUME_SITE_POLL_BRANCH);
             }
         }
         /* Canonical stable-value poll:
@@ -1791,7 +2061,8 @@ static int _interp_run_core(CpuState *cpu, uint32_t entry_pc24,
                 ? ((uint8_t)in.a == cpu_read8(cpu, in.db, _wait_addr))
                 : (in.a == cpu_read16(cpu, in.db, _wait_addr));
             if (_equal) {
-                return bridge_cooperative_yield(cpu, &in, pc_before, yield_pc);
+                return bridge_cooperative_yield(cpu, &in, pc_before, yield_pc,
+                                                INTERP_RESUME_SITE_STABLE_POLL);
             }
         }
         /* Canonical automatic-joypad wait used by synchronous message boxes:
@@ -1823,7 +2094,8 @@ static int _interp_run_core(CpuState *cpu, uint32_t entry_pc24,
             if (_rel < 0) {
                 const uint32_t resume = (pc_before & 0xFF0000u) |
                     (uint16_t)(pc_before + 2 + _rel);
-                return bridge_cooperative_yield(cpu, &in, resume, yield_pc);
+                return bridge_cooperative_yield(cpu, &in, resume, yield_pc,
+                                                INTERP_RESUME_SITE_JOYPAD_WAIT);
             }
         }
         /* A NESTED frame (yield_pc == 0) standing on the active scheduler's
@@ -1868,10 +2140,8 @@ static int _interp_run_core(CpuState *cpu, uint32_t entry_pc24,
                  bridge_bus_read(cpu, pc_before + 3) == 0xD0 &&
                  bridge_bus_read(cpu, pc_before + 4) == 0xFB);
             if (_blocked) {
-                s_lle_unwind_active = 1;
-                s_lle_unwind_pc24 = pc_before & 0xFFFFFFu;
-                s_lle_unwind_owner_depth = s_interp_bridge_depth - 1;
-                s_lle_unwind_is_deadline = 0;
+                lle_unwind_arm(pc_before, s_interp_bridge_depth - 1, 0,
+                               INTERP_RESUME_SITE_NESTED_HANDOFF, in.sp);
                 if (_ibrw)
                     fprintf(stderr,
                             "[ibr] nested yield hand-off -> $%06X sp=$%04X "
@@ -1920,7 +2190,7 @@ static int _interp_run_core(CpuState *cpu, uint32_t entry_pc24,
                 }
             }
             if (_yield_flag == yield_flag_value) {
-                s_lle_resume_pc24 = pc_before;
+                lle_resume_set(pc_before, INTERP_RESUME_SITE_YIELD_FLAG, in.sp);
                 sync_interp_to_cpu(&in, cpu);
                 bridge_apu_flush(cpu);
                 return 1;
@@ -2020,6 +2290,13 @@ static int _interp_run_core(CpuState *cpu, uint32_t entry_pc24,
                 &g_itrace_recent[g_itrace_recent_n++ & (ITRACE_RECENT_LEN - 1)];
             _g->pc = pc_before; _g->frame = snes_frame_counter;
             _g->sp = in.sp; _g->op = op; _g->pad = 0;
+            if ((pc_before & 0xFFFFFFu) != edge_expect && itn > 1)
+                interp_edge_note(edge_from, pc_before,
+                                 interp_edge_kind_for_op(edge_op), edge_op,
+                                 in.sp);
+            edge_from = pc_before & 0xFFFFFFu;
+            edge_op = op;
+            edge_expect = interp_fallthrough_pc(pc_before, op, in.mf, in.xf);
         }
         /* Env-gated diagnostic (SNESRECOMP_C2WATCH=1): log every interpreted
          * opcode in the menu-blit range $C2:FC40-$C2:FF00 with the live mode
@@ -2091,7 +2368,7 @@ static int _interp_run_core(CpuState *cpu, uint32_t entry_pc24,
                      * spans runs and needs no arming. */
                     itrace_dump(entry_pc24, head, (int)(itn < 8 ? itn : 8),
                                 ring, trace ? itn : 0);
-                    interp_bridge_dump_recent_steps(512, stderr);
+                    interp_bridge_dump_recent(512, stderr);
                     fflush(stderr);
                     exit(43);
                 }
@@ -2116,10 +2393,9 @@ static int _interp_run_core(CpuState *cpu, uint32_t entry_pc24,
          * local Interp816 struct until a bridge boundary.  Publish the pre-op
          * state so an address write-log can compare the exact store-site
          * registers against AOT.  Completely inert unless explicitly armed. */
-        if (wlog_state_sync) {
-            g_interp_wlog_pc24 = pc_before & 0xFFFFFFu;
+        g_interp_wlog_pc24 = pc_before & 0xFFFFFFu;
+        if (wlog_state_sync)
             sync_interp_to_cpu(&in, cpu);
-        }
         cpu->coprocessor_master_cycles = cpu->master_cycles;
         if (s_interp_pctrace && steps < 4)
             fprintf(stderr, "[pctrace] step=%ld pre-runOpcode pc=%06X\n",
@@ -2241,7 +2517,7 @@ static int _interp_run_core(CpuState *cpu, uint32_t entry_pc24,
         if (in.waiting) {
             in.waiting = false;
             if (auto_quiescent || yield_pc) {
-                s_lle_resume_pc24 = ((uint32_t)in.k << 16) | in.pc;
+                lle_resume_set(((uint32_t)in.k << 16) | in.pc, INTERP_RESUME_SITE_WAI, in.sp);
                 s_lle_wai_yield = 1;
                 sync_interp_to_cpu(&in, cpu);
                 bridge_apu_flush(cpu);
@@ -2349,6 +2625,9 @@ static int _interp_run_core(CpuState *cpu, uint32_t entry_pc24,
                                                 cpu->m_flag ? 1 : 0,
                                                 cpu->x_flag ? 1 : 0);
                 s_lle_next_unwind_is_deadline = 0;
+                interp_edge_note(pc_before, target, INTERP_EDGE_AOT_CALL, op,
+                                 (uint16_t)_sp_pre);
+                g_interp_wlog_pc24 = 0;
                 RecompReturn _air = cpu_dispatch_pc_paired(cpu, target, _fs);
                 s_interp_bounce_owner_depth = _saved_bounce_owner;
                 s_interp_bounce_recomp_base = _saved_bounce_base;
@@ -2362,6 +2641,7 @@ static int _interp_run_core(CpuState *cpu, uint32_t entry_pc24,
                 const uint32_t ret =
                     (pc_before + (uint32_t)call_len +
                      (uint32_t)cpu_dispatch_inline_arg_bytes(target)) & 0xFFFFFF;
+                edge_expect = ret;
                 if (_air != RECOMP_RETURN_NORMAL) {
                     if (s_lle_unwind_active) {
                         if (s_lle_unwind_is_deadline) {
@@ -2372,7 +2652,9 @@ static int _interp_run_core(CpuState *cpu, uint32_t entry_pc24,
                              * Preserve the sentinel through every gap; only
                              * the scheduler publishes the suspended PC. */
                             if (yield_pc) {
-                                s_lle_resume_pc24 = s_lle_unwind_pc24;
+                                lle_resume_set(s_lle_unwind_pc24,
+                                               INTERP_RESUME_SITE_DEADLINE_UNWIND,
+                                               in.sp);
                                 s_lle_unwind_active = 0;
                                 s_lle_unwind_owner_depth = 0;
                                 s_lle_unwind_is_deadline = 0;
@@ -2400,12 +2682,19 @@ static int _interp_run_core(CpuState *cpu, uint32_t entry_pc24,
                              * it (JSR frame pushed for JSR-reached
                              * primitives), so the interpreted coroutine
                              * switch runs byte-exact. */
+                            resume_ring_note(INTERP_RESUME_SITE_YIELD_UNWIND,
+                                             INTERP_RESUME_KIND_UNWIND_CONSUME,
+                                             pc_before, s_lle_unwind_pc24,
+                                             cpu->S);
                             s_lle_unwind_active = 0;
                             s_lle_unwind_owner_depth = 0;
                             s_lle_unwind_is_deadline = 0;
                             sync_cpu_to_interp(cpu, &in);
                             in.k  = (uint8)((s_lle_unwind_pc24 >> 16) & 0xFF);
                             in.pc = (uint16)(s_lle_unwind_pc24 & 0xFFFF);
+                            interp_edge_note(pc_before, s_lle_unwind_pc24,
+                                             INTERP_EDGE_EXTERNAL, op, in.sp);
+                            edge_expect = s_lle_unwind_pc24 & 0xFFFFFFu;
                             if (_ibrw)
                                 fprintf(stderr, "[ibr] yield-unwind -> $%06X "
                                         "sp=$%04X yield_pc=$%06X sched=%d "
@@ -2542,10 +2831,27 @@ static int _interp_run_core(CpuState *cpu, uint32_t entry_pc24,
                 fprintf(stderr, " $%06X/%02X", (unsigned)head[hi].pc,
                         head[hi].op);
             fputc('\n', stderr);
+            /* The step ring holds only the spin by now; the folded edge
+             * ring still holds the transfers that led into it. */
+            fprintf(stderr, "[interp_cap] edges:");
+            for (uint64_t ei = g_interp_edges_n > 8 ? g_interp_edges_n - 8 : 0;
+                 ei < g_interp_edges_n; ei++) {
+                const InterpEdge *e =
+                    &g_interp_edges[ei & (INTERP_EDGE_RING_LEN - 1)];
+                fprintf(stderr, " $%06X>$%06X(%s x%u)",
+                        (unsigned)e->from_pc24, (unsigned)e->to_pc24,
+                        interp_bridge_edge_kind_name(e->kind),
+                        (unsigned)e->count);
+            }
+            fputc('\n', stderr);
 
         }
     }
-    if (trace) itrace_dump(entry_pc24, head, (int)(itn < 8 ? itn : 8), ring, itn);
+    if (trace) {
+        itrace_dump(entry_pc24, head, (int)(itn < 8 ? itn : 8), ring, itn);
+        interp_bridge_dump_recent_edges(64, stderr);
+        interp_bridge_dump_resume_ring(32, stderr);
+    }
     /* Save the current PC so the frame driver can resume from where the
      * interpreter left off, rather than restarting at the RESET vector.
      * Without this, a step-cap bail during a vblank-poll or SPC-handshake
@@ -2559,7 +2865,7 @@ static int _interp_run_core(CpuState *cpu, uint32_t entry_pc24,
      * Interrupt handlers must complete (RTI) or be discarded entirely;
      * the caller (so_rtl.c) saves/restores the CPU stack to handle bail. */
     if (!stop_on_rti)
-        s_lle_resume_pc24 = ((uint32_t)in.k << 16) | in.pc;
+        lle_resume_set(((uint32_t)in.k << 16) | in.pc, INTERP_RESUME_SITE_STEP_CAP, in.sp);
     sync_interp_to_cpu(&in, cpu);
     bridge_apu_flush(cpu);
     /* Post-sync diagnostic: decode the instruction at step-cap PC */
@@ -2681,6 +2987,7 @@ static int interp_bridge_run_ex2(CpuState *cpu, uint32_t entry_pc24,
                               yield_flag_addr, yield_flag_value,
                               reset_cap_on_bounce, stop_pcs, n_stop,
                               stop_on_rti);
+    g_interp_wlog_pc24 = 0;  /* control returns to compiled code */
     RecompStackPop();
     g_last_recomp_func = _saved_func;
     s_interp_bridge_depth--;
