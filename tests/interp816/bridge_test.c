@@ -670,7 +670,12 @@ int main(void) {
     /* S7: an interrupt-owned stable-value poll must cooperatively yield at
      * CMP while the sampled WRAM byte is unchanged, then resume and return
      * normally after the next frame changes it. This is the canonical shape
-     * used by Super Metroid's message-box setup during ship entry. */
+     * used by Super Metroid's message-box setup during ship entry.
+     *
+     * The poll sits under a real caller loop. Cooperative-loop mode disables
+     * the return-past-entry exit, so a poll returning into a host-pushed frame
+     * would run whatever bytes follow it; the caller's store proves the poll
+     * exited, and its next call yields again on the new sample. */
     { memset(RAM, 0, MEMSZ); init_cpu();
       uint8_t c[] = {
           0xAD,0x10,0x00,                    /* LDA $0010 */
@@ -678,9 +683,14 @@ int main(void) {
           0xF0,0xFB,                         /* BEQ CMP */
           0x60                               /* RTS */
       };
-      load(0x8000, c, sizeof c); RAM[0x10] = 0x34;
-      cpu_push_jsr_return_frame(&g_c);
-      int rc1 = interp_bridge_run_loop(&g_c, 0x008000, 0x008003, 0x0020, 0xFF);
+      uint8_t caller[] = {
+          0x20,0x00,0x80,                    /* $8010: JSR $8000 */
+          0x8D,0x20,0x00,                    /*        STA $0020 */
+          0x80,0xF8                          /*        BRA $8010 */
+      };
+      load(0x8000, c, sizeof c); load(0x8010, caller, sizeof caller);
+      RAM[0x10] = 0x34;
+      int rc1 = interp_bridge_run_loop(&g_c, 0x008010, 0x008003, 0x0030, 0xFF);
       printf("S7 interrupt-owned stable-value poll yields and resumes\n");
       CHECK(rc1 == 1, "first rc=%d exp 1 (clean cooperative yield)", rc1);
       CHECK((g_c.A & 0xFF) == 0x34, "A.lo=%02X exp 34 (sample retained)", g_c.A & 0xFF);
@@ -690,9 +700,13 @@ int main(void) {
             (unsigned)interp_bridge_lle_resume_pc());
       RAM[0x10] = 0x35;                      /* models the next frame's NMI */
       int rc2 = interp_bridge_run_loop(&g_c, interp_bridge_lle_resume_pc(),
-                                       0x008003, 0x0020, 0xFF);
-      CHECK(rc2 == 1, "second rc=%d exp 1 (poll exits)", rc2);
-      CHECK(g_c.S == 0x01FF, "return S=%04X exp 01FF (balanced)", g_c.S); }
+                                       0x008003, 0x0030, 0xFF);
+      CHECK(rc2 == 1, "second rc=%d exp 1 (yields on the next sample)", rc2);
+      CHECK(RAM[0x20] == 0x34, "caller saw $%02X exp 34 (poll exited with its sample)", RAM[0x20]);
+      CHECK((g_c.A & 0xFF) == 0x35, "A.lo=%02X exp 35 (new sample)", g_c.A & 0xFF);
+      CHECK(g_c.S == 0x01FD, "S=%04X exp 01FD (one frame, balanced)", g_c.S);
+      CHECK(interp_bridge_lle_resume_pc() == 0x008003,
+            "resume=$%06X exp $008003", (unsigned)interp_bridge_lle_resume_pc()); }
 
     /* S7b: host depth alone must not hide interpreter ownership across a
      * pure architectural tail chain. Every tail callee inherits the paired
