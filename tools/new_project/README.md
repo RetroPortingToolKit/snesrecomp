@@ -184,7 +184,8 @@ title uses a coprocessor this runner supports before investing in a port.
 ## The ROM never enters the repository
 
 The ROM is probed where it lies and is never copied in. `tools/regen.sh` takes
-`--rom` (or `SNESRECOMP_ROM`) so it can stay on your own drive, and the
+`--rom` (or `SNESRECOMP_ROM`) so it can stay on your own drive; without
+either it uses the path the wizard recorded in `rom.cfg`. The
 generated `.gitignore` blocks `*.sfc` / `*.smc` / `src/gen/` regardless.
 `scripts/package_release.sh` refuses to build a zip that contains ROM data.
 

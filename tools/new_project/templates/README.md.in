@@ -46,8 +46,9 @@ cmake --build build -j
 
 The ROM does not have to live in the repository — keeping it on your own
 drive is the better habit, and `SNESRECOMP_ROM` sets the path once for a
-shell. `tools/regen.sh` also finds `@ROM_FILE@` at the repo root if you
-prefer that; `.gitignore` blocks it from ever being committed either way.
+shell. Without either, `tools/regen.sh` finds `@ROM_FILE@` at the repo root,
+then the path the setup wizard recorded in `rom.cfg`; `.gitignore` blocks
+both from ever being committed.
 
 `tools/regen.sh` verifies the ROM, generates `src/gen/*.c`, and re-syncs
 `recomp/funcs.h`. Re-run it whenever you change anything under `recomp/`.
