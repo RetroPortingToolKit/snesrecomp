@@ -146,6 +146,11 @@ static int bridge_apu_port_diag_enabled(void) {
 uint64_t g_interp_bridge_write_epoch;
 static uint64_t s_interp_continuous_read_epoch;
 static uint64_t s_interp_dynamic_progress_epoch;
+/* Bumped by every read whose value can change while the CPU only reads: MMIO,
+ * coprocessor windows, cartridge RAM a coprocessor shares, open bus. A read of
+ * WRAM or ROM leaves it alone -- those change only through a CPU write, an
+ * interrupt handler, or DMA. The stable-poll detector keys on it. */
+static uint64_t s_interp_volatile_read_epoch;
 static uint64_t s_interp_bus_master;
 static unsigned s_interp_bus_cycles;
 static int s_interp_bus_timing_active;
@@ -156,6 +161,7 @@ void interp_bridge_reset_dynamic_cache(void) {
     memset(s_bridge_dynamic_values, 0, sizeof(s_bridge_dynamic_values));
     s_interp_continuous_read_epoch = 0;
     s_interp_dynamic_progress_epoch = 0;
+    s_interp_volatile_read_epoch = 0;
     g_interp_bridge_write_epoch = 0;
 }
 
@@ -201,9 +207,27 @@ static int bridge_continuous_read(uint32_t adr) {
     return 0;
 }
 
+/* Can the byte at `adr` change while the CPU does nothing but read? WRAM
+ * (banks $7E/$7F and the low-8K mirror) and ROM cannot: only a CPU write, an
+ * interrupt handler or DMA moves them. Everything else -- MMIO, expansion,
+ * cartridge RAM (which SA-1 / Super FX share), coprocessor windows, the S-DD1
+ * decompression window -- is volatile. */
+static int bridge_read_is_stable(uint32_t adr) {
+    const uint8_t bank = (uint8_t)(adr >> 16);
+    const uint16_t a = (uint16_t)adr;
+    if (bank == 0x7E || bank == 0x7F) return 1;
+    const int system = bank < 0x40 || (bank >= 0x80 && bank < 0xC0);
+    if (system && a < 0x2000) return 1;
+    if (system && a < 0x8000) return 0;
+    if (!g_snes || !g_snes->cart) return 0;
+    if (g_snes->cart->type == CART_SDD1 && bank >= 0xC0) return 0;
+    return cart_getRomPtr(g_snes->cart, bank, a) != NULL;
+}
+
 static uint8_t bridge_bus_read(void *mem, uint32_t adr) {
     CpuState *cpu = (CpuState *)mem;
     bridge_timing_bus(adr);
+    if (!bridge_read_is_stable(adr)) s_interp_volatile_read_epoch++;
     int continuous=bridge_continuous_read(adr);
     if (continuous) s_interp_continuous_read_epoch++;
     if (bridge_is_apu_port(adr)) bridge_apu_flush(cpu);
@@ -216,6 +240,15 @@ static uint8_t bridge_bus_read(void *mem, uint32_t adr) {
         }
     }
     return value;
+}
+/* The bridge's own look at instruction bytes (poll-shape recognition), not a
+ * guest access: it must not count as a volatile read, or a shape check that
+ * peeks below a bank's ROM window would disqualify the loop it is looking at. */
+static uint8_t bridge_peek8(CpuState *cpu, uint32_t adr) {
+    const uint64_t volatile_epoch = s_interp_volatile_read_epoch;
+    const uint8_t v = bridge_bus_read(cpu, adr);
+    s_interp_volatile_read_epoch = volatile_epoch;
+    return v;
 }
 /* Diagnostic env gates, read once.
  *
@@ -297,6 +330,7 @@ static bool bridge_bus_read_word(void *mem, uint32_t adrl, uint32_t adrh,
     if (!bridge_hw_word(adrl, adrh)) return false;
     bridge_timing_bus(adrl);
     bridge_timing_bus(adrh);
+    s_interp_volatile_read_epoch++;  /* a claimed word is always MMIO */
     if (bridge_continuous_read(adrl) || bridge_continuous_read(adrh))
         s_interp_continuous_read_epoch++;
     CpuState *cpu = (CpuState *)mem;
@@ -662,7 +696,6 @@ static const char *const k_resume_site_names[INTERP_RESUME_SITE_COUNT] = {
     [INTERP_RESUME_SITE_D9_IRQ]          = "d9_irq",
     [INTERP_RESUME_SITE_D9_DEADLINE]     = "d9_deadline",
     [INTERP_RESUME_SITE_QUIESCENT]       = "quiescent",
-    [INTERP_RESUME_SITE_POLL_BRANCH]     = "poll_branch",
     [INTERP_RESUME_SITE_STABLE_POLL]     = "stable_poll",
     [INTERP_RESUME_SITE_JOYPAD_WAIT]     = "joypad_wait",
     [INTERP_RESUME_SITE_NESTED_HANDOFF]  = "nested_handoff",
@@ -1520,6 +1553,19 @@ static int _interp_run_core(CpuState *cpu, uint32_t entry_pc24,
     } QuiescentState;
     QuiescentState qring[64];
     memset(qring, 0, sizeof qring);
+    /* Stable-poll detector state: the architectural state at the last few
+     * loop heads this frame branched back to (see the detector below). */
+    typedef struct PollHeadState {
+        uint32_t pc;
+        uint16_t a, x, y, sp, dp;
+        uint8_t db, c, z, v, n, i, d, mf, xf, e;
+        uint64_t write_epoch;
+        uint64_t volatile_read_epoch;
+        long step;
+    } PollHeadState;
+    PollHeadState poll_heads[4];
+    memset(poll_heads, 0, sizeof poll_heads);
+    unsigned poll_head_next = 0;
 
     const long step_cap = interp_step_cap();
     long steps = 0;
@@ -1996,10 +2042,6 @@ static int _interp_run_core(CpuState *cpu, uint32_t entry_pc24,
          * loop back in bank $00 while yield_pc is given as $80:80A1, so an exact
          * compare never matches — the interp spins the vblank wait to the step
          * cap and bails (JP boot froze here at Task0 state=3). */
-        /* Secondary cooperative hardware polls.  SM uses both
-         *   LDA abs; BMI/BPL -5
-         *   BIT abs; BMI/BPL -5
-         * while NMI/IRQ asynchronously changes bit 15. */
         const int _cooperative_poll = s_poll_gate &&
             ((yield_pc && !auto_quiescent) ||
              (!yield_pc && s_lle_sched_depth > 0 &&
@@ -2007,63 +2049,63 @@ static int _interp_run_core(CpuState *cpu, uint32_t entry_pc24,
               s_interp_bridge_depth > 1));
         const uint8_t _poll_op =
             _cooperative_poll
-                ? bridge_bus_read(cpu, pc_before) : 0;
-        const uint8_t _poll_branch =
-            _cooperative_poll
-                ? bridge_bus_read(cpu, pc_before + 3) : 0;
-        const uint16_t _poll_pc16 = (uint16_t)pc_before;
-        const int _secondary_poll_pc =
-            _poll_pc16 == 0xE02C || _poll_pc16 == 0xE06B ||
-            _poll_pc16 == 0xE50D || _poll_pc16 == 0xE609 ||
-            _poll_pc16 == 0xE526;
-        if (_cooperative_poll && _secondary_poll_pc &&
-            (_poll_op == 0xAD || _poll_op == 0x2C) &&
-            (_poll_branch == 0x30 || _poll_branch == 0x10) &&
-            bridge_bus_read(cpu, pc_before + 4) == 0xFB) {
-            const uint16_t _wait_addr = (uint16_t)(
-                bridge_bus_read(cpu, pc_before + 1) |
-                (bridge_bus_read(cpu, pc_before + 2) << 8));
-            const int _negative =
-                (cpu_read16(cpu, in.db, _wait_addr) & 0x8000u) != 0;
-            const int _branch_taken =
-                _poll_branch == 0x30 ? _negative : !_negative;
-            if (_branch_taken) {
-                return bridge_cooperative_yield(cpu, &in, pc_before, yield_pc,
-                                                INTERP_RESUME_SITE_POLL_BRANCH);
-            }
-        }
-        /* Canonical stable-value poll:
+                ? bridge_peek8(cpu, pc_before) : 0;
+        /* Stable-state poll: the general form of an interrupt wait.
          *
-         *     LDA value       ; save the current value in A
-         * loop:
-         *     CMP value
-         *     BEQ loop
+         * A loop that branches back to its head with the CPU in exactly the
+         * state it had there last time -- every register, every flag, the
+         * stack -- having written nothing and read only WRAM and ROM in
+         * between, will do so forever: the machine is deterministic and none
+         * of its inputs can change until an interrupt handler or DMA writes
+         * memory. That is the definition of waiting for an interrupt, whatever
+         * the instructions are (`LDA v; CMP v; BEQ`, `LDA flag; BMI`, `BIT
+         * flag; BPL`, `LDA dp; AND #mask; BNE`, an indexed or long read ...),
+         * so it needs no opcode pattern and no game address.
          *
-         * This is another cooperative interrupt boundary, not an ordinary
-         * CPU loop: forward progress requires NMI/IRQ to change memory.  The
-         * v2 emitter automatically sends functions containing a pure-memory
-         * self-poll through this interpreter path while an LLE scheduler is
-         * active.  Match the instruction bytes and the exact self-branch so
-         * no game/function address hint is needed.  If the comparison still
-         * matches, yield before executing it; the next frame's interrupt can
-         * update memory and the resumed CMP then exits naturally.
+         * In a frame that owns a yield contract the scheduler resumes here
+         * after delivering the interrupt. A NESTED frame (no contract of its
+         * own) can never see the interrupt -- the host is below it on the
+         * stack -- so bridge_cooperative_yield hands the block outward to the
+         * frame that can. Resuming at the loop head is exact: it is the PC
+         * whose state just repeated.
          *
-         * M controls both A and the memory operand width.  Direct-page and
-         * indexed variants can be added when observed; absolute CMP is the
-         * canonical 65816 form used for interrupt-owned WRAM counters. */
-        if (_cooperative_poll && _poll_op == 0xCD &&
-            bridge_bus_read(cpu, pc_before + 3) == 0xF0 &&
-            bridge_bus_read(cpu, pc_before + 4) == 0xFB) {
-            const uint16_t _wait_addr = (uint16_t)(
-                bridge_bus_read(cpu, pc_before + 1) |
-                (bridge_bus_read(cpu, pc_before + 2) << 8));
-            const int _equal = in.mf
-                ? ((uint8_t)in.a == cpu_read8(cpu, in.db, _wait_addr))
-                : (in.a == cpu_read16(cpu, in.db, _wait_addr));
-            if (_equal) {
+         * MMIO and coprocessor reads (s_interp_volatile_read_epoch) and any
+         * write (g_interp_bridge_write_epoch) disqualify a lap, so device
+         * polls ($4212, APU ports, SA-1 / Super FX status) keep running here
+         * where time advances. Only short backward transfers are loop heads;
+         * the check is a handful of compares per taken back-branch. */
+        if (_cooperative_poll &&
+            ((pc_before ^ edge_from) & 0xFF0000u) == 0 &&
+            (uint16_t)pc_before < (uint16_t)edge_from &&
+            (uint16_t)((uint16_t)edge_from - (uint16_t)pc_before) <= 64u) {
+            PollHeadState now;
+            memset(&now, 0, sizeof now);
+            now.pc = pc_before; now.a = in.a; now.x = in.x; now.y = in.y;
+            now.sp = in.sp; now.dp = in.dp; now.db = in.db;
+            now.c = in.c; now.z = in.z; now.v = in.v; now.n = in.n;
+            now.i = in.i; now.d = in.d; now.mf = in.mf; now.xf = in.xf;
+            now.e = in.e;
+            now.write_epoch = g_interp_bridge_write_epoch;
+            now.volatile_read_epoch = s_interp_volatile_read_epoch;
+            now.step = steps;
+            PollHeadState *slot = NULL;
+            for (unsigned hi = 0; hi < 4; hi++)
+                if (poll_heads[hi].step && poll_heads[hi].pc == now.pc)
+                    slot = &poll_heads[hi];
+            if (slot && now.step - slot->step <= 256 &&
+                slot->a == now.a && slot->x == now.x && slot->y == now.y &&
+                slot->sp == now.sp && slot->dp == now.dp &&
+                slot->db == now.db && slot->c == now.c && slot->z == now.z &&
+                slot->v == now.v && slot->n == now.n && slot->i == now.i &&
+                slot->d == now.d && slot->mf == now.mf &&
+                slot->xf == now.xf && slot->e == now.e &&
+                slot->write_epoch == now.write_epoch &&
+                slot->volatile_read_epoch == now.volatile_read_epoch) {
                 return bridge_cooperative_yield(cpu, &in, pc_before, yield_pc,
                                                 INTERP_RESUME_SITE_STABLE_POLL);
             }
+            if (!slot) slot = &poll_heads[poll_head_next++ & 3];
+            *slot = now;
         }
         /* Canonical automatic-joypad wait used by synchronous message boxes:
          *
@@ -2082,15 +2124,15 @@ static int _interp_run_core(CpuState *cpu, uint32_t entry_pc24,
          * the final taken BEQ, yield to the owning LLE scheduler, and resume at
          * the backward target so $4212/$4218/$4219 are sampled again. */
         if (_cooperative_poll && _poll_op == 0xF0 && in.z &&
-            bridge_bus_read(cpu, pc_before - 8) == 0xAD &&
-            bridge_bus_read(cpu, pc_before - 7) == 0x18 &&
-            bridge_bus_read(cpu, pc_before - 6) == 0x42 &&
-            bridge_bus_read(cpu, pc_before - 5) == 0xD0 &&
-            bridge_bus_read(cpu, pc_before - 4) == 0x05 &&
-            bridge_bus_read(cpu, pc_before - 3) == 0xAD &&
-            bridge_bus_read(cpu, pc_before - 2) == 0x19 &&
-            bridge_bus_read(cpu, pc_before - 1) == 0x42) {
-            const int8_t _rel = (int8_t)bridge_bus_read(cpu, pc_before + 1);
+            bridge_peek8(cpu, pc_before - 8) == 0xAD &&
+            bridge_peek8(cpu, pc_before - 7) == 0x18 &&
+            bridge_peek8(cpu, pc_before - 6) == 0x42 &&
+            bridge_peek8(cpu, pc_before - 5) == 0xD0 &&
+            bridge_peek8(cpu, pc_before - 4) == 0x05 &&
+            bridge_peek8(cpu, pc_before - 3) == 0xAD &&
+            bridge_peek8(cpu, pc_before - 2) == 0x19 &&
+            bridge_peek8(cpu, pc_before - 1) == 0x42) {
+            const int8_t _rel = (int8_t)bridge_peek8(cpu, pc_before + 1);
             if (_rel < 0) {
                 const uint32_t resume = (pc_before & 0xFF0000u) |
                     (uint16_t)(pc_before + 2 + _rel);
@@ -2124,21 +2166,17 @@ static int _interp_run_core(CpuState *cpu, uint32_t entry_pc24,
          * serviced normally. A frame between here and the scheduler that also
          * cannot yield re-arms one level further out, so this walks outward to
          * the scheduler from any depth. */
+        /* A nested frame on any OTHER interrupt wait -- a stable-value poll
+         * that is not the scheduler's own yield PC (Super Metroid's message
+         * box waits a frame at $85:813C, reached through a PLM dispatch) --
+         * is the same block point, and the stable-poll detector above hands
+         * it outward through the same unwind. */
         if (!yield_pc && s_lle_sched_depth > 0 && s_sched_yield_pc &&
             s_interp_bridge_depth > 1 &&
             (pc_before & 0x7FFFFF) == (s_sched_yield_pc & 0x7FFFFF)) {
             const uint8_t _sched_flag =
                 bridge_bus_read(cpu, s_sched_yield_flag_addr);
-            const int _blocked =
-                _sched_flag == s_sched_yield_flag_value ||
-                (steps > 16 &&
-                 bridge_bus_read(cpu, pc_before) == 0xAD &&
-                 bridge_bus_read(cpu, pc_before + 1) ==
-                     (uint8_t)s_sched_yield_flag_addr &&
-                 bridge_bus_read(cpu, pc_before + 2) ==
-                     (uint8_t)(s_sched_yield_flag_addr >> 8) &&
-                 bridge_bus_read(cpu, pc_before + 3) == 0xD0 &&
-                 bridge_bus_read(cpu, pc_before + 4) == 0xFB);
+            const int _blocked = _sched_flag == s_sched_yield_flag_value;
             if (_blocked) {
                 lle_unwind_arm(pc_before, s_interp_bridge_depth - 1, 0,
                                INTERP_RESUME_SITE_NESTED_HANDOFF, in.sp);

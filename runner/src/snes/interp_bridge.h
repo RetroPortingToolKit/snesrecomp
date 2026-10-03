@@ -79,8 +79,7 @@ enum {
     INTERP_RESUME_SITE_D9_IRQ,          /* $C0:84B2 wait specialization       */
     INTERP_RESUME_SITE_D9_DEADLINE,
     INTERP_RESUME_SITE_QUIESCENT,       /* stable CPU/memory state cycle      */
-    INTERP_RESUME_SITE_POLL_BRANCH,     /* cooperative BIT/LDA + BPL/BMI poll */
-    INTERP_RESUME_SITE_STABLE_POLL,     /* cooperative LDA v; CMP v; BEQ      */
+    INTERP_RESUME_SITE_STABLE_POLL,     /* stable-state poll (interrupt wait) */
     INTERP_RESUME_SITE_JOYPAD_WAIT,     /* auto-joypad $4212 wait             */
     INTERP_RESUME_SITE_NESTED_HANDOFF,  /* nested frame on scheduler's wait   */
     INTERP_RESUME_SITE_YIELD_FLAG,      /* scheduler yield flag matched       */
