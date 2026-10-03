@@ -128,6 +128,12 @@ void debug_server_on_ppu_line(int line);
 // `argb` is host-endian 0x00RRGGBB, `pitch` in bytes.
 void debug_server_note_composed_frame(const void *argb, unsigned pitch,
                                       int width, int height);
+// Record which renderer drew a scanline and the BG mode it drew it in
+// (`renderer`: 0 legacy, 1 new). A game can change the BG mode mid-frame by
+// HDMA, so this is not redundant with the $2105 captured at line start --
+// the two answer different questions, and a disagreement between the two
+// renderers shows up as a difference here and nowhere else.
+void debug_server_on_ppu_line_drawn(int line, int renderer, unsigned bgmode);
 // Capture the renderer's computed window spans after host widescreen policy
 // has been applied. `edges` contains nr+1 signed screen-space boundaries.
 void debug_server_on_ppu_window(int line, int layer, const int16_t *edges,
@@ -166,6 +172,10 @@ static inline void debug_server_on_ppu_line(int line) { (void)line; }
 static inline void debug_server_note_composed_frame(const void *argb, unsigned pitch,
                                                     int width, int height) {
     (void)argb; (void)pitch; (void)width; (void)height;
+}
+static inline void debug_server_on_ppu_line_drawn(int line, int renderer,
+                                                  unsigned bgmode) {
+    (void)line; (void)renderer; (void)bgmode;
 }
 static inline void debug_server_on_ppu_window(int line, int layer,
                                                const int16_t *edges,

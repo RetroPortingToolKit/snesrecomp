@@ -134,14 +134,28 @@ void snes_sync_master_clock(Snes *snes, uint64_t master_clock) {
 void cart_sync_coprocessors(Cart *cart, uint64_t master_clock) {
     (void)cart; (void)master_clock;
 }
+/* A plain LoROM cart over the flat RAM: $8000-$FFFF of every non-WRAM bank is
+ * ROM. The stable-poll detector asks the cart which reads are ROM. */
+static Cart g_test_cart;
+uint8_t *cart_getRomPtr(Cart *cart, uint8_t bank, uint16_t adr) {
+    (void)cart;
+    if (bank == 0x7E || bank == 0x7F || adr < 0x8000) return NULL;
+    return &RAM[((uint32_t)bank << 16) | adr];
+}
 /* cpu_state.c isn't linked here; the bridge's constructor installs its
  * step-ring dump into this hook, so provide the slot. */
 void (*g_interp_recent_dump_hook)(int n, FILE *out) = 0;
 uint8 cpu_read8(CpuState *cpu, uint8 bank, uint16 addr) {
     (void)cpu; return RAM[(((uint32)bank << 16) | addr) & 0xFFFFFF];
 }
+/* Write-site attribution probe (S16): what the bridge published as the
+ * executing opcode's PC when this store reached the bus. */
+extern uint32_t g_interp_wlog_pc24;
+static uint32_t g_write_site_pc24 = 0xFFFFFFFFu;
+static uint32_t g_aot_saw_site_pc24 = 0xFFFFFFFFu;
 void cpu_write8(CpuState *cpu, uint8 bank, uint16 addr, uint8 v) {
     (void)cpu; RAM[(((uint32)bank << 16) | addr) & 0xFFFFFF] = v;
+    if (bank == 0 && addr == 0x0420) g_write_site_pc24 = g_interp_wlog_pc24;
 }
 uint16 cpu_read16(CpuState *cpu, uint8 bank, uint16 addr) {
     uint8 lo = cpu_read8(cpu, bank, addr);
@@ -184,6 +198,7 @@ RecompReturn cpu_unresolved_abandon_balanced(CpuState *cpu, uint32 site_pc24,
 RecompReturn cpu_dispatch_pc(CpuState *cpu, uint32 pc24, uint16 miss_restore) {
     if ((pc24 & 0xFFFFFF) == FAKE_AOT) {
         g_aot_called++;
+        g_aot_saw_site_pc24 = g_interp_wlog_pc24;
         cpu->A = (uint16)(cpu->A + 0x0100);     /* observable "compiled" work */
         cpu->S = (uint16)(cpu->S + 2);          /* models RTS popping its frame */
         return RECOMP_RETURN_NORMAL;
@@ -388,6 +403,32 @@ static void redirect_b(CpuState *cpu,uint32_t pc) {
     interp_bridge_pre_opcode_redirect(0x008010);
 }
 static void forbidden_c(CpuState *cpu,uint32_t pc) {(void)cpu;(void)pc;++hook_c;}
+/* S17: a "device" that answers on the 10th time the loop head is reached. */
+static unsigned g_poll_visits;
+static uint32_t g_poll_answer_addr;
+static uint8_t g_poll_answer_value;
+static void poll_device(CpuState *cpu, uint32_t pc) {
+    (void)cpu; (void)pc;
+    if (++g_poll_visits == 10)
+        RAM[g_poll_answer_addr & 0xFFFFFF] = g_poll_answer_value;
+}
+/* Run `code` at $8000 as a cooperative-scheduler task whose RTS lands in the
+ * scheduler's own wait at $8100 (LDA $20; BNE self, flag value 0). */
+static int run_poll_task(const uint8_t *code, int len) {
+    static const uint8_t scheduler_wait[] = {0xAD,0x20,0x00, 0xD0,0xFB};
+    load(0x8000, code, len);
+    load(0x8100, scheduler_wait, sizeof scheduler_wait);
+    cpu_write8(&g_c, 0, g_c.S, 0x80); g_c.S--;
+    cpu_write8(&g_c, 0, g_c.S, 0xFF); g_c.S--;
+    return interp_bridge_run_loop(&g_c, 0x008000, 0x008100, 0x0020, 0);
+}
+static int resume_ring_has(uint64_t since, int site, int kind) {
+    InterpResumeEvent e;
+    for (uint64_t q = since; q < interp_bridge_resume_total(); q++)
+        if (interp_bridge_resume_get(q, &e) && e.site == site && e.kind == kind)
+            return 1;
+    return 0;
+}
 static void observe_dest(CpuState *cpu,uint32_t pc) {(void)cpu;(void)pc;++hook_dest;}
 
 int main(void) {
@@ -399,6 +440,8 @@ int main(void) {
     setenv("SNESRECOMP_TIER2_JOURNAL", journal, 1);
 #endif
     RAM = malloc(MEMSZ);
+    g_test_cart.type = CART_LOROM;
+    g_test_snes.cart = &g_test_cart;
 
     printf("S0 APU timeline policy remains cartridge-scoped\n");
     CHECK(!interp_bridge_use_absolute_apu_timeline(false, false, false),
@@ -1120,6 +1163,166 @@ int main(void) {
       rc=interp_bridge_run(&g_c,0x008000);
       CHECK(rc==1 && g_c.S==0x01ff,"redirected RTS is classified as return");
       interp_bridge_set_pre_opcode_hook(0,NULL);
+    }
+    /* S16: the always-on observability rings. One run of
+     *   $8400 LDX #$05 / loop: DEX / BNE loop / STA $0420 /
+     *         JSR $8200 (interpreted) / JSR $8100 (compiled) / RTS
+     *   $8200 LDA #$33 / RTS
+     * must leave exactly five control-transfer records -- the four taken
+     * BNEs fold into ONE record, which is what keeps a spin's path in
+     * readable -- and attribute the store to its exact instruction while the
+     * compiled body sees no interpreter PC at all. */
+    { memset(RAM, 0, MEMSZ); init_cpu(); g_aot_called = 0;
+      uint8_t c[] = {0xA2,0x05, 0xCA, 0xD0,0xFD, 0x8D,0x20,0x04,
+                     0x20,0x00,0x82, 0x20,0x00,0x81, 0x60};
+      uint8_t callee[] = {0xA9,0x33, 0x60};
+      load(0x8400, c, sizeof c);
+      load(0x8200, callee, sizeof callee);
+      cpu_push_jsr_return_frame(&g_c);
+      g_write_site_pc24 = g_aot_saw_site_pc24 = 0xFFFFFFFFu;
+      const uint64_t e0 = interp_bridge_edge_total();
+      int rc = interp_bridge_run(&g_c, 0x008400);
+      printf("S16 edge ring folds a loop; write site and resume writes recorded\n");
+      CHECK(rc == 1 && g_c.S == 0x01FF, "rc=%d S=%04X exp balanced return", rc, g_c.S);
+      const uint64_t e1 = interp_bridge_edge_total();
+      CHECK(e1 - e0 == 5, "edges recorded=%llu exp 5",
+            (unsigned long long)(e1 - e0));
+      static const struct { uint32_t from, to; int kind; uint32_t count; } want[5] = {
+          {0x000000, 0x008400, INTERP_EDGE_ENTRY,    1},
+          {0x008403, 0x008402, INTERP_EDGE_BRANCH,   4},
+          {0x008408, 0x008200, INTERP_EDGE_CALL,     1},
+          {0x008202, 0x00840B, INTERP_EDGE_RETURN,   1},
+          {0x00840B, 0x008100, INTERP_EDGE_AOT_CALL, 1},
+      };
+      for (int i = 0; i < 5 && e1 - e0 == 5; i++) {
+        InterpEdge e;
+        CHECK(interp_bridge_edge_get(e0 + (uint64_t)i, &e), "edge %d readable", i);
+        CHECK(e.from_pc24 == want[i].from && e.to_pc24 == want[i].to &&
+              e.kind == want[i].kind && e.count == want[i].count,
+              "edge %d = $%06X->$%06X %s x%u, exp $%06X->$%06X %s x%u", i,
+              (unsigned)e.from_pc24, (unsigned)e.to_pc24,
+              interp_bridge_edge_kind_name(e.kind), (unsigned)e.count,
+              (unsigned)want[i].from, (unsigned)want[i].to,
+              interp_bridge_edge_kind_name(want[i].kind),
+              (unsigned)want[i].count);
+      }
+      InterpEdge gone;
+      CHECK(!interp_bridge_edge_get(e1, &gone), "a not-yet-written record is refused");
+      CHECK(g_write_site_pc24 == 0x008405,
+            "store attributed to $%06X exp $008405", (unsigned)g_write_site_pc24);
+      CHECK(g_aot_saw_site_pc24 == 0,
+            "compiled body saw interp PC $%06X exp 0", (unsigned)g_aot_saw_site_pc24);
+      CHECK(g_interp_wlog_pc24 == 0,
+            "interp PC $%06X still published after the bridge returned",
+            (unsigned)g_interp_wlog_pc24);
+
+      const uint64_t r0 = interp_bridge_resume_total();
+      const uint32_t before = interp_bridge_lle_resume_pc();
+      interp_bridge_set_lle_resume_pc(0x00ABCD);
+      InterpResumeEvent re;
+      memset(&re, 0, sizeof re);
+      CHECK(interp_bridge_resume_total() == r0 + 1 &&
+            interp_bridge_resume_get(r0, &re) &&
+            re.site == INTERP_RESUME_SITE_EXTERNAL &&
+            re.kind == INTERP_RESUME_KIND_SET &&
+            re.old_pc24 == (before & 0xFFFFFFu) && re.new_pc24 == 0x00ABCD,
+            "external resume write recorded old->new with its site");
+      CHECK(!strcmp(interp_bridge_resume_site_name(re.site), "external"),
+            "site name '%s'", interp_bridge_resume_site_name(re.site));
+      interp_bridge_set_lle_resume_pc(before);
+    }
+    /* S17: the stable-poll detector is defined by state, not by opcodes.
+     * A loop that returns to its head with identical registers, having
+     * written nothing and read only WRAM/ROM, can only be released by an
+     * interrupt or DMA: it must yield (or, nested, hand outward) at that head
+     * whatever its instructions are. A loop that makes progress, writes, or
+     * reads a device must keep running. */
+    for (int wide = 0; wide < 2; ++wide) {
+      /* (a) nested frame, a shape no byte matcher knew: LDA/AND/BNE */
+      memset(RAM, 0, MEMSZ); init_cpu(); g_aot_called = 0; g_abandon_called = 0;
+      g_c.emulation = 0;
+      g_aot_gap_walks_into_wait = 1;
+      uint8_t scheduler[] = {
+          0x22,0x00,0x81,0x00,                 /* JSL fake compiled root */
+          0xA9,0x5A, 0x85,0x21,                /* observable continuation */
+          0xAD,0x20,0x00, 0xD0,0xFB            /* primary wait */
+      };
+      uint8_t gap[] = {
+          0x08, 0xE2,0x20,                     /* PHP; SEP #$20 */
+          0xAD,0x10,0x00,                      /* loop: LDA flag */
+          0x29,0x01,                           /*       AND #$01 */
+          0xD0,0xF9,                           /*       BNE loop */
+          0x28, 0x6B                           /* PLP; RTL */
+      };
+      if (wide) gap[1] = 0xC2;                 /* REP #$20: AND #$0001 */
+      uint8_t gap16[] = {
+          0x08, 0xC2,0x20, 0xAD,0x10,0x00, 0x29,0x01,0x00, 0xD0,0xF8,
+          0x28, 0x6B
+      };
+      load(0x8000, scheduler, sizeof scheduler);
+      if (wide) load(0x8300, gap16, sizeof gap16);
+      else load(0x8300, gap, sizeof gap);
+      RAM[0x10] = 0x01;
+      const uint64_t r0 = interp_bridge_resume_total();
+      int rc = interp_bridge_run_loop(&g_c, 0x008000, 0x008008, 0x20, 0);
+      printf("S17a nested %d-bit LDA/AND/BNE wait hands outward\n", wide ? 16 : 8);
+      CHECK(rc == 1 && !g_abandon_called, "nested wait must yield without abandon");
+      CHECK(interp_bridge_lle_resume_pc() == 0x008303,
+            "resume=$%06X exp $008303 (loop head)",
+            (unsigned)interp_bridge_lle_resume_pc());
+      CHECK(resume_ring_has(r0, INTERP_RESUME_SITE_STABLE_POLL,
+                            INTERP_RESUME_KIND_UNWIND_ARM),
+            "nested frame must hand the wait outward (stable_poll unwind_arm)");
+      CHECK(g_c.S == 0x01FB && RAM[0x21] == 0, "frames retained, caller not run");
+      RAM[0x10] = 0x00;                        /* interrupt clears the flag */
+      rc = interp_bridge_run_loop(&g_c, interp_bridge_lle_resume_pc(),
+                                  0x008008, 0x20, 0);
+      CHECK(rc == 1 && g_c.S == 0x01FF && RAM[0x21] == 0x5A,
+            "release resumes PLP/RTL and the caller once: S=%04X", g_c.S);
+      CHECK(g_aot_called == 1 && g_abandon_called == 0,
+            "nested body not re-entered or abandoned");
+      g_aot_gap_walks_into_wait = 0;
+    }
+    /* (b) scheduler frame, long-indexed WRAM read: LDX; LDA long,X; BMI */
+    { memset(RAM, 0, MEMSZ); init_cpu();
+      const uint8_t c[] = {0xA2,0x02, 0xBF,0x0E,0x00,0x7E, 0x30,0xFA, 0x60};
+      RAM[0x7E0010] = 0x80;
+      int rc = run_poll_task(c, sizeof c);
+      printf("S17b long-indexed WRAM wait yields at its head\n");
+      CHECK(rc == 1 && interp_bridge_lle_resume_pc() == 0x008002,
+            "rc=%d resume=$%06X exp $008002", rc,
+            (unsigned)interp_bridge_lle_resume_pc());
+      RAM[0x7E0010] = 0x00;
+      rc = interp_bridge_run_loop(&g_c, interp_bridge_lle_resume_pc(),
+                                  0x008100, 0x0020, 0);
+      CHECK(rc == 1 && interp_bridge_lle_resume_pc() == 0x008100,
+            "released loop must RTS to the scheduler wait: resume=$%06X",
+            (unsigned)interp_bridge_lle_resume_pc()); }
+    /* (c) negatives: each loop is released by the "device" on visit 10 and
+     * must still be running then -- never parked early. */
+    { static const struct { const char *what; uint8_t code[12]; int len;
+                            uint32_t head, addr; uint8_t value; } neg[3] = {
+        {"MMIO read ($4212)", {0xAD,0x12,0x42, 0x10,0xFB, 0x60}, 6,
+         0x008000, 0x004212, 0x80},
+        {"loop that writes", {0xAD,0x10,0x00, 0x8D,0x11,0x00, 0x10,0xF8, 0x60}, 9,
+         0x008000, 0x000010, 0x80},
+        {"loop that counts", {0xE8, 0xAD,0x10,0x00, 0x10,0xFA, 0x60}, 7,
+         0x008000, 0x000010, 0x80},
+      };
+      for (int k = 0; k < 3; k++) {
+        memset(RAM, 0, MEMSZ); init_cpu();
+        g_poll_visits = 0;
+        g_poll_answer_addr = neg[k].addr;
+        g_poll_answer_value = neg[k].value;
+        interp_bridge_set_pre_opcode_hook(neg[k].head, poll_device);
+        int rc = run_poll_task(neg[k].code, neg[k].len);
+        interp_bridge_set_pre_opcode_hook(0, NULL);
+        printf("S17c %s is not a stable poll\n", neg[k].what);
+        CHECK(rc == 1 && g_poll_visits == 10 &&
+              interp_bridge_lle_resume_pc() == 0x008100,
+              "rc=%d visits=%u resume=$%06X exp 10 visits then scheduler wait",
+              rc, g_poll_visits, (unsigned)interp_bridge_lle_resume_pc());
+      }
     }
     printf("\n==== interp_bridge Phase-1: %d/%d checks passed ====\n", g_check - g_fail, g_check);
     if (g_fail) { printf("RESULT: FAIL (%d)\n", g_fail); return 1; }
