@@ -1900,6 +1900,7 @@ def decode_function(rom: bytes, bank: int, start: int,
                      terminal_jsr_sites: Optional[set] = None,
                      noreturn_jsr_sites: Optional[set] = None,
                      stop_on_unknown_callee_exit: bool = False,
+                     hle_entry_pcs: Optional[set] = None,
                     ) -> "FunctionDecodeGraph":
     """Public cached wrapper around `_decode_function_uncached`.
 
@@ -1925,6 +1926,7 @@ def decode_function(rom: bytes, bank: int, start: int,
             terminal_jsr_sites=terminal_jsr_sites,
             noreturn_jsr_sites=noreturn_jsr_sites,
             stop_on_unknown_callee_exit=stop_on_unknown_callee_exit,
+            hle_entry_pcs=hle_entry_pcs,
         )
 
     cache_key = (
@@ -1941,6 +1943,7 @@ def decode_function(rom: bytes, bank: int, start: int,
         _identity(terminal_jsr_sites),
         _identity(noreturn_jsr_sites),
         bool(stop_on_unknown_callee_exit),
+        frozenset(pc & 0xFFFF for pc in (hle_entry_pcs or ())),
     )
     cached = _DECODE_CACHE.get(cache_key)
     if cached is not None:
@@ -1965,6 +1968,7 @@ def decode_function(rom: bytes, bank: int, start: int,
         terminal_jsr_sites=terminal_jsr_sites,
         noreturn_jsr_sites=noreturn_jsr_sites,
         stop_on_unknown_callee_exit=stop_on_unknown_callee_exit,
+        hle_entry_pcs=hle_entry_pcs,
     )
     _DECODE_CACHE[cache_key] = graph
     return graph
@@ -1986,6 +1990,7 @@ def _decode_function_uncached(rom: bytes, bank: int, start: int,
                      terminal_jsr_sites: Optional[set] = None,
                      noreturn_jsr_sites: Optional[set] = None,
                      stop_on_unknown_callee_exit: bool = False,
+                     hle_entry_pcs: Optional[set] = None,
                     ) -> FunctionDecodeGraph:
     """Decode a function starting at (bank, start) with entry (m, x) state.
 
@@ -2037,6 +2042,17 @@ def _decode_function_uncached(rom: bytes, bank: int, start: int,
     entry_x &= 1
     entry_key = DecodeKey(addr24(bank, start), entry_m, entry_x)
     graph = FunctionDecodeGraph(entry=entry_key)
+    hle_entry_pcs = frozenset(
+        pc & 0xFFFF for pc in (hle_entry_pcs or ())) - {start & 0xFFFF}
+
+    def _hle_local_goto_entries(entries) -> frozenset:
+        # Local computed-goto dispatch targets that name an HLE boundary.
+        # The worklist turns those edges into boundary exits, so codegen
+        # must emit tail transfers to the stub instead of local gotos.
+        return frozenset(
+            addr24(bank, e & 0xFFFF) for e in entries
+            if e and ((e >> 16) & 0xFF) in (0, bank)
+            and (e & 0xFFFF) in hle_entry_pcs)
 
     # Worklist holds (key, edge_kind, pred_pc). edge_kind is
     # 'entry' for the initial seed, 'jump' for BRA/BRL/JMP-ABS/cond-
@@ -2074,6 +2090,20 @@ def _decode_function_uncached(rom: bytes, bank: int, start: int,
                 and edge_kind == 'fall'
                 and pred_pc >= 0
                 and pred_pc < end):
+            boundary = ((bank << 16) | (pred_pc & 0xFFFF), key)
+            if boundary not in graph.boundary_exits:
+                graph.boundary_exits.append(boundary)
+            continue
+        # A cfg `hle_func` / `hle_spc_upload` PC is replaced by a host
+        # implementation: its ROM bytes must never be compiled into another
+        # function's body. Every edge into it -- jump, fall-through, local
+        # computed goto, from imported territory, inside a caller's explicit
+        # end: range, or in a function with an internal stack dispatch -- is
+        # a tail transfer to the HLE stub. The sibling gate below is not
+        # enough: it covers only jump edges and has range/stack exemptions.
+        if (hle_entry_pcs
+                and edge_kind != 'entry'
+                and pc in hle_entry_pcs):
             boundary = ((bank << 16) | (pred_pc & 0xFFFF), key)
             if boundary not in graph.boundary_exits:
                 graph.boundary_exits.append(boundary)
@@ -2431,6 +2461,9 @@ def _decode_function_uncached(rom: bytes, bank: int, start: int,
                     # before dividing by the entry size.
                     insn.dispatch_index_bias = int(auth.get('index_bias', 0) or 0)
                     insn.dispatch_local_goto = is_local_goto
+                    if is_local_goto:
+                        insn.dispatch_hle_tail_entries = (
+                            _hle_local_goto_entries(entries))
                     insn.dispatch_pointer_match = is_pointer_match
                     insn.dispatch_popped_call_frame = bool(
                         auth.get('popped_call_frame'))
@@ -2641,6 +2674,8 @@ def _decode_function_uncached(rom: bytes, bank: int, start: int,
                     insn.dispatch_table_bases = ()
                     insn.dispatch_terminal = True
                     insn.dispatch_local_goto = True
+                    insn.dispatch_hle_tail_entries = (
+                        _hle_local_goto_entries(entries))
                     insn.dispatch_stack_pointer = True
                     insn.dispatch_forced_m = site_m
                     insn.dispatch_forced_x = site_x

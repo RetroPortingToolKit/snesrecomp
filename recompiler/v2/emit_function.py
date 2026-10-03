@@ -557,6 +557,9 @@ def emit_function(rom: bytes, bank: int, start: int,
     # Generic HLE: cfg declared `hle_func <pc> <c_helper>`. Emit a
     # forwarding stub that hands control to the named C function.
     # The host runner provides the body (typically in gen_stubs.c).
+    # The stub deliberately neither pops the return frame nor charges
+    # cycles: the helper owns the replaced routine's RTS/RTL stack effect,
+    # flags and timing (docs/HLE_FUNC.md; tests/v2/test_hle_func_seam.py).
     if hle_func and (start & 0xFFFF) in hle_func:
         c_helper = hle_func[start & 0xFFFF]
         variant_name = f"{base_func_name}{_variant_suffix(entry_m, entry_x)}"
@@ -590,7 +593,9 @@ def emit_function(rom: bytes, bank: int, start: int,
                             sibling_entry_pcs=sibling_entry_pcs,
                             inline_arg_map=inline_arg_map,
                             terminal_jsr_sites=terminal_jsr_sites,
-                            noreturn_jsr_sites=noreturn_jsr_sites)
+                            noreturn_jsr_sites=noreturn_jsr_sites,
+                            hle_entry_pcs=(set(hle_func or ()) |
+                                           set(hle_spc_upload or ())))
     # Forward any suppressed indirect calls upward so emit_bank can
     # aggregate them into the build report. List-of-records.
     if suppressed_collector is not None:

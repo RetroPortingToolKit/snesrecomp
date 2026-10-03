@@ -109,6 +109,9 @@ struct Inputs {
     roots: BTreeSet<VariantKey>,
     entries: HashMap<u32, BankEntry>,
     sibling_entries: HashMap<u32, BTreeSet<u32>>,
+    /// Per bank (and its execution mirror): 16-bit PCs whose bodies are
+    /// replaced by `hle_func` / `hle_spc_upload` host implementations.
+    hle_entries: HashMap<u32, BTreeSet<u32>>,
     cfg_index: HashMap<u32, usize>,
     authority_bytes: HashMap<u32, Vec<u8>>,
     authority_data: HashMap<u32, Vec<bool>>,
@@ -256,6 +259,7 @@ fn load_inputs(cfg_dir: &Path, rom: &mut Vec<u8>, all_cfg_roots: bool) -> Result
     let mut roots = architectural_roots(rom.as_slice());
     let mut entries = HashMap::new();
     let mut sibling_entries: HashMap<u32, BTreeSet<u32>> = HashMap::new();
+    let mut hle_entries: HashMap<u32, BTreeSet<u32>> = HashMap::new();
     let mut cfg_index = HashMap::new();
     let mut authority_bytes = HashMap::new();
     let mut authority_data = HashMap::new();
@@ -419,9 +423,18 @@ fn load_inputs(cfg_dir: &Path, rom: &mut Vec<u8>, all_cfg_roots: bool) -> Result
                 declared_exit_sets.insert((resolved, m & 1, x & 1), modes.clone());
             }
         }
-        let mut hle_entries: BTreeSet<u32> = cfg.hle_func.keys().copied().collect();
-        hle_entries.extend(cfg.hle_spc_upload.iter().copied());
-        for pc in hle_entries {
+        let mut bank_hle: BTreeSet<u32> = cfg.hle_func.keys().map(|pc| pc & 0xFFFF).collect();
+        bank_hle.extend(cfg.hle_spc_upload.iter().map(|pc| pc & 0xFFFF));
+        for decode_bank in [Some(bank), mirror_bank(mapping, bank)]
+            .into_iter()
+            .flatten()
+        {
+            hle_entries
+                .entry(decode_bank)
+                .or_default()
+                .extend(bank_hle.iter().copied());
+        }
+        for pc in bank_hle {
             let target = (bank << 16) | (pc & 0xFFFF);
             for resolved in [Some(target), mirror_pc24(mapping, target)]
                 .into_iter()
@@ -483,6 +496,7 @@ fn load_inputs(cfg_dir: &Path, rom: &mut Vec<u8>, all_cfg_roots: bool) -> Result
         roots,
         entries,
         sibling_entries,
+        hle_entries,
         cfg_index,
         authority_bytes,
         authority_data,
@@ -1180,6 +1194,10 @@ fn analyze(
                 .cloned()
                 .unwrap_or_default();
             siblings.remove(&pc);
+            let hle_pcs = inputs
+                .hle_entries
+                .get(&bank)
+                .or_else(|| mirror.and_then(|m| inputs.hle_entries.get(&m)));
             let inline_loops = cfg.map(|cfg| &cfg.inline_dispatch_loops);
             let env = DecodeEnv {
                 rom_mapping: mapping,
@@ -1194,6 +1212,7 @@ fn analyze(
                 callee_exit_mx: Some(&active_exact),
                 callee_exit_mx_modes: Some(&active_sets),
                 sibling_entry_pcs: Some(&siblings),
+                hle_entry_pcs: hle_pcs,
                 callee_inline_skip: Some(&inline_args),
                 inline_dispatch_loop_pcs: inline_loops,
                 terminal_jsr_sites: Some(&inputs.terminal_jsr_sites),

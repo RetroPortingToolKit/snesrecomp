@@ -220,7 +220,8 @@ class Insn:
                  'dispatch_return_pc', 'dispatch_return_m', 'dispatch_return_x',
                   'dispatch_local_goto', 'dispatch_runtime',
                   'dispatch_pointer_match', 'dispatch_popped_call_frame',
-                  'dispatch_stack_pointer', 'dispatch_forced_m',
+                  'dispatch_stack_pointer', 'dispatch_hle_tail_entries',
+                  'dispatch_forced_m',
                   'dispatch_forced_x', 'dispatch_consumed_stack_bytes',
                   'dispatch_configured_stack_bytes',
                   'const_z_fold_unconditional', 'const_z_fold_dead_pc24',
@@ -279,6 +280,9 @@ class Insn:
         # handler.
         self.dispatch_popped_call_frame = False
         self.dispatch_stack_pointer = False
+        # Local computed-goto targets that are hle_func/hle_spc_upload
+        # boundaries: emitted as tail transfers to the HLE stub.
+        self.dispatch_hle_tail_entries = frozenset()
         self.dispatch_forced_m = 1
         self.dispatch_forced_x = 1
         self.dispatch_consumed_stack_bytes = 0

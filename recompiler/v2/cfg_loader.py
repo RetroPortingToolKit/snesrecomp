@@ -190,17 +190,15 @@ class BankCfg:
     # driver's AA/BB-ready and CC-terminator handshake; `legacy` retains the
     # direct state replacement required by older per-game declarations.
     hle_spc_upload: dict = field(default_factory=dict)
-    # `hle_func <pc16> <c_function_name>` — replace the recompiled body
-    # of the function at <pc> with a single forwarding call to the named
-    # C function. Used for hand-written HLE bodies that need to run
-    # alongside cfg-declared (m,x) variants — the recompiler skips
-    # decoding the bytes for these PCs and emits a forwarding stub per
-    # requested variant: `RecompReturn NAME_MxXy(CpuState *cpu) {
-    #   return <c_function_name>(cpu); }`. The C helper must be
-    # provided by the per-game runner (typically in gen_stubs.c).
-    # HLE ABI: the helper preserves its entry M/X unless the associated
-    # `func ... exit_mx:M,X` boundary explicitly declares another exit.
-    # Map: pc16 -> c_function_name. See emit_function.py for stub shape.
+    # `hle_func <pc16> <c_function_name>` — replace the routine at <pc>
+    # (both LoROM mirrors) with a forwarding stub for all four (m,x)
+    # variants: `RecompReturn NAME_MxXy(CpuState *cpu)` calls the named C
+    # function, provided by the per-game runner (typically gen_stubs.c).
+    # The PC is a hard decode boundary: its ROM bytes are never compiled
+    # into another body. HLE ABI: the helper pops the RTS/RTL return frame
+    # itself, and preserves its entry M/X unless an exit_mx contract
+    # declares another exit. Map: pc16 -> c_function_name. Full contract:
+    # docs/HLE_FUNC.md.
     hle_func: dict = field(default_factory=dict)
     # `hle_dispatch <site_pc16> <c_function_name>` — at the named indirect
     # JMP/JML/JSR site, replace the unresolved-dispatch trap with a
@@ -391,15 +389,9 @@ def load_bank_cfg(path: str) -> BankCfg:
                 cfg.hle_spc_upload[pc16] = mode
                 continue
 
-            # hle_func <pc16> <c_function_name> — replace the decoded
-            # body of the function at <pc> with a forwarding stub:
-            #   RecompReturn NAME_MxXy(CpuState *cpu) {
-            #     return <c_function_name>(cpu);
-            #   }
-            # The C helper must be provided externally (typically
-            # gen_stubs.c). One stub per (m,x) variant the recompiler
-            # discovers as called from elsewhere. See BankCfg.hle_func
-            # comment.
+            # hle_func <pc16> <c_function_name> — replace the routine at
+            # <pc> with a forwarding stub per (m,x) variant (all four).
+            # See BankCfg.hle_func and docs/HLE_FUNC.md.
             if head == 'hle_func':
                 if len(tokens) != 3:
                     raise ValueError(

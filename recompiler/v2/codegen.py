@@ -1537,6 +1537,8 @@ def _emit_indirect_dispatch(insn) -> List[str]:
                 "  /* absolute indirect dispatch: switch on the loaded pointer */")
         lines.append("  switch (_target) {")
         seen_cases = set()
+        hle_tail_entries = frozenset(
+            getattr(insn, 'dispatch_hle_tail_entries', ()) or ())
         for e in entries:
             if e is None or e == 0:
                 continue
@@ -1547,6 +1549,32 @@ def _emit_indirect_dispatch(insn) -> List[str]:
             if local_pc in seen_cases:
                 continue
             seen_cases.add(local_pc)
+            tgt_addr = ((bank & 0xFF) << 16) | local_pc
+            if tgt_addr in hle_tail_entries:
+                # An hle_func/hle_spc_upload target is never decoded into
+                # this body (decoder boundary exit). The computed goto is a
+                # tail transfer into its stub, which inherits this
+                # function's return frame and baseline.
+                base_name = (_NAME_RESOLVER.get(tgt_addr)
+                             or f"bank_{bank & 0xFF:02X}_{local_pc:04X}")
+                for em_v, ex_v in valid_variant_list(tgt_addr):
+                    _UNRESOLVED_CALL_TARGETS.add((tgt_addr, em_v, ex_v))
+                lines.append(f"    case 0x{local_pc:04x}: {{  /* HLE boundary */")
+                lines.append("      cpu->host_return_valid = _hrv;")
+                lines.append("      RecompReturn _r;")
+                lines.append(
+                    "      switch (((cpu->m_flag & 1) << 1) | (cpu->x_flag & 1)) {")
+                lines += variant_dispatch_case_lines(
+                    tgt_addr, base_name, indent="        ",
+                    pre_call=["cpu_tailcall_inherit_return_context(_entry_s, _hrv);"],
+                    lle_fallback=(
+                        f"interp_tier_dispatch_tail(cpu, "
+                        f"{_transfer_target_expr(tgt_addr, False)}, "
+                        f"0x{site_pc24:06x}u, _entry_s, _hrv)"))
+                lines.append("      }")
+                lines.append("      return _r;")
+                lines.append("    }")
+                continue
             lines.append(
                 f"    case 0x{local_pc:04x}: goto L_{local_pc:04X}{suffix};")
         lines.append("    default:")
