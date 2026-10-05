@@ -1905,7 +1905,12 @@ static void RewindKeyDown(int key, int repeat) {
  * ports: Left/Right scrub (hold to keep scrubbing), Enter or Space commits,
  * Escape cancels, and the pad mirrors them. */
 static void RunRewindLoop(bool *running) {
-  uint32 prev_pad = 0;
+  /* The caller continues directly after a successful modal open. Consume
+   * its request here so F8 cannot reopen the panel after every close. */
+  g_rewind_hotkey = 0;
+  /* Opening while dashing/jumping must not reuse the held A/B as a fresh
+   * selection/cancel. Each action needs a release and a new press. */
+  uint32 prev_pad = OverlayNavInputs();
   uint32 held_dir = 0;
   uint32 held_since = 0, last_repeat = 0;
   unsigned frames = 0;
