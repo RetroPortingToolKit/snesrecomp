@@ -16,6 +16,8 @@
  *   <tag>.sram.bin                 cartridge RAM, whatever size the cart has
  *   <tag>.regs.json                PPU / HDMA register state
  *   <tag>.ppuw.tsv                 the frame's PPU register write journal
+ *   <tag>.apu.tsv                  CPU<->SPC port traffic still in the always-on
+ *                                  port ring (audio_trace.h)
  *   <tag>.info.json                frame, sizes, layer mask
  *
  * Observer only: reads guest state, never changes it. Returns 0 on success.

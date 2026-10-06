@@ -247,4 +247,95 @@ if cfg.gsu_log == "1" then
   end
 end
 
+-- irq_log=1: one line per interrupt the S-CPU takes, and per read of an
+-- interrupt acknowledge register, to <dump_dir>/irq.tsv -- the oracle for a
+-- frame driver's interrupt delivery (which line, which source, how many per
+-- frame). Acks: $4211 TIMEUP (H/V timer) and, on a SuperFX cart, $3031 (SFR
+-- high byte, which clears the GSU's IRQ flag). Columns:
+--   frame  scanline  hclock  event  pc24  detail
+-- where detail is the GSU IRQ flag (sfr.irq) for nmi/irq, and the value read
+-- for an ack.
+if cfg.irq_log == "1" then
+  local irq_f = io.open(dump_dir .. "/irq.tsv", "w")
+  irq_f:write("# frame\tscanline\thclock\tevent\tpc24\tdetail\n")
+  local function row(event, detail)
+    local st = emu.getState()
+    irq_f:write(string.format("%d\t%d\t%d\t%s\t%06X\t%s\n", frame,
+      st["ppu.scanline"] or -1, st["memoryManager.hClock"] or -1, event,
+      (st["cpu.k"] or 0) * 65536 + (st["cpu.pc"] or 0), detail))
+  end
+  local function gsu_irq_flag()
+    local v = emu.getState()["cart.coprocessor.sfr.irq"]
+    if v == nil then return "-" end
+    return v and "1" or "0"
+  end
+  emu.addEventCallback(function() row("nmi", gsu_irq_flag()) end, emu.eventType.nmi)
+  emu.addEventCallback(function() row("irq", gsu_irq_flag()) end, emu.eventType.irq)
+  local function ack(name)
+    return function(addr, value)
+      row(name, string.format("%02X", value))
+      return value
+    end
+  end
+  for bank = 0x00, 0x3F do
+    for _, base in ipairs({ bank * 0x10000, (bank + 0x80) * 0x10000 }) do
+      emu.addMemoryCallback(ack("ack4211"), emu.callbackType.read, base + 0x4211, base + 0x4211,
+                            emu.cpuType.snes, emu.memType.snesMemory)
+      emu.addMemoryCallback(ack("ack3031"), emu.callbackType.read, base + 0x3031, base + 0x3031,
+                            emu.cpuType.snes, emu.memType.snesMemory)
+    end
+  end
+  emu.addEventCallback(function() irq_f:flush() end, emu.eventType.endFrame)
+end
+
+-- apu_log=1: S-CPU <-> SPC700 port traffic to <dump_dir>/apu.tsv -- the
+-- oracle half of the recomp's audio trace port events (audio_trace.h:
+-- cpu_wr / cpu_rd). Every CPU write to $2140-$2143, and every CPU read whose
+-- value differs from the previous read of that port, so a handshake (write a
+-- command, poll for its echo) shows when the echo arrived without logging
+-- every poll. Columns: frame scanline hclock event port value
+if cfg.apu_log == "1" then
+  local apu_f = io.open(dump_dir .. "/apu.tsv", "w")
+  apu_f:write("# frame\tscanline\thclock\tevent\tport\tvalue\n")
+  local last_read = { -1, -1, -1, -1 }
+  local function row(event, port, value)
+    local st = emu.getState()
+    apu_f:write(string.format("%d\t%d\t%d\t%s\t%d\t%02X\n", frame,
+      st["ppu.scanline"] or -1, st["memoryManager.hClock"] or -1, event, port, value))
+  end
+  local function on_write(addr, value)
+    row("cpu_wr", addr & 3, value)
+    return value
+  end
+  local function on_read(addr, value)
+    local port = addr & 3
+    if last_read[port + 1] ~= value then
+      last_read[port + 1] = value
+      row("cpu_rd", port, value)
+    end
+    return value
+  end
+  for bank = 0x00, 0x3F do
+    for _, base in ipairs({ bank * 0x10000, (bank + 0x80) * 0x10000 }) do
+      emu.addMemoryCallback(on_write, emu.callbackType.write, base + 0x2140, base + 0x2143,
+                            emu.cpuType.snes, emu.memType.snesMemory)
+      emu.addMemoryCallback(on_read, emu.callbackType.read, base + 0x2140, base + 0x2143,
+                            emu.cpuType.snes, emu.memType.snesMemory)
+    end
+  end
+  -- The SPC700's side: its writes to $F4-$F7 (the values the S-CPU reads
+  -- back), on change -- the recomp's spc_wr. When an echo arrived, not only
+  -- when the S-CPU next looked.
+  local last_spc = { -1, -1, -1, -1 }
+  emu.addMemoryCallback(function(addr, value)
+    local port = addr & 3
+    if last_spc[port + 1] ~= value then
+      last_spc[port + 1] = value
+      row("spc_wr", port, value)
+    end
+    return value
+  end, emu.callbackType.write, 0xF4, 0xF7, emu.cpuType.spc, emu.memType.spcMemory)
+  emu.addEventCallback(function() apu_f:flush() end, emu.eventType.endFrame)
+end
+
 emu.addEventCallback(function() frame = frame + 1 end, emu.eventType.endFrame)
