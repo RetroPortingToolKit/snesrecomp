@@ -146,6 +146,22 @@ bool superfx_is_running(const SuperFx *fx);
  * `pc24`. A hook changes guest execution: a title arms one only while its
  * feature is on, and must leave it inert (or disarmed) otherwise. */
 typedef void SuperFxPcHook(SuperFx *fx, uint32_t pc24, void *context);
+/* Explicit hooks for an additional private presentation pass. Native hooks
+ * are never inherited. Callbacks may edit only the private core/registers
+ * and RAM; ROM and any external authoritative state remain read-only. */
+typedef struct SuperFxReplayPcHook {
+  uint32_t pc24;
+  SuperFxPcHook *hook;
+  void *context;
+} SuperFxReplayPcHook;
+/* Same opt-in and instruction bound as superfx_replay_snapshot. Hook storage
+ * is private to this call and released before returning, including failure.
+ * The result is a borrowed architectural snapshot, not an owned core: do not
+ * pass it to superfx_destroy. A nonzero hook_count requires non-NULL hooks. */
+bool superfx_replay_snapshot_with_hooks(const SuperFx *source,
+                                        uint8_t *private_ram, SuperFx *result,
+                                        const SuperFxReplayPcHook *hooks,
+                                        unsigned hook_count);
 bool superfx_set_pc_hook(SuperFx *fx, uint32_t pc24, SuperFxPcHook *hook,
                          void *context);
 void superfx_clear_pc_hooks(SuperFx *fx);
