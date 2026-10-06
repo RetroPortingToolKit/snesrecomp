@@ -38,6 +38,9 @@ extern Ppu *g_ppu;
 /* 0 until the first frame has booted from the reset vector. */
 static uint32_t s_resume_pc;
 
+/* The CPU executed WAI and is halted until an interrupt line asserts. */
+static bool s_wai_halted;
+
 static uint32_t read_vector(uint32_t addr) {
   /* Through the guest bus, so a mapper or coprocessor window resolves the
    * vector the way the CPU sees it. */
@@ -72,8 +75,12 @@ static bool cart_irq_pending(void) {
   return false;
 }
 
+static bool irq_line_asserted(void) {
+  return g_snes->inIrq || cart_irq_pending();
+}
+
 static bool irq_wanted(void) {
-  return !g_cpu._flag_I && (g_snes->inIrq || cart_irq_pending());
+  return !g_cpu._flag_I && irq_line_asserted();
 }
 
 /* Master clocks the CPU has spent that the beam has not walked yet: the walk
@@ -142,6 +149,7 @@ void snes_beam_frame_driver_run_frame(void) {
    * there is no instruction stream to interrupt yet. */
   if (!booting && g_snes->nmiEnabled) {
     g_snes->inNmi = true;
+    s_wai_halted = false;
     run_interrupt(nmi_vector(), frame_end);
     g_snes->inNmi = false;
   }
@@ -153,12 +161,21 @@ void snes_beam_frame_driver_run_frame(void) {
     uint64_t next;
     uint32_t to_irq;
 
-    if (!irq_wanted()) {
+    /* WAI halts the CPU until an interrupt line asserts -- NMI (next field),
+     * a raster match or a coprocessor IRQ. With I set the IRQ wakes it
+     * without taking the vector. Resuming it after a park step instead made
+     * every WAI last one scanline: Doom times its title hold as a countdown
+     * of WAIs (`WAI / DEX / BPL`), which then ran out within the first field
+     * and skipped the title. */
+    if (s_wai_halted && irq_line_asserted())
+      s_wai_halted = false;
+    if (!s_wai_halted && !irq_wanted()) {
       interp_bridge_set_master_deadline(frame_end);
       (void)interp_bridge_run_until_quiescent(&g_cpu, s_resume_pc);
       interp_bridge_set_master_deadline(0);
       update_resume_pc();
-      (void)interp_bridge_lle_took_wai(); /* sticky: consume it */
+      if (interp_bridge_lle_took_wai())
+        s_wai_halted = true;
     }
     /* Past the boundary, an interrupt belongs to the next frame. Delivering
      * one with the deadline already spent made the handler yield on its first
@@ -168,6 +185,7 @@ void snes_beam_frame_driver_run_frame(void) {
     if (g_cpu.master_cycles >= frame_end)
       break;
     if (irq_wanted()) {
+      s_wai_halted = false;
       run_interrupt(irq_vector(), frame_end);
       continue;
     }
@@ -178,7 +196,8 @@ void snes_beam_frame_driver_run_frame(void) {
       cart_sync_coprocessors(g_snes->cart, g_cpu.master_cycles);
       continue;
     }
-    /* Parked on a poll with field time left: hardware time still passes.
+    /* Parked on a poll or halted on WAI with field time left: hardware time
+     * still passes.
      * Ending the CPU half here instead also took that time from the
      * coprocessors, which run on the same master clock. Step to the next H/V
      * match when it is nearer than a line (+1: the comparator window excludes
@@ -241,4 +260,5 @@ void snes_beam_frame_driver_draw_ppu_frame(void) {
 
 void snes_beam_frame_driver_reset(void) {
   s_resume_pc = 0;
+  s_wai_halted = false;
 }
