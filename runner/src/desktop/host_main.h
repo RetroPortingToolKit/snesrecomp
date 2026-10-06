@@ -194,6 +194,9 @@ typedef struct SnesDesktopHostGame {
   int (*prepare_netplay)(int from_lobby, char *reason, size_t reason_cap);
   /* Validate that required title plugins actually activated before linking. */
   int (*netplay_ready)(char *reason, size_t reason_cap);
+  /* After the gameplay loop ends, before SDL resources are destroyed or a
+   * relaunch begins. Stop title-owned workers here. No further frames run. */
+  void (*on_shutdown)(void);
 } SnesDesktopHostGame;
 
 /* The whole program. Returns the process exit code. */

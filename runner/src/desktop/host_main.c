@@ -4117,6 +4117,8 @@ error_reading:;
   if (g_blend) recomp_frame_blend_destroy(g_blend);
 #endif
 
+  if (game->on_shutdown) game->on_shutdown();
+
   // clean sdl
   SetAudioPaused(true);
 #if SNESRECOMP_SDL3
