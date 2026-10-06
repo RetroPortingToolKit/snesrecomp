@@ -161,7 +161,77 @@ static void test_replay_job_log(void) {
   destroy_fixture(native, rom, ram);
 }
 
+typedef struct HookProbe { unsigned calls; bool loop; } HookProbe;
+static void private_hook(SuperFx *fx, uint32_t pc24, void *context) {
+  HookProbe *probe = context;
+  ++probe->calls;
+  if (probe->loop) {
+    superfx_hook_redirect(fx, (uint16_t)pc24);
+    return;
+  }
+  superfx_set_reg(fx, pc24 + 1, 100);
+  fx->ram[0x100 + pc24] = 0x5a;
+}
+static void native_hook(SuperFx *fx, uint32_t pc24, void *context) {
+  (void)fx; (void)pc24;
+  ++*(unsigned *)context;
+}
+
+static void test_private_hooks(void) {
+  uint8_t *rom, *ram;
+  SuperFx *native = make_superfx(&rom, &ram);
+  if (!native) abort();
+  const uint8_t program[] = {0xd1, 0xd2, 0x00};
+  memcpy(rom, program, sizeof(program));
+  uint8_t *private_ram = calloc(kRamSize, 1);
+  if (!private_ram) abort();
+  unsigned native_calls = 0;
+  check(superfx_set_pc_hook(native, 0, native_hook, &native_calls),
+        "install native hook for isolation test");
+  superfx_set_enhancement_mode(native, kSuperFxEnhancement_PresentationReplay);
+  superfx_cpu_write_io(native, 0x301e, 0);
+  superfx_cpu_write_io(native, 0x301f, 0);
+  const SuperFx before = *native;
+  SuperFx result;
+  HookProbe probe = {0, false};
+  SuperFxReplayPcHook hooks[] = {{0, private_hook, &probe},
+                                {1, private_hook, &probe}};
+  check(!superfx_replay_snapshot_with_hooks(native, ram, &result, hooks, 2),
+        "private hooks reject authoritative RAM");
+  check(!superfx_replay_snapshot_with_hooks(native, private_ram, native, hooks, 2),
+        "private hooks reject authoritative core result");
+  check(!superfx_replay_snapshot_with_hooks(native, private_ram, &result, NULL, 2),
+        "private hooks reject missing descriptors");
+  check(superfx_replay_snapshot_with_hooks(native, private_ram, &result, hooks, 2),
+        "explicit private hooks complete replay");
+  check(probe.calls == 2 && result.r[1].data == 101 && result.r[2].data == 101,
+        "each private hook edits only its replay registers");
+  check(private_ram[0x100] == 0x5a && private_ram[0x101] == 0x5a &&
+        ram[0x100] == 0 && ram[0x101] == 0,
+        "private hook RAM edits stay in the private buffer");
+  check(native_calls == 0 && memcmp(native, &before, sizeof(before)) == 0,
+        "replay does not invoke native hooks or change any native core field");
+  check(!result.pc_hooks && !result.pc_hook_count && !result.pc_hook_cap,
+        "completed replay retains no hook allocation");
+  check(superfx_replay_snapshot(native, private_ram, &result) && native_calls == 0,
+        "legacy replay still excludes all native hooks");
+  check(!result.pc_hooks && !result.pc_hook_count && !result.pc_hook_cap,
+        "legacy replay detaches the native hook allocation");
+  probe.loop = true;
+  check(!superfx_replay_snapshot_with_hooks(native, private_ram, &result, hooks, 1),
+        "a looping private hook is bounded by the replay guard");
+  check(!result.pc_hooks && !result.pc_hook_count && !result.pc_hook_cap,
+        "failed replay releases private hook storage");
+  check(memcmp(native, &before, sizeof(before)) == 0 && native_calls == 0,
+        "failed replay leaves the source and native hooks intact");
+  superfx_sync(native, 10000);
+  check(native_calls == 1, "native hook still works after private hooks are freed");
+  free(private_ram);
+  destroy_fixture(native, rom, ram);
+}
+
 int main(void) {
+  test_private_hooks();
   test_replay_job_log();
   test_private_replay();
   uint8_t *native_rom = NULL, *native_ram = NULL;

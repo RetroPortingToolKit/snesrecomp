@@ -567,19 +567,42 @@ static bool render_widescreen_frame(SuperFx *f) {
 
 bool superfx_replay_snapshot(const SuperFx *source, uint8_t *private_ram,
                              SuperFx *result) {
+  return superfx_replay_snapshot_with_hooks(source, private_ram, result, NULL, 0);
+}
+
+bool superfx_replay_snapshot_with_hooks(const SuperFx *source,
+                                        uint8_t *private_ram, SuperFx *result,
+                                        const SuperFxReplayPcHook *hooks,
+                                        unsigned hook_count) {
   if (!source || !private_ram || !result || source == result ||
       private_ram == source->ram ||
+      (hook_count && !hooks) || hook_count > UINT16_MAX ||
       source->enhancement_mode != kSuperFxEnhancement_PresentationReplay)
     return false;
+  struct SuperFxPcHookSlot *private_hooks = NULL;
+  if (hook_count) {
+    private_hooks = malloc(hook_count * sizeof(*private_hooks));
+    if (!private_hooks) return false;
+    for (unsigned i = 0; i < hook_count; ++i) {
+      if (!hooks[i].hook) { free(private_hooks); return false; }
+      private_hooks[i] = (struct SuperFxPcHookSlot){
+          hooks[i].pc24 & 0xFFFFFFu, hooks[i].hook, hooks[i].context};
+    }
+  }
   *result = *source;
   result->ram = private_ram;
   result->presentation = NULL;
   result->enhancement_mode = kSuperFxEnhancement_None;
   result->ws_render_active = result->ws_replay_pending = result->ws_replay_mode = false;
-  result->pc_hook_count = 0;
+  result->pc_hooks = private_hooks;
+  result->pc_hook_count = result->pc_hook_cap = (uint16_t)hook_count;
+  result->redirect_pending = false;
   unsigned guard = 0;
   while ((result->sfr & SFR_G) && guard++ < 20000000)
     run_one(result);
+  free(result->pc_hooks);
+  result->pc_hooks = NULL;
+  result->pc_hook_count = result->pc_hook_cap = 0;
   return !(result->sfr & SFR_G);
 }
 
