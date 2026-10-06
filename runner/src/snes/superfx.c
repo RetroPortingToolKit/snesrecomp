@@ -673,15 +673,19 @@ bool superfx_is_running(const SuperFx *f) { return f && (f->sfr & SFR_G) != 0; }
 #define SUPERFX_JOB_CAP 4096u
 static SuperFxJob s_jobs[SUPERFX_JOB_CAP];
 static uint32_t s_job_head;   /* total jobs ever started */
+static const SuperFx *s_job_owner;
 
 static void job_start(SuperFx *f) {
+  s_job_owner = f;
   SuperFxJob *j = &s_jobs[s_job_head++ & (SUPERFX_JOB_CAP - 1)];
   j->start_master = f->master_clock;
   j->stop_master = 0;
   j->pc24 = ((uint32_t)f->pbr << 16) | rv(f, 15);
 }
 static void job_stop(SuperFx *f) {
-  if (!s_job_head) return;
+  /* Private presentation clones execute STOP too. Only the core that began
+   * the recorded job may finish it; a replay must not truncate its timing. */
+  if (!s_job_head || s_job_owner != f) return;
   SuperFxJob *j = &s_jobs[(s_job_head - 1) & (SUPERFX_JOB_CAP - 1)];
   if (!j->stop_master)
     j->stop_master = f->master_clock - (uint64_t)(f->clock_credit > 0 ? f->clock_credit : 0);

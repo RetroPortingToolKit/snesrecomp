@@ -135,7 +135,34 @@ static void test_private_replay(void) {
   for (unsigned i = 0; i < 2; i++) destroy_fixture(fx[i], rom[i], ram[i]);
 }
 
+static void test_replay_job_log(void) {
+  uint8_t *rom, *ram;
+  SuperFx *native = make_superfx(&rom, &ram);
+  if (!native) abort();
+  uint8_t *private_ram = malloc(kRamSize);
+  if (!private_ram) abort();
+  native->master_clock = 100;
+  superfx_set_enhancement_mode(native, kSuperFxEnhancement_PresentationReplay);
+  superfx_cpu_write_io(native, 0x301e, 0);
+  superfx_cpu_write_io(native, 0x301f, 0);
+  SuperFxJob job;
+  check(superfx_job_log(&job, 1) == 1 && job.stop_master == 0,
+        "native job is still running before replay");
+  memcpy(private_ram, ram, kRamSize);
+  SuperFx result;
+  check(superfx_replay_snapshot(native, private_ram, &result),
+        "private replay completes while the native job is running");
+  check(superfx_job_log(&job, 1) == 1 && job.stop_master == 0,
+        "private STOP cannot finish the authoritative job timing record");
+  superfx_sync(native, 10000);
+  check(superfx_job_log(&job, 1) == 1 && job.stop_master > job.start_master,
+        "native STOP still completes its own timing record");
+  free(private_ram);
+  destroy_fixture(native, rom, ram);
+}
+
 int main(void) {
+  test_replay_job_log();
   test_private_replay();
   uint8_t *native_rom = NULL, *native_ram = NULL;
   uint8_t *optin_rom = NULL, *optin_ram = NULL;

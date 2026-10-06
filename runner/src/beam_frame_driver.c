@@ -233,6 +233,11 @@ void snes_beam_frame_driver_run_frame(void) {
 }
 
 void snes_beam_frame_driver_draw_ppu_frame(void) {
+  snes_beam_frame_driver_draw_ppu_frame_observed(NULL, NULL);
+}
+
+void snes_beam_frame_driver_draw_ppu_frame_observed(
+    SnesBeamRasterObserver *observer, void *context) {
   int line;
 
   /* The field's register state as of its start, then each line's journal
@@ -252,6 +257,8 @@ void snes_beam_frame_driver_draw_ppu_frame(void) {
     if (ppu_rasterTakeHdmaen(&hdmaen))
       dma_startDma(g_snes->dma, hdmaen, true);
     ppu_runLine(g_ppu, line);
+    if (observer)
+      observer(g_ppu, (unsigned)line, context);
     /* HDMA runs in the H-blank after this line; it lands on the next. */
     dma_doHdma(g_snes->dma);
   }
