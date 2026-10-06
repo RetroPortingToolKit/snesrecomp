@@ -1542,9 +1542,7 @@ void WriteReg(uint16 reg, uint8 value) {
     cart_sync_coprocessors(g_snes->cart, g_cpu.master_cycles);
     cart_write(g_snes->cart, 0, reg, value);
   } else if (reg >= 0x2100 && reg < 0x2140) {
-    ppu_write(g_ppu, reg & 0xff, value);
-    if (g_snes)
-      ppu_rasterRecord(reg, g_snes->vPos, value);
+    ppu_write(g_ppu, reg & 0xff, value);   /* journals itself */
   } else if (reg >= 0x2140 && reg < 0x2180) {
 #if SNESRECOMP_ENABLE_MODS
     if (snes_mod_runtime_filter_apu_write_c(reg, value)) {
@@ -1557,13 +1555,8 @@ void WriteReg(uint16 reg, uint8 value) {
     snes_writeBBus(g_snes, reg & 0xff, value);
   } else if (reg >= 0x4200 && reg < 0x4220) {
     if (reg == 0x420C) {
+      /* The raster journal records it in snes_writeReg. */
       g_snesrecomp_last_hdmaen = value;
-      /* Per-line fact: this title switches the transition's HDMA
-       * channels on from the line-21 raster handler, and a frame-model
-       * host that samples the mask once at render time never sees them.
-       * See raster_reg_journaled() in ppu.c. */
-      if (g_snes)
-        ppu_rasterRecord(reg, g_snes->vPos, value);
     }
     if (reg == 0x420D)
       g_memsel = (uint8_t)(value & 1);  /* FastROM select; paces $80-FF code */
