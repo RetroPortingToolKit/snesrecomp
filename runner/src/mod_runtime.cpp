@@ -21,10 +21,60 @@
 #include <sstream>
 #include <string>
 #include <system_error>
+#include <stdexcept>
 #include <utility>
 #include <vector>
 
+#ifdef _WIN32
+#define WIN32_LEAN_AND_MEAN
+#include <windows.h>
+#endif
+
 namespace fs = std::filesystem;
+
+/* C host paths use the platform's narrow filesystem encoding: the Windows
+ * executable anchor and legacy fopen paths use CP_ACP. libstdc++'s path
+ * constructor instead consults the C locale, which rejects accented names.
+ * Cross that boundary explicitly without changing the process-wide locale. */
+static fs::path host_path(const std::string& text) {
+#ifdef _WIN32
+    if (text.empty()) return {};
+    const int n = MultiByteToWideChar(CP_ACP, 0, text.c_str(), -1, nullptr, 0);
+    if (!n) throw std::runtime_error("Cannot decode host path");
+    std::wstring wide(n, L'\0');
+    if (!MultiByteToWideChar(CP_ACP, 0, text.c_str(), -1, wide.data(), n))
+        throw std::runtime_error("Cannot decode host path");
+    wide.pop_back();
+    return fs::path(wide);
+#else
+    return fs::path(text);
+#endif
+}
+/* Launcher resource/archive paths are UTF-8. Also accept paths persisted by
+ * older native hosts using the Windows code page. */
+static fs::path resource_path_native(const std::string& text) {
+#ifdef _WIN32
+    if (!text.empty() && !MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS,
+                                             text.c_str(), -1, nullptr, 0))
+        return host_path(text);
+#endif
+    return fs::u8path(text);
+}
+static std::string host_path_text(const fs::path& path) {
+#ifdef _WIN32
+    const int n = WideCharToMultiByte(CP_ACP, 0, path.c_str(), -1,
+                                     nullptr, 0, nullptr, nullptr);
+    if (!n) throw std::runtime_error("Cannot encode host path");
+    std::string text(n, '\0');
+    if (!WideCharToMultiByte(CP_ACP, 0, path.c_str(), -1,
+                            text.data(), n, nullptr, nullptr))
+        throw std::runtime_error("Cannot encode host path");
+    text.pop_back();
+    return text;
+#else
+    return path.string();
+#endif
+}
 
 namespace SNESRecomp {
 namespace {
@@ -500,7 +550,7 @@ bool parse_boot_pokes(const std::string& text,
 bool read_manifest(const fs::path& path, Package& out, std::string* error) {
     std::ifstream file(path);
     if (!file) {
-        set_error(error, "cannot open manifest: " + path.string());
+        set_error(error, "cannot open manifest: " + path.u8string());
         return false;
     }
 
@@ -1076,7 +1126,7 @@ bool package_is_manifest_only(Runtime& runtime, const Package& package) {
          it != end; it.increment(ec)) {
         if (ec) { only = false; break; }   /* cannot see it: do not vouch */
         if (!it->is_regular_file(ec) || ec) continue;
-        const std::string name = it->path().filename().string();
+        const std::string name = it->path().filename().u8string();
         if (name != "manifest.toml") { only = false; break; }
     }
     runtime.manifest_only_cache[key] = only;
@@ -1203,7 +1253,7 @@ bool validate_resource_file(const Resource& resource,
         }
         return !resource.required;
     }
-    const fs::path path(path_text);
+    const fs::path path = resource_path_native(path_text);
     std::error_code ec;
     if (resource_is_directory(resource)) {
         if (!fs::is_directory(path, ec)) {
@@ -1411,10 +1461,10 @@ bool scan(Runtime& runtime, std::string* error) {
             if (!fs::is_regular_file(manifest)) continue;
             Package package;
             if (!read_manifest(manifest, package, error)) return false;
-            if (package.id != package_dir.path().filename().string() ||
-                package.version != version_dir.path().filename().string()) {
+            if (package.id != package_dir.path().filename().u8string() ||
+                package.version != version_dir.path().filename().u8string()) {
                 set_error(error, "package directory does not match manifest: " +
-                                 manifest.string());
+                                 manifest.u8string());
                 return false;
             }
             if (package.id == kCoveragePackage) {
@@ -1662,7 +1712,7 @@ bool read_file(const fs::path& path, std::vector<uint8_t>& out,
                std::string* error) {
     std::ifstream in(path, std::ios::binary);
     if (!in) {
-        set_error(error, "cannot open " + path.string());
+        set_error(error, "cannot open " + path.u8string());
         return false;
     }
     in.seekg(0, std::ios::end);
@@ -1674,7 +1724,7 @@ bool read_file(const fs::path& path, std::vector<uint8_t>& out,
     in.seekg(0);
     out.resize((size_t)size);
     if (!out.empty() && !in.read((char*)out.data(), size)) {
-        set_error(error, "cannot read " + path.string());
+        set_error(error, "cannot read " + path.u8string());
         return false;
     }
     return true;
@@ -1706,9 +1756,9 @@ bool safe_archive_name(const std::string& name) {
     if (name.size() >= 2 &&
         std::isalpha((unsigned char)name[0]) && name[1] == ':')
         return false;
-    const fs::path path = fs::path(name).lexically_normal();
+    const fs::path path = fs::u8path(name).lexically_normal();
     for (const auto& part : path) {
-        const std::string text = part.string();
+        const std::string text = part.u8string();
         if (text == ".." || text == "." || text.empty()) return false;
     }
     return true;
@@ -2009,7 +2059,7 @@ bool extract_zip(const std::vector<uint8_t>& bytes,
         return false;
     }
     for (const ZipEntry& entry : entries) {
-        const fs::path output = target / fs::path(entry.name);
+        const fs::path output = target / fs::u8path(entry.name);
         if (entry.directory) {
             fs::create_directories(output, ec);
             if (ec) {
@@ -2128,10 +2178,10 @@ bool zip_store_tree(const fs::path& root, std::vector<uint8_t>& out,
     for (const fs::path& file : files) {
         const fs::path rel = fs::relative(file, root, ec);
         if (ec || rel.empty()) {
-            set_error(error, "cannot relativize " + file.string());
+            set_error(error, "cannot relativize " + file.u8string());
             return false;
         }
-        std::string name = rel.generic_string();
+        std::string name = rel.generic_u8string();
         if (!safe_archive_name(name)) {
             set_error(error, "unsafe path in package: " + name);
             return false;
@@ -2463,7 +2513,7 @@ int provider_install(void*, const char* archive_path) {
     std::string id;
     std::string version;
     std::string error;
-    if (!install_archive(state(), archive_path, &id, &version, &error) ||
+    if (!install_archive(state(), resource_path_native(archive_path), &id, &version, &error) ||
         !scan(state(), &error)) {
         state().error = error;
         return 0;
@@ -2544,7 +2594,7 @@ int provider_set_option(void*, const char*, const char*,
 int provider_commit(void*, const char* image_path) {
     std::string error;
     if (!mod_runtime_commit(
-            image_path ? fs::path(image_path) : fs::path(), &error)) {
+            image_path ? resource_path_native(image_path) : fs::path(), &error)) {
         state().error = error;
         return 0;
     }
@@ -2872,8 +2922,8 @@ void publish_variants(Runtime& runtime) {
             if (!row.patch.empty()) {
                 for (const PatchRow& patch : package->patches) {
                     if (patch.feature_id != row.feature_id || patch.id != row.patch) continue;
-                    const fs::path path = package->root / patch.file;
-                    copy_c(decl.patch_path, sizeof(decl.patch_path), path.string());
+                    const fs::path path = package->root / fs::u8path(patch.file);
+                    copy_c(decl.patch_path, sizeof(decl.patch_path), host_path_text(path));
                     if (!patch.target_sha256.empty() &&
                         hex_to_bytes(patch.target_sha256, decl.patch_target_sha256, 32))
                         decl.has_patch_target_sha256 = 1;
@@ -3057,17 +3107,28 @@ extern "C" uint32_t snes_mod_runtime_synthetic_sram_size_c(void) {
 
 extern "C" int snes_mod_runtime_initialize_c(
     const char* root, const char* game_id, const char* rom_sha256) {
-    std::string error;
-    return SNESRecomp::mod_runtime_initialize(
-        root ? fs::path(root) : fs::path("mods"),
-        game_id ? game_id : "",
-        rom_sha256 ? rom_sha256 : "", &error) ? 1 : 0;
+    try {
+        std::string error;
+        return SNESRecomp::mod_runtime_initialize(
+            root ? host_path(root) : fs::path("mods"),
+            game_id ? game_id : "",
+            rom_sha256 ? rom_sha256 : "", &error) ? 1 : 0;
+    } catch (const std::exception& ex) {
+        SNESRecomp::state() = {};
+        SNESRecomp::state().error = std::string("Cannot initialize mods: ") + ex.what();
+        return 0;
+    }
 }
 
 extern "C" int snes_mod_runtime_commit_c(const char* rom_path) {
-    std::string error;
-    return SNESRecomp::mod_runtime_commit(
-        rom_path ? fs::path(rom_path) : fs::path(), &error) ? 1 : 0;
+    try {
+        std::string error;
+        return SNESRecomp::mod_runtime_commit(
+            rom_path ? host_path(rom_path) : fs::path(), &error) ? 1 : 0;
+    } catch (const std::exception& ex) {
+        SNESRecomp::state().error = std::string("Cannot commit mods: ") + ex.what();
+        return 0;
+    }
 }
 
 extern "C" void snes_mod_runtime_activate_plugins_c(void) {
@@ -3337,7 +3398,7 @@ extern "C" int snes_mod_runtime_effective_set_c(char* out, uint32_t cap) {
                 text += '/';
                 text += feature.id;
                 /* Options are listed under the package, not the feature, so
-                 * filter — emitting another feature's options here would make
+                 * filter â€” emitting another feature's options here would make
                  * the line depend on manifest ordering. */
                 std::map<std::string, std::string> opts;
                 for (const SNESRecomp::Option& option : package->options) {
@@ -3442,7 +3503,7 @@ extern "C" int snes_mod_runtime_package_root_c(const char* package_id,
     }
     if (!package) return 0;
 
-    const std::string root = package->root.string();
+    const std::string root = host_path_text(package->root);
     if (root.size() + 1 > cap) return 0;
     std::memcpy(out, root.c_str(), root.size() + 1);
     return 1;
