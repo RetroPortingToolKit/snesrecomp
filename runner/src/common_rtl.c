@@ -1087,7 +1087,7 @@ bool RtlLoadSnapshotFromMemory(const void *data, size_t size) {
  */
 
 #define RTL_RB_RESIDUE_MAGIC 0x53524252u /* 'RBRS' */
-#define RTL_RB_RESIDUE_VERSION 6u
+#define RTL_RB_RESIDUE_VERSION 7u
 
 typedef struct RtlRollbackResidue {
   uint32 magic;
@@ -1149,7 +1149,25 @@ typedef struct RtlRollbackResidue {
    * frame-boundary savestate (ppu_handleVblank reloads the OAM port from
    * oamaddl/oamaddh) and wrong for a mid-frame rollback. See ppu.h. */
   PpuRollbackResidue ppu_rb;
+  /* v7: the carried guest clock must rewind with the SPC port scheduler.
+   * Otherwise a load can leave reads behind the restored portGuestAnchor,
+   * preventing the SPC from advancing through a music-upload handshake. */
+  RtlApuFrameClock apu_frame_clock;
+  uint8 extended_frame_timing;
+  uint8 pad_v7[7];
 } RtlRollbackResidue;
+
+/* v6 saves predate the carried clock. Reconstruct a boundary from the saved
+ * port mapping, retaining queued writes and the actual SPC state. A latest
+ * write can be ahead of the executed SPC, so include its guest timestamp. */
+static void rtl_apu_clock_from_ports(RtlApuFrameClock *clock,
+                                      const ApuPortSched *ports, uint64_t master) {
+  uint64_t guest = ports->guestAnchor;
+  if (ports->clock > ports->targetAnchor)
+    guest += ports->clock - ports->targetAnchor;
+  if (guest < ports->lastGuest) guest = ports->lastGuest;
+  *clock = (RtlApuFrameClock){master, guest, guest, RTL_APU_CYCLES_PER_FRAME};
+}
 
 size_t RtlRollbackSnapshotBound(void) {
   /* Guest blob upper bound + residue. The guest blob is WRAM (128 KiB) +
@@ -1252,6 +1270,8 @@ static void rtl_rb_residue_capture(RtlRollbackResidue *r) {
   interp_bridge_rb_state_save(r->interp);
   r->hdma_pending_init = dma_hdma_pending_init_get(g_snes->dma);
   ppu_rb_residue_get(g_snes->ppu, &r->ppu_rb);
+  if (g_extended_frame_timing) r->apu_frame_clock = g_apu_frame_clock;
+  r->extended_frame_timing = g_extended_frame_timing;
 }
 
 static void rtl_rb_residue_apply(const RtlRollbackResidue *r) {
@@ -1270,6 +1290,10 @@ static void rtl_rb_residue_apply(const RtlRollbackResidue *r) {
   interp_bridge_rb_state_load(r->interp);
   dma_hdma_pending_init_set(g_snes->dma, r->hdma_pending_init);
   ppu_rb_residue_set(g_snes->ppu, &r->ppu_rb);
+  if (r->extended_frame_timing)
+    g_apu_frame_clock = r->apu_frame_clock;
+  else
+    rtl_apu_clock_from_ports(&g_apu_frame_clock, &r->apu_port, r->cpu.master_cycles);
 }
 
 static RtlRollbackResidue s_loaded_execution;
@@ -1289,13 +1313,15 @@ bool RtlLoadExecutionState(SaveLoadInfo *sli) {
   uint32 size = 0;
   s_loaded_execution_valid = false;
   sli->func(sli, &size, sizeof(size));
-  if (size != sizeof(s_loaded_execution)) return false;
+  bool legacy = size == offsetof(RtlRollbackResidue, apu_frame_clock);
+  if (!legacy && size != sizeof(s_loaded_execution)) return false;
   memset(&s_loaded_execution, 0, sizeof(s_loaded_execution));
-  sli->func(sli, &s_loaded_execution, sizeof(s_loaded_execution));
+  sli->func(sli, &s_loaded_execution, size);
   cx4_saveload_clock(g_snes->cart->cx4, sli);
   return s_loaded_execution_valid =
       s_loaded_execution.magic == RTL_RB_RESIDUE_MAGIC &&
-      s_loaded_execution.version == RTL_RB_RESIDUE_VERSION;
+      s_loaded_execution.version == (legacy ? 6u : RTL_RB_RESIDUE_VERSION) &&
+      s_loaded_execution.extended_frame_timing <= 1;
 }
 
 void RtlApplyExecutionState(void) {
