@@ -237,3 +237,37 @@ LLE opt-out, and close with measured and owner evidence. If a defect is
 reported, fix and recheck that affected behavior without imposing a new
 campaign/matrix. Mobile/Xbox qualification is later scoped work, not an
 additional prerequisite after owner acceptance of the Windows build.
+
+## Shared desktop frame candidate (2026-10-06, in progress)
+
+The refreshed MMX floor regenerated 4,695 AOT variants and linked successfully.
+A single 1,956-frame native SDL capture completed with audio enabled, but its
+image showed the title screen: early Start inputs did not establish gameplay.
+The corrected route now uses the title's existing 1,400-frame menu timing and
+WRAM entry conditions. It has not yet been run; no active-game gain is claimed.
+The capture's host timing placed 3,191 of 4,583 ms in final composition. Its
+329 main-thread samples were 85.41% outside the executable, so it cannot name
+an exact DLL hotspot or establish a CPU-only percentage.
+
+A concrete shared host issue exists independently of the PPU pilot: after
+drawing to a locked SDL texture, the host reads the whole frame into its frozen
+overlay snapshot. Reading mapped/write-combined memory can be costly. The
+`SNESRECOMP_FRAME_IMPL=LLE|HLE` candidate composes in cached host memory, keeps
+draw/blend/snapshot/OSD order, and uploads each row once with write-only copies.
+It changes the presentation service's private buffer placement, not guest code,
+PPU device behavior or audio synthesis. The current blend path already stages
+only when blending; HLE generalizes staging to all supported frame widths.
+LLE remains the default and the separate 8bpp pilot is LLE in both arms.
+The predeclared target is 10% whole-runtime work reduction, subject to actual
+measurement and owner acceptance. End-of-loop FPS/process-CPU telemetry is
+separate from opt-in per-stage profiling.
+
+The relevant pool for this boundary is MMX, Doom and Super Metroid. SMK and
+SMW currently own separate desktop loops and do not call this service; their
+prepared builds cannot qualify it and receive no performance claim. Doom uses
+its pinned cf01c55 framework with the same host patch; MMX and Super Metroid use
+this experiment framework with freshly generated matching code. Super Metroid
+needs the current host's UI API and explicit resolved-target argument on its
+two legacy interpreter dispatch calls. Those are floor compatibility repairs,
+not credited as renderer gains. Paired builds, active-route checks and owner
+handoffs remain pending. No screenshot/state/campaign matrix is planned.

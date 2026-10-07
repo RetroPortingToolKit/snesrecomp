@@ -1,6 +1,15 @@
 option(SNESRECOMP_EXPOSE_COVERAGE_MOD "Show the default-off Coverage Capture mod" OFF)
 add_compile_definitions(SNESRECOMP_EXPOSE_COVERAGE_MOD=$<BOOL:${SNESRECOMP_EXPOSE_COVERAGE_MOD}>)
 include(${CMAKE_CURRENT_LIST_DIR}/ppu_8bpp_backend.cmake)
+set(SNESRECOMP_FRAME_IMPL "LLE" CACHE STRING "Desktop frame composition (LLE or HLE)")
+set_property(CACHE SNESRECOMP_FRAME_IMPL PROPERTY STRINGS LLE HLE)
+if(NOT SNESRECOMP_FRAME_IMPL MATCHES "^(LLE|HLE)$")
+    message(FATAL_ERROR "SNESRECOMP_FRAME_IMPL must be LLE or HLE")
+endif()
+set_property(SOURCE "${CMAKE_CURRENT_LIST_DIR}/src/desktop/host_main.c"
+    APPEND PROPERTY COMPILE_DEFINITIONS
+    SNESRECOMP_FRAME_STAGING_HLE=$<STREQUAL:${SNESRECOMP_FRAME_IMPL},HLE>)
+message(STATUS "SNES desktop frame composition: ${SNESRECOMP_FRAME_IMPL}")
 
 # runner.cmake — shared source list for snesrecomp game projects.
 #
