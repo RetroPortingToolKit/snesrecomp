@@ -163,182 +163,77 @@ The component experiment and default-off disposition above remain unchanged.
 
 ## Execution strategy and completion gate
 
-The first new SNES work is the missing active Mode 1 production cost screen in
-Mega Man X. The September startup smoke cannot select another PPU helper.
-Reuse SMK's current route and Doom's fresh production sample; take a new screen
-only when the missing active evidence can change the implementation boundary.
-Use one production configuration per title and at most one missing active
-attribution capture per selected game for this implementation round. The earlier
-six-launch cap bounded the completed discovery pass; it is not a lifetime cap.
+Windows is the first delivery scope. Start with MMX (ordinary Mode 1), SMK
+(Mode 7/DSP-1), and Doom (Mode 3/8bpp/Super FX). Keep a functioning LLE service,
+the caller ABI, and fixed build-time selection. Small practical differences
+are allowed; complete internal-state, pixel and waveform identity are not
+universal gates. Historical completed exact tests above remain unchanged.
 
-| Workload | Bounded useful route and production-floor milestone | Role |
+### First work and replacement boundary
+
+Resolve active MMX production cost and route readiness first, reusing SMK's
+route and Doom's fresh sample. Take only a profile that answers a missing
+selection question. Pin current matched builds, compiler, ROM/firmware and
+normal presentation/audio settings; old startup measurements or executable
+presence do not qualify a new implementation.
+
+The planned renderer boundary is the shared layer-span and main/subscreen
+composition service, including windows, priority, sprites and color math,
+chosen only if the active cost can yield a useful game gain. Do not arbitrarily
+add another helper. If the evidence instead supports a broader guest/GSU/bus
+job service, declare its supported jobs, memory outputs and completion/IRQ
+consumers before coding. Doom's self samples do not independently identify a
+safe whole-job replacement or prove an 8bpp gain.
+
+| Game | Ready route / remaining gap | Delivery role |
 | --- | --- | --- |
-| Mega Man X | Stock intro-highway movement, jump/shoot, enemies and one death/retry or stage-exit transition. Record the actual active event/frame window and a short replay once. Refresh the stale September floor with current build/ROM identities and production diagnostics off. | Planned primary ordinary tiled renderer/composition service. Current active Mode 1 cost and current replay readiness are gaps; do not assume the startup percentages persist. |
-| Super Mario Kart | Reuse `tools/smk-one-player-race.txt` and the retained 5,001-frame driving/pause/GIVE UP-to-RETRY/END route from `_wt-smk-dsp1-qualification`. Its observed transition is the bounded gameplay gate; no mandatory full cup. | Mode 7/DSP-1 companion. Use maintained LLE firmware for a renderer comparison; the separate DSP-1 draft's unresolved visual/audio acceptance remains separate. |
-| Doom | Reuse `build/profile-subsample-20261006/doom/route.txt`: E1M1 entry around frame 1358, forward movement, turn/fire, pause/resume, exit at frame 2056. Baseline-final-a production SHA and native disabled-enhancement settings are recorded above. | Mode 3/8bpp/Super FX companion, or primary if the measured broader guest/GSU boundary wins selection. Audio output was off in the sample: audio/device and worker cost remain unmeasured. |
+| MMX | Stock intro-highway movement/jump/shooting on a current production pin. Refresh the stale startup floor and record a short useful route. | Planned primary renderer and playable `MegaManXSNESRecomp.exe`. |
+| SMK | Reuse `tools/smk-one-player-race.txt` and the retained 5,001-frame driving/pause/GIVE UP route; use functioning LLE DSP-1 firmware for a renderer comparison. | Mode 7 companion; separate DSP-1 draft acceptance remains separate. |
+| Doom | Reuse `build/profile-subsample-20261006/doom/route.txt`: E1M1 movement/turn/fire/pause, 2,056 frames. Audio output was off in discovery; ready normal-play builds must restore normal settings. | Mode 3/Super FX companion, or primary if a GSU service is selected. |
 
-Choose the first implementation only after the active MMX screen resolves the
-ordinary-renderer gap. The planned graphics boundary is the shared layer-span
-and main/subscreen composition service, including windows, priority, sprites
-and color math, rather than one more scalar helper. It may use native spans,
-cached decoded input or a different private renderer while preserving raster
-updates and caller output. If its recoverable cost is not useful, select the
-Doom-supported broader guest/GSU/bus job service instead: output buffers,
-completion/status/IRQ and CPU/APU-visible memory effects define that boundary.
-The fresh Doom self bins do not by themselves identify a safe whole-job HLE or
-justify deleting GSU execution. Document the concrete supported job/scene family
-and measured eligible share before coding. No implementation is chosen merely
-because a title contains an 8bpp call or a coprocessor.
-If a Super FX service becomes the selected candidate, replace the Mode 1/Mode 7
-companions with runnable Star Fox and Yoshi's Island routes that exercise that
-service. Verify their functioning floors first; MMX/SMK cannot supply Super FX
-qualification. This is a replacement three-game set, not six extra benchmark
-legs. If that narrower service is only supported by Doom, state a Doom-only
-pilot and do not promote it as a multi-game Super FX result.
+A Super FX replacement changes the three-game set to Doom, Star Fox and
+Yoshi's Island, after verifying their functioning floors and useful routes.
+This replaces companions rather than adding a matrix; unaffected MMX/SMK are
+not evidence for that service. A Doom-only job remains an explicitly narrow
+pilot, not a multi-game Super FX success.
 
-Before coding, declare the primary affected active window and useful gain
-metric. The preliminary planning target is 10% less whole active-workload
-CPU/frame work at identical useful guest progress and presentation settings,
-without worse pacing/tail behavior. This is not a universal acceptance floor
-or a promised outcome: the candidate must exceed observed noise and deliver a
-useful gain on its tested platform. Report all-thread process CPU, wall/frame
-work, pacing tails and eligible-work/dispatch coverage; separate attribution
-captures from uninstrumented timing and exclude unrelated presentation wins.
+### Focused objective checks and gain
 
-For a renderer replacement, compare raster-state/VRAM/HDMA inputs and native
-frame output through palette changes, windows, sprite priority, transparency,
-main/subscreen color math, blanking and transition scenes. Preserve guest
-register/status, DMA and IRQ/NMI consumers. For a GSU job replacement, compare
-written buffers, readback and completion/IRQ consumers plus the actual resulting
-scene. Compare same-build save/load continuation if private state changes;
-reject unsupported cross-build state before mutation. Preserve the real LLE
-build. Both builds run the bounded primary and two companion routes with
-retained checkpoints, state/event evidence and relevant short audio evidence.
-Minute policy-permitted differences need practical assessment, not automatic
-rejection or silent acceptance. No stalled guest progression or softlock passes.
+Reuse existing focused rendering or job-boundary tests. Preserve required
+buffer ownership, memory effects, raster/HDMA consumers, status, interrupts
+and completion order. Test same-build save continuation only when the change
+makes it relevant; add only a concrete missing correctness case. Crashes,
+softlocks, lost completion and save corruption are defects. Do not mandate
+checkpoint sweeps, full-state/audio matching, automated transition campaigns
+or completed games.
 
-Timing is bounded: two balanced primary pairs (ABBA), and one A/B per companion,
-with one production configuration each. Use exact-build correctness outputs
-where reusable, but separate performance-only logs from trace/hash/dump runs.
-Record cost, code size, coverage and contamination. Do not automatically repeat
-a noisy result, build a same-binary matrix or qualify every game. Inconclusive
-or unsuccessful candidates remain drafts with their evidence.
+Start with one matched same-route LLE/HLE performance pair per selected game.
+Uncapped Windows measurement is allowed; report FPS and percentage gain with
+equal useful guest progress, settings and host contention. Preserve normal
+render/audio production for normal-game claims, keeping capture diagnostics
+out of timing. Declare a useful candidate-specific gain before coding; 10% is
+a planning aim, not a universal threshold. Reverse the order only if noise or
+contradiction blocks the decision, with no automatic repetition or configuration
+matrix. Inconclusive or unsuccessful experiments remain drafts with evidence.
 
-The planned final owner handoff is the playable Windows x64
-`MegaManXSNESRecomp.exe`, stock presentation, built with the selected shared
-renderer and accompanied by exact config/build/ROM identity and the short
-highway route. The owner plays normal movement, jumps, shooting, retry and
-controls/audio feel. If cost screening instead selects the GSU service, replace
-that primary handoff explicitly with `DoomSNESRecomp.exe` and its stock E1M1
-movement/turn/fire/pause/resume route; do not claim an MMX renderer win from a
-Doom result. Only a promising measured implementation reaches subjective
-playtesting. After owner acceptance, make HLE default solely for the qualified
-platform and documented supported service scope, keep build-time LLE opt-out,
-merge and close the issue. Rejected behavior, feel or insufficient gain leaves
-LLE default and the experiment draft. Neither full campaigns nor an endless
-all-games qualification matrix are prerequisites for this scoped completion.
+Make one representative current-image sanity inspection of the new service:
+looks right, not garbled. No pixel-perfect old/new comparison is required.
+Deeper visual debugging follows an actual defect or owner report, not a preset
+image/audio audit program.
 
-## Measurement, decision and delivery protocol
+### Human validation and Windows completion
 
-Owner completion rule: establish a material game-workload gain and automated
-compatibility, then deliver the final playable build for the owner's feel check.
-After that check passes, integrate the prepared default change and close the
-scoped work. Exhaustive game coverage and completed campaigns are not additional
-completion requirements.
+After focused checks and material measured gain, package normal-paced ready
+HLE games for all three selected titles, LLE alternatives, build identities
+and simple launch instructions. Launch each ready game for the owner, one at
+a time or in a per-system batch, and ask whether it looks and plays right.
+Do not ask for launch permission again or substitute old/unqualified binaries
+for the final candidate. The owner judges ordinary movement, controls,
+graphics, sound and continued play; this practical check is the final gate.
 
-1. **Pin the workload and floor.** Use the three games and concrete routes above.
-   Build LLE and HLE from the same title/framework revisions, compiler/options,
-   ROM/firmware identities, presentation/audio settings and initial game state;
-   only the selected implementation differs. Keep the replaced LLE service
-   runnable. An old executable is discovery evidence, not a mismatched control.
-   Use native game saves or replayed inputs when private savestates cannot cross
-   builds. First resolve the named route/build gaps; do not perfect unrelated
-   hardware before replacing a functioning operation.
-   Verify that companion routes actually exercise the replacement; an unaffected
-   title is a regression control, not evidence for that HLE service. If the
-   chosen service changes, replace an unsuitable companion in the three-title
-   set instead of accumulating extra games or claiming unexercised coverage.
-2. **Attribute only what is missing.** Reuse suitable profiles and collect at
-   most one new active-workload attribution capture per selected game in this
-   implementation round. Identify the intended service's eligible dynamic work.
-   Include worker threads and external modules or report them unresolved; a
-   main-thread symbol histogram cannot supply a whole-process cost percentage.
-   Capture diagnostics separately from performance. End discovery when there
-   is enough evidence to select a useful service, not when every subsystem has
-   a profile. The earlier six-launch discovery cap applied to that completed
-   pass, not to the whole implementation/qualification program.
-3. **Choose one replacement.** Record its caller ABI, inputs, outputs, observable
-   side effects, supported operation scope, permitted tiny differences, expected
-   cost removed, and candidate-specific useful gain before coding. Implement a
-   shared service with build-time LLE/HLE selection and explicit build identity.
-   Do not stack several speculative replacements into the same comparison.
-4. **Measure equivalent active play.** Delimit a fixed gameplay window by guest
-   frames and meaningful game events, excluding boot, warmup and teardown.
-   Choose enough active work to dominate measurement granularity once, then keep
-   it fixed. Report total process CPU milliseconds per guest frame (all threads),
-   critical-path frame work, median/p95 frame time and missed presentation/audio
-   deadlines where available. Record peak memory and code size, since constrained
-   targets matter. Preserve normal renderer and audio production; a benchmark
-   that omits presentation/audio is a core-only diagnostic, not end-to-end proof.
-   The owner selected Windows first and authorized uncapping for useful
-   measurements. Prefer a finite uncapped comparison where it preserves the
-   same game, render and audio-synthesis work. Remove host frame-delay/VSync
-   waits only in isolated benchmark configuration; do not change the guest
-   timing model, resolution, effects, audio workload or HLE coverage between
-   builds. Report uncapped FPS and milliseconds/frame alongside total CPU/frame,
-   and verify completed render/audio work and game progress rather than trusting
-   a frame counter alone. A legacy benchmark that skips rendering/presentation
-   or audio remains core-only evidence; use a complete paced CPU/frame comparison
-   until that benchmark path can exercise equivalent work. Normal capped play
-   can show reduced CPU/frame even when FPS stays unchanged. Measure GPU
-   completion/queue cost when work moves there; a shorter submission call alone
-   is not a win. Keep the final owner-playtest package normally paced.
-5. **Use a fixed comparison budget.** The primary game gets LLE/HLE/HLE/LLE:
-   two order-balanced pairs, four measured executions. Each of the two companion
-   games gets one LLE/HLE pair, two executions each. That is eight measured runs
-   per candidate on one declared host/configuration, not a Cartesian matrix.
-   Reuse their progression telemetry and final outputs; take expensive milestone
-   captures outside timing, and use isolated LLE/HLE fixtures for detailed
-   contracts. Do not automatically add separate full campaigns or trace runs.
-   Keep team builds/profiling out of the timed window, record host load/power/
-   thermal conditions, and preserve every result. A noisy or contradictory result
-   stops that screen; fix an identified condition before a bounded replacement
-   measurement. Never repeat until a passing subset appears.
-6. **Decide from useful gain and compatibility.** Report both paired percentage
-   and absolute savings, with the observed pair spread. About 10% lower whole
-   active-workload CPU time is a planning aim, not a universal acceptance rule.
-   A candidate may instead solve a declared frame-budget or stutter problem.
-   Both primary pairs must show a clear consistent useful improvement beyond
-   observed noise; two pairs are not a formal confidence interval. Companion
-   single pairs screen for large regressions, not proof of zero performance
-   change. Explain any apparent regression before broadening defaults. Exact
-   promises require exact outputs; permitted approximations use a declared
-   practical image/audio/result comparison. Check input, audio, progression,
-   affected completion/IRQ consumers, transitions and relevant pause/reset/save
-   behavior. No crash, softlock, stale buffer, lost completion or save corruption
-   passes. A huge isolated kernel ratio cannot substitute for this decision.
-7. **Hand off the actual finished candidate.** Provide the named primary game as
-   a ready-to-launch normal-paced HLE package, an LLE comparison build, isolated
-   save/checkpoint setup, launch instructions and checksums/build identity. Include
-   a short before/after report, companion results and any tiny known differences.
-   Prepare the intended default-selection/integration change in the draft PR so
-   the owner tests the package intended to ship. Ask the owner to play normally
-   and assess response, motion/collision, camera/scrolling, stereo where relevant,
-   audio rhythm and continued progression. There is no prescribed full-campaign
-   completion or multi-game human test matrix. Owner rejection reopens the
-   affected behavior; fix and recheck that change before another handoff.
-8. **Finish the scoped delivery.** After owner acceptance, integrate the reviewed
-   candidate, make HLE the default for the supported titles/platform/service,
-   retain a documented build-time LLE opt-out, and record the measured and manual
-   evidence before closing the issue. Do not add unrelated qualification gates
-   after the agreed playtest. If the replacement cannot deliver material gain,
-   preserve its branch and draft PR with results, explain why, and choose a new
-   boundary deliberately; an unsuccessful experiment is not a completed system.
-
-The owner selected **Windows first; port measurements later**. Windows x64 is
-therefore the initial implementation, measurement, final-playtest and default
-scope. After automated checks, material gain and the owner's normal-paced feel
-approval, finish that Windows delivery; a mobile/Xbox port is not a new gate
-before closure. Later port work carries the winning candidate and relevant
-routes to the chosen target and measures there before claiming target savings.
-Do not multiply all hosts into the Windows discovery/comparison matrix.
+Positive feedback plus measured gain completes Windows delivery: merge,
+default HLE only for the supported service/title scope, retain build-time
+LLE opt-out, and close with measured and owner evidence. If a defect is
+reported, fix and recheck that affected behavior without imposing a new
+campaign/matrix. Mobile/Xbox qualification is later scoped work, not an
+additional prerequisite after owner acceptance of the Windows build.
