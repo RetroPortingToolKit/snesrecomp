@@ -101,3 +101,62 @@ timings would not demonstrate a benefit from this changed path. No such
 whole-title claim or softlock qualification is made here.
 
 Tracking: central Beads `beads-hr1g`, under the SNES framework epic.
+
+## Representative-workload discovery (2026-10-06)
+
+Use a three-title coverage pool: Mega Man X (ordinary tiled Mode 1), Super
+Mario Kart (Mode 7/DSP-1), and Doom (Mode 3/8bpp plus Super FX). This is not an
+automatic matrix. Reuse evidence first, with one production configuration per
+selected workload; the complete cross-system discovery pass permits at most
+six new captures total. Neither this pool nor a successful sample establishes
+exhaustive hardware, audio, game or enhancement coverage.
+
+Reused evidence:
+
+- `F:/Projects/snesrecomp/snesrecomp/build/perf/final_phaseon_20260905/summary.json`:
+  September 5 SDL3 300-frame startup smoke, SMALL history and audio-render calls
+  zero. MMX inclusive guest/PPU/present times are 118.228/24.374/161.586 ms;
+  SMW's are 81.215/58.446/145.893 ms. These stale presentation-heavy startup
+  measurements do not establish current active Mode 1 or audio priorities.
+- `F:/Projects/snesrecomp/_wt-smk-dsp1-qualification/build-lle/paired-performance/five-pairs.json`
+  and its `docs/DSP1_QUALIFICATION.md`: October 6 GCC 15.2 Release, 5,001-frame
+  driving route, median paired DSP-1 HLE throughput delta +10.9536%. Foreign
+  contention and unresolved visual/audio acceptance prevent qualification;
+  this is not subsystem attribution or an 8bpp gain.
+- `F:/Projects/snesrecomp/DoomSNESRecomp/build-validation/baseline-final-a/stderr.log`:
+  October 6 active window frames 1358-2056 (699 presentations): guest
+  2208.631 ms, raster capture 297.424 ms, composition 298.837 ms,
+  upload/present 313.839 ms, and state trace 148.652 ms. That diagnostic route
+  includes trace/dump overhead; it cannot independently isolate GSU or 8bpp.
+- Historical context, outside the selected three-title pool:
+  `FZeroRecomp/docs/HD_MODE7_PERFORMANCE.md` (September 21), recorded BS Deluxe
+  race frames 1600/1601, GCC -O3, custom-renderer medians 3.18-13.92 ms across
+  output settings. Emulation, audio, upload and display are excluded; these
+  already-realized presentation savings are not generic-core gains.
+
+One fresh bounded Doom discovery sample is preserved at
+`build/profile-subsample-20261006/doom/`: `samples.csv`, `attribution.json`,
+`samples.csv.child.log`, and `route.txt`. The production baseline executable
+SHA-256 is `02B769001365B1BFAD889EC881F9897A462E5B35C0B00F7188987AD0734F6CEC`.
+It completed 2,056 frames with child exit 0 and zero sampler errors, audio
+output off and diagnostics absent. This is the entire boot-to-gameplay route,
+not an isolated active-game window or a throughput benchmark.
+
+Of 457 samples, 194 (42.451%) are outside the executable; nearest-symbol self
+bins include `_interp_run_core` 10.284% (47 samples), `instruction.constprop.0` 6.783%,
+`bridge_bus_read` 4.595%, `run_one` 3.720%, `read_opcode` 2.845%, and
+`ppu_runLine` 2.407%. Main-thread instruction pointers are not call stacks:
+these bins cannot supply inclusive subsystem totals, identify every inlined
+helper, or cover worker/audio-device costs. Outside-module samples are not
+attributed to an engine service. Sampling perturbs execution and can alias
+periodic work; no speedup follows from it.
+
+Doom does reach the shared 8bpp renderer: its `GameDrawPpuFrame` calls the beam
+renderer, which invokes `ppu_runLine` before the line observer, and Mode 3 BG1
+calls `PpuDrawBackground_8bpp`. `DoomRendererPreparePpu` binds an OBJ overlay;
+the optional custom compositor does not bypass stock scanout. This source
+reachability is not an independent measurement of 8bpp cost. The existing
+active-window phases and new self samples support investigating a broader
+guest/GSU/bus service boundary before prioritizing 8bpp alone. That is a theory
+for the next bounded investigation, not an HLE qualification or promotion.
+The component experiment and default-off disposition above remain unchanged.
