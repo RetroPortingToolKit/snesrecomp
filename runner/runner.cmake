@@ -1,4 +1,13 @@
-set(SNESRECOMP_FRAME_IMPL "LLE" CACHE STRING "Desktop frame composition (LLE or HLE)")
+# Qualified on Windows x64; retain the reference default on other targets.
+# An explicit cache selection always wins, including an existing LLE build.
+set(_SNESRECOMP_FRAME_DEFAULT "LLE")
+string(TOLOWER "${CMAKE_SYSTEM_PROCESSOR}" _SNESRECOMP_FRAME_PROCESSOR)
+if(WIN32 AND CMAKE_SIZEOF_VOID_P EQUAL 8 AND
+   _SNESRECOMP_FRAME_PROCESSOR MATCHES "^(amd64|x86_64|x64)$")
+    set(_SNESRECOMP_FRAME_DEFAULT "HLE")
+endif()
+set(SNESRECOMP_FRAME_IMPL "${_SNESRECOMP_FRAME_DEFAULT}" CACHE STRING
+    "Desktop frame composition (LLE or HLE; Windows x64 defaults to HLE)")
 set_property(CACHE SNESRECOMP_FRAME_IMPL PROPERTY STRINGS LLE HLE)
 if(NOT SNESRECOMP_FRAME_IMPL MATCHES "^(LLE|HLE)$")
     message(FATAL_ERROR "SNESRECOMP_FRAME_IMPL must be LLE or HLE")
