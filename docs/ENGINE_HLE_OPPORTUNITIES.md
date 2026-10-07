@@ -70,4 +70,34 @@ each build, alternates six LLE/HLE pairs, checks output hashes and writes
 destination clearing, excluding fixture generation and digest computation.
 No whole-game improvement or default promotion follows from that measurement.
 
+The 2026-10-06 GCC 15.2.0 `-O3` Windows x64 screen on a Ryzen 7 9800X3D used affinity mask 4,
+2,000 synthetic frames of 224 lines per arm, one warmup each, then six
+alternating pairs. Reported component intervals were:
+
+| Pair | Order | Scalar ms | Batched ms | Time reduction |
+| --- | --- | ---: | ---: | ---: |
+| 1 | Scalar, batched | 554 | 282 | 49.10% |
+| 2 | Batched, scalar | 568 | 320 | 43.66% |
+| 3 | Scalar, batched | 534 | 289 | 45.88% |
+| 4 | Batched, scalar | 539 | 286 | 46.94% |
+| 5 | Scalar, batched | 588 | 319 | 45.75% |
+| 6 | Batched, scalar | 615 | 347 | 43.58% |
+
+Median paired component time reduction was **45.81%**; raw medians were
+561 ms and 304 ms. Every arm returned output hash `53d95e1d38490d4a`.
+The original source/current scalar/batched contract check was rerun immediately
+before timing and matched. Team benchmarks and builds were serialized; process
+snapshots were taken only at screen boundaries, so they cannot establish an
+uncontaminated host throughout the run. Foreign compiler/game processes were
+observed, including an active Super Mario World process. The standalone test
+executables were 384,542 bytes scalar and 384,030 bytes batched; these are test
+binary sizes, not linked game sizes. Treat this as a component screen,
+not a precise isolated gain estimate or a game FPS result.
+
+The experiment remains **draft and default-off**. Required next evidence is
+an actual useful 8bpp workload's share of total host cost, gameplay and transition
+qualification, and whole-title paired timing. SMW/MMX Mode 1 or SMK Mode 7
+timings would not demonstrate a benefit from this changed path. No such
+whole-title claim or softlock qualification is made here.
+
 Tracking: central Beads `beads-hr1g`, under the SNES framework epic.
