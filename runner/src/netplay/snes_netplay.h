@@ -220,6 +220,15 @@ const char *snes_netplay_refusal(void);
  * rendezvous before hard_resync. SAVE still ships async after host write.
  * Guests use saves/netplay/ so personal saves/ is never overwritten.
  * Returns 1 if netplay handled the request, 0 if offline — caller may RtlSaveLoad. */
+/* Menu actions are accepted only from seat zero at an acknowledged pause.
+ * Opening copies the host's completed frame to every peer. Guests stay frozen
+ * while the host browses; closing establishes a fresh input/rollback epoch.
+ * request/load return success, never an offline-fallback indication. */
+int snes_netplay_menu_open(void);
+int snes_netplay_menu_paused(void);
+int snes_netplay_menu_ready(void);
+int snes_netplay_menu_load(int slot);
+int snes_netplay_menu_close(void);
 int  snes_netplay_is_host(void);
 int  snes_netplay_request_save(int slot);
 int  snes_netplay_request_load(int slot);

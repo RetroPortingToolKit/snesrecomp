@@ -33,6 +33,7 @@
 #include "snes_savestate_menu.h"
 #include "snes_overlay_draw.h"
 #include "snes_osd.h"
+#include "netplay/snes_netplay.h"
 
 #include "common_rtl.h"
 #include "desktop/sdl_compat.h"
@@ -367,6 +368,8 @@ static void menu_move(int delta)
 static void menu_submit(int save)
 {
     char path[256];
+    if (snes_netplay_active() &&
+        (!snes_netplay_is_host() || !snes_netplay_menu_ready())) return;
     RtlEnsureSaveDir();
     slot_path(s_selected, path, sizeof(path));
     if (save) {
@@ -391,6 +394,15 @@ static void menu_submit(int save)
     if (!slot_exists(s_selected)) {
         set_status("SLOT %02d IS EMPTY", s_selected);
         snes_osd_push_slot_empty(s_selected);
+        return;
+    }
+    if (snes_netplay_active()) {
+        if (!snes_netplay_menu_load(s_selected)) {
+            set_status("LOAD FAILED: SLOT %02d", s_selected);
+            return;
+        }
+        /* Keep the network pause until the loaded snapshot is acknowledged. */
+        snes_savestate_menu_close();
         return;
     }
     if (!RtlLoadSnapshot(path)) {
@@ -438,6 +450,7 @@ int snes_savestate_menu_poll_open(uint32_t inputs)
         return 0;
     if ((prev & SSM_OPEN_GESTURE) == SSM_OPEN_GESTURE)
         return 0;
+    if (snes_netplay_active() && !snes_netplay_menu_open()) return 0;
     s_open = 1;
     s_status[0] = '\0';
     s_thumbs_scanned = 0;
@@ -452,6 +465,11 @@ void snes_savestate_menu_poll_nav(uint32_t inputs, uint32_t ticks_ms)
     uint32_t pressed;
     int dir;
 
+    if (snes_netplay_active() &&
+        (!snes_netplay_is_host() || !snes_netplay_menu_ready())) {
+        s_prev_inputs = inputs;
+        return;
+    }
     if (!s_open) {
         s_prev_inputs = inputs;
         return;
@@ -510,6 +528,8 @@ void snes_savestate_menu_handle_key(int key, int repeat)
 {
     int slot = -1;
 
+    if (snes_netplay_active() &&
+        (!snes_netplay_is_host() || !snes_netplay_menu_ready())) return;
     if (!s_open || repeat)
         return;
     /* SDLK_* is unsigned under SDL3 and signed under SDL2. Cast at every
