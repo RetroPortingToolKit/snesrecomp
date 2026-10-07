@@ -277,6 +277,23 @@ static double MonotonicSeconds(void) {
   return (double)SDL_GetPerformanceCounter() / SDL_GetPerformanceFrequency();
 }
 
+/* All-thread process CPU, sampled only at the runtime window boundaries. */
+static double ProcessCpuSeconds(void) {
+#ifdef _WIN32
+  FILETIME created, exited, kernel, user;
+  if (GetProcessTimes(GetCurrentProcess(), &created, &exited, &kernel, &user)) {
+    uint64_t ticks = ((uint64_t)kernel.dwHighDateTime << 32) | kernel.dwLowDateTime;
+    ticks += ((uint64_t)user.dwHighDateTime << 32) | user.dwLowDateTime;
+    return (double)ticks / 1e7;
+  }
+#elif defined(CLOCK_PROCESS_CPUTIME_ID)
+  struct timespec now;
+  if (clock_gettime(CLOCK_PROCESS_CPUTIME_ID, &now) == 0)
+    return (double)now.tv_sec + (double)now.tv_nsec / 1e9;
+#endif
+  return -1;
+}
+
 /* Opt-in wall-time diagnostics (SNESRECOMP_HOST_PROFILE=1). No guest state is
  * sampled or changed here. Values include preemption/lock waits and are not
  * CPU-time measurements. */
@@ -401,6 +418,15 @@ static int g_frozen_w, g_frozen_h;
  * frame rather than once per present. */
 static unsigned g_present_frame;
 
+#ifndef SNESRECOMP_FRAME_STAGING_HLE
+#define SNESRECOMP_FRAME_STAGING_HLE 0
+#endif
+#if defined(SNESRECOMP_HOST_HAS_BLEND) || SNESRECOMP_FRAME_STAGING_HLE
+/* Compose where reads are cheap, then upload with a write-only row copy.
+ * The frozen overlay snapshot and optional OSD/blend read this frame. */
+static uint8 g_frame_stage[kSnesDesktopMaxFrameWidth * 4 * 240];
+#endif
+
 static GamepadInfo g_gamepad[2];
 
 extern Snes *g_snes;
@@ -418,9 +444,6 @@ void snesrecomp_desktop_set_widescreen(int enabled) {
 static RecompFrameBlend *g_blend;
 /* The simulated frame whose picture the blend is currently keeping. */
 static unsigned g_blend_frame;
-/* Cached-memory staging frame: see DrawPpuFrameWithPerf. Same bound as the
- * frozen-frame copy, which is the widest field this host presents. */
-static uint8 g_blend_stage[kPpuBufWidth * 4 * 240];
 #endif
 static void FrameBlendConfigure(void) {
 #if defined(SNESRECOMP_HOST_HAS_BLEND)
@@ -1226,27 +1249,25 @@ static void DrawPpuFrameWithPerf(void) {
     return;
   }
 
-  /* Where this frame is composed. Normally the presenter's own buffer, so the
-   * frame is written straight where it is going. WHILE BLENDING it is a host
-   * staging frame instead, uploaded with one linear copy at the end.
-   *
-   * The SDL presenter hands back a LOCKED STREAMING TEXTURE and a blend is a
-   * read-modify-write. Mapped texture memory is frequently write-combined:
-   * excellent for sequential writes, pathological to read, and whether it is
-   * depends on the backend and the driver -- so blending in place is fine on
-   * one machine and ruins the frame rate on another, the shape of a bug that
-   * never reproduces for the developer. recomp_frame_blend.h says exactly
-   * this and prescribes exactly this remedy. With blending off nothing
-   * changes: the frame is composed into the presenter's buffer as before. */
+  /* LLE composes directly into the presenter's mapped buffer except while
+   * blending. HLE stages every supported frame in cached host memory: even
+   * without blending, the frozen overlay snapshot reads the whole frame.
+   * Reading a write-combined texture can dominate this service. Preserve the
+   * draw/blend/snapshot/OSD order and upload the same bytes once at the end. */
   uint8 *pixel_buffer = present_buffer;
   int pitch = present_pitch;
-#if defined(SNESRECOMP_HOST_HAS_BLEND)
+#if defined(SNESRECOMP_HOST_HAS_BLEND) || SNESRECOMP_FRAME_STAGING_HLE
   const size_t frame_bytes = (size_t)(g_snes_width * render_scale) *
                              (size_t)(g_snes_height * render_scale) * 4u;
+  bool staged = SNESRECOMP_FRAME_STAGING_HLE &&
+                frame_bytes <= sizeof(g_frame_stage);
+#if defined(SNESRECOMP_HOST_HAS_BLEND)
   const bool blending = g_config.frame_blend && g_blend &&
-                        frame_bytes <= sizeof(g_blend_stage);
-  if (blending) {
-    pixel_buffer = g_blend_stage;
+                        frame_bytes <= (size_t)kPpuBufWidth * 4u * 240u;
+  staged |= blending;
+#endif
+  if (staged) {
+    pixel_buffer = g_frame_stage;
     pitch = g_snes_width * render_scale * 4;
   }
 #endif
@@ -1400,10 +1421,10 @@ static void DrawPpuFrameWithPerf(void) {
   }
 
 
-#if defined(SNESRECOMP_HOST_HAS_BLEND)
+#if defined(SNESRECOMP_HOST_HAS_BLEND) || SNESRECOMP_FRAME_STAGING_HLE
   /* One linear, write-only copy into the presenter's buffer -- the access
    * pattern write-combined memory is good at. */
-  if (blending) {
+  if (staged) {
     const int rows = g_snes_height * render_scale;
     const int row_bytes = g_snes_width * render_scale * 4;
     for (int y = 0; y < rows; y++)
@@ -3573,6 +3594,7 @@ error_reading:;
   if (!profile_first) profile_first = 1;
   double profile_window_start = 0;
   double run_start = MonotonicSeconds();
+  const double run_cpu_start = ProcessCpuSeconds();
   uint8 audiopaused = true;
   SnesHostClock video_clock;
   double presentation_hz = WantedPresentationHz(DisplayRefresh());
@@ -4055,6 +4077,7 @@ error_reading:;
   }
 
   const double run_end = MonotonicSeconds();
+  const double run_cpu_end = ProcessCpuSeconds();
   if (state_trace) fclose(state_trace);
   if (g_frame_timings) {
     FILE *f = fopen(frame_timing_path, "w");
@@ -4077,6 +4100,11 @@ error_reading:;
   host_report_breadcrumb("video totals: simulations=%u presentations=%llu seconds=%.3f",
                          frameCtr, (unsigned long long)presentations,
                          run_end - run_start);
+  host_report_breadcrumb("frame service: implementation=%s seconds=%.9f fps=%.3f cpu_seconds=%.9f",
+      SNESRECOMP_FRAME_STAGING_HLE ? "HLE" : "LLE", run_end - run_start,
+      run_end > run_start ? frameCtr / (run_end - run_start) : 0,
+      run_cpu_start >= 0 && run_cpu_end >= run_cpu_start
+          ? run_cpu_end - run_cpu_start : -1);
   if (g_profile) {
     double profile_seconds = run_end - profile_window_start;
     host_report_breadcrumb("video profile window: first=%u last=%u seconds=%.6f presentations=%u",

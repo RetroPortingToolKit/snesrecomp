@@ -1,0 +1,82 @@
+{
+    "date":  "2026-10-07",
+    "platform":  "Windows x64; SDL video/Wasapi audio",
+    "framework_candidate":  "dd05eb50529f67fb4ff19557b7b662d38b5d33a0",
+    "titles":  {
+                   "mmx":  "98a661e8d079c204612def50a06e2bcb4359f6f0",
+                   "doom":  "d2a3b861b3e721f6fd7d8ce0dcce2c65945d7b73",
+                   "sm":  "14cfc9e0dee56f9abb7a23eb5bc85cefcd843a9a"
+               },
+    "selections":  {
+                       "frame":  [
+                                     "LLE",
+                                     "HLE"
+                                 ],
+                       "8bpp":  "LLE"
+                   },
+    "conditions":  "One LLE then HLE pair per title. Normal rendering/audio synthesis and delivery retained; frame pacing removed. Capture/host-profile off. Foreign PSX -j6 compiler activity present. No repetitions or statistical certainty claimed.",
+    "limitation":  "Measured native presentation. Owner accepted all three at normal speed with adaptive widescreen on 2026-10-07. No mobile/Xbox claim. Newer upstream title changes preserved during integration were not the measured binaries.",
+    "results":  [
+                    {
+                        "game":  "mmx",
+                        "frames":  3008,
+                        "lle_fps":  340.936,
+                        "hle_fps":  889.911,
+                        "fps_gain":  161.01995682474129,
+                        "cpu_reduction":  67.16666666666666,
+                        "lle_cpu":  9.375,
+                        "hle_cpu":  3.078125,
+                        "same_progress":  true,
+                        "lle_binary_sha256":  "b988e46aa710f68b675812bd27a057a84ef05a16968f0157e8d2dc47133607c1",
+                        "route_sha256":  "a17def7d1cc3f9f7521aa5c869bf528dde21b2891b35f5988ddd18c15158295e",
+                        "rom_file_sha256":  "152eb370f988b33291d2dddfc48abb42bfa236a08ddc7362e07dd2795e3e37d0",
+                        "hle_binary_sha256":  "3acbea468e161695e2b352e6c4a4eadabc8e948a504ac78215ebd6bee7e3cb3b",
+                        "route_scope":  "Boot, menus, and active intro-highway movement/jump/shooting"
+                    },
+                    {
+                        "game":  "doom",
+                        "frames":  2056,
+                        "lle_fps":  250.122,
+                        "hle_fps":  443.316,
+                        "fps_gain":  77.23990692542037,
+                        "cpu_reduction":  43.11926605504587,
+                        "lle_cpu":  8.515625,
+                        "hle_cpu":  4.84375,
+                        "same_progress":  true,
+                        "lle_binary_sha256":  "bbd12d2d5cc2c8a905151f43a812f0028b5e2eec4dc4d24ce975bf2e79fc2595",
+                        "route_sha256":  "8aa841fc5e843ad746826f35bf7eef640747ebe34e554f4dc2965c970db3d5b5",
+                        "rom_file_sha256":  "d45e26eb10c323ecd480e5f2326b223e29264c3adde67f48f0d2791128e519e8",
+                        "hle_binary_sha256":  "15035f047ad455efdde9630f9c332b26b74e12784a4943811a6507311eefad97",
+                        "route_scope":  "Boot, menus, and E1M1 movement/turn/fire/pause-resume"
+                    },
+                    {
+                        "game":  "sm",
+                        "frames":  3600,
+                        "lle_fps":  427.737,
+                        "hle_fps":  1259.308,
+                        "fps_gain":  194.41175301645637,
+                        "cpu_reduction":  66.66666666666667,
+                        "lle_cpu":  8.859375,
+                        "hle_cpu":  2.953125,
+                        "same_progress":  true,
+                        "lle_binary_sha256":  "c0949a8344dd64bd5298f41966875b3fa84e2aab405058c92095eee5b248b1f8",
+                        "route_sha256":  "548592bd2b8b0afa7695d63c7e87df16a3099de97e27189c7470a349c3970135",
+                        "rom_file_sha256":  "12b77c4bc9c1832cee8881244659065ee1d84c70c3d29e6eaf92e6798cc2ca72",
+                        "hle_binary_sha256":  "9b385af47b14e8c7f309713b14aa38a94ebf5099160bda57fc26687d98890790",
+                        "route_scope":  "Cold boot/title and natural attract-mode gameplay; not player-controlled campaign"
+                    }
+                ],
+    "evidence":  "F:\\Projects\\snesrecomp\\_wt-ppu-tile-batch-hle\\build\\frame-service-qualification",
+    "doom_framework_base":  "cf01c554f6745edcd197fd6c363ca350f6a40c77",
+    "doom_tested_frame_patch_commit":  "3a38927faa227a50ec840e6e9826b92eab769951",
+    "floor_overlays":  {
+                           "doom":  "Respect external RECOMP_UI_ROOT CMake cache selection instead of FORCE",
+                           "sm":  "Pass false for already-resolved interpreter dispatch targets (new API argument)"
+                       },
+    "review_source_overlays":  "F:/Projects/_hle-review-20261006/snes/source-overlays",
+    "owner_acceptance":  {
+                             "mmx":  "yes mmx is good",
+                             "doom":  "doom is ok",
+                             "sm":  "super metroid works fine as well."
+                         }
+}

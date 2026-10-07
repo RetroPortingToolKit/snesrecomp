@@ -1,3 +1,21 @@
+# Qualified on Windows x64; retain the reference default on other targets.
+# An explicit cache selection always wins, including an existing LLE build.
+set(_SNESRECOMP_FRAME_DEFAULT "LLE")
+string(TOLOWER "${CMAKE_SYSTEM_PROCESSOR}" _SNESRECOMP_FRAME_PROCESSOR)
+if(WIN32 AND CMAKE_SIZEOF_VOID_P EQUAL 8 AND
+   _SNESRECOMP_FRAME_PROCESSOR MATCHES "^(amd64|x86_64|x64)$")
+    set(_SNESRECOMP_FRAME_DEFAULT "HLE")
+endif()
+set(SNESRECOMP_FRAME_IMPL "${_SNESRECOMP_FRAME_DEFAULT}" CACHE STRING
+    "Desktop frame composition (LLE or HLE; Windows x64 defaults to HLE)")
+set_property(CACHE SNESRECOMP_FRAME_IMPL PROPERTY STRINGS LLE HLE)
+if(NOT SNESRECOMP_FRAME_IMPL MATCHES "^(LLE|HLE)$")
+    message(FATAL_ERROR "SNESRECOMP_FRAME_IMPL must be LLE or HLE")
+endif()
+set_property(SOURCE "${CMAKE_CURRENT_LIST_DIR}/src/desktop/host_main.c"
+    APPEND PROPERTY COMPILE_DEFINITIONS
+    SNESRECOMP_FRAME_STAGING_HLE=$<STREQUAL:${SNESRECOMP_FRAME_IMPL},HLE>)
+message(STATUS "SNES desktop frame composition: ${SNESRECOMP_FRAME_IMPL}")
 option(SNESRECOMP_EXPOSE_COVERAGE_MOD "Show the default-off Coverage Capture mod" OFF)
 add_compile_definitions(SNESRECOMP_EXPOSE_COVERAGE_MOD=$<BOOL:${SNESRECOMP_EXPOSE_COVERAGE_MOD}>)
 
