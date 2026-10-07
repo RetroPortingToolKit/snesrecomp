@@ -66,5 +66,12 @@
       "route_scope": "Cold boot/title and natural attract-mode gameplay; not player-controlled campaign"
     }
   ],
-  "evidence": "F:\\Projects\\snesrecomp\\_wt-ppu-tile-batch-hle\\build\\frame-service-qualification"
+  "evidence": "F:\\Projects\\snesrecomp\\_wt-ppu-tile-batch-hle\\build\\frame-service-qualification",
+  "doom_framework_base": "cf01c554f6745edcd197fd6c363ca350f6a40c77",
+  "doom_tested_frame_patch_commit": "3a38927faa227a50ec840e6e9826b92eab769951",
+  "floor_overlays": {
+    "doom": "Respect external RECOMP_UI_ROOT CMake cache selection instead of FORCE",
+    "sm": "Pass false for already-resolved interpreter dispatch targets (new API argument)"
+  },
+  "review_source_overlays": "F:/Projects/_hle-review-20261006/snes/source-overlays"
 }
