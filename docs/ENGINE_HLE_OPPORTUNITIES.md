@@ -238,13 +238,14 @@ reported, fix and recheck that affected behavior without imposing a new
 campaign/matrix. Mobile/Xbox qualification is later scoped work, not an
 additional prerequisite after owner acceptance of the Windows build.
 
-## Shared desktop frame candidate (2026-10-06, in progress)
+## Shared desktop frame candidate (2026-10-07, ready for owner play)
 
 The refreshed MMX floor regenerated 4,695 AOT variants and linked successfully.
 A single 1,956-frame native SDL capture completed with audio enabled, but its
 image showed the title screen: early Start inputs did not establish gameplay.
-The corrected route now uses the title's existing 1,400-frame menu timing and
-WRAM entry conditions. It has not yet been run; no active-game gain is claimed.
+The corrected route uses the title's existing 1,400-frame menu timing and
+WRAM entry conditions. It completed 3,008 frames and reached the highway;
+the terminal image is coherent gameplay.
 The capture's host timing placed 3,191 of 4,583 ms in final composition. Its
 329 main-thread samples were 85.41% outside the executable, so it cannot name
 an exact DLL hotspot or establish a CPU-only percentage.
@@ -269,5 +270,39 @@ its pinned cf01c55 framework with the same host patch; MMX and Super Metroid use
 this experiment framework with freshly generated matching code. Super Metroid
 needs the current host's UI API and explicit resolved-target argument on its
 two legacy interpreter dispatch calls. Those are floor compatibility repairs,
-not credited as renderer gains. Paired builds, active-route checks and owner
-handoffs remain pending. No screenshot/state/campaign matrix is planned.
+not credited as renderer gains.
+
+One native-presentation, uncapped SDL pair per title completed with equal
+simulation and presentation counts, audio enabled and capture diagnostics off:
+
+| Route | Frames | LLE FPS | HLE FPS | FPS gain | Process CPU reduction |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| MMX boot/menu/intro highway | 3,008 | 340.936 | 889.911 | 161.02% | 67.17% |
+| Doom boot/menu/E1M1 movement/fire/pause | 2,056 | 250.122 | 443.316 | 77.24% | 43.12% |
+| Super Metroid cold boot/title/natural gameplay demo | 3,600 | 427.737 | 1,259.308 | 194.41% | 66.67% |
+
+These are whole-route results, not isolated active-level timing. Super Metroid
+used its built-in attract gameplay rather than a player-driven campaign. A
+foreign PSX compile was active throughout; the large gains and process CPU
+reductions support this host-memory fix, but are not precise universal ratios.
+No reverse pair was warranted. The renderer/driver can affect the benefit;
+mobile and Xbox measurements remain separate future work.
+
+Existing MMX terminal WRAM/VRAM/CGRAM/OAM artifacts match across the two
+implementations. Review of the service preserves buffer bounds, row pitch and
+draw/blend/snapshot/OSD ordering. One actual HLE composed presentation captured
+with adaptive widescreen is coherent, with clean stage margins. This is a
+basic sanity check, not a pixel-perfect image campaign or owner acceptance.
+Binary/ROM/route hashes and exact numbers are in
+[the evidence record](qualification/frame-service-windows-20261007.json).
+Local raw logs and finite routes are under
+`build/frame-service-qualification/` in this experiment worktree.
+
+Normal-paced adaptive review builds and LLE alternatives are staged in
+`F:/Projects/_hle-review-20261006/snes/`. `Play.ps1 -Game mmx|doom|sm`
+selects HLE by default for this private review launcher; `-Implementation LLE`
+selects the separately built reference. It checks binary identity, uses
+separate review configs, and supplies no benchmark/replay inputs. Source
+builds still default to LLE. The owner is away: do not launch or request
+immediate feedback. Framework PR 151 remains draft until the owner has judged
+normal play. No screenshot/state/campaign matrix is needed.
