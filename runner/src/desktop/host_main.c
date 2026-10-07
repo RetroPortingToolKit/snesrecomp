@@ -3226,6 +3226,15 @@ int snesrecomp_desktop_main(const SnesDesktopHostGame *game, int argc, char **ar
           if (rom_path_buf[0]) {
             snesrecomp_rom_cache_write(rom_path_buf);
             rom_resolved_by_launcher = 1;
+          } else {
+            /* PLAY is gated on a verified ROM, so LAUNCH without one is a
+             * launcher bug. Never answer it with the console file picker: for
+             * a lobby launch the match has already started on the other
+             * peers, and a dialog here is a prompt after PLAY. */
+            fprintf(stderr, "launcher: LAUNCH returned without a ROM path%s; "
+                            "refusing to fall back to a file picker\n",
+                    ls.netplay_launch.enabled ? " (netplay match)" : "");
+            return 1;
           }
         }
         /* UNAVAILABLE (assets or GL missing) -> console resolver below */
