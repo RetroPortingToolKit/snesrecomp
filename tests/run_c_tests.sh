@@ -166,6 +166,7 @@ echo "=== DSP-1 bus/core shell ==="
 
 "$CC" -std=c11 -Wall -Wextra -Werror -O1 \
     -I "$ROOT/runner/src" -I "$ROOT/runner/src/snes" \
+    -DSNESRECOMP_DSP1_HLE=1 \
     "$ROOT/tests/dsp1/dsp1_hle_host_test.c" \
     "$ROOT/runner/src/snes/dsp1.c" \
     "$ROOT/runner/src/snes/dsp1_hle.c" \

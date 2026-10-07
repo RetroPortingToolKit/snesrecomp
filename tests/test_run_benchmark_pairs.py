@@ -22,6 +22,43 @@ def load_module():
     return mod
 
 
+def test_per_arm_arguments_preserve_argv_boundaries():
+    mod = load_module()
+    args = mod.parse_args([
+        "--frames", "60", "--a-exe", "a.exe", "--a-rom", "a.sfc",
+        "--b-exe", "b.exe", "--b-rom", "b.sfc",
+        "--a-arg=--input-file", "--a-arg", "race route with spaces.txt",
+        "--b-arg=--input", "--b-arg", "2400:100:0100",
+    ])
+    assert args.a_arg == ["--input-file", "race route with spaces.txt"]
+    assert args.b_arg == ["--input", "2400:100:0100"]
+    calls = []
+    old_run = mod.subprocess.run
+
+    def fake_run(cmd, **kwargs):
+        calls.append(cmd)
+        return subprocess.CompletedProcess(
+            cmd, 0, stdout='SNESRECOMP_BENCHMARK '
+            '{"frames":60,"seconds":0.25,"fps":240.0}\n', stderr="")
+
+    mod.subprocess.run = fake_run
+    try:
+        for side, extra in (("A", args.a_arg), ("B", args.b_arg)):
+            record = mod.run_one(side, pathlib.Path("game.exe"),
+                                 pathlib.Path("game.sfc"), 60, False,
+                                 pathlib.Path("."), 3.5, side, extra)
+            assert record["command"][4:] == extra
+    finally:
+        mod.subprocess.run = old_run
+    assert calls[0][4:] == args.a_arg
+    assert calls[1][4:] == args.b_arg
+    defaults = mod.parse_args([
+        "--frames", "60", "--a-exe", "a.exe", "--a-rom", "a.sfc",
+        "--b-exe", "b.exe", "--b-rom", "b.sfc",
+    ])
+    assert defaults.a_arg == defaults.b_arg == []
+
+
 def load_same_path_module():
     spec = importlib.util.spec_from_file_location("run_same_path_benchmark_control",
                                                   SAME_PATH_SCRIPT)

@@ -2,9 +2,9 @@
  * Nintendo DSP-1 / NEC uPD7725 coprocessor.
  *
  * This is an instruction-level C11 port of ares' uPD96050 core restricted to
- * the uPD7725 geometry used by DSP-1/DSP-1B. Firmware is not included. When
- * an external 8192-byte dump is unavailable, the verified command-level HLE
- * model handles supported software and fails loudly on any unknown command.
+ * the uPD7725 geometry used by DSP-1/DSP-1B. Firmware is not included. The
+ * build selects either this firmware-dependent LLE floor or the verified
+ * command-level HLE model, which fails loudly on any unknown command.
  */
 
 #include "dsp1.h"
@@ -536,7 +536,7 @@ static void dsp1_hle_fail(Dsp1 *d, uint8_t command) {
   dsp1_hle_dump_host_trace(d);
   fprintf(stderr,
           "[dsp1] HLE stopped on unsupported or invalid command %02x; "
-          "provide DSP-1 firmware to continue\n",
+          "rebuild with SNESRECOMP_DSP1_IMPL=LLE and provide firmware\n",
           command);
 }
 
@@ -664,7 +664,10 @@ static void dsp1_hle_write_data(Dsp1 *d, uint8_t value) {
 
 Dsp1 *dsp1_create(void) {
   Dsp1 *d = (Dsp1 *)calloc(1, sizeof(Dsp1));
-  if (d) dsp1_reset(d);
+  if (d) {
+    d->hle_active = SNESRECOMP_DSP1_HLE;
+    dsp1_reset(d);
+  }
   return d;
 }
 
@@ -892,7 +895,15 @@ static int dsp1_load_firmware_file(Dsp1 *d, const char *path) {
 int dsp1_load_firmware(Dsp1 *d, const char *rom_path) {
   if (!d) return 0;
   d->firmware_ok = 0;
-  d->hle_active = 0;
+  d->hle_active = SNESRECOMP_DSP1_HLE;
+  fprintf(stderr, "[dsp1] implementation=%s (build-fixed)\n",
+          dsp1_build_implementation());
+  if (SNESRECOMP_DSP1_HLE) {
+    dsp1_reset(d);
+    fprintf(stderr, "[dsp1] firmware inputs ignored by HLE build; "
+                    "unverified commands stop execution.\n");
+    return 0;
+  }
 
   const char *env = getenv("SNESRECOMP_DSP1_ROM");
   if (env && env[0] && dsp1_load_firmware_file(d, env)) return 1;
@@ -921,12 +932,16 @@ int dsp1_load_firmware(Dsp1 *d, const char *rom_path) {
     }
   }
 
-  d->hle_active = 1;
   dsp1_reset(d);
   fprintf(stderr,
-          "[dsp1] no firmware found; using firmware-free HLE. "
-          "Unverified commands stop execution and request firmware.\n");
+          "[dsp1] LLE build requires an 8192-byte DSP-1 firmware image. "
+          "Set SNESRECOMP_DSP1_ROM or place dsp1b.rom/dsp1.rom nearby. "
+          "DSP-1 will not execute without firmware.\n");
   return 0;
+}
+
+const char *dsp1_build_implementation(void) {
+  return SNESRECOMP_DSP1_HLE ? "HLE" : "LLE";
 }
 
 int dsp1_firmware_loaded(const Dsp1 *d) { return d ? d->firmware_ok : 0; }
