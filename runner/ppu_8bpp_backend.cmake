@@ -1,0 +1,12 @@
+# The scalar renderer remains the default/reference implementation.
+set(SNESRECOMP_PPU_8BPP_IMPL "LLE" CACHE STRING "8bpp tiled renderer (LLE or HLE)")
+set_property(CACHE SNESRECOMP_PPU_8BPP_IMPL PROPERTY STRINGS LLE HLE)
+string(TOUPPER "${SNESRECOMP_PPU_8BPP_IMPL}" _ppu_8bpp_impl)
+if(_ppu_8bpp_impl STREQUAL "HLE")
+  add_compile_definitions(SNESRECOMP_PPU_8BPP_HLE=1)
+elseif(_ppu_8bpp_impl STREQUAL "LLE")
+  add_compile_definitions(SNESRECOMP_PPU_8BPP_HLE=0)
+else()
+  message(FATAL_ERROR "SNESRECOMP_PPU_8BPP_IMPL must be LLE or HLE")
+endif()
+message(STATUS "SNES 8bpp tiled renderer: ${_ppu_8bpp_impl}")
