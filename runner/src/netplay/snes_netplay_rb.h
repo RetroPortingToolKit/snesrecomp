@@ -110,6 +110,10 @@ void snes_netplay_rb_stage_local(uint16_t buttons);
 
 /* Diagnostics for the facade's net_diag / OSD. */
 uint32_t snes_netplay_rb_sim_tick(void);
+/* Session hold (rnet_rb_driver_set_hold): every peer stops on one tick. */
+void snes_netplay_rb_set_hold(uint32_t tick);
+void snes_netplay_rb_clear_hold(void);
+int snes_netplay_rb_hold_settled(void);
 uint32_t snes_netplay_rb_episode_count(void);
 uint32_t snes_netplay_rb_invent_count(void);
 uint32_t snes_netplay_rb_promote_count(void);

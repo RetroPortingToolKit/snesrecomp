@@ -2346,45 +2346,98 @@ static void host_lobby_ensure_init(void) {
     fprintf(stderr, "netplay: snes_host_lobby_init failed\n");
 }
 
+/* Self-test evidence: the menu panel this peer shows, as a BMP. */
+static void NetplayMenuSelftestShot(const char *who, int serial) {
+  const char *dir = getenv("SNES_NET_MENU_SELFTEST_SHOTS");
+  const uint32_t *px = NULL;
+  int w = 0, h = 0;
+  char path[512];
+  FILE *f;
+  if (!dir || !snes_savestate_menu_overlay_image(&px, &w, &h) || !px) return;
+  snprintf(path, sizeof(path), "%s/menu-%s-%d.bmp", dir, who, serial);
+  if (!(f = fopen(path, "wb"))) return;
+  uint32_t bytes = (uint32_t)(w * h * 4);
+  uint32_t hdr[13] = {54 + bytes, 0, 54, 40, (uint32_t)w, (uint32_t)-h, 0x200001, 0, bytes, 0, 0, 0, 0};
+  fwrite("BM", 1, 2, f); fwrite(hdr, sizeof(hdr), 1, f); fwrite(px, bytes, 1, f); fclose(f);
+}
+
 /* Explicit desktop integration test; the harness uses private installations.
- * Exercise the actual browser, including a save, load and cancel. */
+ * Exercises the synchronized menu: save, load and cancel, each opened on one
+ * agreed frame, with the guest mirroring the host and refused as a driver. */
 static void NetplayMenuSelftest(uint32_t frame) {
-  static int enabled = -1, phase, hold;
-  if (enabled < 0) enabled = HostGetenv("SNES_NET_MENU_SELFTEST") != NULL;
+  static int enabled = -1, phase, wait, mirror_logged;
+  static uint32_t hold_ms = 1000, idle_since;
+  static uint32_t resumed_at;
+  if (enabled < 0) {
+    const char *hold = getenv("SNES_NET_MENU_SELFTEST_HOLD_MS"); /* time in each menu */
+    enabled = getenv("SNES_NET_MENU_SELFTEST") != NULL; /* like every SNES_NET_* knob */
+    if (hold && atoi(hold) > 0) hold_ms = (uint32_t)atoi(hold);
+  }
   if (!enabled) return;
   if (!snes_netplay_is_host()) {
     if (!phase && frame >= 30) {
-      if (snes_netplay_menu_open() || snes_netplay_menu_load(11) || snes_netplay_menu_close())
+      if (snes_netplay_menu_open() || snes_netplay_menu_save(11) || snes_netplay_menu_load(11) ||
+          snes_netplay_menu_close())
         abort(); /* The harness requires a clean exit and the refusal marker. */
       fprintf(stderr, "[netplay_menu_test] guest actions refused\n");
       phase = 1;
     }
+    if (snes_savestate_menu_is_open() && !mirror_logged) {
+      fprintf(stderr, "[netplay_menu_test] guest mirror open frame=%u\n", frame);
+      mirror_logged = 1;
+      wait = 0;
+    } else if (mirror_logged == 1 && snes_savestate_menu_is_open() &&
+               snes_savestate_menu_selected() == 11) {
+      /* The host's cursor has arrived: the mirror shows its slot 12. */
+      NetplayMenuSelftestShot("guest", ++phase);
+      mirror_logged = 2;
+    } else if (!snes_savestate_menu_is_open()) {
+      mirror_logged = 0;
+    }
     return;
   }
-  if ((phase == 0 && frame >= 60) || (phase == 2 && frame >= 120) ||
-      (phase == 4 && frame >= 180)) {
+  switch (phase) {
+  case 0: case 3: case 6: /* open, 60 frames after the previous resume */
+    if (frame < (phase ? resumed_at + 60 : 60) || snes_netplay_menu_paused()) return;
     (void)snes_savestate_menu_poll_open(0);
     if (snes_savestate_menu_poll_open(SNES_PAD_SELECT | SNES_PAD_R)) {
       ++phase;
-      hold = 0;
+      wait = 0;
     }
-  } else if ((phase == 1 || phase == 3 || phase == 5) && snes_netplay_menu_ready()) {
-    /* Stay paused for many host pumps so the guest has time to try inputs. */
-    if (++hold < 60) return;
+    return;
+  case 1: case 4: case 7:
+    /* Stay paused a while: the guest tries inputs, and a long hold proves a
+     * paused match stays connected. */
+    if (!snes_netplay_menu_idle()) { wait = 0; return; }
+    if (!wait++) idle_since = SDL_GetTicks();
+    if (SDL_GetTicks() - idle_since < hold_ms) return;
+    if (phase == 7) {
+      snes_savestate_menu_handle_key(SDLK_ESCAPE, 0);
+      fprintf(stderr, "[netplay_menu_test] action=cancel frame=%u\n", frame);
+      phase = 8;
+      return;
+    }
     snes_savestate_menu_handle_key(SDLK_EQUALS, 0); /* slot 12 */
     snes_savestate_menu_poll_nav(0, SDL_GetTicks());
-    if (phase == 1) {
-      snes_savestate_menu_poll_nav(SNES_PAD_X, SDL_GetTicks());
-      snes_savestate_menu_poll_nav(0, SDL_GetTicks());
-      snes_savestate_menu_poll_nav(SNES_PAD_B, SDL_GetTicks());
-    } else if (phase == 3) {
-      snes_savestate_menu_poll_nav(SNES_PAD_A, SDL_GetTicks());
-    } else {
-      snes_savestate_menu_handle_key(SDLK_ESCAPE, 0);
-    }
-    fprintf(stderr, "[netplay_menu_test] action=%s frame=%u\n",
-            phase == 1 ? "save" : phase == 3 ? "load" : "cancel", frame);
+    NetplayMenuSelftestShot("host", phase);
+    snes_savestate_menu_poll_nav(phase == 1 ? SNES_PAD_X : SNES_PAD_A, SDL_GetTicks());
+    snes_savestate_menu_poll_nav(0, SDL_GetTicks());
+    fprintf(stderr, "[netplay_menu_test] action=%s frame=%u\n", phase == 1 ? "save" : "load", frame);
     ++phase;
+    return;
+  case 2: /* close once every peer has verified the save */
+    if (!snes_netplay_menu_idle()) return;
+    snes_savestate_menu_poll_nav(SNES_PAD_B, SDL_GetTicks());
+    snes_savestate_menu_poll_nav(0, SDL_GetTicks());
+    phase = 9;
+    return;
+  case 5: case 8: case 9: /* wait for the resume */
+    if (snes_netplay_menu_paused()) return;
+    resumed_at = frame;
+    phase = phase == 9 ? 3 : phase == 5 ? 6 : 10;
+    return;
+  default:
+    return;
   }
 }
 

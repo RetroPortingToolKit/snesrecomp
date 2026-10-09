@@ -48,6 +48,7 @@ extern "C" {
 #define SNES_SSM_H 448
 
 int  snes_savestate_menu_is_open(void);
+int  snes_savestate_menu_selected(void);
 
 /* Mask out any button that was still held when the menu closed, until it is
  * released. Call once per frame on seat 0's word and pass the result to both
@@ -79,6 +80,15 @@ void snes_savestate_menu_note_frame(const uint32_t *fb, int w, int h);
 /* The rasterized panel, ARGB8888, SNES_SSM_W x SNES_SSM_H. Returns 0 and
  * nulls the outputs when the menu is closed. */
 int  snes_savestate_menu_overlay_image(const uint32_t **pixels, int *w, int *h);
+
+/* Netplay's synchronized pause menu (snes_netplay.c) drives these on every
+ * peer. On a guest the menu is a read-only mirror of the host's. */
+void snes_savestate_menu_netplay_show(void);
+void snes_savestate_menu_netplay_hide(void);
+void snes_savestate_menu_netplay_cursor(int slot);
+void snes_savestate_menu_netplay_status(const char *fmt, int slot);
+/* Write the current state and thumbnail to `slot` on this peer. */
+int  snes_savestate_menu_netplay_write_slot(int slot);
 
 #ifdef __cplusplus
 }

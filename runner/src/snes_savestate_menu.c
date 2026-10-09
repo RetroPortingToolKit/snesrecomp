@@ -80,6 +80,8 @@
 
 
 static int s_open;
+/* Netplay guest: a read-only mirror of the host's menu. */
+static int s_mirror;
 static int s_selected;
 static int s_dirty = 1;
 static uint32_t s_panel[SSM_W * SSM_H];
@@ -338,8 +340,11 @@ static void rasterize_panel(void)
     draw_snes_button(s_panel, 212, 398, 'B', 0xFFFF6B6Bu);
     draw_text(s_panel, 236, 402, "BACK", 0xFFE2E5EBu, 1);
     draw_text(s_panel, 316, 402, "UP DOWN SLOT", 0xFF7F8796u, 1);
-    draw_text(s_panel, 20, 422, "KEYS: ARROWS SLOT  X LOAD  S SAVE  ESC BACK  1-9 JUMP",
-              0xFFB8BDC8u, 1);
+    if (s_mirror)
+        draw_text(s_panel, 20, 422, "NETPLAY: THE HOST CONTROLS THIS MENU", 0xFFB8BDC8u, 1);
+    else
+        draw_text(s_panel, 20, 422, "KEYS: ARROWS SLOT  X LOAD  S SAVE  ESC BACK  1-9 JUMP",
+                  0xFFB8BDC8u, 1);
     if (s_status[0])
         draw_text(s_panel, 20, 436, s_status, 0xFFFFD24Du, 1);
 
@@ -363,23 +368,47 @@ static void menu_move(int delta)
         s_selected -= SSM_SLOTS;
     s_status[0] = '\0';
     s_dirty = 1;
+    snes_netplay_menu_cursor(s_selected); /* every peer shows the host's cursor */
+}
+
+/* The state and thumbnail of `slot`, written on this peer. */
+static int write_slot(int slot)
+{
+    char path[256];
+    RtlEnsureSaveDir();
+    slot_path(slot, path, sizeof(path));
+    if (!RtlSaveSnapshot(path))
+        return 0;
+    if (s_have_live_thumb)
+        write_thumb(slot, s_live_thumb);
+    refresh_thumbs();
+    return 1;
 }
 
 static void menu_submit(int save)
 {
     char path[256];
-    if (snes_netplay_active() &&
-        (!snes_netplay_is_host() || !snes_netplay_menu_ready())) return;
+    if (snes_netplay_active()) {
+        /* Every peer saves or loads in step; netplay reports the result. */
+        if (!snes_netplay_is_host() || !snes_netplay_menu_ready()) return;
+        if (!save && !slot_exists(s_selected)) {
+            set_status("SLOT %02d IS EMPTY", s_selected);
+            return;
+        }
+        if (save ? snes_netplay_menu_save(s_selected) : snes_netplay_menu_load(s_selected))
+            set_status(save ? "SAVING SLOT %02d ON EVERY PEER" : "LOADING SLOT %02d ON EVERY PEER",
+                       s_selected);
+        else
+            set_status("BUSY - TRY AGAIN: SLOT %02d", s_selected);
+        return;
+    }
     RtlEnsureSaveDir();
     slot_path(s_selected, path, sizeof(path));
     if (save) {
-        if (!RtlSaveSnapshot(path)) {
+        if (!write_slot(s_selected)) {
             set_status("SAVE FAILED: SLOT %02d", s_selected);
             return;
         }
-        if (s_have_live_thumb)
-            write_thumb(s_selected, s_live_thumb);
-        refresh_thumbs();
         /* Deliberately stays open after a save, where psxrecomp closes.
          * The freshly written thumbnail appearing in the row is the only
          * direct evidence a player gets that the state was actually
@@ -394,15 +423,6 @@ static void menu_submit(int save)
     if (!slot_exists(s_selected)) {
         set_status("SLOT %02d IS EMPTY", s_selected);
         snes_osd_push_slot_empty(s_selected);
-        return;
-    }
-    if (snes_netplay_active()) {
-        if (!snes_netplay_menu_load(s_selected)) {
-            set_status("LOAD FAILED: SLOT %02d", s_selected);
-            return;
-        }
-        /* Keep the network pause until the loaded snapshot is acknowledged. */
-        snes_savestate_menu_close();
         return;
     }
     if (!RtlLoadSnapshot(path)) {
@@ -421,13 +441,74 @@ int snes_savestate_menu_is_open(void)
     return s_open;
 }
 
-void snes_savestate_menu_close(void)
+int snes_savestate_menu_selected(void)
+{
+    return s_selected;
+}
+
+static void close_local(void)
 {
     s_open = 0;
+    s_mirror = 0;
     s_repeat_dir = 0;
     s_input_guard = s_prev_inputs;
     s_status[0] = '\0';
     s_dirty = 1;
+}
+
+void snes_savestate_menu_close(void)
+{
+    /* In netplay the menu closes on every peer together: the host asks, and
+     * netplay hides it everywhere once every peer has resumed. A guest
+     * cannot close the host's menu. */
+    if (snes_netplay_active() && snes_netplay_menu_paused()) {
+        if (snes_netplay_is_host())
+            (void)snes_netplay_menu_close();
+        return;
+    }
+    close_local();
+}
+
+void snes_savestate_menu_netplay_show(void)
+{
+    if (!s_open) {
+        s_open = 1;
+        s_repeat_dir = 0;
+        s_status[0] = '\0';
+    }
+    s_mirror = !snes_netplay_is_host();
+    s_thumbs_scanned = 0;
+    s_dirty = 1;
+    if (!s_mirror)
+        snes_netplay_menu_cursor(s_selected);
+}
+
+void snes_savestate_menu_netplay_hide(void)
+{
+    if (s_open)
+        close_local();
+}
+
+void snes_savestate_menu_netplay_cursor(int slot)
+{
+    if (slot < 0 || slot >= SSM_SLOTS)
+        return;
+    s_selected = slot;
+    s_status[0] = '\0';
+    s_dirty = 1;
+}
+
+void snes_savestate_menu_netplay_status(const char *fmt, int slot)
+{
+    s_thumbs_scanned = 0; /* a slot file or its thumbnail may have changed */
+    set_status(fmt, slot);
+}
+
+int snes_savestate_menu_netplay_write_slot(int slot)
+{
+    if (slot < 0 || slot >= SSM_SLOTS)
+        return 0;
+    return write_slot(slot);
 }
 
 uint32_t snes_savestate_menu_filter_guest_input(uint32_t inputs)
@@ -452,7 +533,10 @@ int snes_savestate_menu_poll_open(uint32_t inputs)
         return 0;
     if (snes_netplay_active() && !snes_netplay_menu_open()) return 0;
     s_open = 1;
+    s_mirror = 0;
     s_status[0] = '\0';
+    if (snes_netplay_active())
+        snprintf(s_status, sizeof(s_status), "PAUSING EVERY PEER ON ONE FRAME...");
     s_thumbs_scanned = 0;
     s_repeat_dir = 0;
     s_dirty = 1;
@@ -551,12 +635,16 @@ void snes_savestate_menu_handle_key(int key, int repeat)
     s_selected = slot;
     s_status[0] = '\0';
     s_dirty = 1;
+    snes_netplay_menu_cursor(s_selected);
 }
 
 void snes_savestate_menu_note_frame(const uint32_t *fb, int w, int h)
 {
     int x, y;
-    if (!fb || w <= 0 || h <= 0 || s_open)
+    /* A netplay host's menu opens before every peer has run to the pause
+     * frame; keep sampling until then so the thumbnail shows that frame. */
+    if (!fb || w <= 0 || h <= 0 ||
+        (s_open && !(snes_netplay_active() && !snes_netplay_menu_ready())))
         return;
     for (y = 0; y < SSM_THUMB_H; y++) {
         const uint32_t *row = fb + (size_t)(y * h / SSM_THUMB_H) * (size_t)w;

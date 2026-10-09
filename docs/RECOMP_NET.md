@@ -329,7 +329,34 @@ Rules that matter for SNES recomp hosts:
     `SNESRECOMP_MW_H2H_TOP_BAR=0`.
   - Opt out present: `SNESRECOMP_MW_H2H_FULL_FRAME=0` (half-crop),
     `SNESRECOMP_MW_H2H_LOCAL_VIEW=0` (show split).
-- Savestate / SRAM during netplay is **host-only** (`local_slot == 0`):
+- **Synchronized savestate menu** (Select+R on the host; `snes_netplay_menu_*`):
+  - Only the host drives it. Every peer shows its own copy of the menu; on a
+    guest it is a read-only mirror that follows the host's cursor.
+  - **Open** pauses every peer on the same tick: the host picks
+    `sim + input delay + 16` and sends `HOLD(t)`. Each peer runs to `t` and
+    stops there (rollback: `rnet_rb_driver_set_hold` admits nothing at or past
+    `t` and predicts nothing while held, so `t` is final once reached; the
+    local pad is neutral and unsealed while the menu is up). When every peer
+    has answered `SETTLE`, the host probes the size and CRC of its snapshot at
+    `t`; a guest whose own snapshot differs is sent the host's.
+  - **Save**: every peer writes the slot (and its thumbnail) itself, then the
+    host probes the file's CRC; only a peer whose copy differs is sent the
+    host's slot and thumbnail (`state_drop_peer` removes the matching seats).
+  - **Load**: the slot is probed and sent the same way first; then `LOAD`
+    has every peer apply its own verified copy, and the menu closes.
+  - **Close** sends `RESUME`. If no peer's state was replaced the hold is
+    released and play continues in the same rollback epoch. Otherwise (a
+    load, or a pause state that had to be sent) `RESYNC` first clears every
+    peer's input rings, then `RESUME` primes and restarts the epoch -- in
+    that order, because a peer that cleared after another had primed would
+    erase the primed wires and wait on them forever.
+  - Commands are size-0 probes on slot 255 (`crc = cmd << 28 | arg`), one at a
+    time; every guest replies after acting. A paused match stays connected
+    (validated with 10 s holds).
+  - Test: `tools/test_netplay_desktop.py --savestate-menu` in the MMX port
+    (`--force-mismatch` diverges the guest once so the repair path runs;
+    `--delay-sync`, `--menu-hold-ms`).
+- Hotkey savestate / SRAM during netplay is **host-only** (`local_slot == 0`):
   - **Host** keeps personal files under `saves/` (continuous). Save/load and
     SRAM flush apply **immediately** on the host; the blob is then shipped
     async to the guest (`STATE_*` chunks). Load/SRAM stall admit until the
