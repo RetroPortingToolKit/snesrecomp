@@ -1353,8 +1353,9 @@ static int np_menu_settled(void)
 
 /* Validation knob (guest): SNES_NET_MENU_FORCE_MISMATCH=1 really diverges
  * this peer once -- one WRAM byte at the first pause, one byte of the first
- * saved slot -- so the transfer path, not a lucky match, is what a test sees
- * repair it. Never set in play. */
+ * saved slot, and the slot file is gone before the first load (an empty
+ * slot here, full on the host) -- so the transfer path, not a lucky match,
+ * is what a test sees repair it. Never set in play. */
 static int np_force_mismatch(int which)
 {
     static int armed = -1, used;
@@ -1367,12 +1368,22 @@ static int np_force_mismatch(int which)
     return 1;
 }
 
+/* The pause state: the rollback format (with its timing residue, which a
+ * plain savestate lacks -- a guest given only the host's savestate kept its
+ * own residue and the resumed match refused on the APU digest), written so
+ * equal states give equal bytes. */
 static int np_snapshot(uint8_t **out, size_t *size, rnet_u32 *crc)
 {
-    size_t n = RtlSaveSnapshotToMemory(NULL, 0);
-    uint8_t *blob = n ? (uint8_t *)malloc(n) : NULL;
-    if (!blob || RtlSaveSnapshotToMemory(blob, n) != n) { free(blob); return 0; }
-    *out = blob; *size = n; *crc = rnet_checksum(blob, n);
+    size_t cap = RtlSaveSnapshotToMemory(NULL, 0);
+    uint8_t *blob;
+    size_t n;
+    if (!cap) return 0;
+    cap += 1024u * 1024u; /* execution position + residue */
+    blob = (uint8_t *)malloc(cap);
+    if (!blob) return 0;
+    n = RtlNetplaySnapshotToMemory(blob, cap);
+    if (!n || !RtlNetplaySnapshotHashedBytes(n)) { free(blob); return 0; }
+    *out = blob; *size = n; *crc = rnet_checksum(blob, RtlNetplaySnapshotHashedBytes(n));
     return 1;
 }
 
@@ -1748,6 +1759,12 @@ file_verified:
 static void np_menu_host_xfer_done(void)
 {
     if (g_np.menu == NP_MENU_SYNC) {
+        /* Apply the very bytes the guests applied, so every peer resumes from
+         * one restore path rather than the host from its live state. */
+        if (!RtlRollbackLoadFromMemory(g_np.menu_blob, g_np.menu_blob_size)) {
+            np_menu_fail("host could not apply its pause state");
+            return;
+        }
         fprintf(stderr, "snes_netplay: menu state sent; every peer paused on host state\n");
         np_menu_host_ready();
         return;
@@ -1846,7 +1863,7 @@ static void np_apply_ready_state(void)
 
     if (op == RNET_STATE_OP_MENU) {
         /* Guest whose state at the hold tick differed: take the host's. */
-        if (!RtlLoadSnapshotFromMemory(data, size)) {
+        if (!RtlRollbackLoadFromMemory(data, size)) {
             np_menu_fail("invalid snapshot");
             return;
         }
@@ -1974,6 +1991,13 @@ static void np_guest_handle_probe(void)
     if ((op == RNET_STATE_OP_SAVE || op == RNET_STATE_OP_LOAD) && size != 0 &&
         g_np.menu != NP_MENU_OFF) {
         rnet_u32 local_sz = 0, local_crc = 0;
+        if (op == RNET_STATE_OP_LOAD && np_force_mismatch(4)) {
+            char path[256];
+            RtlSaveSlotPath((int)slot, path, sizeof(path));
+            remove(path);
+            fprintf(stderr, "snes_netplay: menu FORCED empty slot=%u (validation knob)\n",
+                    (unsigned)slot);
+        }
         match = np_slot_crc((int)slot, &local_sz, &local_crc) && local_sz == size &&
                 local_crc == crc;
         (void)rnet_session_state_probe_reply(g_np.session, match);

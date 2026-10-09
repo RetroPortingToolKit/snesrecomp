@@ -371,13 +371,14 @@ static void menu_move(int delta)
     snes_netplay_menu_cursor(s_selected); /* every peer shows the host's cursor */
 }
 
-/* The state and thumbnail of `slot`, written on this peer. */
+/* The state and thumbnail of `slot`, written on this peer. In netplay the
+ * live audio ring is left out, so peers in one state write one file. */
 static int write_slot(int slot)
 {
     char path[256];
     RtlEnsureSaveDir();
     slot_path(slot, path, sizeof(path));
-    if (!RtlSaveSnapshot(path))
+    if (!(snes_netplay_active() ? RtlSaveSnapshotRingBlanked(path) : RtlSaveSnapshot(path)))
         return 0;
     if (s_have_live_thumb)
         write_thumb(slot, s_live_thumb);

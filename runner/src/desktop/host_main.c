@@ -2366,12 +2366,14 @@ static void NetplayMenuSelftestShot(const char *who, int serial) {
  * agreed frame, with the guest mirroring the host and refused as a driver. */
 static void NetplayMenuSelftest(uint32_t frame) {
   static int enabled = -1, phase, wait, mirror_logged;
-  static uint32_t hold_ms = 1000, idle_since;
+  static uint32_t hold_ms = 1000, idle_since, first_open = 60;
   static uint32_t resumed_at;
   if (enabled < 0) {
     const char *hold = getenv("SNES_NET_MENU_SELFTEST_HOLD_MS"); /* time in each menu */
     enabled = getenv("SNES_NET_MENU_SELFTEST") != NULL; /* like every SNES_NET_* knob */
     if (hold && atoi(hold) > 0) hold_ms = (uint32_t)atoi(hold);
+    const char *start = getenv("SNES_NET_MENU_SELFTEST_START"); /* first menu's frame */
+    if (start && atoi(start) > 0) first_open = (uint32_t)atoi(start);
   }
   if (!enabled) return;
   if (!snes_netplay_is_host()) {
@@ -2398,7 +2400,7 @@ static void NetplayMenuSelftest(uint32_t frame) {
   }
   switch (phase) {
   case 0: case 3: case 6: /* open, 60 frames after the previous resume */
-    if (frame < (phase ? resumed_at + 60 : 60) || snes_netplay_menu_paused()) return;
+    if (frame < (phase ? resumed_at + 60 : first_open) || snes_netplay_menu_paused()) return;
     (void)snes_savestate_menu_poll_open(0);
     if (snes_savestate_menu_poll_open(SNES_PAD_SELECT | SNES_PAD_R)) {
       ++phase;

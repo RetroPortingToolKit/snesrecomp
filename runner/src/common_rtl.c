@@ -1340,6 +1340,47 @@ size_t RtlRollbackSaveToMemory(void *data, size_t capacity) {
   return used + sizeof(residue);
 }
 
+/* The S-DSP output ring is live audio-consumer state: the SDL audio thread
+ * advances its read cursor, so two peers in the same guest state write it
+ * differently (snes_state_digest leaves it out for the same reason). These
+ * blank it while a snapshot is written, so equal states write equal bytes,
+ * and put the live ring back afterwards. */
+static DspOutputRing s_blank_ring_saved;
+static void rtl_ring_blank_begin(void) {
+  static const DspOutputRing blank;
+  RtlApuLock();
+  dsp_output_ring_save(g_snes->apu->dsp, &s_blank_ring_saved);
+  dsp_output_ring_restore(g_snes->apu->dsp, &blank);
+  RtlApuUnlock();
+}
+static void rtl_ring_blank_end(void) {
+  RtlApuLock();
+  dsp_output_ring_restore(g_snes->apu->dsp, &s_blank_ring_saved);
+  RtlApuUnlock();
+}
+
+size_t RtlNetplaySnapshotToMemory(void *data, size_t capacity) {
+  size_t n;
+  if (!g_snes) return 0;
+  rtl_ring_blank_begin();
+  n = RtlRollbackSaveToMemory(data, capacity);
+  rtl_ring_blank_end();
+  return n;
+}
+
+size_t RtlNetplaySnapshotHashedBytes(size_t size) {
+  return size > sizeof(RtlRollbackResidue) ? size - sizeof(RtlRollbackResidue) : 0;
+}
+
+bool RtlSaveSnapshotRingBlanked(const char *filename) {
+  bool ok;
+  if (!g_snes) return false;
+  rtl_ring_blank_begin();
+  ok = RtlSaveSnapshot(filename);
+  rtl_ring_blank_end();
+  return ok;
+}
+
 bool RtlRollbackLoadFromMemory(const void *data, size_t size) {
   RtlRollbackResidue residue;
   DspOutputRing ring;

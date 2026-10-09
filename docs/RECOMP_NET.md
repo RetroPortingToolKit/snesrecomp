@@ -338,7 +338,14 @@ Rules that matter for SNES recomp hosts:
     `t` and predicts nothing while held, so `t` is final once reached; the
     local pad is neutral and unsealed while the menu is up). When every peer
     has answered `SETTLE`, the host probes the size and CRC of its snapshot at
-    `t`; a guest whose own snapshot differs is sent the host's.
+    `t`; a guest whose own snapshot differs is sent the host's, and every peer
+    -- the host too -- applies those same bytes. The snapshot is the rollback
+    format (`RtlNetplaySnapshotToMemory`): a plain savestate lacks the timing
+    residue, and a guest given only that kept its own residue and the resumed
+    match refused on the APU digest. The S-DSP output ring (advanced by the
+    audio thread) is blanked while writing and the residue's absolute cycle
+    counters are left out of the CRC (`RtlNetplaySnapshotHashedBytes`), so two
+    peers in one state agree with audio on. Menu saves blank the ring too.
   - **Save**: every peer writes the slot (and its thumbnail) itself, then the
     host probes the file's CRC; only a peer whose copy differs is sent the
     host's slot and thumbnail (`state_drop_peer` removes the matching seats).
