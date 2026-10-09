@@ -1178,6 +1178,22 @@ int main(void) {
       CHECK(rc==1 && g_c.S==0x01ff,"redirected RTS is classified as return");
       interp_bridge_set_pre_opcode_hook(0,NULL);
     }
+    /* S15b: combined game mods exceed 192 observers. Execute every site,
+     * including the late registrations that MMX Boss Rush used to lose. */
+    { memset(RAM,0,MEMSZ);init_cpu();hook_dest=0;
+      interp_bridge_set_pre_opcode_hook(0,NULL);
+      for(unsigned i=0;i<208;++i) {
+        RAM[0x8000+i]=0xea;
+        CHECK(interp_bridge_add_pre_opcode_hook(0x008000+i,observe_dest),
+              "combined-mod observer %u registered",i);
+      }
+      RAM[0x8000+208]=0x60;
+      cpu_push_jsr_return_frame(&g_c);
+      int rc=interp_bridge_run(&g_c,0x008000);
+      CHECK(rc==1 && g_c.S==0x01ff,"combined-mod routine returns balanced");
+      CHECK(hook_dest==208,"every observer executes, including the late sites");
+      interp_bridge_set_pre_opcode_hook(0,NULL);
+    }
     /* S16: the always-on observability rings. One run of
      *   $8400 LDX #$05 / loop: DEX / BNE loop / STA $0420 /
      *         JSR $8200 (interpreted) / JSR $8100 (compiled) / RTS
