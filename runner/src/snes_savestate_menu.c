@@ -378,7 +378,12 @@ static int write_slot(int slot)
     char path[256];
     RtlEnsureSaveDir();
     slot_path(slot, path, sizeof(path));
-    if (!(snes_netplay_active() ? RtlSaveSnapshotRingBlanked(path) : RtlSaveSnapshot(path)))
+#if defined(SNESRECOMP_NET)
+    bool saved = snes_netplay_active() ? RtlSaveSnapshotRingBlanked(path) : RtlSaveSnapshot(path);
+#else
+    bool saved = RtlSaveSnapshot(path);
+#endif
+    if (!saved)
         return 0;
     if (s_have_live_thumb)
         write_thumb(slot, s_live_thumb);
