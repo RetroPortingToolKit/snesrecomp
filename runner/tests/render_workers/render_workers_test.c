@@ -1,3 +1,6 @@
+#ifdef __APPLE__
+#define _DARWIN_C_SOURCE 1 /* Expose Darwin's logical-CPU sysconf selector. */
+#endif
 #define _POSIX_C_SOURCE 200809L
 #include "render_workers.h"
 #include <stdatomic.h>
