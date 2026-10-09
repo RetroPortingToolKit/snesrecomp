@@ -52,7 +52,7 @@
     }
   ],
   "reversal_reason": "Initial measured HLE and separate unmeasured capture differed by about 5%; reversed order once to resolve the material-gain margin",
-  "output_sanity": "Separate HLE frame 2056 shows coherent E1M1 view, weapon, enemies and HUD; inspected locally",
+  "output_sanity": "Separate HLE frame 2056 shows coherent E1M1 view, weapon and HUD; inspected locally",
   "interpretation": "Repeatable material Doom route gain. Windows Doom scope only; ordinary owner play acceptance pending. No mobile/Xbox or other 8bpp game claim.",
   "raw_evidence": "Private local worktree build-qualification/; ROM-derived output and code are not published"
 }
