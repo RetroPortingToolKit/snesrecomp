@@ -14,8 +14,9 @@ The fresh baseline/LLE/HLE contract check matched all 4,096 cases, and a
 separate HLE presentation showed coherent gameplay, weapon and HUD. Exact
 source/build/ROM/route identities and measurements are in
 [the evidence record](qualification/8bpp-doom-windows-20261009.json).
-Normal-paced HLE and LLE binaries are staged for the owner. Ordinary owner
-play acceptance remains pending; the shared build still defaults to LLE.
+Normal-paced HLE and LLE binaries are staged for the owner. The owner tried
+the measured HLE build and reported "Looks and plays correctly" on October 9.
+Windows Doom qualification is complete; the shared build still defaults to LLE.
 This evidence covers Windows Doom, with no other-title or mobile/Xbox claim.
 
 The assessment and discovery notes below preserve the earlier work. The
@@ -35,7 +36,7 @@ Xbox performance has been measured here.
 
 | Route | Maintained floor and useful replacement boundary | Evidence and disposition |
 | --- | --- | --- |
-| Graphics: ordinary tiled backgrounds | `ppu.c` scanline/window/priority contract; decode a source tile span once rather than once per output pixel | Ordinary 2/4bpp paths already batch tiles. This branch batches 8bpp tile spans with a retained scalar reference. Current Windows Doom route gains 14.28–14.96% FPS; owner play acceptance remains pending, and other titles are unqualified. |
+| Graphics: ordinary tiled backgrounds | `ppu.c` scanline/window/priority contract; decode a source tile span once rather than once per output pixel | Ordinary 2/4bpp paths already batch tiles. This branch batches 8bpp tile spans with a retained scalar reference. Current Windows Doom route gains 14.28–14.96% FPS and has owner play acceptance; other titles are unqualified. |
 | Graphics: large tiles, offset-per-tile, mosaic | Complete layer spans with their scroll overrides, palette, transparency and clipping; keep caller-visible raster events | Scalar work remains, but each has different boundary rules. These are separate candidates, not rejected by the 8bpp experiment. Existing Mode 2 capture and widescreen shadow consumers must be included in the contract. |
 | Graphics: Mode 7 and full presentation | Consume raster-state/VRAM snapshots and emit native/HD images; affine spans, cached texels or a host GPU renderer | F-Zero's separate custom renderer already reports substantial renderer savings; those are title/presentation results, not fresh generic-core gains. A generic GPU path needs raster changes, windows, main/subscreen color math, readback and fallback scope specified. Mode 7/DSP-1 also warrants actual hot-route attribution. |
 | Graphics: sprite evaluation/composition | Line result plus status bits consumed by the guest; independent presentation can use a different internal algorithm | Prior generic composition helper refactor regressed Mega Man X by about 3.8% and was rejected (`PERFORMANCE.md`). Do not repeat that refactor or infer that all composition alternatives are exhausted. |

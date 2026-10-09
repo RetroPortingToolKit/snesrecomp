@@ -53,6 +53,12 @@
   ],
   "reversal_reason": "Initial measured HLE and separate unmeasured capture differed by about 5%; reversed order once to resolve the material-gain margin",
   "output_sanity": "Separate HLE frame 2056 shows coherent E1M1 view, weapon and HUD; inspected locally",
-  "interpretation": "Repeatable material Doom route gain. Windows Doom scope only; ordinary owner play acceptance pending. No mobile/Xbox or other 8bpp game claim.",
+  "interpretation": "Repeatable material Doom route gain, accepted by the owner at normal speed. Windows Doom scope only. No mobile/Xbox or other 8bpp game claim.",
+  "owner_acceptance": {
+    "date": "2026-10-09",
+    "feedback": "Looks and plays correctly",
+    "binary_sha256": "09558fdd70a1c499354c1c837a25c9a702304ae280a4b0031ec44707f20041a6",
+    "configuration": "Normal pacing, audio enabled, no benchmark script or capture/profiling"
+  },
   "raw_evidence": "Private local worktree build-qualification/; ROM-derived output and code are not published"
 }
