@@ -2346,12 +2346,55 @@ static void host_lobby_ensure_init(void) {
     fprintf(stderr, "netplay: snes_host_lobby_init failed\n");
 }
 
+/* Explicit desktop integration test; the harness uses private installations.
+ * Exercise the actual browser, including a save, load and cancel. */
+static void NetplayMenuSelftest(uint32_t frame) {
+  static int enabled = -1, phase, hold;
+  if (enabled < 0) enabled = HostGetenv("SNES_NET_MENU_SELFTEST") != NULL;
+  if (!enabled) return;
+  if (!snes_netplay_is_host()) {
+    if (!phase && frame >= 30) {
+      if (snes_netplay_menu_open() || snes_netplay_menu_load(11) || snes_netplay_menu_close())
+        abort(); /* The harness requires a clean exit and the refusal marker. */
+      fprintf(stderr, "[netplay_menu_test] guest actions refused\n");
+      phase = 1;
+    }
+    return;
+  }
+  if ((phase == 0 && frame >= 60) || (phase == 2 && frame >= 120) ||
+      (phase == 4 && frame >= 180)) {
+    (void)snes_savestate_menu_poll_open(0);
+    if (snes_savestate_menu_poll_open(SNES_PAD_SELECT | SNES_PAD_R)) {
+      ++phase;
+      hold = 0;
+    }
+  } else if ((phase == 1 || phase == 3 || phase == 5) && snes_netplay_menu_ready()) {
+    /* Stay paused for many host pumps so the guest has time to try inputs. */
+    if (++hold < 60) return;
+    snes_savestate_menu_handle_key(SDLK_EQUALS, 0); /* slot 12 */
+    snes_savestate_menu_poll_nav(0, SDL_GetTicks());
+    if (phase == 1) {
+      snes_savestate_menu_poll_nav(SNES_PAD_X, SDL_GetTicks());
+      snes_savestate_menu_poll_nav(0, SDL_GetTicks());
+      snes_savestate_menu_poll_nav(SNES_PAD_B, SDL_GetTicks());
+    } else if (phase == 3) {
+      snes_savestate_menu_poll_nav(SNES_PAD_A, SDL_GetTicks());
+    } else {
+      snes_savestate_menu_handle_key(SDLK_ESCAPE, 0);
+    }
+    fprintf(stderr, "[netplay_menu_test] action=%s frame=%u\n",
+            phase == 1 ? "save" : phase == 3 ? "load" : "cancel", frame);
+    ++phase;
+  }
+}
+
 static uint16_t netplay_capture_pad(void *ctx) {
   (void)ctx;
   PollKeyboardControls(snesrecomp_sdl_get_keyboard_state());
   const unsigned player = snes_netplay_input_player() == 1 ? 1 : 0;
-  return (uint16_t)((((g_input_state | g_pad_buttons) >> (player * 12)) |
-      g_gamepad[player].axis_buttons) & 0x0fffu);
+  return (uint16_t)snes_savestate_menu_filter_guest_input(
+      (((g_input_state | g_pad_buttons) >> (player * 12)) |
+       g_gamepad[player].axis_buttons) & 0x0fffu);
 }
 
 static void netplay_poll_events(void *ctx, int *want_soft_exit) {
@@ -2367,8 +2410,11 @@ static void netplay_poll_events(void *ctx, int *want_soft_exit) {
       *want_soft_exit = 2;
       g_netplay_from_lobby = 0; /* Closing the window exits the application. */
     }
-    if (event.type == SDL_KEYDOWN &&
-        SNESRECOMP_SDL_EVENT_KEY(event) == SDLK_ESCAPE)
+    if (event.type == SDL_KEYDOWN && snes_savestate_menu_is_open()) {
+      snes_savestate_menu_handle_key(SNESRECOMP_SDL_EVENT_KEY(event),
+                                    SNESRECOMP_SDL_EVENT_REPEAT(event));
+    } else if (event.type == SDL_KEYDOWN &&
+               SNESRECOMP_SDL_EVENT_KEY(event) == SDLK_ESCAPE)
       *want_soft_exit = 1;
     if (event.type == SDL_KEYDOWN)
       HandleInput(SNESRECOMP_SDL_EVENT_KEY(event), SNESRECOMP_SDL_EVENT_MOD(event), true);
@@ -3180,6 +3226,15 @@ int snesrecomp_desktop_main(const SnesDesktopHostGame *game, int argc, char **ar
           if (rom_path_buf[0]) {
             snesrecomp_rom_cache_write(rom_path_buf);
             rom_resolved_by_launcher = 1;
+          } else {
+            /* PLAY is gated on a verified ROM, so LAUNCH without one is a
+             * launcher bug. Never answer it with the console file picker: for
+             * a lobby launch the match has already started on the other
+             * peers, and a dialog here is a prompt after PLAY. */
+            fprintf(stderr, "launcher: LAUNCH returned without a ROM path%s; "
+                            "refusing to fall back to a file picker\n",
+                    ls.netplay_launch.enabled ? " (netplay match)" : "");
+            return 1;
           }
         }
         /* UNAVAILABLE (assets or GL missing) -> console resolver below */
@@ -3652,6 +3707,12 @@ error_reading:;
         break;
       case SDL_KEYDOWN:
 #if defined(SNES_HAS_LOBBY_CLIENT)
+        if (g_netplay_session && snes_savestate_menu_is_open()) {
+          snes_savestate_menu_handle_key(SNESRECOMP_SDL_EVENT_KEY(event),
+                                        SNESRECOMP_SDL_EVENT_REPEAT(event));
+          HandleInput(SNESRECOMP_SDL_EVENT_KEY(event), SNESRECOMP_SDL_EVENT_MOD(event), true);
+          break;
+        }
         if (g_netplay_session && SNESRECOMP_SDL_EVENT_KEY(event) == SDLK_ESCAPE) {
           g_netplay_exit_requested = 1;
           break;
@@ -3705,16 +3766,16 @@ error_reading:;
       g_gamepad[1].axis_buttons = 0;
     {
       int ls = debug_server_consume_loadstate();
-      if (ls >= 0) {
+      if (ls >= 0 && !g_netplay_session) {
         RtlSaveLoad(kSaveLoad_Load, ls);
         GameReset();
       }
       int ss = debug_server_consume_savestate();
-      if (ss >= 0)
+      if (ss >= 0 && !g_netplay_session)
         RtlSaveLoad(kSaveLoad_Save, ss);
     }
     double before_debug_wait = MonotonicSeconds();
-    debug_server_wait_if_paused();
+    if (!g_netplay_session) debug_server_wait_if_paused();
     if (MonotonicSeconds() - before_debug_wait > 0.05)
       g_reset_clock = true;
 
@@ -3724,6 +3785,31 @@ error_reading:;
     if (snes_netplay_active()) {
       /* Refused mid-match; dropped rather than left to fire when it ends. */
       g_open_launcher_hotkey = 0;
+      snes_netplay_pump();
+      NetplayMenuSelftest(frameCtr);
+      if (snes_netplay_is_host()) {
+        uint32 human = snes_savestate_menu_filter_guest_input(netplay_capture_pad(NULL));
+        if (snes_savestate_menu_is_open()) {
+          snes_savestate_menu_poll_nav(human, SDL_GetTicks());
+        } else if (!snes_netplay_menu_paused()) {
+          (void)snes_savestate_menu_poll_open(g_savestate_menu_hotkey
+              ? (SNES_PAD_SELECT | SNES_PAD_R) : human);
+        }
+        g_savestate_menu_hotkey = 0;
+        if (snes_netplay_menu_ready() && !snes_savestate_menu_is_open())
+          (void)snes_netplay_menu_close();
+      }
+      if (snes_netplay_menu_paused() && !g_overlay_modal) {
+        g_overlay_modal = true;
+        SetAudioPaused(true);
+        snes_osd_push("Host is managing savestates", 3000);
+      } else if (!snes_netplay_menu_paused() && g_overlay_modal) {
+        g_overlay_modal = false;
+        GameReset();
+        ResetAudioTimeline();
+        SetAudioPaused(false);
+        OverlayNoteClosed();
+      }
       if (!snes_host_clock_simulation_due(&video_clock, MonotonicSeconds())) {
         snes_netplay_pump();
         WaitUntil(video_clock.next_simulation);
@@ -3789,7 +3875,8 @@ error_reading:;
         SDL_Delay(1);
       }
       g_present_alpha = 1;
-      DrawPpuFrameWithPerf();
+      if (snes_savestate_menu_is_open()) PresentFrozenWithOverlay();
+      else DrawPpuFrameWithPerf();
       ++presentations;
       continue;
     }
@@ -4145,6 +4232,8 @@ error_reading:;
   if (g_blend) recomp_frame_blend_destroy(g_blend);
 #endif
 
+  if (game->on_shutdown) game->on_shutdown();
+
   // clean sdl
   SetAudioPaused(true);
 #if SNESRECOMP_SDL3
@@ -4220,6 +4309,11 @@ static void HandleCommand(uint32 j, bool pressed) {
 
   if (g_netplay_session) {
     switch (j) {
+    case kKeys_SaveStateMenu:
+#if defined(SNES_HAS_LOBBY_CLIENT)
+      if (pressed && snes_netplay_is_host()) g_savestate_menu_hotkey = 1;
+#endif
+      return;
     case kKeys_Fullscreen: case kKeys_WindowBigger: case kKeys_WindowSmaller:
     case kKeys_DisplayPerf: case kKeys_Screenshot:
     case kKeys_VolumeUp: case kKeys_VolumeDown:

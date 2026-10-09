@@ -587,15 +587,21 @@ void ppu_write(Ppu* ppu, uint8_t adr, uint8_t val);
 typedef void (*PpuVramWriteLogHook)(uint32_t byte_addr, uint8_t value);
 void ppu_set_vram_write_log_hook(PpuVramWriteLogHook hook);
 
-/* Raster journal — per-line replay of mid-frame INIDISP writes for frame-model
- * hosts. See the block comment in ppu.c. Host calls Begin after its
- * vblank-edge work and ApplyLine in its render loop; the register write path
- * calls Record with the beam line. */
+/* Raster journal — per-line replay of mid-field PPU register writes for
+ * frame-model hosts. See the block comment in ppu.c. The beam cuts it into
+ * fields at V=225 (ppu_rasterFieldBoundary); ppu_write records every display
+ * register write with the beam line. A host arms it with ppu_rasterBegin and
+ * brackets its render loop with RenderBegin / ApplyLine per line / RenderEnd. */
 void ppu_rasterBegin(Ppu *ppu);
 void ppu_rasterRenderBegin(Ppu *ppu);
+void ppu_rasterRenderEnd(Ppu *ppu);
 int  ppu_rasterTakeHdmaen(uint8_t *out);
 void ppu_rasterRecord(uint16_t reg, uint16_t line, uint8_t val);
 void ppu_rasterApplyLine(Ppu *ppu, int line);
+/* Called by the beam walk when it reaches V=225. */
+void ppu_rasterFieldBoundary(void);
+/* Disarm, for a machine rebuild (session reset). */
+void ppu_rasterReset(void);
 
 /* Scanout latch bypass — set by the debug server around render_inject so an
  * injected OAM/CGRAM state is rendered as given. A frame-model host that
@@ -606,15 +612,6 @@ void ppu_rasterApplyLine(Ppu *ppu, int line);
 extern int g_ppu_scanout_latch_bypass;
 int  ppu_rasterDebugDump(char *out, int cap);
 
-/* Raster journal — per-line replay of mid-frame INIDISP writes for frame-model
- * hosts. See the block comment in ppu.c. Host calls Begin after its
- * vblank-edge work and ApplyLine in its render loop; the register write path
- * calls Record with the beam line. */
-void ppu_rasterBegin(Ppu *ppu);
-void ppu_rasterRenderBegin(Ppu *ppu);
-int  ppu_rasterTakeHdmaen(uint8_t *out);
-void ppu_rasterRecord(uint16_t reg, uint16_t line, uint8_t val);
-void ppu_rasterApplyLine(Ppu *ppu, int line);
 int  ppu_rasterDebugDump(char *out, int cap);
 /* Always-on PPU register write journal (every build, Release included).
  *

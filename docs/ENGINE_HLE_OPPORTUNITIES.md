@@ -1,5 +1,27 @@
 # Engine acceleration assessment
 
+## Current 8bpp status (2026-10-09)
+
+The opt-in 8bpp tile-span renderer now has useful Windows Doom measurements
+on current framework main. Fresh Release GCC/SDL3 builds completed the same
+2,056-frame boot/menu/E1M1 movement, turning, firing and pause route with
+audio enabled. Cached frame composition was HLE in both arms; only the 8bpp
+build selection changed. The first pair gained 14.28% FPS (12.49% less runtime),
+and one reversed-order pair gained 14.96% FPS (13.02% less runtime). Reversal
+was warranted by observed run-to-run variation, and the gain held.
+
+The fresh baseline/LLE/HLE contract check matched all 4,096 cases, and a
+separate HLE presentation showed coherent gameplay, weapon and HUD. Exact
+source/build/ROM/route identities and measurements are in
+[the evidence record](qualification/8bpp-doom-windows-20261009.json).
+Normal-paced HLE and LLE binaries are staged for the owner. Ordinary owner
+play acceptance remains pending; the shared build still defaults to LLE.
+This evidence covers Windows Doom, with no other-title or mobile/Xbox claim.
+
+The assessment and discovery notes below preserve the earlier work. The
+cached frame-service results belong to the separately merged PR 152 and
+are not credited to the 8bpp renderer.
+
 This is a shared-engine assessment, not a search limited to guest function
 hooks. Follow the owner's [HLE policy](https://github.com/mstan/recomp-ai-rules/blob/main/HLE.md):
 keep the working LLE reference, select implementations when building, and
@@ -13,7 +35,7 @@ Xbox performance has been measured here.
 
 | Route | Maintained floor and useful replacement boundary | Evidence and disposition |
 | --- | --- | --- |
-| Graphics: ordinary tiled backgrounds | `ppu.c` scanline/window/priority contract; decode a source tile span once rather than once per output pixel | Ordinary 2/4bpp paths already batch tiles. 8bpp still repeats map and plane resolution per pixel. This branch implements that bounded portable candidate. Whole-title share remains unknown. |
+| Graphics: ordinary tiled backgrounds | `ppu.c` scanline/window/priority contract; decode a source tile span once rather than once per output pixel | Ordinary 2/4bpp paths already batch tiles. This branch batches 8bpp tile spans with a retained scalar reference. Current Windows Doom route gains 14.28–14.96% FPS; owner play acceptance remains pending, and other titles are unqualified. |
 | Graphics: large tiles, offset-per-tile, mosaic | Complete layer spans with their scroll overrides, palette, transparency and clipping; keep caller-visible raster events | Scalar work remains, but each has different boundary rules. These are separate candidates, not rejected by the 8bpp experiment. Existing Mode 2 capture and widescreen shadow consumers must be included in the contract. |
 | Graphics: Mode 7 and full presentation | Consume raster-state/VRAM snapshots and emit native/HD images; affine spans, cached texels or a host GPU renderer | F-Zero's separate custom renderer already reports substantial renderer savings; those are title/presentation results, not fresh generic-core gains. A generic GPU path needs raster changes, windows, main/subscreen color math, readback and fallback scope specified. Mode 7/DSP-1 also warrants actual hot-route attribution. |
 | Graphics: sprite evaluation/composition | Line result plus status bits consumed by the guest; independent presentation can use a different internal algorithm | Prior generic composition helper refactor regressed Mega Man X by about 3.8% and was rejected (`PERFORMANCE.md`). Do not repeat that refactor or infer that all composition alternatives are exhausted. |
@@ -303,6 +325,6 @@ Normal-paced adaptive review builds and LLE alternatives are staged in
 selects HLE by default for this private review launcher; `-Implementation LLE`
 selects the separately built reference. It checks binary identity, uses
 separate review configs, and supplies no benchmark/replay inputs. Source
-builds still default to LLE. The owner is away: do not launch or request
-immediate feedback. Framework PR 151 remains draft until the owner has judged
-normal play. No screenshot/state/campaign matrix is needed.
+builds at that time still defaulted to LLE. The owner was away when this
+frame-service review was prepared. That service later moved to PR 152 and
+was accepted separately; current 8bpp qualification status is recorded above.

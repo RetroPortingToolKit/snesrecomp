@@ -16,6 +16,13 @@ ask users to produce extracted caches. Hash checks are memoized by path, length
 and modification time to keep redraws inexpensive. Trusted game code performs
 its own final validation and extraction before loading imported content.
 
+In netplay, each peer's lobby offer lists, per installed package, the features
+whose required files are not verified (`snes_mod_runtime_missing_files_c`, the
+`missing_files` netplay mod hook, wire field `nf`). The host intersects that
+with its plan, shows "Needs files" on the player's seat, and refuses Play
+(`peer_needs_files`) until the player selects them; each peer is prompted for
+its own missing files in the lobby.
+
 `tests/mod_resources/shared_source_rom_test.cpp` covers synchronization in both
 directions, independent keys, persistence, clearing, copier headers and wrong-ROM
 rejection through the real launcher provider. The test uses synthetic bytes.

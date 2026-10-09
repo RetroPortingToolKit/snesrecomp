@@ -29,6 +29,32 @@ work normally driven by the framework timeline, including:
 - APU catch-up at a cadence that does not depend on one frame-sized catch-up
   call.
 
+## Beam-Aligned Driver and the Raster Journal
+
+`runner/src/beam_frame_driver.h` is the framework's driver for whole-program
+LLE ports, and what `tools/new_project` scaffolds call. One host frame is one
+PPU field, ending where the beam reaches V=225; interrupts (raster H/V matches
+and a coprocessor's IRQ line) are taken in the CPU half at the beam position
+they latch at; parked time runs the beam, APU and coprocessors; and the field
+is rasterized from the raster journal with the real HDMA unit. Two rules it
+encodes, both learned from Doom's raster chain:
+
+- Measure the boundary from the beam, not from a CPU-time grid, and never walk
+  the beam past it: CPU clocks spent beyond V=225 belong to the next field.
+- Do not deliver an interrupt once the CPU clock is past the boundary. With the
+  deadline spent, the handler yields at its first instruction and the next
+  delivery stacks a second interrupt frame on top of it.
+
+The raster journal (`ppu_raster*`, ppu.c) records every display-register write
+-- `$2100-$2133` except the VRAM/CGRAM/OAM data ports, plus HDMAEN -- with its
+beam line, from `ppu_write` itself, so CPU stores, DMA and beam HDMA are all
+seen. The beam cuts it into fields at V=225 (`ppu_rasterFieldBoundary`), not
+the host: a CPU half may legitimately run past V=225 (Doom DMAs its frame from
+line 199 into the next field's top border), and those writes belong to the
+next field. A host arms it with `ppu_rasterBegin`, and brackets its render loop
+with `ppu_rasterRenderBegin`, `ppu_rasterApplyLine` per line and
+`ppu_rasterRenderEnd`, which reapplies the writes made since the field ended.
+
 ## APU Pacing
 
 `snes_catchupApu()` has a per-call runaway clamp. That guard assumes callers

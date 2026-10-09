@@ -181,6 +181,11 @@ void snes_netplay_clear_return_to_lobby(void) { g_return_to_lobby_stub = 0; }
 const char *snes_netplay_refusal(void) { return NULL; }
 
 int  snes_netplay_is_host(void) { return 0; }
+int snes_netplay_menu_open(void) { return 0; }
+int snes_netplay_menu_paused(void) { return 0; }
+int snes_netplay_menu_ready(void) { return 0; }
+int snes_netplay_menu_load(int slot) { (void)slot; return 0; }
+int snes_netplay_menu_close(void) { return 0; }
 int  snes_netplay_request_save(int slot)
 {
     (void)slot;
@@ -229,6 +234,9 @@ typedef struct {
     int          sram_sync_done;     /* both: initial SRAM sync finished */
     int          host_sram_applied;  /* host already has live SRAM */
     /* LOAD sync FSM (MotK-style probe → optional xfer → ready → hard_resync). */
+    int          menu; /* 0 playing, 1 snapshot, 2 ready probe, 3 browsing, 4 resume */
+    uint32_t     menu_serial;
+    uint32_t     menu_started_ms;
     int          xfer;               /* NP_XFER_* */
     int          xfer_slot;
     int          load_applied_local; /* snapshot applied; waiting ready/resync */
@@ -1082,7 +1090,7 @@ static int np_read_slot_file(int slot, uint8_t **out, size_t *out_size);
 
 static int np_xfer_busy(void)
 {
-    if (g_np.xfer != NP_XFER_NONE)
+    if (g_np.menu || g_np.xfer != NP_XFER_NONE)
         return 1;
     return rnet_session_state_busy(g_np.session) ||
            rnet_session_state_take_ready(g_np.session, NULL, NULL, NULL, NULL);
@@ -1199,7 +1207,7 @@ static int np_read_slot_file(int slot, uint8_t **out, size_t *out_size)
         return -1;
     }
     sz = ftell(f);
-    if (sz <= 0 || (size_t)sz > 512u * 1024u) {
+    if (sz <= 0 || (size_t)sz > 8u * 1024u * 1024u - 8u) {
         fclose(f);
         return -1;
     }
@@ -1234,6 +1242,120 @@ static void np_apply_sram_blob(const void *data, size_t size)
     RtlWriteSram(); /* host → main; guest → sandbox */
 }
 
+/* SAVE/size-zero probes retain their ACK for retransmission. Unlike the
+ * legacy LOAD-ready exchange, losing a ready/resume ACK cannot strand us. */
+#define NP_MENU_CONTROL_SLOT 255
+#define NP_MENU_READY 1u
+#define NP_MENU_RESUME 2u
+
+static void np_menu_fail(const char *reason)
+{
+    fprintf(stderr, "snes_netplay: menu sync failed: %s\n", reason);
+    snes_netplay_request_return_to_lobby();
+    g_np.menu = 1; /* Fail closed: never simulate a partially applied load. */
+}
+
+static void np_menu_resume(void)
+{
+    rnet_session_hard_resync(g_np.session);
+    if (g_np_rollback && !snes_netplay_rb_start()) {
+        np_menu_fail("rollback restart");
+        return;
+    }
+    g_np.needs_advance = g_np.latched_for_tick = g_np.staged_valid = 0;
+    g_np.host_sync_valid = 0;
+    memset(g_np.published, 0, sizeof(g_np.published));
+    np_prime_after_hard_resync();
+    RtlNetplayAudioReset();
+    g_np.menu = 0;
+    fprintf(stderr, "snes_netplay: menu resumed serial=%u tick=0\n", g_np.menu_serial);
+}
+
+static int np_menu_snapshot(const void *snapshot, size_t size)
+{
+    uint8_t *blob = (uint8_t *)malloc(size + 8);
+    uint32_t serial = g_np.menu_serial + 1;
+    uint32_t tick = snes_netplay_sim_tick();
+    int i, rc;
+    if (!blob || !size || serial >= 0x40000000u) { free(blob); return 0; }
+    for (i = 0; i < 4; ++i) {
+        blob[i] = (uint8_t)(serial >> (8 * i));
+        blob[4 + i] = (uint8_t)(tick >> (8 * i));
+    }
+    memcpy(blob + 8, snapshot, size);
+    rc = rnet_session_state_begin(g_np.session, RNET_STATE_OP_MENU, 0, blob, size + 8);
+    free(blob);
+    if (rc != 0) return 0;
+    g_np.menu_serial = serial;
+    g_np.menu = 1;
+    g_np.menu_started_ms = SDL_GetTicks();
+    return 1;
+}
+
+int snes_netplay_menu_paused(void) { return snes_netplay_active() && g_np.menu != 0; }
+int snes_netplay_menu_ready(void) { return snes_netplay_active() && g_np.menu == 3; }
+
+int snes_netplay_menu_open(void)
+{
+    size_t size;
+    uint8_t *blob;
+    int ok;
+    if (!snes_netplay_is_host() || !snes_netplay_is_running() || g_np.menu ||
+        np_xfer_busy() || !g_np.sram_sync_done) return 0;
+    size = RtlSaveSnapshotToMemory(NULL, 0);
+    blob = (uint8_t *)malloc(size);
+    if (!blob) return 0;
+    ok = RtlSaveSnapshotToMemory(blob, size) == size && size && np_menu_snapshot(blob, size);
+    free(blob);
+    return ok;
+}
+
+int snes_netplay_menu_load(int slot)
+{
+    uint8_t *blob = NULL;
+    size_t size = 0;
+    int ok;
+    if (!snes_netplay_is_host() || !snes_netplay_menu_ready() || slot < 0 || slot >= 12)
+        return 0;
+    if (np_read_slot_file(slot, &blob, &size) != 0) return 0;
+    /* Both peers apply the exact same bytes in the transfer completion path.
+     * A malformed snapshot ends the session rather than resuming split state. */
+    ok = np_menu_snapshot(blob, size);
+    free(blob);
+    return ok;
+}
+
+int snes_netplay_menu_close(void)
+{
+    if (!snes_netplay_is_host() || !snes_netplay_menu_ready()) return 0;
+    if (rnet_session_state_probe(g_np.session, RNET_STATE_OP_SAVE, NP_MENU_CONTROL_SLOT,
+            0, (g_np.menu_serial << 2) | NP_MENU_RESUME) != 0) return 0;
+    g_np.menu = 4;
+    g_np.menu_started_ms = SDL_GetTicks();
+    return 1;
+}
+
+static void np_menu_drive(void)
+{
+    int match;
+    if (g_np.menu && g_np.menu != 3 &&
+        (uint32_t)(SDL_GetTicks() - g_np.menu_started_ms) > 30000u) {
+        np_menu_fail("timeout");
+        return;
+    }
+    if (g_np.local_slot != 0) return;
+    if ((g_np.menu == 2 || g_np.menu == 4) &&
+        rnet_session_state_probe_take_reply(g_np.session, &match)) {
+        rnet_session_state_probe_finish(g_np.session);
+        if (!match) { np_menu_fail("peer refused"); return; }
+        if (g_np.menu == 4) np_menu_resume();
+        else {
+            g_np.menu = 3;
+            fprintf(stderr, "snes_netplay: menu ready serial=%u\n", g_np.menu_serial);
+        }
+    }
+}
+
 static void np_apply_ready_state(void)
 {
     rnet_u8 op = 0, slot = 0;
@@ -1243,6 +1365,34 @@ static void np_apply_ready_state(void)
         return;
     if (!data || size == 0) {
         rnet_session_state_finish(g_np.session, 0);
+        return;
+    }
+
+    if (op == RNET_STATE_OP_MENU) {
+        uint32_t serial = 0, tick = 0;
+        const uint8_t *blob = (const uint8_t *)data;
+        int i;
+        if (size <= 8) { np_menu_fail("short snapshot"); return; }
+        for (i = 0; i < 4; ++i) {
+            serial |= (uint32_t)blob[i] << (8 * i);
+            tick |= (uint32_t)blob[4 + i] << (8 * i);
+        }
+        g_np.menu = 1;
+        g_np.menu_started_ms = SDL_GetTicks();
+        if (!RtlLoadSnapshotFromMemory(blob + 8, size - 8)) {
+            np_menu_fail("invalid snapshot");
+            return;
+        }
+        g_np.menu_serial = serial;
+        rnet_session_state_finish(g_np.session, 0);
+        fprintf(stderr, "snes_netplay: menu snapshot serial=%u host_tick=%u applied\n", serial, tick);
+        if (g_np.local_slot == 0) {
+            if (rnet_session_state_probe(g_np.session, RNET_STATE_OP_SAVE, NP_MENU_CONTROL_SLOT,
+                    0, (serial << 2) | NP_MENU_READY) != 0) {
+                np_menu_fail("ready probe"); return;
+            }
+            g_np.menu = 2;
+        }
         return;
     }
 
@@ -1298,6 +1448,20 @@ static void np_guest_handle_probe(void)
         return;
     if (!rnet_session_state_probe_pending(g_np.session, &op, &slot, &size, &crc))
         return;
+
+    if (op == RNET_STATE_OP_SAVE && slot == NP_MENU_CONTROL_SLOT && size == 0) {
+        uint32_t serial = crc >> 2, command = crc & 3u;
+        if (serial > g_np.menu_serial) return; /* Apply the snapshot before ACK. */
+        if (command != NP_MENU_READY && command != NP_MENU_RESUME) return;
+        /* ACK old controls too: a delayed READY after RESUME must not leave
+         * an unanswered library probe blocking the new input epoch. */
+        (void)rnet_session_state_probe_reply(g_np.session, 1);
+        if (serial == g_np.menu_serial) {
+            if (command == NP_MENU_READY && g_np.menu == 1) g_np.menu = 3;
+            else if (command == NP_MENU_RESUME && g_np.menu == 3) np_menu_resume();
+        }
+        return;
+    }
 
     /* Post-load ready rendezvous. */
     if (op == RNET_STATE_OP_LOAD && size == 0 && crc == NP_LOAD_READY_CRC) {
@@ -1533,7 +1697,7 @@ int snes_netplay_state_barrier(void)
     RNetSessionStats st;
     if (!snes_netplay_active() || !g_np.session)
         return 0;
-    if (g_np.xfer != NP_XFER_NONE)
+    if (g_np.menu || g_np.xfer != NP_XFER_NONE)
         return 1;
     if (rnet_session_state_busy(g_np.session))
         return 1;
@@ -1799,6 +1963,7 @@ static void np_pump_session(void)
     np_guest_handle_probe();
     np_apply_ready_state();
     np_host_drive_load_xfer();
+    np_menu_drive();
     if (rnet_session_is_running(g_np.session))
         np_maybe_start_sram_sync();
 }
@@ -1837,7 +2002,7 @@ int snes_netplay_poll_admit(void)
         return 0;
     }
     /* App-layer load barrier (probe / xfer / ready rendezvous). */
-    if (g_np.xfer != NP_XFER_NONE) {
+    if (g_np.menu || rnet_session_state_busy(g_np.session) || g_np.xfer != NP_XFER_NONE) {
         snes_netplay_diag_tick();
         return 0;
     }

@@ -3409,6 +3409,50 @@ extern "C" int snes_mod_runtime_have_package_c(const char* package_id,
     return it->second.find(version) != it->second.end() ? 1 : 0;
 }
 
+/*
+ * Which features of the installed package `package_id` cannot run yet because
+ * a required owner-supplied file (another game's ROM, say) is unselected,
+ * missing, or not the expected file? Comma-separated feature ids, every
+ * feature of the selected version whether enabled or not: the netplay offer
+ * carries this so a host enabling a feature mid-lobby already knows the
+ * answer. Returns the count; the list is cut short rather than overrun.
+ */
+extern "C" int snes_mod_runtime_missing_files_c(const char* package_id,
+                                                char* out, uint32_t cap) {
+    if (out && cap) out[0] = '\0';
+    if (!package_id) return 0;
+    SNESRecomp::Runtime& runtime = SNESRecomp::state();
+    const SNESRecomp::Package* package =
+        SNESRecomp::selected_package(runtime, package_id);
+    if (!package) return 0;
+    int count = 0;
+    size_t used = 0;
+    for (const SNESRecomp::Feature& feature : package->features) {
+        bool missing = false;
+        for (const SNESRecomp::Resource& resource : package->resources) {
+            if (resource.feature_id != feature.id || !resource.required)
+                continue;
+            if (!SNESRecomp::validate_resource_file(
+                    resource,
+                    SNESRecomp::resource_path(runtime, *package, feature,
+                                              resource),
+                    nullptr)) {
+                missing = true;
+                break;
+            }
+        }
+        if (!missing) continue;
+        ++count;
+        if (!out || !cap) continue;
+        const size_t need = feature.id.size() + (used ? 1 : 0);
+        if (used + need + 1 > cap) continue;
+        if (used) out[used++] = ',';
+        std::memcpy(out + used, feature.id.c_str(), feature.id.size() + 1);
+        used += feature.id.size();
+    }
+    return count;
+}
+
 namespace {
 
 /* Copy into a fixed row field, refusing rather than truncating. A truncated

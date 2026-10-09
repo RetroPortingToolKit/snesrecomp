@@ -65,6 +65,10 @@ echo "=== HD Mode 7 sampling and composition ==="
     -lm -o "$OUT/ppu_mode7_hd_test"
 "$OUT/ppu_mode7_hd_test"
 
+echo "=== PPU raster journal ==="
+"$CC" -std=c11 -Wall -Wextra -O1     -DSNESRECOMP_REVERSE_DEBUG=0     -I "$ROOT/runner/src" -I "$ROOT/runner/src/snes"     "$ROOT/tests/ppu/ppu_raster_journal_test.c"     "$ROOT/runner/src/snes/ppu.c"     "$ROOT/runner/src/snes/ppu_legacy.c"     -lm -o "$OUT/ppu_raster_journal_test"
+"$OUT/ppu_raster_journal_test"
+
 echo "=== DMA / HDMA ==="
 # sdd1.c is upstream's vendored S-DD1 decoder and is not -Werror clean here:
 # sdd1.c:773 reads `(a16 >= 0x00 && 0)`, an always-true comparison on a
@@ -389,6 +393,18 @@ if [ -n "$KB_SDL_LIBS" ]; then
     ( cd "$OUT" && ./config_roundtrip_test )
 else
     echo "  (skipped: no SDL headers)"
+fi
+
+echo "=== standalone save-state browser (no netplay helper) ==="
+if [ -n "$KB_SDL_LIBS" ] && command -v cmake >/dev/null; then
+    STANDALONE_SDL=SDL2
+    if [ -n "$KB_SDL_DEF" ]; then STANDALONE_SDL=SDL3; fi
+    cmake -S "$ROOT/tests/netplay/standalone" -B "$OUT/standalone-menu" \
+        -DCMAKE_C_COMPILER="$CC" -DSNESRECOMP_SDL_BACKEND="$STANDALONE_SDL"
+    cmake --build "$OUT/standalone-menu" --parallel 2
+    ctest --test-dir "$OUT/standalone-menu" --output-on-failure
+else
+    echo "  (skipped: needs SDL headers and CMake)"
 fi
 
 echo "=== mod runtime: presentation_only is not compared by netplay ==="

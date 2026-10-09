@@ -567,19 +567,42 @@ static bool render_widescreen_frame(SuperFx *f) {
 
 bool superfx_replay_snapshot(const SuperFx *source, uint8_t *private_ram,
                              SuperFx *result) {
+  return superfx_replay_snapshot_with_hooks(source, private_ram, result, NULL, 0);
+}
+
+bool superfx_replay_snapshot_with_hooks(const SuperFx *source,
+                                        uint8_t *private_ram, SuperFx *result,
+                                        const SuperFxReplayPcHook *hooks,
+                                        unsigned hook_count) {
   if (!source || !private_ram || !result || source == result ||
       private_ram == source->ram ||
+      (hook_count && !hooks) || hook_count > UINT16_MAX ||
       source->enhancement_mode != kSuperFxEnhancement_PresentationReplay)
     return false;
+  struct SuperFxPcHookSlot *private_hooks = NULL;
+  if (hook_count) {
+    private_hooks = malloc(hook_count * sizeof(*private_hooks));
+    if (!private_hooks) return false;
+    for (unsigned i = 0; i < hook_count; ++i) {
+      if (!hooks[i].hook) { free(private_hooks); return false; }
+      private_hooks[i] = (struct SuperFxPcHookSlot){
+          hooks[i].pc24 & 0xFFFFFFu, hooks[i].hook, hooks[i].context};
+    }
+  }
   *result = *source;
   result->ram = private_ram;
   result->presentation = NULL;
   result->enhancement_mode = kSuperFxEnhancement_None;
   result->ws_render_active = result->ws_replay_pending = result->ws_replay_mode = false;
-  result->pc_hook_count = 0;
+  result->pc_hooks = private_hooks;
+  result->pc_hook_count = result->pc_hook_cap = (uint16_t)hook_count;
+  result->redirect_pending = false;
   unsigned guard = 0;
   while ((result->sfr & SFR_G) && guard++ < 20000000)
     run_one(result);
+  free(result->pc_hooks);
+  result->pc_hooks = NULL;
+  result->pc_hook_count = result->pc_hook_cap = 0;
   return !(result->sfr & SFR_G);
 }
 
@@ -673,15 +696,19 @@ bool superfx_is_running(const SuperFx *f) { return f && (f->sfr & SFR_G) != 0; }
 #define SUPERFX_JOB_CAP 4096u
 static SuperFxJob s_jobs[SUPERFX_JOB_CAP];
 static uint32_t s_job_head;   /* total jobs ever started */
+static const SuperFx *s_job_owner;
 
 static void job_start(SuperFx *f) {
+  s_job_owner = f;
   SuperFxJob *j = &s_jobs[s_job_head++ & (SUPERFX_JOB_CAP - 1)];
   j->start_master = f->master_clock;
   j->stop_master = 0;
   j->pc24 = ((uint32_t)f->pbr << 16) | rv(f, 15);
 }
 static void job_stop(SuperFx *f) {
-  if (!s_job_head) return;
+  /* Private presentation clones execute STOP too. Only the core that began
+   * the recorded job may finish it; a replay must not truncate its timing. */
+  if (!s_job_head || s_job_owner != f) return;
   SuperFxJob *j = &s_jobs[(s_job_head - 1) & (SUPERFX_JOB_CAP - 1)];
   if (!j->stop_master)
     j->stop_master = f->master_clock - (uint64_t)(f->clock_credit > 0 ? f->clock_credit : 0);

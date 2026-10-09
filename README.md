@@ -26,6 +26,14 @@ An opt-in [HD Mode 7 renderer](docs/HD_MODE7.md) provides higher-resolution
 background sampling for frontends and custom game renderers while retaining
 the normal PPU output.
 
+Shared desktop builds **default to HLE frame composition on Windows x64**.
+This qualified optimization reduces presentation overhead while retaining the
+LLE caller contract. For the maintained reference path when investigating
+correctness, configure with `-DSNESRECOMP_FRAME_IMPL=LLE` and rebuild; performance
+may be lower. Other targets default to LLE. Existing build-cache choices are
+preserved. See [HLE defaults and qualification](docs/HLE_DEFAULTS.md) for scope,
+measurements, and build examples.
+
 <table>
   <tr>
     <td width="29%"><img src="docs/assets/games/super-mario-world-wide.png" alt="Super Mario World running in SNESRecomp at 16:9" width="100%"><br><sub><b>Super Mario World</b></sub></td>

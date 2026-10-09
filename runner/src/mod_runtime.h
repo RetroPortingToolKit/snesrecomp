@@ -97,6 +97,12 @@ int snes_mod_runtime_adopt_set_c(const char* want, char* reason, uint32_t cap);
 int snes_mod_runtime_have_package_c(const char* package_id, const char* version,
                                     char* name_out, uint32_t name_cap);
 
+/* Features of installed `package_id` whose required owner files are not
+ * provided (unselected, missing, or the wrong file), comma-separated into
+ * `out`. Every feature, enabled or not. Returns how many. */
+int snes_mod_runtime_missing_files_c(const char* package_id, char* out,
+                                     uint32_t cap);
+
 /* One package row on the lobby wire.
  *
  * The effective-set text below is keyed by FEATURE, which is the right grain
