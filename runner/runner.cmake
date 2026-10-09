@@ -18,6 +18,7 @@ set_property(SOURCE "${CMAKE_CURRENT_LIST_DIR}/src/desktop/host_main.c"
 message(STATUS "SNES desktop frame composition: ${SNESRECOMP_FRAME_IMPL}")
 option(SNESRECOMP_EXPOSE_COVERAGE_MOD "Show the default-off Coverage Capture mod" OFF)
 add_compile_definitions(SNESRECOMP_EXPOSE_COVERAGE_MOD=$<BOOL:${SNESRECOMP_EXPOSE_COVERAGE_MOD}>)
+include(${CMAKE_CURRENT_LIST_DIR}/ppu_8bpp_backend.cmake)
 
 # runner.cmake — shared source list for snesrecomp game projects.
 #
