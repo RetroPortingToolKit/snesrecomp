@@ -26,9 +26,6 @@ An opt-in [HD Mode 7 renderer](docs/HD_MODE7.md) provides higher-resolution
 background sampling for frontends and custom game renderers while retaining
 the normal PPU output.
 
-Custom renderers can opt into [reusable rendering workers](docs/RENDER_WORKERS.md)
-to distribute independent rows across CPU cores with a serial fallback.
-
 <table>
   <tr>
     <td width="29%"><img src="docs/assets/games/super-mario-world-wide.png" alt="Super Mario World running in SNESRecomp at 16:9" width="100%"><br><sub><b>Super Mario World</b></sub></td>
