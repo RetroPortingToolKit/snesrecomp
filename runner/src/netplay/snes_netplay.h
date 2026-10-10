@@ -84,6 +84,11 @@ typedef struct SnesNetplayConfig {
      * (recomp-ui docs/HOST_NETPLAY.md "Host relay"). LAN transport, not ICE
      * and not the server relay. */
     int         transport_host;
+    /* 1 = the launch said transport "host" over ICE (relay_via "ice"): the
+     * match rides the ICE agents the lobby's waiting room already connected,
+     * adopted from recomp-net at start. No port is bound or dialled.
+     * transport_host is also 1 then; this is tested first. */
+    int         transport_ice_hub;
 } SnesNetplayConfig;
 
 void snes_netplay_config_defaults(SnesNetplayConfig *cfg);

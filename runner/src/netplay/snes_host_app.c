@@ -52,6 +52,9 @@ void snes_host_app_apply_launch(const RecompLauncherCNetplayLaunch *net,
 #if defined(RECOMP_LAUNCHER_HAS_HOST_RELAY)
   out->net_cfg.transport_host = net->transport_host ? 1 : 0;
 #endif
+#if defined(RECOMP_LAUNCHER_HAS_HOST_RELAY_ICE)
+  out->net_cfg.transport_ice_hub = net->transport_ice_hub ? 1 : 0;
+#endif
   {
     const SnesLobbyMatchCaps *caps = snes_lobby_match_caps();
     if (caps && caps->valid) {
