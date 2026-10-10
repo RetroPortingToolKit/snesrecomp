@@ -44,6 +44,9 @@ static inline int  snes_netplay_rb_hold_settled(void) { return 0; }
 #include "snes_savestate_menu.h"
 #include "snes_osd.h"
 #if defined(SNES_HAS_LOBBY_CLIENT)
+#if defined(RNET_ENABLE_ICE)
+#include "recomp_net/host_ice.h" /* rnet_host_ice_destroy_agent */
+#endif
 #include "snes_lobby_client.h"
 #endif
 #include "desktop/sdl_compat.h"
@@ -237,6 +240,7 @@ typedef struct {
     uint8_t      host_sync[2];       /* game-defined slot-0 sync bytes */
     int          host_sync_valid;
     int          use_ice;
+    int          ice_hub;     /* adopted waiting-room ICE agents */
     int          guest_sandbox;      /* save root redirected to saves/netplay */
     int          sram_sync_sent;     /* host: SRAM blob transfer started */
     int          sram_sync_done;     /* both: initial SRAM sync finished */
@@ -496,6 +500,8 @@ static int resolve_use_ice(const SnesNetplayConfig *cfg)
     int in_motk_room = 0;
 
     if (cfg->transport == 2) return 0; /* force LAN */
+    /* Host relay over ICE: the agents are adopted, not negotiated here. */
+    if (cfg->transport_ice_hub) return 0;
     /* Host relay (2026-10-01): the server launched transport "host" -- the
      * host binds its advertised port and every guest dials it. That is the
      * LAN transport (accept-first / hub), chosen by the server after each
@@ -586,6 +592,7 @@ const char *snes_netplay_transport_name(void)
 {
     if (!snes_netplay_active()) return "none";
     if (g_np.use_ice) return "ice";
+    if (g_np.ice_hub) return "ice_hub";
     /* "lan" and "relay" are the same UDP transport; they are not the same
      * thing to read in a log when a match misbehaves. */
     return g_np.force_input_relay ? "relay" : "lan";
@@ -963,7 +970,52 @@ int snes_netplay_start(const SnesNetplayConfig *cfg)
 #endif
     }
 
-    if (!use_ice) {
+    if (cfg->transport_ice_hub) {
+        /* The lobby's waiting room already connected these agents (recomp-net
+         * host_ice.h); adopt them rather than bind or dial anything. Before
+         * this the launch fell through to LAN with an empty bind and peer, so
+         * both peers waited on nothing behind a black screen. Session slots
+         * are SEAT-mapped here (snes_host_lobby.c), so a guest's lobby seat is
+         * its session slot and the hub must be session slot 0. */
+        int rc = -1;
+        const char *why = "ice_hub: this build has no ICE lobby support";
+#if defined(SNES_HAS_LOBBY_CLIENT) && defined(RNET_ENABLE_ICE)
+        if (rcfg.local_slot == 0) {
+            RNetLobbyIceSeat seat[RNET_MAX_SLOTS];
+            RNetIceAdoptSeat adopt[RNET_MAX_SLOTS];
+            int n = rnet_lobby_ice_take_hub(seat, RNET_MAX_SLOTS), k;
+            why = "ice_hub: no connected agents to take";
+            if (n == (int)rcfg.slot_count - 1) {
+                for (k = 0; k < n; k++) {
+                    adopt[k].slot = seat[k].lobby_slot;
+                    adopt[k].agent = seat[k].agent;
+                }
+                rc = rnet_session_start_ice_hub_adopt(g_np.session, adopt, n);
+                why = "ice_hub: the agents do not match the seated guests";
+            }
+            if (rc != 0) {
+                for (k = 0; k < n; k++)
+                    rnet_host_ice_destroy_agent(seat[k].agent);
+            }
+        } else {
+            RNetIceAgent *agent = rnet_lobby_ice_take_guest_agent();
+            why = "ice_hub: no connected agent to the host";
+            if (agent) {
+                rc = rnet_session_adopt_ice_agent(g_np.session, agent);
+                if (rc != 0) rnet_host_ice_destroy_agent(agent);
+            }
+        }
+        if (rc != 0 && rnet_lobby_ice_launch_error()[0])
+            why = rnet_lobby_ice_launch_error();
+#endif
+        if (rc != 0) {
+            fprintf(stderr, "snes_netplay: %s (slot %u of %u)\n", why,
+                    (unsigned)rcfg.local_slot, (unsigned)rcfg.slot_count);
+            rnet_session_destroy(g_np.session);
+            g_np.session = NULL;
+            return -3;
+        }
+    } else if (!use_ice) {
         /* Host relay with 3+ seats: the host is the hub (recomp-net fans the
          * guests' rows out); every guest dials it. Two seats stay the plain
          * pair (host accept-first). LAN rooms are two seats and unaffected. */
@@ -993,6 +1045,7 @@ int snes_netplay_start(const SnesNetplayConfig *cfg)
     g_np.host_sync[0] = g_np.host_sync[1] = 0;
     memset(g_np.published, 0, sizeof(g_np.published));
     g_np.use_ice = use_ice;
+    g_np.ice_hub = cfg->transport_ice_hub ? 1 : 0;
     g_np.sram_sync_sent = 0;
     g_np.sram_sync_done = 0;
     g_np.host_sram_applied = 0;
