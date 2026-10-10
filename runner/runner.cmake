@@ -33,6 +33,7 @@ add_compile_definitions(SNESRECOMP_EXPOSE_COVERAGE_MOD=$<BOOL:${SNESRECOMP_EXPOS
 # of this list — it is a developer-only verify backend, off for normal builds.
 
 set(SNESRECOMP_RUNNER_ROOT ${CMAKE_CURRENT_LIST_DIR})
+include(${SNESRECOMP_RUNNER_ROOT}/dsp1_backend.cmake)
 # The framework checkout itself (runner/..). Derived, not taken from the
 # caller's SNESRECOMP_ROOT: that one is the includer's own spelling and a
 # project is free not to define it at all.

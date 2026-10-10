@@ -29,6 +29,7 @@
 #include "snapshot_guard.h"
 #include "snes/dsp.h"
 #include "snes/cart.h"
+#include "snapshot_identity.h"
 #include "snes/dma.h"
 #include "snes/cx4.h"
 #include "snes/sa1.h"
@@ -306,7 +307,7 @@ static uint64_t fp_fnv1a(const uint8_t *p, size_t n) {
 // FILE-backed SaveLoadInfo. snes_saveload calls back into func() once per
 // scalar/blob; we route each call to fread/fwrite. Single magic+version
 // header lets future format changes be detected.
-#define RTL_SAV_MAGIC   0x52544c53u  /* "RTLS" */
+#define RTL_SAV_MAGIC rtl_snapshot_magic(g_snes && g_snes->cart && g_snes->cart->dsp1)
 /* v4: dropped Dma.pad[7] blob tail.
  * v5: optional game-specific chunk appended after the snes_saveload blob
  *     (RtlGameInfo.state_save_extra/state_load_extra) — e.g. MMX task-slot
@@ -963,7 +964,8 @@ bool RtlLoadSnapshot(const char *filename) {
       || hdr[0] != RTL_SAV_MAGIC
       || hdr[1] < RTL_SAV_VERSION_MIN || hdr[1] > RTL_SAV_VERSION
       || (g_rtl_game_info && hdr[1] < g_rtl_game_info->minimum_state_version)) {
-    printf("Save file %s: bad magic/version (legacy StateRecorder format no longer supported)\n", filename);
+    printf("Save file %s: incompatible magic/version or DSP-1 implementation "
+           "(legacy untagged DSP-1 states are unsupported)\n", filename);
     fclose(f);
     return false;
   }

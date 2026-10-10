@@ -3,6 +3,15 @@
 
 #include <stdint.h>
 
+/* Standalone builds retain the instruction-level floor by default. CMake
+ * resolves SNESRECOMP_DSP1_IMPL once and supplies this numeric definition. */
+#ifndef SNESRECOMP_DSP1_HLE
+#define SNESRECOMP_DSP1_HLE 0
+#endif
+#if SNESRECOMP_DSP1_HLE != 0 && SNESRECOMP_DSP1_HLE != 1
+#error "SNESRECOMP_DSP1_HLE must be 0 (LLE) or 1 (HLE)"
+#endif
+
 struct SaveLoadInfo;
 
 typedef struct Dsp1 Dsp1;
@@ -19,6 +28,10 @@ uint8_t dsp1_read_data_ram(Dsp1 *d, uint16_t addr);
 void dsp1_write_data_ram(Dsp1 *d, uint16_t addr, uint8_t value);
 
 int dsp1_load_firmware(Dsp1 *d, const char *rom_path);
+/* Identifies the fixed build choice, independent of firmware availability.
+ * dsp1_load_firmware returns firmware-loaded, not backend-ready; an HLE build
+ * ignores firmware inputs and therefore returns zero, as before. */
+const char *dsp1_build_implementation(void);
 int dsp1_firmware_loaded(const Dsp1 *d);
 int dsp1_hle_active(const Dsp1 *d);
 int dsp1_hle_failed(const Dsp1 *d);
