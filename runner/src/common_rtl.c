@@ -1041,6 +1041,9 @@ size_t RtlSaveSnapshotToMemory(void *data, size_t capacity) {
                : memory.position;
 }
 
+static bool s_rollback_load;
+bool RtlIsRollbackLoad(void) {return s_rollback_load;}
+
 bool RtlLoadSnapshotFromMemory(const void *data, size_t size) {
   if (g_rtl_game_info && g_rtl_game_info->snapshot_allowed &&
       !g_rtl_game_info->snapshot_allowed()) return false;
@@ -1074,7 +1077,7 @@ bool RtlLoadSnapshotFromMemory(const void *data, size_t size) {
   RtlApuUnlock();
   if (memory.error) return false;
   g_snes->beamMasterLast = g_cpu.master_cycles;
-  snes_mod_audio_stop_all();
+  if(!s_rollback_load) snes_mod_audio_stop_all();
   PpuResetWidescreenOamHistory(g_snes->ppu);
   if (g_rtl_game_info && g_rtl_game_info->on_state_loaded)
     g_rtl_game_info->on_state_loaded(hdr[1]);
@@ -1379,7 +1382,10 @@ bool RtlRollbackLoadFromMemory(const void *data, size_t size) {
    * was on, and said so once per frame in the log. Netplay rollback had the
    * same shape waiting for it. Keep the counter across the load. */
   { const uint64_t generation = s_state_generation;
+    const bool previous_rollback_load=s_rollback_load;
+    s_rollback_load=true;
     ok = RtlLoadSnapshotFromMemory(data, guest);
+    s_rollback_load=previous_rollback_load;
     s_state_generation = generation; }
 
   /* The game's execution position goes back BEFORE the residue is applied and
