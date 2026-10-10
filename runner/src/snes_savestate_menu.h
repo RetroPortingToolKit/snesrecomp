@@ -1,6 +1,7 @@
 #ifndef SNES_SAVESTATE_MENU_H
 #define SNES_SAVESTATE_MENU_H
 
+#include <stddef.h>
 #include <stdint.h>
 
 #ifdef __cplusplus
@@ -76,6 +77,14 @@ void snes_savestate_menu_close(void);
  * (one downsample to 128x112); ignored while the menu is open, so the
  * thumbnail is of the game and not of the overlay. */
 void snes_savestate_menu_note_frame(const uint32_t *fb, int w, int h);
+
+/* Optional: the picture the player actually sees, when a title composes its
+ * own (e.g. a co-op renderer that draws the second player over the PPU
+ * frame). Called while the game is paused, as a slot is written; fills `dst`
+ * (capacity `cap` pixels, XRGB, rows packed) and sets its size. Returns 0 to
+ * keep the PPU frame noted above. */
+typedef int (*SnesSavestateComposeFn)(uint32_t *dst, size_t cap, int *w, int *h);
+void snes_savestate_menu_set_compose(SnesSavestateComposeFn compose);
 
 /* The rasterized panel, ARGB8888, SNES_SSM_W x SNES_SSM_H. Returns 0 and
  * nulls the outputs when the menu is closed. */

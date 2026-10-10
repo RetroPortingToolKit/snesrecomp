@@ -93,6 +93,8 @@ static int s_thumbs_scanned;
  * thumbnail of whatever slot is saved next. */
 static uint32_t s_live_thumb[SSM_THUMB_W * SSM_THUMB_H];
 static int s_have_live_thumb;
+static SnesSavestateComposeFn s_compose;
+static void sample_thumb(const uint32_t *fb, int w, int h);
 
 /* Footer status line — this port's substitute for psxrecomp's host_osd_push.
  * The SNES hosts have no OSD layer, and adding one to carry three strings
@@ -385,6 +387,15 @@ static int write_slot(int slot)
 #endif
     if (!saved)
         return 0;
+    /* The game is paused on the saved frame, so a title-composed picture of
+     * it (what the player sees, partner included) beats the raw PPU frame. */
+    if (s_compose) {
+        static uint32_t composed[1024 * 256];
+        int cw = 0, ch = 0;
+        if (s_compose(composed, sizeof(composed) / sizeof(composed[0]), &cw, &ch) &&
+            cw > 0 && ch > 0 && (size_t)cw * (size_t)ch <= sizeof(composed) / sizeof(composed[0]))
+            sample_thumb(composed, cw, ch);
+    }
     if (s_have_live_thumb)
         write_thumb(slot, s_live_thumb);
     refresh_thumbs();
@@ -644,14 +655,24 @@ void snes_savestate_menu_handle_key(int key, int repeat)
     snes_netplay_menu_cursor(s_selected);
 }
 
+void snes_savestate_menu_set_compose(SnesSavestateComposeFn compose)
+{
+    s_compose = compose;
+}
+
 void snes_savestate_menu_note_frame(const uint32_t *fb, int w, int h)
 {
-    int x, y;
     /* A netplay host's menu opens before every peer has run to the pause
      * frame; keep sampling until then so the thumbnail shows that frame. */
     if (!fb || w <= 0 || h <= 0 ||
         (s_open && !(snes_netplay_active() && !snes_netplay_menu_ready())))
         return;
+    sample_thumb(fb, w, h);
+}
+
+static void sample_thumb(const uint32_t *fb, int w, int h)
+{
+    int x, y;
     for (y = 0; y < SSM_THUMB_H; y++) {
         const uint32_t *row = fb + (size_t)(y * h / SSM_THUMB_H) * (size_t)w;
         uint32_t *out = s_live_thumb + (size_t)y * SSM_THUMB_W;

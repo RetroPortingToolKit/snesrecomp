@@ -1139,6 +1139,20 @@ static void RunaheadCapture(void *context, int for_picture) {
     g_rtl_game_info->draw_ppu_frame();
 }
 
+/* A slot's thumbnail, composed the way the player sees it. A title-owned
+ * compositor (MMX's co-op renderer draws the partner over the PPU frame)
+ * draws from the frame it captured, so asking it again while paused yields
+ * the saved frame without touching the guest. */
+static int ComposeStateThumbnail(uint32_t *dst, size_t cap, int *w, int *h) {
+  if (!g_game->draw_frame || (size_t)g_snes_width * (size_t)g_snes_height > cap)
+    return 0;
+  if (!g_game->draw_frame((uint8 *)dst, (size_t)g_snes_width * 4, g_my_pixels,
+                          g_snes_width, g_snes_height, 1.0))
+    return 0;
+  *w = g_snes_width; *h = g_snes_height;
+  return 1;
+}
+
 /* Snapshots and their thumbnails share the same completed raster boundary. */
 static void NoteStateFrame(void) {
   if (g_ppu && g_ppu->renderBuffer) {
@@ -3723,6 +3737,7 @@ error_reading:;
   }
   g_state_generation = RtlStateGeneration();
 
+  snes_savestate_menu_set_compose(ComposeStateThumbnail);
   host_report_breadcrumb("entering main loop");
 
   while (running) {
