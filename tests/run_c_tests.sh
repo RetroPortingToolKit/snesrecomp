@@ -395,6 +395,18 @@ else
     echo "  (skipped: no SDL headers)"
 fi
 
+echo "=== standalone save-state browser (no netplay helper) ==="
+if [ -n "$KB_SDL_LIBS" ] && command -v cmake >/dev/null; then
+    STANDALONE_SDL=SDL2
+    if [ -n "$KB_SDL_DEF" ]; then STANDALONE_SDL=SDL3; fi
+    cmake -S "$ROOT/tests/netplay/standalone" -B "$OUT/standalone-menu" \
+        -DCMAKE_C_COMPILER="$CC" -DSNESRECOMP_SDL_BACKEND="$STANDALONE_SDL"
+    cmake --build "$OUT/standalone-menu" --parallel 2
+    ctest --test-dir "$OUT/standalone-menu" --output-on-failure
+else
+    echo "  (skipped: needs SDL headers and CMake)"
+fi
+
 echo "=== mod runtime: presentation_only is not compared by netplay ==="
 # C++ because mod_runtime is C++, and it is compiled here rather than mocked so
 # the real manifest parser, the real effective-set text and the real adopt

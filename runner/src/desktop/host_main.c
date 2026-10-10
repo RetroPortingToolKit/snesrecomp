@@ -4365,7 +4365,9 @@ static void HandleCommand(uint32 j, bool pressed) {
   if (g_netplay_session) {
     switch (j) {
     case kKeys_SaveStateMenu:
+#if defined(SNES_HAS_LOBBY_CLIENT)
       if (pressed && snes_netplay_is_host()) g_savestate_menu_hotkey = 1;
+#endif
       return;
     case kKeys_Fullscreen: case kKeys_WindowBigger: case kKeys_WindowSmaller:
     case kKeys_DisplayPerf: case kKeys_Screenshot:
