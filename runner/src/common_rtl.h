@@ -372,6 +372,15 @@ bool RtlLoadSnapshotFromMemory(const void *data, size_t size);
  */
 size_t RtlRollbackSaveToMemory(void *data, size_t capacity);
 bool RtlRollbackLoadFromMemory(const void *data, size_t size);
+/* Netplay: snapshots two peers in the same guest state write byte-for-byte
+ * alike (the live audio output ring is blanked while writing). The memory
+ * form is the rollback format -- load it with RtlRollbackLoadFromMemory,
+ * which carries the timing residue and keeps the receiver's live ring. */
+size_t RtlNetplaySnapshotToMemory(void *data, size_t capacity);
+/* How much of such a snapshot two peers in one state agree on: all but the
+ * trailing residue, whose absolute cycle counters are host bookkeeping. */
+size_t RtlNetplaySnapshotHashedBytes(size_t size);
+bool RtlSaveSnapshotRingBlanked(const char *filename);
 /* Upper bound for one rollback snapshot; sizes the ring's allocations. */
 size_t RtlRollbackSnapshotBound(void);
 
