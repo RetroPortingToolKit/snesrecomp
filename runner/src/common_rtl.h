@@ -346,6 +346,10 @@ void RtlApplyExecutionState(void);
 uint64_t RtlStateGeneration(void);
 size_t RtlSaveSnapshotToMemory(void *data, size_t capacity);
 bool RtlLoadSnapshotFromMemory(const void *data, size_t size);
+/* True only while a rollback restore invokes the game's load callbacks.
+ * Preserve presentation cue acknowledgements in this context; an ordinary
+ * save-state load still ends the old presentation timeline. */
+bool RtlIsRollbackLoad(void);
 
 /*
  * Rollback snapshots (netplay ROLLBACK mode).

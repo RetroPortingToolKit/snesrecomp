@@ -420,8 +420,9 @@ static void sync_interp_to_cpu(const Interp816 *in, CpuState *c) {
  * sites use 16). Callbacks may mutate CpuState and live DMA/PPU MMIO mirrors;
  * changes to CpuState are copied back into the interpreter before the opcode
  * runs. */
-/* MW widescreen + H2H vert-widen alone registers ~125 unique PCs. */
-enum { kInterpPreOpcodeHookSlots = 192 };
+/* MW widescreen + H2H vert-widen registers ~125 unique PCs. MMX co-op,
+ * weapon hooks and Boss Rush together need more than the former 192 slots. */
+enum { kInterpPreOpcodeHookSlots = 256 };
 static struct {
     uint32_t pc24;
     InterpPreOpcodeHook hook;
