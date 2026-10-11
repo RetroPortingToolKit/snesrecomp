@@ -81,3 +81,5 @@ dsp1.bin
 /build-data-packs/
 
 /build-content-pack/
+# Local paired renderer qualification artifacts.
+/build-ppu-hle/

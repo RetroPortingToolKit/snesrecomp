@@ -19,6 +19,12 @@ extern unsigned char g_snesrecomp_last_hdmaen;
 #include "snes_regs.h"
 #include "ws_shadow.h"
 
+#ifndef SNESRECOMP_PPU_8BPP_HLE
+#define SNESRECOMP_PPU_8BPP_HLE 0
+#endif
+#if SNESRECOMP_PPU_8BPP_HLE != 0 && SNESRECOMP_PPU_8BPP_HLE != 1
+#error SNESRECOMP_PPU_8BPP_HLE must be 0 or 1
+#endif
 
 extern Snes *g_snes;
 extern unsigned char g_snesrecomp_last_hdmaen;
@@ -1191,8 +1197,9 @@ static void PpuDrawBackground_4bpp(Ppu *ppu, PpuPixelPrioBufs *dstbuf,
  * implemented mode 1's 4bpp/2bpp layers and treated every other mode as mode
  * 7.  Super FX games commonly DMA their planar framebuffer into a mode-3 BG1,
  * so that fallback interpreted perfectly valid tile data as a mode-7 bitmap.
- * Keep this scalar for clarity; 256 pixels per line is insignificant beside
- * the coprocessor workload and gives us the complete 8x8/16x16 tile contract. */
+ * The default scalar implementation is the reference for 8x8/16x16 tiles.
+ * The build-selected HLE resolves map/character/plane reads once per span
+ * ending at an 8-pixel source boundary. All state is local to this call. */
 static void PpuDrawBackground_8bpp(Ppu *ppu, uint y, bool sub, uint layer,
                                   PpuZbufType zhi, PpuZbufType zlo) {
   if (!IS_SCREEN_ENABLED(ppu, sub, layer))
@@ -1218,7 +1225,7 @@ static void PpuDrawBackground_8bpp(Ppu *ppu, uint y, bool sub, uint layer,
     const int right = win.edges[windex + 1];
     PpuZbufType *dstz = ppu->bgBuffers[sub].data + left + kPpuExtraLeftRight;
 
-    for (int screen_x = left; screen_x < right; screen_x++, dstz++) {
+    for (int screen_x = left; screen_x < right;) {
       const int sx = screen_x + ppu->hScroll[layer];
       int sc = mapadr + (((sy >> tile_shift) & 31) << 5);
       if (((sy >> page_shift) & 1) && PPU_bgTilemapHigher(ppu, layer))
@@ -1243,6 +1250,26 @@ static void PpuDrawBackground_8bpp(Ppu *ppu, uint y, bool sub, uint layer,
       const uint16 p23 = PpuRenderVram(ppu)[(addr + 8) & 0x7fff];
       const uint16 p45 = PpuRenderVram(ppu)[(addr + 16) & 0x7fff];
       const uint16 p67 = PpuRenderVram(ppu)[(addr + 24) & 0x7fff];
+#if SNESRECOMP_PPU_8BPP_HLE
+      /* A 16x16 tile can select a different character at its midpoint;
+       * windows and negative widescreen coordinates can clip either end. */
+      unsigned width = 8 - ((unsigned)sx & 7);
+      if (width > (unsigned)(right - screen_x))
+        width = (unsigned)(right - screen_x);
+      const PpuZbufType z = (tile & 0x2000) ? zhi : zlo;
+      for (unsigned i = 0; i < width; i++) {
+        const unsigned b = (tile & 0x4000) ? bit + i : bit - i;
+        const unsigned pixel =
+            ((p01 >> b) & 1) | (((p01 >> (b + 8)) & 1) << 1) |
+            (((p23 >> b) & 1) << 2) | (((p23 >> (b + 8)) & 1) << 3) |
+            (((p45 >> b) & 1) << 4) | (((p45 >> (b + 8)) & 1) << 5) |
+            (((p67 >> b) & 1) << 6) | (((p67 >> (b + 8)) & 1) << 7);
+        if (pixel && z > dstz[i])
+          dstz[i] = z + pixel;
+      }
+      screen_x += (int)width;
+      dstz += width;
+#else
       const unsigned pixel =
           ((p01 >> bit) & 1) | (((p01 >> (bit + 8)) & 1) << 1) |
           (((p23 >> bit) & 1) << 2) | (((p23 >> (bit + 8)) & 1) << 3) |
@@ -1251,6 +1278,9 @@ static void PpuDrawBackground_8bpp(Ppu *ppu, uint y, bool sub, uint layer,
       const PpuZbufType z = (tile & 0x2000) ? zhi : zlo;
       if (pixel && z > *dstz)
         *dstz = z + pixel;
+      screen_x++;
+      dstz++;
+#endif
     }
   }
 }
