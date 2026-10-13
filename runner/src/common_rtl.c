@@ -718,6 +718,7 @@ static void RtlApplyMultitapEnv(void) {
 }
 
 bool RtlRunFrame(uint32 inputs) {
+  if (g_rtl_game_info->frame_begin && !g_rtl_game_info->frame_begin(&inputs)) return false;
 #ifdef SNES_COSIM
   /* Co-sim (dev/diagnostics only): connect the coordinator once, before the
    * first frame executes. Boot ran deterministically already; the co-sim
@@ -888,6 +889,7 @@ bool RtlRunFrame(uint32 inputs) {
   snes_rb_probe_after_frame(inputs);
 #endif
 
+  if (g_rtl_game_info->frame_end) g_rtl_game_info->frame_end();
   return false;
 }
 
