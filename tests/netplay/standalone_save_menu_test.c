@@ -47,6 +47,11 @@ bool RtlLoadSnapshot(const char *path)
 void snes_osd_push_slot_saved(int slot) { (void)slot; saved_toast++; }
 void snes_osd_push_slot_loaded(int slot) { (void)slot; loaded_toast++; }
 void snes_osd_push_slot_empty(int slot) { (void)slot; }
+void snes_osd_push(const char *message, int duration_ms)
+{
+    (void)message; (void)duration_ms;
+    check(0, "numbered slots use their dedicated toast");
+}
 
 int main(void)
 {

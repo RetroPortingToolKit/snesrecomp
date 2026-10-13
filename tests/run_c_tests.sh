@@ -352,6 +352,9 @@ echo "=== SNES lobby caps (widescreen keys over recomp-net's client) ==="
     "$ROOT/lib/recomp-net/src/platform/rnet_platform.c" \
     "$ROOT/lib/recomp-net/src/platform/rnet_stun.c" \
     "$ROOT/lib/recomp-net/src/nat/rnet_host_relay.c" \
+    "$ROOT/lib/recomp-net/src/nat/rnet_host_ice.c" \
+    "$ROOT/lib/recomp-net/src/nat/rnet_sig_hold.c" \
+    "$ROOT/lib/recomp-net/src/lobby/rnet_ice_rtt.c" \
     -o "$OUT/snes_lobby_caps_test"
 "$OUT/snes_lobby_caps_test"
 
