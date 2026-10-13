@@ -6,7 +6,8 @@ import tempfile
 
 root=Path(__file__).resolve().parents[2]
 source=(root/'runner/src/common_rtl.c').read_text()
-names=('void RtlSetSaveRoot(', 'const char *RtlSaveRoot(', 'void RtlEnsureSaveDir(',
+names=('void RtlSetSaveRoot(', 'const char *RtlSaveRoot(', 'static void ensure_save_root(',
+       'void RtlEnsureSaveDir(',
        'void RtlSramFilePath(', 'int RtlTryWriteSram(', 'int RtlWriteSram(')
 parts=[]
 for name in names:
@@ -14,7 +15,7 @@ for name in names:
     opening=source.index('{',start)
     end=source.index('}',opening)+1 if name in (names[1], names[-1]) else source.index('\n}',opening)+2
     parts.append(source[start:end])
-prefix = '#include "common_rtl.h"\n#ifdef _WIN32\n#include <io.h>\n#include <direct.h>\n#else\n#include <unistd.h>\n#include <sys/stat.h>\n#endif\nuint8 *g_sram; int g_sram_size; static char s_save_root[96]="saves";\n'
+prefix = '#include "common_rtl.h"\n#ifdef _WIN32\n#include <io.h>\n#include <direct.h>\n#else\n#include <unistd.h>\n#include <sys/stat.h>\n#endif\nuint8 *g_sram; int g_sram_size; static char s_save_root[96]="saves"; static char s_quick_save_root[96];\n'
 with tempfile.TemporaryDirectory(prefix='sram-check-') as temp:
     temp=Path(temp)
     (temp/'sram.c').write_text(prefix+'\n'.join(parts))
