@@ -174,6 +174,14 @@ class BankCfg:
     # terminal_jsr, the callee does not consume the call frame as inline data;
     # emission preserves the real frame and hands the exceptional path to LLE.
     noreturn_jsr: set = field(default_factory=set)
+    # `brk_rti <site_pc16>` -- the BRK at this site is a two-byte no-op on
+    # hardware: the native BRK vector points at a bare RTI, so the interrupt
+    # pushes PB, PC+2 and P and the RTI pulls them straight back. Decode falls
+    # through it and the emitter compiles the round trip (the stack bytes
+    # written, the RTI's cycles). Emission and the native analyzer both reject
+    # a site that is not a BRK and a vector that is not a bare RTI
+    # (v2/brk_rti.py). Contract: docs/BRK_RTI.md.
+    brk_rti: set = field(default_factory=set)
     # `hle_spc_upload <pc>` directives — replace the recompiled body of
     # the function starting at <pc> with a single call to the runtime
     # HLE helper RtlUploadSpcImageFromDp. The standard SNES SPC upload
@@ -503,6 +511,23 @@ def load_bank_cfg(path: str) -> BankCfg:
                         f"{path}: JSR site ${site_pc16:04X} cannot be both "
                         "terminal_jsr and noreturn_jsr")
                 cfg.noreturn_jsr.add(site_pc16)
+                continue
+
+            # brk_rti <site_pc16> — a BRK whose vector is a bare RTI.
+            if head == 'brk_rti':
+                if len(tokens) != 2:
+                    raise ValueError(
+                        f"{path}: brk_rti needs exactly one <site_pc16>, "
+                        f"got: {stripped!r}")
+                try:
+                    site_pc16 = _parse_hex(tokens[1]) & 0xFFFF
+                except ValueError as e:
+                    raise ValueError(
+                        f"{path}: brk_rti bad site {tokens[1]!r}: {e}")
+                if site_pc16 in cfg.brk_rti:
+                    raise ValueError(
+                        f"{path}: brk_rti duplicate site ${site_pc16:04X}")
+                cfg.brk_rti.add(site_pc16)
                 continue
 
             # hle_dispatch <site_pc16> <c_function_name> — replace the

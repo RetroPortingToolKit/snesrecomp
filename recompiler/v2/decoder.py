@@ -906,6 +906,11 @@ def _labeled_successors(insn: Insn, key: DecodeKey, bank: int,
 
     mnem = insn.mnem
 
+    if mnem == 'BRK' and getattr(insn, 'brk_rti', False):
+        # brk_rti: the interrupt round trip returns past the signature byte
+        # with P restored, so the widths and the PHP stack are unchanged.
+        return [(DecodeKey(addr24(bank, next_pc), key.m, key.x, key.p_stack), 'fall')]
+
     if mnem in _TERMINATORS:
         return []
 
@@ -1899,6 +1904,7 @@ def decode_function(rom: bytes, bank: int, start: int,
                      inline_arg_map: Optional[Dict[int, int]] = None,
                      terminal_jsr_sites: Optional[set] = None,
                      noreturn_jsr_sites: Optional[set] = None,
+                     brk_rti_sites: Optional[set] = None,
                      stop_on_unknown_callee_exit: bool = False,
                      hle_entry_pcs: Optional[set] = None,
                     ) -> "FunctionDecodeGraph":
@@ -1925,6 +1931,7 @@ def decode_function(rom: bytes, bank: int, start: int,
             inline_arg_map=inline_arg_map,
             terminal_jsr_sites=terminal_jsr_sites,
             noreturn_jsr_sites=noreturn_jsr_sites,
+            brk_rti_sites=brk_rti_sites,
             stop_on_unknown_callee_exit=stop_on_unknown_callee_exit,
             hle_entry_pcs=hle_entry_pcs,
         )
@@ -1942,6 +1949,7 @@ def decode_function(rom: bytes, bank: int, start: int,
         _identity(inline_arg_map),
         _identity(terminal_jsr_sites),
         _identity(noreturn_jsr_sites),
+        _identity(brk_rti_sites),
         bool(stop_on_unknown_callee_exit),
         frozenset(pc & 0xFFFF for pc in (hle_entry_pcs or ())),
     )
@@ -1967,6 +1975,7 @@ def decode_function(rom: bytes, bank: int, start: int,
         inline_arg_map=inline_arg_map,
         terminal_jsr_sites=terminal_jsr_sites,
         noreturn_jsr_sites=noreturn_jsr_sites,
+        brk_rti_sites=brk_rti_sites,
         stop_on_unknown_callee_exit=stop_on_unknown_callee_exit,
         hle_entry_pcs=hle_entry_pcs,
     )
@@ -1989,6 +1998,7 @@ def _decode_function_uncached(rom: bytes, bank: int, start: int,
                      inline_arg_map: Optional[Dict[int, int]] = None,
                      terminal_jsr_sites: Optional[set] = None,
                      noreturn_jsr_sites: Optional[set] = None,
+                     brk_rti_sites: Optional[set] = None,
                      stop_on_unknown_callee_exit: bool = False,
                      hle_entry_pcs: Optional[set] = None,
                     ) -> FunctionDecodeGraph:
@@ -2194,6 +2204,10 @@ def _decode_function_uncached(rom: bytes, bank: int, start: int,
                     f"JSR at ${insn.addr & 0xFFFFFF:06X} cannot be both "
                     "terminal_jsr and noreturn_jsr")
             insn.noreturn_jsr = True
+        if brk_rti_sites and (insn.addr & 0xFFFFFF) in brk_rti_sites:
+            from v2.brk_rti import check_brk_rti_site
+            check_brk_rti_site(rom, insn.addr)
+            insn.brk_rti = True
 
         # JSL/JML dispatch-table detection: if the call target is a
         # registered dispatch helper, decode the bytes immediately

@@ -424,7 +424,8 @@ def _h_nop(insn, vf): return [Nop()]
 def _h_wdm(insn, vf): return [Nop()]
 def _h_brk(insn, vf): return [Break(
     cop=False, source_pc24=insn.addr & 0xFFFFFF,
-    tier_to_lle=getattr(insn, 'data_region_exec', False))]
+    tier_to_lle=getattr(insn, 'data_region_exec', False),
+    rti_round_trip=getattr(insn, 'brk_rti', False))]
 # A real COP is a syscall: it pushes PB/PC/P, the handler runs, and its RTI
 # pops P again -- so a COP is M/X-transparent by hardware and decode may
 # continue past it in the same widths. The only thing that cannot be compiled

@@ -2635,6 +2635,31 @@ def _emit_stop(op: Stop) -> List[str]:
 
 
 def _emit_break(op: Break) -> List[str]:
+    if op.rti_round_trip and op.source_pc24 is not None:
+        # brk_rti: BRK pushes PB, the address past its signature byte and P
+        # (native mode), sets I and clears D; the vector's bare RTI pulls the
+        # same four bytes. What stays is the bytes left below S and the time:
+        # the BRK's cycles are the block's, the RTI's 7 (6 + 1 native) are
+        # charged here at the speed of bank $00, where the vector points.
+        # Only the native vector ($FFE6) was validated: in emulation mode
+        # BRK goes through $FFFE, so that case runs in the interpreter.
+        site = op.source_pc24 & 0xFFFFFF
+        ret = (site + 2) & 0xFFFF
+        return [
+            "/* BRK to a bare RTI (brk_rti): the round trip, then on */",
+            "if (cpu->emulation) {",
+            f"  return interp_tier_dispatch_tail(cpu, "
+            f"{_transfer_target_expr(site, False)}, 0x{site:06x}u, _entry_s, _hrv);",
+            "}",
+            "{ uint16 _s = cpu->S;",
+            "  cpu_mirrors_to_p(cpu);",
+            "  cpu_write8(cpu, 0x00, _s, cpu->PB);",
+            f"  cpu_write8(cpu, 0x00, (uint16)(_s - 1), 0x{ret >> 8:02x});",
+            f"  cpu_write8(cpu, 0x00, (uint16)(_s - 2), 0x{ret & 0xFF:02x});",
+            "  cpu_write8(cpu, 0x00, (uint16)(_s - 3), (uint8)cpu->P);",
+            "  cpu->cycles += 7;",
+            "  cpu->master_cycles += 7 * 8; }",
+        ]
     if not op.tier_to_lle:
         return ["/* COP: software interrupt */" if op.cop
                 else "/* BRK: software interrupt */"]
