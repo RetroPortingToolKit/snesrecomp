@@ -72,7 +72,7 @@
             "-DBUILD_TESTING=OFF",
             "-DSNESRECOMP_BUILD_VERSION=regression-171-173-baseline"
           ],
-          "generated_hash_manifest_sha256": "83b6a7e13586f23f1dd20315971677f91c9a035c5ce5e2af653713f1d345f61d"
+          "generated_hash_manifest_sha256": "44d98e23e0ad809366df6a5241f95b8deea5c8243df475e81126d2ffda844794"
         },
         "candidate": {
           "game": "smw",
@@ -107,7 +107,7 @@
             "-DBUILD_TESTING=OFF",
             "-DSNESRECOMP_BUILD_VERSION=regression-171-173-candidate"
           ],
-          "generated_hash_manifest_sha256": "235c1a38f8079c77eb049b853aad4a9fd5682602e73735fe9aab9980e19667d8"
+          "generated_hash_manifest_sha256": "392ac7ca7e1d1be152fd12c3af3b71105f4b79bcafadd1d6dff821a3213f42f5"
         }
       },
       "routes": {
@@ -1625,7 +1625,7 @@
             "-DBUILD_TESTING=OFF",
             "-DSNESRECOMP_BUILD_VERSION=regression-171-173-baseline"
           ],
-          "generated_hash_manifest_sha256": "41b2febc5e447c2ca6e3e1469c52933445636d40507b2050e4511e62fabf19bf"
+          "generated_hash_manifest_sha256": "952bc6342aef49fc58972247532397edd406a2cf63cd6e7d8b2ac4768f7a1650"
         },
         "candidate": {
           "game": "mmx",
@@ -1660,7 +1660,7 @@
             "-DBUILD_TESTING=OFF",
             "-DSNESRECOMP_BUILD_VERSION=regression-171-173-candidate"
           ],
-          "generated_hash_manifest_sha256": "e704ff28fbe75b0553adc478ba1fe63e3b1c69371077a55c01d1bacc4ec2c325"
+          "generated_hash_manifest_sha256": "a7bea9231830cae6a3eeb192ee9df9e49624a35b3dacb0333bdacad0aaafd00f"
         }
       },
       "routes": {
