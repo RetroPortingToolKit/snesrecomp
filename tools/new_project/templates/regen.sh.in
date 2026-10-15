@@ -42,7 +42,16 @@ if [ ! -f "$CLI" ]; then
   exit 1
 fi
 
-PYTHON="${PYTHON:-$(command -v python3 || command -v python || true)}"
+PYTHON=${PYTHON:-}
+if [ -z "$PYTHON" ]; then
+  # Windows App Execution Aliases can exist on PATH without running Python.
+  for _snes_python in python3 python; do
+    if "$_snes_python" -c 'import sys; sys.exit(sys.version_info[0] != 3)' >/dev/null 2>&1; then
+      PYTHON=$_snes_python
+      break
+    fi
+  done
+fi
 if [ -z "$PYTHON" ]; then
   echo "regen.sh: no python3 on PATH" >&2
   exit 1

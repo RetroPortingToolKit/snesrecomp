@@ -86,7 +86,14 @@ typedef struct PpuExtraObject {
   const uint16_t *pixels;
 } PpuExtraObject;
 
-typedef struct PpuPixelPrioBufs {
+#if defined(_MSC_VER)
+#define PPU_ALIGN8_PRE __declspec(align(8))
+#define PPU_ALIGN8_POST
+#else
+#define PPU_ALIGN8_PRE
+#define PPU_ALIGN8_POST __attribute__((aligned(8)))
+#endif
+typedef PPU_ALIGN8_PRE struct PpuPixelPrioBufs {
   // This holds the prio in the upper 8 bits and the color in the lower 8 bits.
   // Sized for the widescreen border; logical screen x maps to
   // data[x + kPpuExtraLeftRight].
@@ -96,7 +103,9 @@ typedef struct PpuPixelPrioBufs {
   // offset aborts on ARM -- and which ones do shifts whenever a field
   // above them grows.
   PpuZbufType data[kPpuBufWidth];
-} __attribute__((aligned(8))) PpuPixelPrioBufs;
+} PPU_ALIGN8_POST PpuPixelPrioBufs;
+#undef PPU_ALIGN8_PRE
+#undef PPU_ALIGN8_POST
 
 static inline void PpuWidescreenAdjustPinnedWindowEdges(
     int screen_left, int screen_right, int *w1l, int *w1r, int *w2l,

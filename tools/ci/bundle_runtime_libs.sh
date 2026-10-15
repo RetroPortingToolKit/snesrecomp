@@ -78,7 +78,15 @@ windows)
   # died exactly there. The PE format is small and fixed; Python is in the
   # pack and on every runner. objdump remains a fallback for a host without
   # Python.
-  PY="$(command -v python3 || command -v python || true)"
+  PY="${PYTHON:-}"
+  if [[ -z "$PY" ]]; then
+    for _snes_python in python3 python; do
+      if "$_snes_python" -c 'import sys; sys.exit(sys.version_info[0] != 3)' >/dev/null 2>&1; then
+        PY=$_snes_python
+        break
+      fi
+    done
+  fi
   imports_of() {
     if [[ -n "${PY}" ]]; then
       "${PY}" - "$1" <<'PYEOF'
