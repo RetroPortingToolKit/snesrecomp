@@ -34,8 +34,12 @@
     "msvc_ppu_alignment": "passed"
   },
   "local_artifacts": "F:\\Projects\\_regression-review-20261014",
-  "owner_approval": "pending",
-  "merges": "not performed",
+  "owner_approval": "Approved merging after owner passed SMW/ALttP/MMX and SM freeze reproduced on baseline; see Markdown follow-up.",
+  "merges": {
+    "171": "57ed72a6f83abe92a46d47244628648ccabcc392",
+    "172": "b59a837e0949022d1312f56dd6e733396d9727e9",
+    "173": "01e02e18243a752ee1558fa64b589b6dd8eb10a3"
+  },
   "games": {
     "smw": {
       "builds": {
@@ -1948,5 +1952,19 @@
       "scheduler_bail": 0,
       "apu_sync_timeout": 0
     }
+  },
+  "long_attract_followup": {
+    "frames_per_arm": 20000,
+    "first_freeze_frame_both": 12910,
+    "baseline_and_candidate_failures": {
+      "interpreter_step_cap": 96,
+      "scheduler_bail": 1
+    },
+    "full_interpreter_reference_failures": 0,
+    "tracking": [
+      "beads-8wg.6.11",
+      "beads-8wg.2.126"
+    ],
+    "qualified_fix": false
   }
 }
