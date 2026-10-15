@@ -271,12 +271,62 @@ static void test_video_settings_roundtrip(void) {
   CHECK(!g_config.shader, "cleared shader did not survive");
 }
 
+/* Multitap seats (players 3..). A two-seat host must not grow keys it does not
+ * route; a five-seat host round-trips source, gamepad claim and a per-seat
+ * [GamepadMap] ControlsPn line. */
+static void test_multitap_seats_roundtrip(void) {
+  ConfigSetPadSeats(2);
+  write_file(kBaseIni);
+  ParseConfigFile(kPath);
+  CHECK(g_config.player_src[2] == 0 && !g_config.enable_gamepad[2],
+        "seat 3 must start with no device");
+  WriteConfigFile(kPath);
+  char *out = read_file();
+  CHECK(out && !strstr(out, "SourceP3") && !strstr(out, "EnableGamepad3"),
+        "a two-seat host wrote multitap keys");
+
+  ConfigSetPadSeats(5);
+  g_config.player_src[2] = 1;  /* keyboard */
+  g_config.player_src[3] = 2;  /* gamepad */
+  g_config.enable_gamepad[3] = true;
+  g_config.player_src[4] = 0;
+  WriteConfigFile(kPath);
+  out = read_file();
+  CHECK(out && strstr(out, "SourceP5") && !strstr(out, "SourceP6"),
+        "five-seat host must write exactly seats 3..5");
+  g_config.player_src[2] = g_config.player_src[3] = g_config.player_src[4] = 0xEE;
+  g_config.enable_gamepad[3] = false;
+  ParseConfigFile(kPath);
+  CHECK(ConfigHasPlayerSource(2) && ConfigHasPlayerSource(4), "SourceP3/P5 not read back");
+  CHECK(g_config.player_src[2] == 1, "seat 3 source: got %d", g_config.player_src[2]);
+  CHECK(g_config.player_src[3] == 2 && g_config.enable_gamepad[3],
+        "seat 4 gamepad: src %d enable %d", g_config.player_src[3], g_config.enable_gamepad[3]);
+  CHECK(g_config.player_src[4] == 0, "seat 5 none: got %d", g_config.player_src[4]);
+
+  /* Default pad layout for seat 3, and an explicit ControlsP4 line. */
+  CHECK(FindCmdForGamepadButton(kGamepadBtn_Start + 2 * kGamepadBtn_Count, 0) ==
+            ConfigSeatControlsBase(2) + 5,
+        "seat 3 Start does not map to its own Start");
+  write_file("[GamepadMap]\nControlsP4 = DpadUp, DpadDown, DpadLeft, DpadRight, Start, Back, B, A, Y, X, Lb, Rb\n");
+  ConfigReloadGamepadMap(kPath);
+  CHECK(FindCmdForGamepadButton(kGamepadBtn_Back + 3 * kGamepadBtn_Count, 0) ==
+            ConfigSeatControlsBase(3) + 5,
+        "ControlsP4 Start on Back was not applied to seat 4");
+  CHECK(FindCmdForGamepadButton(kGamepadBtn_Start + 2 * kGamepadBtn_Count, 0) ==
+            ConfigSeatControlsBase(2) + 5,
+        "seat 3 lost its default layout when seat 4 was configured");
+  CHECK(ConfigSeatForControl(ConfigSeatControlsBase(4) + 11) == 4,
+        "seat 5 R does not belong to seat 5");
+  ConfigSetPadSeats(2);
+}
+
 int main(void) {
   test_fullscreen_roundtrip();
   test_player_sources_roundtrip();
   test_vsync_tristate();
   test_written_from_nothing();
   test_video_settings_roundtrip();
+  test_multitap_seats_roundtrip();
   /* Last: it flips the process-wide opt-in and never flips it back. */
   test_rewind_opt_in();
   remove(kPath);

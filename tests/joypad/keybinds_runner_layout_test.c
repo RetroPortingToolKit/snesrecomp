@@ -53,6 +53,21 @@ int main(void){
     ck("Up does not read as Right", !(keybinds_read_player_runner(keys,2) & (1u<<7)));
     memset(keys,0,sizeof keys); keys[kb->p2.left]=1;
     ck("Left does not read as Down", !(keybinds_read_player_runner(keys,2) & (1u<<5)));
+    /* Multitap seats: player 3 starts unbound, reads its own keys, and its
+     * [player3] section survives a save and a reload. */
+    /* A previous run saved P3's binding in this build directory. */
+    keybinds_reset_player(3);
+    keybinds_reset_player(5);
+    memset(keys,0,sizeof keys);
+    ck("player 3 unbound by default", keybinds_get_button(3,6) == SDL_SCANCODE_UNKNOWN);
+    keybinds_set_button(3, 6, SDL_SCANCODE_KP_ENTER);   /* start */
+    keys[SDL_SCANCODE_KP_ENTER]=1;
+    ck("player 3 Start -> bit 3", keybinds_read_player_runner(keys,3) == (1u<<3));
+    ck("player 3 key is not player 1's", !(keybinds_read_player_runner(keys,1) & (1u<<3)));
+    keybinds_save();
+    keybinds_init(NULL);
+    ck("[player3] survives save + reload", keybinds_get_button(3,6) == SDL_SCANCODE_KP_ENTER);
+    ck("player 5 still unbound", keybinds_get_button(5,6) == SDL_SCANCODE_UNKNOWN);
     printf("\n%s (%d failure%s)\n", fails?"FAILED":"PASSED", fails, fails==1?"":"s");
     return fails?1:0;
 }

@@ -255,6 +255,13 @@ static uint32 g_input_state;
  * main loop doesn't clear bits the gamepad just set. OR'd into `inputs`
  * once per frame alongside g_input_state and axis_buttons. */
 static uint32 g_pad_buttons;
+/* Multitap seats 2.. (players 3..): keyboard (keybinds.ini [player3]..),
+ * [KeyMap]-bound and gamepad buttons, in the runner's 12-bit seat layout.
+ * Pushed through RtlSetPadState before each frame; seats 0 and 1 keep the
+ * packed word above. */
+static uint16 g_seat_keys[kSnesHostPadSeats];
+static uint16 g_seat_keymap[kSnesHostPadSeats];
+static uint16 g_seat_pad[kSnesHostPadSeats];
 static int g_ppu_render_flags = 0;
 static int g_snes_width = 256, g_snes_height = 224;
 static double g_present_alpha = 1;
@@ -427,7 +434,7 @@ static unsigned g_present_frame;
 static uint8 g_frame_stage[kSnesDesktopMaxFrameWidth * 4 * 240];
 #endif
 
-static GamepadInfo g_gamepad[2];
+static GamepadInfo g_gamepad[kSnesHostPadSeats];
 
 extern Snes *g_snes;
 
@@ -1028,8 +1035,34 @@ void NORETURN Die(const char *error) {
 }
 
 static GamepadInfo *GetGamepadInfo(SDL_JoystickID id) {
-  return (g_gamepad[0].joystick_id == id) ? &g_gamepad[0] :
-    (g_gamepad[1].joystick_id == id) ? &g_gamepad[1] : NULL;
+  for (int i = 0; i < kSnesHostPadSeats; ++i)
+    if (g_gamepad[i].joystick_id == id) return &g_gamepad[i];
+  return NULL;
+}
+
+/* Seats the game declares (GameInfo num_players), 2..kSnesHostPadSeats.
+ * Gamepads, config.ini and the launcher follow this count. */
+static int HostConfiguredSeats(void) {
+  int n = g_game && g_game->num_players > 2 ? g_game->num_players : 2;
+  return n > kSnesHostPadSeats ? kSnesHostPadSeats : n;
+}
+
+/* Seats routed into the guest this frame: the declared seats the configured
+ * multitaps actually reach (RtlPlayerCount). */
+static int HostPadSeats(void) {
+  int n = HostConfiguredSeats();
+  int reach = RtlPlayerCount();
+  return n > reach ? (reach < 2 ? 2 : reach) : n;
+}
+
+/* Hand seats 2.. to the multitap model. Netplay publishes remote seats
+ * through the same door, so a session leaves them to it. */
+static void PushExtraSeats(void) {
+  if (g_netplay_session) return;
+  const int seats = HostPadSeats();
+  for (int seat = 2; seat < seats; ++seat)
+    RtlSetPadState(seat, (uint16)(g_seat_keys[seat] | g_seat_keymap[seat] |
+                                  g_seat_pad[seat] | g_gamepad[seat].axis_buttons));
 }
 
 void ChangeWindowScale(int scale_step) {
@@ -1478,6 +1511,9 @@ static bool HandleDeviceEvent(const SDL_Event *event) {
   case SDL_CONTROLLERDEVICEREMOVED:
     gi = GetGamepadInfo(SNESRECOMP_SDL_EVENT_DEVICE(*event));
     if (gi) {
+      for (int button = 0; button < kGamepadBtn_Count; ++button)
+        if ((gi->modifiers & (1u << button)) && gi->last_cmd[button])
+          HandleGamepadInput(gi, button, false);
       memset(gi, 0, sizeof(GamepadInfo));
       gi->joystick_id = -1;
     }
@@ -1505,6 +1541,9 @@ static bool HandleDeviceEvent(const SDL_Event *event) {
   case SDL_JOYDEVICEREMOVED:
     gi = GetGamepadInfo(event->jdevice.which);
     if (gi && gi->raw_joystick) {
+      for (int button = 0; button < kGamepadBtn_Count; ++button)
+        if ((gi->modifiers & (1u << button)) && gi->last_cmd[button])
+          HandleGamepadInput(gi, button, false);
       if (gi->joystick) SDL_JoystickClose(gi->joystick);
       memset(gi, 0, sizeof(GamepadInfo));
       gi->joystick_id = -1;
@@ -2550,8 +2589,9 @@ static void OpenAllGamepads(void) {
 #else
   int njs = SDL_NumJoysticks();
 #endif
-  printf("[Gamepad] SDL reports %d joystick(s). enable_gamepad=[%d,%d]\n",
-         njs, g_config.enable_gamepad[0], g_config.enable_gamepad[1]);
+  printf("[Gamepad] SDL reports %d joystick(s). enable_gamepad=[%d,%d,%d,%d,%d]\n",
+         njs, g_config.enable_gamepad[0], g_config.enable_gamepad[1],
+         g_config.enable_gamepad[2], g_config.enable_gamepad[3], g_config.enable_gamepad[4]);
   for (int i = 0; i < njs; i++) {
 #if SNESRECOMP_SDL3
     /* SDL3 enumerates by instance ID rather than by index. */
@@ -2579,13 +2619,14 @@ static void OpenAllGamepads(void) {
 
 /* Re-seat the pads after the launcher changed which player uses one. */
 static void ReassignGamepads(void) {
-  for (int i = 0; i < 2; i++) {
+  for (int i = 0; i < kSnesHostPadSeats; i++) {
     if (g_gamepad[i].raw_joystick && g_gamepad[i].joystick)
       SDL_JoystickClose(g_gamepad[i].joystick);
     memset(&g_gamepad[i], 0, sizeof(g_gamepad[i]));
     g_gamepad[i].joystick_id = -1;
   }
   g_pad_buttons = 0;
+  memset(g_seat_pad, 0, sizeof(g_seat_pad));
   OpenAllGamepads();
 }
 
@@ -2618,13 +2659,16 @@ static void LauncherSeed(RecompLauncherCSettings *ls, RecompLauncherCGameInfo *g
                                                : (g_config.enable_gamepad[0] ? 2 : 1);
   ls->player_src[1] = ConfigHasPlayerSource(1) ? g_config.player_src[1]
                                                : (g_config.enable_gamepad[1] ? 2 : 0);
+  for (int seat = 2; seat < kSnesHostPadSeats && seat < RECOMP_LAUNCHER_MAX_PLAYERS; ++seat)
+    ls->player_src[seat] = ConfigHasPlayerSource(seat) ? g_config.player_src[seat]
+                                                       : (g_config.enable_gamepad[seat] ? 2 : 0);
   /* Config stores deadzone as a raw stick radius; the launcher edits a
    * 0-100%. Convert in both directions, ROUNDING each way: truncating
    * both made the round trip lossy -- 10% saved as 32767/10 = 3276 read
    * back as 9%, so the slider walked down a percent every time the
    * player pressed Play. */
-  ls->deadzone[0] = ls->deadzone[1] =
-      (g_config.gamepad_deadzone * 100 + 32767 / 2) / 32767;
+  for (int seat = 0; seat < RECOMP_LAUNCHER_MAX_PLAYERS; ++seat)
+    ls->deadzone[seat] = (g_config.gamepad_deadzone * 100 + 32767 / 2) / 32767;
   ls->skip_launcher = g_config.skip_launcher;
   ls->msu1_enabled  = 0;
   /* Display rows the framework host wires (see FrameBlendConfigure,
@@ -2748,10 +2792,12 @@ static void LauncherCommit(const RecompLauncherCSettings *ls, const char *config
   g_config.audio_freq          = (uint16)ls->audio_freq;
   g_config.volume              = ls->volume;
   ApplyVolume();
-  g_config.player_src[0]       = ls->player_src[0];
-  g_config.player_src[1]       = ls->player_src[1];
-  g_config.enable_gamepad[0]   = ls->player_src[0] == 2;
-  g_config.enable_gamepad[1]   = ls->player_src[1] == 2;
+  for (int seat = 0; seat < kSnesHostPadSeats && seat < RECOMP_LAUNCHER_MAX_PLAYERS; ++seat) {
+    /* Seats past the game's count are not on the launcher's page; keep them. */
+    if (seat >= 2 && seat >= HostConfiguredSeats()) break;
+    g_config.player_src[seat]     = ls->player_src[seat];
+    g_config.enable_gamepad[seat] = ls->player_src[seat] == 2;
+  }
   g_config.gamepad_deadzone    = (ls->deadzone[0] * 32767 + 50) / 100;
   g_config.skip_launcher       = ls->skip_launcher != 0;
   g_config.frame_blend         = ls->frame_blend != 0;
@@ -2829,10 +2875,11 @@ static void ApplyLiveSettings(const Config *before) {
   }
   /* keybinds.ini: the controller page's keyboard half. */
   keybinds_init(g_program_path);
-  if (g_config.player_src[0] != before->player_src[0] ||
-      g_config.player_src[1] != before->player_src[1] ||
-      g_config.enable_gamepad[0] != before->enable_gamepad[0] ||
-      g_config.enable_gamepad[1] != before->enable_gamepad[1])
+  bool seats_changed = false;
+  for (int seat = 0; seat < kSnesHostPadSeats; ++seat)
+    seats_changed |= g_config.player_src[seat] != before->player_src[seat] ||
+                     g_config.enable_gamepad[seat] != before->enable_gamepad[seat];
+  if (seats_changed)
     ReassignGamepads();
 }
 
@@ -3098,6 +3145,8 @@ int snesrecomp_desktop_main(const SnesDesktopHostGame *game, int argc, char **ar
   }
   if (game->state_menu_hotkeys) ConfigUseStateMenuDefaults();
   if (game->in_game_launcher) ConfigUseInGameLauncherDefaults();
+  /* Before parsing: default [GamepadMap] rows exist for each routed seat. */
+  ConfigSetPadSeats(HostConfiguredSeats());
   ParseConfigFile(config_file);
   g_active_config_file = config_file;
   /* Local overrides (gitignored). Last parser to set a key wins. */
@@ -3403,7 +3452,7 @@ int snesrecomp_desktop_main(const SnesDesktopHostGame *game, int argc, char **ar
     }
   }
 
-  g_gamepad[0].joystick_id = g_gamepad[1].joystick_id = -1;
+  for (int i = 0; i < kSnesHostPadSeats; ++i) g_gamepad[i].joystick_id = -1;
   g_ws_extra = g_game->native_widescreen ? (g_snes_width - 256) / 2 : 0;
   g_ws_active = g_ws_extra != 0;
   g_ppu_render_flags = g_config.new_renderer * kPpuRenderFlags_NewRenderer |
@@ -4146,6 +4195,7 @@ error_reading:;
     inputs |= debug_server_get_controller_inputs();
     double profile_start = ProfileStart();
     double guest_start = MonotonicSeconds();
+    PushExtraSeats();
     if (game->before_run_frame) game->before_run_frame();
     g_audio_producer_active = paced_realtime && g_audio_device != 0;
     /* Run-ahead owns the whole frame when it is on: it advances the guest
@@ -4359,6 +4409,9 @@ static void PollKeyboardControls(const uint8_t *keys) {
   uint32 p1 = g_config.player_src[0] == 1 ? keybinds_read_player_runner(keys, 1) : 0;
   uint32 p2 = g_config.player_src[1] == 1 ? keybinds_read_player_runner(keys, 2) : 0;
   g_input_state = p1 | (p2 << 12);
+  for (int seat = 2; seat < kSnesHostPadSeats; ++seat)
+    g_seat_keys[seat] = g_config.player_src[seat] == 1
+        ? keybinds_read_player_runner(keys, seat + 1) : 0;
 }
 
 static void HandleCommand(uint32 j, bool pressed) {
@@ -4376,6 +4429,16 @@ static void HandleCommand(uint32 j, bool pressed) {
     uint32 m = 0x1000 << kKbdRemap[j - kKeys_ControlsP2];
     g_input_state = pressed ? (g_input_state | m) : (g_input_state & ~m);
     return;
+  }
+
+  {
+    const int seat = ConfigSeatForControl((int)j);
+    if (seat >= 2) {
+      uint16 m = (uint16)(1u << kKbdRemap[(j - kKeys_ControlsP3) % 12]);
+      g_seat_keymap[seat] = pressed ? (uint16)(g_seat_keymap[seat] | m)
+                                    : (uint16)(g_seat_keymap[seat] & ~m);
+      return;
+    }
   }
 
   if (g_netplay_session) {
@@ -4514,15 +4577,18 @@ static void OpenOneGamepad(int i) {
     return;
   }
 
-  uint8 scan_order[3] = { SDL_GameControllerGetPlayerIndex(controller), 0, 1 };
+  uint8 scan_order[1 + kSnesHostPadSeats];
+  scan_order[0] = (uint8)SDL_GameControllerGetPlayerIndex(controller);
+  for (int k = 0; k < kSnesHostPadSeats; ++k) scan_order[1 + k] = (uint8)k;
   /* The self-test pad must be player 1: the overlay gestures read seat 0. */
   if (g_selftest_pad && SDL_JoystickInstanceID(g_selftest_pad) == joystick_id)
     scan_order[0] = 0;
 
   int found_idx = -1;
-  for (int k = 0; k < 3; k++) {
+  const int seats = HostConfiguredSeats();
+  for (int k = 0; k < 1 + kSnesHostPadSeats; k++) {
     uint8 j = scan_order[k];
-    if (j < 2 && g_config.enable_gamepad[j] && (k == 0 || g_gamepad[j].joystick_id == -1)) {
+    if (j < seats && g_config.enable_gamepad[j] && (k == 0 || g_gamepad[j].joystick_id == -1)) {
       found_idx = j;
       break;
     }
@@ -4547,7 +4613,7 @@ static void OpenOneJoystick(int i) {
   SDL_JoystickID id = SDL_JoystickInstanceID(joystick);
   if (GetGamepadInfo(id) || SelftestPadExcludes(id)) { SDL_JoystickClose(joystick); return; }
   int slot = -1;
-  for (int j = 0; j < 2; ++j) {
+  for (int j = 0; j < HostConfiguredSeats(); ++j) {
     if (g_config.enable_gamepad[j] && g_gamepad[j].joystick_id == -1) {
       slot = j; break;
     }
@@ -4601,6 +4667,15 @@ static void SetPadButtonOrFallthrough(uint32 j, bool pressed) {
     uint32 m = 0x1000u << kKbdRemap[j - kKeys_ControlsP2];
     g_pad_buttons = pressed ? (g_pad_buttons | m) : (g_pad_buttons & ~m);
     return;
+  }
+  {
+    const int seat = ConfigSeatForControl((int)j);
+    if (seat >= 2) {
+      uint16 m = (uint16)(1u << kKbdRemap[(j - kKeys_ControlsP3) % 12]);
+      g_seat_pad[seat] = pressed ? (uint16)(g_seat_pad[seat] | m)
+                                 : (uint16)(g_seat_pad[seat] & ~m);
+      return;
+    }
   }
   if (g_overlay_modal)
     return;   /* a panel owns the screen: no state loads behind it */
