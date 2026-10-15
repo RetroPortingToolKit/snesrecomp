@@ -21,6 +21,9 @@
 #include "common_cpu_infra.h"  /* cpu_take_tailcall_return_context — swallow a stale
                                 * tail-armed context on the LLE yield unwind */
 #include "ppu_dma_trace.h"      /* ppudma_note_interrupt — per-frame tally */
+#if defined(_MSC_VER) && !defined(__clang__)
+#include <intrin.h>             /* _BitScanForward64 */
+#endif
 
 /* Guest-time-anchored APU (Rockman X JP gate #3 / audio pacing): the interp
  * tier advances the SPC per interpreted opcode by guest master cycles, exactly
@@ -175,6 +178,17 @@ static unsigned bridge_region_speed(uint32_t adr) {
      * (cpu_state.c cpu_region_speed) so both tiers price transfers
      * identically. */
     return (unsigned)cpu_region_speed(adr);
+}
+
+/* Index of the lowest set bit; v must be non-zero. */
+static inline unsigned bridge_ctz64(uint64_t v) {
+#if defined(_MSC_VER) && !defined(__clang__)
+    unsigned long i;
+    _BitScanForward64(&i, v);
+    return (unsigned)i;
+#else
+    return (unsigned)__builtin_ctzll(v);
+#endif
 }
 
 static void bridge_timing_bus(uint32_t adr) {
@@ -1553,6 +1567,20 @@ static int _interp_run_core(CpuState *cpu, uint32_t entry_pc24,
     } QuiescentState;
     QuiescentState qring[64];
     memset(qring, 0, sizeof qring);
+    /* The quiescent detector's candidates, bucketed by a hash of every field
+     * a match compares (PC, registers, flags, widths, both epochs). An entry
+     * that matches has the same hash, so it is in now's bucket: qbucket[b]
+     * has bit s set while ring slot s holds a state hashing to b, and
+     * qslot_bucket[s] says which bucket that is (0xFF: slot still empty).
+     * Every slot in the bucket is a candidate, not just the latest visit to
+     * the PC -- a loop whose state at a PC alternates matches only an older
+     * one -- and they are compared in full in ascending slot order, so the
+     * entry chosen, and with it the repeat count, is the one the full
+     * 64-entry scan chooses. A collision only costs a compare. */
+    uint64_t qbucket[64];
+    uint8_t qslot_bucket[64];
+    memset(qbucket, 0, sizeof qbucket);
+    memset(qslot_bucket, 0xFF, sizeof qslot_bucket);
     /* Stable-poll detector state: the architectural state at the last few
      * loop heads this frame branched back to (see the detector below). */
     typedef struct PollHeadState {
@@ -1934,8 +1962,25 @@ static int _interp_run_core(CpuState *cpu, uint32_t entry_pc24,
             now.d=in.d; now.mf=in.mf; now.xf=in.xf; now.e=in.e;
             now.write_epoch=g_interp_bridge_write_epoch; now.step=steps;
             now.continuous_read_epoch=s_interp_continuous_read_epoch;
-            for (unsigned qi=0; qi<64; qi++) {
-                QuiescentState *old=&qring[qi];
+            unsigned qb;
+            {
+                const uint64_t k = 0x9E3779B97F4A7C15ull;
+                uint64_t h = now.pc;
+                h = h * k ^ ((uint64_t)now.a << 32 | (uint64_t)now.x << 16 | now.y);
+                h = h * k ^ ((uint64_t)now.sp << 32 | (uint64_t)now.dp << 16 |
+                             (uint64_t)now.db << 8 | now.k);
+                h = h * k ^ ((uint64_t)now.c | (uint64_t)now.z << 8 |
+                             (uint64_t)now.v << 16 | (uint64_t)now.n << 24 |
+                             (uint64_t)now.i << 32 | (uint64_t)now.d << 40 |
+                             (uint64_t)now.mf << 48 | (uint64_t)now.xf << 56);
+                h = h * k ^ now.e;
+                h = h * k ^ now.write_epoch;
+                h = h * k ^ now.continuous_read_epoch;
+                h *= k;
+                qb = (unsigned)(h >> 58);
+            }
+            for (uint64_t qm = qbucket[qb]; qm; qm &= qm - 1) {
+                QuiescentState *old=&qring[bridge_ctz64(qm)];
                 if (old->step && steps-old->step<=256 &&
                     old->pc==now.pc && old->a==now.a && old->x==now.x &&
                     old->y==now.y && old->sp==now.sp && old->dp==now.dp &&
@@ -1970,6 +2015,13 @@ static int _interp_run_core(CpuState *cpu, uint32_t entry_pc24,
                     }
                     break;
                 }
+            }
+            {
+                const unsigned qs = (unsigned)(steps & 63);
+                if (qslot_bucket[qs] != 0xFF)
+                    qbucket[qslot_bucket[qs]] &= ~(1ull << qs);
+                qbucket[qb] |= 1ull << qs;
+                qslot_bucket[qs] = (uint8_t)qb;
             }
             qring[steps & 63]=now;
         }
