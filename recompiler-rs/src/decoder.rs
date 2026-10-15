@@ -1389,18 +1389,24 @@ pub fn decode_function(
                     let site_m = insn.m_flag & 1;
                     let site_x = insn.x_flag & 1;
                     let mut extra_succs: Vec<(DecodeKey, &'static str)> = Vec::new();
-                    for &e in &entries {
-                        if e == 0 {
-                            continue;
-                        }
-                        let eb = (e >> 16) & 0xFF;
-                        let e16 = e & 0xFFFF;
-                        if eb == bank
-                            && ((0x8000..=0xFFFF).contains(&e16)
-                                || addr_in_reloc_region(eb, e16, reloc).is_some())
-                        {
-                            extra_succs
-                                .push((DecodeKey::new(addr24(eb, e16), site_m, site_x), "jump"));
+                    // Ptrcall handlers are separate call demands. Importing
+                    // their RTSes contaminates this routine's exit widths.
+                    if !auth.ptr_call {
+                        for &e in &entries {
+                            if e == 0 {
+                                continue;
+                            }
+                            let eb = (e >> 16) & 0xFF;
+                            let e16 = e & 0xFFFF;
+                            if eb == bank
+                                && ((0x8000..=0xFFFF).contains(&e16)
+                                    || addr_in_reloc_region(eb, e16, reloc).is_some())
+                            {
+                                extra_succs.push((
+                                    DecodeKey::new(addr24(eb, e16), site_m, site_x),
+                                    "jump",
+                                ));
+                            }
                         }
                     }
                     let succ: Vec<DecodeKey> = if auth.ptr_call {
@@ -1414,9 +1420,55 @@ pub fn decode_function(
                                 reloc,
                             )
                         }) & 0xFFFF;
-                        let next = DecodeKey::new(addr24(bank, next_pc), site_m, site_x);
-                        extra_succs.push((next.clone(), "fall"));
-                        vec![next]
+                        let mut return_modes = HashSet::new();
+                        let mut missing_targets = Vec::new();
+                        for &entry in &entries {
+                            if entry == 0 {
+                                continue;
+                            }
+                            let target = if insn.dispatch_kind.as_deref() == Some("long") {
+                                entry & 0xFFFFFF
+                            } else {
+                                addr24(bank, entry & 0xFFFF)
+                            };
+                            match lookup_exit_mx_modes(
+                                mapping,
+                                env.callee_exit_mx,
+                                env.callee_exit_mx_modes,
+                                target,
+                                site_m,
+                                site_x,
+                            ) {
+                                Some(modes) => return_modes.extend(modes),
+                                None => missing_targets.push(target),
+                            }
+                        }
+                        if !missing_targets.is_empty() && env.stop_on_unknown_callee_exit {
+                            for target in missing_targets {
+                                let item = (insn.addr & 0xFFFFFF, target, site_m, site_x);
+                                if !graph.unknown_callee_exit_sites.contains(&item) {
+                                    graph.unknown_callee_exit_sites.push(item);
+                                }
+                            }
+                        } else {
+                            if !missing_targets.is_empty() || return_modes.is_empty() {
+                                return_modes.insert((site_m, site_x));
+                            }
+                            let mut modes: Vec<_> = return_modes.into_iter().collect();
+                            modes.sort();
+                            for (m, x) in modes {
+                                extra_succs.push((
+                                    DecodeKey::with_stack(
+                                        addr24(bank, next_pc),
+                                        m,
+                                        x,
+                                        key.p_stack.clone(),
+                                    ),
+                                    "fall",
+                                ));
+                            }
+                        }
+                        extra_succs.iter().map(|(next, _)| next.clone()).collect()
                     } else {
                         extra_succs.iter().map(|(k, _)| k.clone()).collect()
                     };
@@ -3329,26 +3381,25 @@ pub(crate) fn compute_deps(
     let mut sib_pcs: Vec<u32> = Vec::new();
     for di in graph.insns() {
         let ins = &di.insn;
-        let dispatch_targets: Vec<u32> =
-            if ins.mnem == "JSR" && ins.mode == Mode::IndirX && ins.dispatch_entries.is_some() {
-                let bank = (ins.addr >> 16) & 0xFF;
-                ins.dispatch_entries
-                    .as_deref()
-                    .unwrap_or(&[])
-                    .iter()
-                    .copied()
-                    .filter(|entry| *entry != 0)
-                    .map(|entry| {
-                        if ins.dispatch_kind.as_deref() == Some("long") {
-                            entry & 0xFFFFFF
-                        } else {
-                            addr24(bank, entry & 0xFFFF)
-                        }
-                    })
-                    .collect()
-            } else {
-                Vec::new()
-            };
+        let dispatch_targets: Vec<u32> = if ins.dispatch_call && ins.dispatch_entries.is_some() {
+            let bank = (ins.addr >> 16) & 0xFF;
+            ins.dispatch_entries
+                .as_deref()
+                .unwrap_or(&[])
+                .iter()
+                .copied()
+                .filter(|entry| *entry != 0)
+                .map(|entry| {
+                    if ins.dispatch_kind.as_deref() == Some("long") {
+                        entry & 0xFFFFFF
+                    } else {
+                        addr24(bank, entry & 0xFFFF)
+                    }
+                })
+                .collect()
+        } else {
+            Vec::new()
+        };
         let tp: Option<u32> = if ins.mnem == "JSR" && ins.length == 3 && ins.mode != Mode::IndirX {
             Some(addr24((ins.addr >> 16) & 0xFF, ins.operand & 0xFFFF))
         } else if ins.mnem == "JSL" {

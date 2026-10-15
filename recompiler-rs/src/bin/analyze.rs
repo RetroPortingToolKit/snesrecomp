@@ -1103,7 +1103,11 @@ fn solve_exit_equation_sccs(
                                     &solved,
                                 )
                             });
-                        modes == Some(BTreeSet::from([(m & 1, x & 1)]))
+                        modes.is_some_and(|modes| {
+                            // A proven non-returning call cannot violate a
+                            // preservation assumption about its continuation.
+                            modes.is_empty() || modes == BTreeSet::from([(m & 1, x & 1)])
+                        })
                     })
             });
             if !assumptions_hold {
@@ -1924,6 +1928,24 @@ mod tests {
     fn exit_equation_solver_preserves_closed_noreturn_fact() {
         let looping = VariantKey::new(0xB98000, 0, 0);
         let solved = solve(vec![(looping, equation(&[], &[], &[]))]);
+        assert_eq!(solved[&looping], BTreeSet::new());
+    }
+
+    #[test]
+    fn exit_equation_solver_accepts_noreturn_in_preservation_cycle() {
+        let dispatcher = VariantKey::new(0x008100, 1, 0);
+        let looping = VariantKey::new(0x008400, 1, 0);
+        let solved = solve(vec![
+            (
+                dispatcher,
+                equation(&[(1, 0)], &[], &[((looping.pc24, 1, 0), 1, 0)]),
+            ),
+            (
+                looping,
+                equation(&[], &[], &[((dispatcher.pc24, 1, 0), 1, 0)]),
+            ),
+        ]);
+        assert_eq!(solved[&dispatcher], BTreeSet::from([(1, 0)]));
         assert_eq!(solved[&looping], BTreeSet::new());
     }
 

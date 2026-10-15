@@ -2530,14 +2530,38 @@ def _decode_function_uncached(rom: bytes, bank: int, start: int,
                                 rom, bank, pc, (pc + insn.length) & 0xFFFF)
                         nxt &= 0xFFFF
                         insn.dispatch_return_pc = nxt
-                        nxt_key = DecodeKey(addr24(bank, nxt), site_m, site_x, ())
-                        succ = [nxt_key]
+                        return_modes = set()
+                        missing_targets = []
+                        for entry in entries:
+                            if not entry:
+                                continue
+                            target = (entry & 0xFFFFFF
+                                      if insn.dispatch_kind == 'long'
+                                      else addr24(bank, entry & 0xFFFF))
+                            modes = _lookup_exit_mx_mode_set(
+                                callee_exit_mx, callee_exit_mx_modes,
+                                target, site_m, site_x)
+                            if modes is None:
+                                missing_targets.append(target)
+                            else:
+                                return_modes.update(modes)
+                        if missing_targets and stop_on_unknown_callee_exit:
+                            for target in missing_targets:
+                                item = (insn.addr & 0xFFFFFF, target, site_m, site_x)
+                                if item not in graph.unknown_callee_exit_sites:
+                                    graph.unknown_callee_exit_sites.append(item)
+                            succ = []
+                        else:
+                            if missing_targets or not return_modes:
+                                return_modes.add((site_m, site_x))
+                            succ = [DecodeKey(addr24(bank, nxt), m, x, key.p_stack)
+                                    for m, x in sorted(return_modes)]
                         # Candidate handlers are cross-function call demands,
                         # not CFG successors of the enclosing caller. Decode
                         # only the PEA-selected continuation here; otherwise
                         # every explicit pointer target is inlined and also
                         # mis-recorded as a boundary tail exit.
-                        decode_succs = [(nxt_key, 'fall')]
+                        decode_succs = [(next_key, 'fall') for next_key in succ]
                     graph.insns[key] = DecodedInsn(key=key, insn=insn,
                                                    successors=succ)
                     for s, sk in decode_succs:
@@ -2584,7 +2608,7 @@ def _decode_function_uncached(rom: bytes, bank: int, start: int,
                     site_x = insn.x_flag & 1
                     nxt = _pea_ptrcall_return_pc(
                         rom, bank, pc, (pc + insn.length) & 0xFFFF)
-                    nxt_key = DecodeKey(addr24(bank, nxt), site_m, site_x, ())
+                    nxt_key = DecodeKey(addr24(bank, nxt), site_m, site_x, key.p_stack)
                     insn.dispatch_pushed_call = True
                     insn.dispatch_pushed_call_frame_size = pushed_call_size
                     insn.dispatch_consumed_stack_bytes = pushed_call_size

@@ -1954,7 +1954,8 @@ def emit_function(rom: bytes, bank: int, start: int,
                 lines.append(_goto_or_return(succs[0], source_pc24=blk_pc24)
                              + " /* implicit fall-through */")
             elif (len(succs) > 1 and pairs
-                  and pairs[-1][0].mnem in ('JSR', 'JSL')):
+                  and (pairs[-1][0].mnem in ('JSR', 'JSL')
+                       or getattr(pairs[-1][0], 'dispatch_call', False))):
                 lines.append("switch (((cpu->m_flag & 1) << 1) | (cpu->x_flag & 1)) {")
                 seen_mx = set()
                 fallback_stmt = None
