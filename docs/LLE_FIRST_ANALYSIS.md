@@ -169,6 +169,32 @@ tail target should instead model that target directly. A site cannot be both
 `terminal_jsr` and `noreturn_jsr`; both Python and Rust configuration parsers
 reject that contradiction.
 
+## Run-time immediates (`live_operand`)
+
+`live_operand <site_pc16>` names an immediate-mode instruction whose operand
+the host may edit in the loaded ROM image (a cheat raising a limit, a patch
+toggled while running). Emission replaces the folded constant with a read of
+`PB:(pc+1)` at the instruction's own width, so compiled code sees the edit
+exactly as the interpreter does. The opcode, and with it the cycle charge,
+stays the IMM form.
+
+Only data operands are supported: `LDA LDX LDY ADC SBC AND ORA EOR CMP CPX
+CPY BIT`. Changing one of those changes a value, never a decode width or a
+control-flow edge, so every structural fact the analyzer proved still holds.
+`REP`/`SEP` (they set the widths every later decode depends on), `MVN`/`MVP`
+(bank operands) and the signature bytes of `BRK`/`COP`/`WDM` are refused by
+name, as is a site that is not an immediate.
+
+The one value fact derived from an immediate is the constant-Z branch fold
+(`LDA #0` / `BEQ` taken unconditionally). Both the Python decoder and the
+native analyzer skip that fold at a declared site, so the manifest and the
+emitted C keep both successors; the decode cache key includes the declared
+sites. Guarded pointer recovery may still enumerate candidates from the
+decoded bytes: emission compares the pointer actually loaded and keeps the
+interpreter default arm, so an edited value outside the candidates runs on the
+interpreter, never on a wrong target. A duplicate site is a configuration
+error in both parsers.
+
 ## Acceptance
 
 - Deterministic full and partial generated manifests.

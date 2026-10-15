@@ -50,6 +50,7 @@ from v2.ir import (  # noqa: E402
     IROp, IRBlock, Value,
     CondBranch, Goto, IndirectGoto, Call, Return,
     PullReg, PushReg, Pull, Push, PushEffectiveAddress, Reg,
+    ConstI, Read, SegRef, SegKind,
 )
 
 
@@ -57,6 +58,48 @@ def _label_for(key: DecodeKey) -> str:
     """C label name for a block keyed by (pc, m, x)."""
     pc = key.pc & 0xFFFF
     return f"L_{pc:04X}_M{key.m}X{key.x}"
+
+
+# Immediate-mode instructions whose operand is data: changing it changes a
+# value, never a width or a control-flow edge, so every fact the analyzer
+# proved about the routine still holds. REP and SEP change the widths every
+# later decode depends on, MVN/MVP name banks, BRK/COP/WDM are signatures:
+# none of those may be live, and each is refused by name.
+LIVE_OPERAND_MNEMONICS = frozenset({
+    'LDA', 'LDX', 'LDY', 'ADC', 'SBC', 'AND', 'ORA', 'EOR',
+    'CMP', 'CPX', 'CPY', 'BIT',
+})
+
+
+def _live_operand(insn, ops: List[IROp]) -> List[IROp]:
+    """`live_operand`: replace the folded immediate with a ROM read of it.
+
+    The operand bytes follow the opcode in the program bank, so the read is
+    PB:(pc+1) at the instruction's own width -- exactly the bytes the CPU
+    fetches. Only the constant changes; the opcode, and with it the cycle
+    charge, stays the IMM form.
+    """
+    pc = insn.addr & 0xFFFFFF
+    if insn.mode != _MODE_IMM:
+        raise ValueError(
+            f"live_operand at ${pc:06X}: {insn.mnem} is not "
+            f"an immediate-mode instruction")
+    if insn.mnem not in LIVE_OPERAND_MNEMONICS:
+        what = ("a status operand: it changes the widths decoded after it"
+                if insn.mnem in ('REP', 'SEP') else
+                "not a data operand")
+        raise ValueError(
+            f"live_operand at ${pc:06X}: {insn.mnem} #imm is {what}; only "
+            f"{', '.join(sorted(LIVE_OPERAND_MNEMONICS))} are supported")
+    seg = SegRef(kind=SegKind.LONG, offset=(pc + 1) & 0xFFFF,
+                 bank=(pc >> 16) & 0xFF)
+    # Every supported mnemonic lowers its IMM operand as the first op.
+    first = ops[0] if ops else None
+    if not (isinstance(first, ConstI) and first.value == insn.operand):
+        raise ValueError(
+            f"live_operand at ${pc:06X}: {insn.mnem} lowers without a leading "
+            f"constant operand to replace")
+    return [Read(seg=seg, width=first.width, out=first.out)] + list(ops[1:])
 
 
 def _block_cycle_const(pairs) -> int:
@@ -468,6 +511,7 @@ def emit_function(rom: bytes, bank: int, start: int,
                   inline_arg_map=None,
                   terminal_jsr_sites=None,
                   noreturn_jsr_sites=None,
+                  live_operand_sites=None,
                   entry_s_offset: int = 0) -> str:
     """Emit a complete v2 C function source for one 65816 function.
 
@@ -595,7 +639,8 @@ def emit_function(rom: bytes, bank: int, start: int,
                             terminal_jsr_sites=terminal_jsr_sites,
                             noreturn_jsr_sites=noreturn_jsr_sites,
                             hle_entry_pcs=(set(hle_func or ()) |
-                                           set(hle_spc_upload or ())))
+                                           set(hle_spc_upload or ())),
+                            live_operand_sites=live_operand_sites)
     # Forward any suppressed indirect calls upward so emit_bank can
     # aggregate them into the build report. List-of-records.
     if suppressed_collector is not None:
@@ -802,6 +847,9 @@ def emit_function(rom: bytes, bank: int, start: int,
         flat: List[IROp] = []
         for di in cfg.blocks[key].insns:
             ops = lower(di.insn, value_factory=vf)
+            if (live_operand_sites
+                    and (di.insn.addr & 0xFFFFFF) in live_operand_sites):
+                ops = _live_operand(di.insn, ops)
             pairs.append((di.insn, ops))
             flat.extend(ops)
         block_per_insn_ir[key] = pairs

@@ -122,6 +122,7 @@ struct Inputs {
     hle_dispatch: HashMap<u32, String>,
     inline_skip: HashMap<u32, i32>,
     terminal_jsr_sites: BTreeSet<u32>,
+    live_operand_sites: BTreeSet<u32>,
     declared_exit_modes: HashMap<(u32, u8, u8), (u8, u8)>,
     declared_exit_sets: HashMap<(u32, u8, u8), Vec<(u8, u8)>>,
     /// Synthetic reloc regions redirecting WRAM ram_routine entries to blob
@@ -270,6 +271,7 @@ fn load_inputs(cfg_dir: &Path, rom: &mut Vec<u8>, all_cfg_roots: bool) -> Result
     let mut hle_dispatch = HashMap::new();
     let mut inline_skip = HashMap::new();
     let mut terminal_jsr_sites = BTreeSet::new();
+    let mut live_operand_sites = BTreeSet::new();
     let mut declared_exit_modes = HashMap::new();
     let mut declared_exit_sets: HashMap<(u32, u8, u8), Vec<(u8, u8)>> = HashMap::new();
 
@@ -363,6 +365,13 @@ fn load_inputs(cfg_dir: &Path, rom: &mut Vec<u8>, all_cfg_roots: bool) -> Result
             terminal_jsr_sites.insert(site);
             if let Some(mirror) = mirror_pc24(mapping, site) {
                 terminal_jsr_sites.insert(mirror);
+            }
+        }
+        for &site_pc16 in &cfg.live_operand {
+            let site = (bank << 16) | (site_pc16 & 0xFFFF);
+            live_operand_sites.insert(site);
+            if let Some(mirror) = mirror_pc24(mapping, site) {
+                live_operand_sites.insert(mirror);
             }
         }
         for site in &cfg.indirect_dispatch {
@@ -507,6 +516,7 @@ fn load_inputs(cfg_dir: &Path, rom: &mut Vec<u8>, all_cfg_roots: bool) -> Result
         hle_dispatch,
         inline_skip,
         terminal_jsr_sites,
+        live_operand_sites,
         declared_exit_modes,
         declared_exit_sets,
         reloc_regions,
@@ -1220,6 +1230,7 @@ fn analyze(
                 callee_inline_skip: Some(&inline_args),
                 inline_dispatch_loop_pcs: inline_loops,
                 terminal_jsr_sites: Some(&inputs.terminal_jsr_sites),
+                live_operand_sites: Some(&inputs.live_operand_sites),
                 global_inline_skip: Some(&inline_args),
                 stop_on_unknown_callee_exit: true,
                 reloc_regions: Some(&inputs.reloc_regions),
