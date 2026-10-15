@@ -1,0 +1,1952 @@
+{
+  "schema": "snesrecomp paired game regression v1",
+  "date": "2026-10-14",
+  "tracking": "beads-8wg.2.125",
+  "branch": "test/pr171-173-four-game-regression",
+  "baseline": "b4e2e0a478e0ae36d4dcfc4fa3887b39a9d0bfe2",
+  "candidate": "835c30e40b5d0890c276335e30ae61573c28112f",
+  "pull_requests": {
+    "171": "592c8901679cf81f25a8c15176485c99700e852f",
+    "172": "cb75eae9fed581a965012b70276377d652cdfb1b",
+    "173": "327187478d3a3cdac751dac06b8cf1c619c9eefb"
+  },
+  "ci": {
+    "url": "https://github.com/RetroPortingToolKit/snesrecomp/actions/runs/38664616925",
+    "head": "835c30e40b5d0890c276335e30ae61573c28112f",
+    "platforms": [
+      "Linux x86-64",
+      "Windows x86-64",
+      "macOS arm64"
+    ],
+    "conclusion": "success",
+    "python_passed": 731,
+    "rust_library_passed": 97,
+    "rust_binary_passed": 7,
+    "c_runtime": "passed",
+    "optional_content_pack": "passed"
+  },
+  "local_tests": {
+    "python_v2_passed": 502,
+    "windows_python_alias_passed": 8,
+    "windows_python_alias_skipped": 1,
+    "input_function_probe": "passed",
+    "config_and_keybind_roundtrips": "passed twice",
+    "msvc_ppu_alignment": "passed"
+  },
+  "local_artifacts": "F:\\Projects\\_regression-review-20261014",
+  "owner_approval": "pending",
+  "merges": "not performed",
+  "games": {
+    "smw": {
+      "builds": {
+        "baseline": {
+          "game": "smw",
+          "arm": "baseline",
+          "framework": "b4e2e0a478e0ae36d4dcfc4fa3887b39a9d0bfe2",
+          "title": "8dedb2869414f20d1d86d34081be26594560cc15",
+          "ui": "01bff9477e6847b2281260f0a9526a85e45b8ba2",
+          "binary": "F:\\Projects\\_regression-review-20261014\\builds\\smw\\baseline\\SuperMarioWorldSNESRecomp.exe",
+          "binary_sha256": "9a6111b72aa8d8462de07d997f37632d1507df76d734d3e4b1620d4dfa4cf0eb",
+          "rom": "F:\\Projects\\_regression-review-20261014\\source\\smw\\smw.sfc",
+          "rom_sha256": "0838e531fe22c077528febe14cb3ff7c492f1f5fa8de354192bdff7137c27f5b",
+          "analyzer_sha256": "6fa2d7604896676c78cdabad2327cd8cb46855f3c0cd35806742717db57b3da9",
+          "generated_files": 104,
+          "cmake_command": [
+            "C:/msys64/mingw64/bin/cmake.exe",
+            "-S",
+            "F:\\Projects\\_regression-review-20261014\\source\\smw",
+            "-B",
+            "F:\\Projects\\_regression-review-20261014\\builds\\smw\\baseline",
+            "-G",
+            "Ninja",
+            "-DCMAKE_BUILD_TYPE=Release",
+            "-DCMAKE_C_COMPILER=C:/msys64/mingw64/bin/gcc.exe",
+            "-DCMAKE_CXX_COMPILER=C:/msys64/mingw64/bin/g++.exe",
+            "-DCMAKE_MAKE_PROGRAM=C:/msys64/mingw64/bin/ninja.exe",
+            "-DPython3_EXECUTABLE=C:/Users/Matthew/AppData/Local/Programs/Python/Python312/python.exe",
+            "-DSNESRECOMP_ROOT=F:/Projects/snesrecomp/_regression-20261014-baseline",
+            "-DRECOMP_UI_ROOT=F:/Projects/snesrecomp/MegamanXRecomp/recomp-ui",
+            "-DSNESRECOMP_ENABLE_TRACE=OFF",
+            "-DSNESRECOMP_SDL_BACKEND=SDL3",
+            "-DSNESRECOMP_SDL3_FETCH=OFF",
+            "-DBUILD_TESTING=OFF",
+            "-DSNESRECOMP_BUILD_VERSION=regression-171-173-baseline"
+          ],
+          "generated_hash_manifest_sha256": "83b6a7e13586f23f1dd20315971677f91c9a035c5ce5e2af653713f1d345f61d"
+        },
+        "candidate": {
+          "game": "smw",
+          "arm": "candidate",
+          "framework": "835c30e40b5d0890c276335e30ae61573c28112f",
+          "title": "8dedb2869414f20d1d86d34081be26594560cc15",
+          "ui": "01bff9477e6847b2281260f0a9526a85e45b8ba2",
+          "binary": "F:\\Projects\\_regression-review-20261014\\builds\\smw\\candidate\\SuperMarioWorldSNESRecomp.exe",
+          "binary_sha256": "e4f32ba05a9323238a6d72152cf6e9f0e52c529b4672b2fd9d98a69ea2854fd2",
+          "rom": "F:\\Projects\\_regression-review-20261014\\source\\smw\\smw.sfc",
+          "rom_sha256": "0838e531fe22c077528febe14cb3ff7c492f1f5fa8de354192bdff7137c27f5b",
+          "analyzer_sha256": "47cf6a2136b61b378d42cca35d5c9fd7888eddbc1b777c2383c78f46624d25c1",
+          "generated_files": 104,
+          "cmake_command": [
+            "C:/msys64/mingw64/bin/cmake.exe",
+            "-S",
+            "F:\\Projects\\_regression-review-20261014\\source\\smw",
+            "-B",
+            "F:\\Projects\\_regression-review-20261014\\builds\\smw\\candidate",
+            "-G",
+            "Ninja",
+            "-DCMAKE_BUILD_TYPE=Release",
+            "-DCMAKE_C_COMPILER=C:/msys64/mingw64/bin/gcc.exe",
+            "-DCMAKE_CXX_COMPILER=C:/msys64/mingw64/bin/g++.exe",
+            "-DCMAKE_MAKE_PROGRAM=C:/msys64/mingw64/bin/ninja.exe",
+            "-DPython3_EXECUTABLE=C:/Users/Matthew/AppData/Local/Programs/Python/Python312/python.exe",
+            "-DSNESRECOMP_ROOT=F:/Projects/snesrecomp/_regression-20261014-pr171-173",
+            "-DRECOMP_UI_ROOT=F:/Projects/snesrecomp/MegamanXRecomp/recomp-ui",
+            "-DSNESRECOMP_ENABLE_TRACE=OFF",
+            "-DSNESRECOMP_SDL_BACKEND=SDL3",
+            "-DSNESRECOMP_SDL3_FETCH=OFF",
+            "-DBUILD_TESTING=OFF",
+            "-DSNESRECOMP_BUILD_VERSION=regression-171-173-candidate"
+          ],
+          "generated_hash_manifest_sha256": "235c1a38f8079c77eb049b853aad4a9fd5682602e73735fe9aab9980e19667d8"
+        }
+      },
+      "routes": {
+        "attract": {
+          "game": "smw",
+          "route": "attract",
+          "evidence_matches": true,
+          "identical_inputs": true,
+          "completed": true,
+          "audio_opened": true,
+          "baseline_frames": [
+            6000
+          ],
+          "candidate_frames": [
+            6000
+          ],
+          "baseline_failures": {
+            "interpreter_step_cap": 0,
+            "scheduler_bail": 0,
+            "apu_sync_timeout": 0
+          },
+          "candidate_failures": {
+            "interpreter_step_cap": 0,
+            "scheduler_bail": 0,
+            "apu_sync_timeout": 0
+          },
+          "baseline_warnings": [],
+          "candidate_warnings": [],
+          "no_new_failures": true,
+          "same_frames": true,
+          "regression_matches": true,
+          "arms": {
+            "baseline": {
+              "binary_sha256": "9a6111b72aa8d8462de07d997f37632d1507df76d734d3e4b1620d4dfa4cf0eb",
+              "case_digest": "08510b4c9845713d7ecc9ddc9b52bd0e8ed8ed04c58650040276a37b834d047b",
+              "evidence_sha256": {
+                "frames/frame_005997.bmp": "845ff7552534e0bb0c5d76f5d64b19f464923e5beccba0ef1065b4cc51c9827d",
+                "frames/frame_005997_cgram.bin": "07bc81081c2b39afe79c5ec0b6f54463315dadce73a910539508e0fb5309acf3",
+                "frames/frame_005997_ppu.json": "a82f2fad730ec850530add78b73442ce72ea82315ae6cd6583c2ea2f6efe3b5d",
+                "frames/frame_005997_vram.bin": "f463a75939b66bd45abb0902a214026ad77190d8fe82b1973bd5258242fa7e70",
+                "frames/frame_005997_wram.bin": "2fa4c424951cd5e0ba9e13e60c31e0758a5e42ec4eaa74cb6d88f3fc0787744c",
+                "frames/frame_005998.bmp": "845ff7552534e0bb0c5d76f5d64b19f464923e5beccba0ef1065b4cc51c9827d",
+                "frames/frame_005998_cgram.bin": "ade9cd66d273acc58f86afd717d57304a5a7f388e325cc86878f26a9199328e7",
+                "frames/frame_005998_ppu.json": "4d06343d5957f1522c58817bbdf242fbba028a4e9d0335d1579387db3ec64f2e",
+                "frames/frame_005998_vram.bin": "1483bb58675cb21bc2949d30fc1867a4723cda5985a58cfcb387bb115cffe171",
+                "frames/frame_005998_wram.bin": "72f469b4ab9f973b0c875b02abfb6795ca473190ceb8303e47fb869c755c56c7",
+                "frames/frame_005999.bmp": "cd33fdf9cc8263ae5351aa0fb5cd651312f9c0697848f6d25fc9253479153748",
+                "frames/frame_005999_cgram.bin": "ade9cd66d273acc58f86afd717d57304a5a7f388e325cc86878f26a9199328e7",
+                "frames/frame_005999_ppu.json": "14788525dc8b2edcde0d48815b8ca6e4ec6d11618abe2f67938d0efbd827a43c",
+                "frames/frame_005999_vram.bin": "d7cdccec58905ba1a43d75c25cf8a16011896f62bb2cabeb58441f3544857555",
+                "frames/frame_005999_wram.bin": "59c9a6d019900363c1341ce5e353dde065eba3f090e782cfd0c10a8ff7ffced5",
+                "trace.jsonl": "af86557187069eb90fbcf6639aac5b5be403d6ef1cb9690a81179f5d58ea1a84"
+              },
+              "command": [
+                "F:\\Projects\\_regression-review-20261014\\runs\\smw\\attract\\baseline/SuperMarioWorldSNESRecomp.exe",
+                "F:\\Projects\\_regression-review-20261014\\source\\smw\\smw.sfc",
+                "--no-launcher",
+                "--config",
+                "F:\\Projects\\_regression-review-20261014\\runs\\smw\\attract\\baseline/config.ini",
+                "--script",
+                "F:\\Projects\\_regression-review-20261014\\runs\\smw\\attract\\baseline/input.txt",
+                "--framedump",
+                "F:\\Projects\\_regression-review-20261014\\runs\\smw\\attract\\baseline/frames",
+                "--benchmark-audio",
+                "6000"
+              ],
+              "input_files": {
+                "config.ini": "[General]\nAutosave=0\nSkipLauncher=1\nDisableFrameDelay=1\n[Graphics]\nFullscreen=0\nWindowScale=2\nOutputMethod=SDL\nNewRenderer=1\nNoSpriteLimits=1\nDisplayAspect=4:3\nWidescreen=0\nFrameBlend=0\n[Sound]\nEnableAudio=1\nAudioFreq=32040\nAudioChannels=2\nAudioSamples=512\n",
+                "input.txt": "wait 6000\n"
+              },
+              "input_save_sha256": {},
+              "environment": {
+                "SNESRECOMP_STATE_TRACE": "{run}/cpu.csv",
+                "SNESRECOMP_RUN_FRAMES": "6000",
+                "SNESRECOMP_WRAM_TRACE_FILE": "{run}/trace.jsonl",
+                "SNESRECOMP_SAVE_ROOT": "{run}/saves",
+                "SNESRECOMP_FRAMEDUMP_START": "5997",
+                "SNESRECOMP_FRAMEDUMP_END": "5999",
+                "SNESRECOMP_FRAMEDUMP_PIXELS": "1",
+                "SNESRECOMP_FRAMEDUMP_VIDEO": "1",
+                "SNESRECOMP_DUMP_DIR": "{run}"
+              }
+            },
+            "candidate": {
+              "binary_sha256": "e4f32ba05a9323238a6d72152cf6e9f0e52c529b4672b2fd9d98a69ea2854fd2",
+              "case_digest": "08510b4c9845713d7ecc9ddc9b52bd0e8ed8ed04c58650040276a37b834d047b",
+              "evidence_sha256": {
+                "frames/frame_005997.bmp": "845ff7552534e0bb0c5d76f5d64b19f464923e5beccba0ef1065b4cc51c9827d",
+                "frames/frame_005997_cgram.bin": "07bc81081c2b39afe79c5ec0b6f54463315dadce73a910539508e0fb5309acf3",
+                "frames/frame_005997_ppu.json": "a82f2fad730ec850530add78b73442ce72ea82315ae6cd6583c2ea2f6efe3b5d",
+                "frames/frame_005997_vram.bin": "f463a75939b66bd45abb0902a214026ad77190d8fe82b1973bd5258242fa7e70",
+                "frames/frame_005997_wram.bin": "2fa4c424951cd5e0ba9e13e60c31e0758a5e42ec4eaa74cb6d88f3fc0787744c",
+                "frames/frame_005998.bmp": "845ff7552534e0bb0c5d76f5d64b19f464923e5beccba0ef1065b4cc51c9827d",
+                "frames/frame_005998_cgram.bin": "ade9cd66d273acc58f86afd717d57304a5a7f388e325cc86878f26a9199328e7",
+                "frames/frame_005998_ppu.json": "4d06343d5957f1522c58817bbdf242fbba028a4e9d0335d1579387db3ec64f2e",
+                "frames/frame_005998_vram.bin": "1483bb58675cb21bc2949d30fc1867a4723cda5985a58cfcb387bb115cffe171",
+                "frames/frame_005998_wram.bin": "72f469b4ab9f973b0c875b02abfb6795ca473190ceb8303e47fb869c755c56c7",
+                "frames/frame_005999.bmp": "cd33fdf9cc8263ae5351aa0fb5cd651312f9c0697848f6d25fc9253479153748",
+                "frames/frame_005999_cgram.bin": "ade9cd66d273acc58f86afd717d57304a5a7f388e325cc86878f26a9199328e7",
+                "frames/frame_005999_ppu.json": "14788525dc8b2edcde0d48815b8ca6e4ec6d11618abe2f67938d0efbd827a43c",
+                "frames/frame_005999_vram.bin": "d7cdccec58905ba1a43d75c25cf8a16011896f62bb2cabeb58441f3544857555",
+                "frames/frame_005999_wram.bin": "59c9a6d019900363c1341ce5e353dde065eba3f090e782cfd0c10a8ff7ffced5",
+                "trace.jsonl": "af86557187069eb90fbcf6639aac5b5be403d6ef1cb9690a81179f5d58ea1a84"
+              },
+              "command": [
+                "F:\\Projects\\_regression-review-20261014\\runs\\smw\\attract\\candidate/SuperMarioWorldSNESRecomp.exe",
+                "F:\\Projects\\_regression-review-20261014\\source\\smw\\smw.sfc",
+                "--no-launcher",
+                "--config",
+                "F:\\Projects\\_regression-review-20261014\\runs\\smw\\attract\\candidate/config.ini",
+                "--script",
+                "F:\\Projects\\_regression-review-20261014\\runs\\smw\\attract\\candidate/input.txt",
+                "--framedump",
+                "F:\\Projects\\_regression-review-20261014\\runs\\smw\\attract\\candidate/frames",
+                "--benchmark-audio",
+                "6000"
+              ],
+              "input_files": {
+                "config.ini": "[General]\nAutosave=0\nSkipLauncher=1\nDisableFrameDelay=1\n[Graphics]\nFullscreen=0\nWindowScale=2\nOutputMethod=SDL\nNewRenderer=1\nNoSpriteLimits=1\nDisplayAspect=4:3\nWidescreen=0\nFrameBlend=0\n[Sound]\nEnableAudio=1\nAudioFreq=32040\nAudioChannels=2\nAudioSamples=512\n",
+                "input.txt": "wait 6000\n"
+              },
+              "input_save_sha256": {},
+              "environment": {
+                "SNESRECOMP_STATE_TRACE": "{run}/cpu.csv",
+                "SNESRECOMP_RUN_FRAMES": "6000",
+                "SNESRECOMP_WRAM_TRACE_FILE": "{run}/trace.jsonl",
+                "SNESRECOMP_SAVE_ROOT": "{run}/saves",
+                "SNESRECOMP_FRAMEDUMP_START": "5997",
+                "SNESRECOMP_FRAMEDUMP_END": "5999",
+                "SNESRECOMP_FRAMEDUMP_PIXELS": "1",
+                "SNESRECOMP_FRAMEDUMP_VIDEO": "1",
+                "SNESRECOMP_DUMP_DIR": "{run}"
+              }
+            }
+          }
+        },
+        "basic": {
+          "game": "smw",
+          "route": "basic",
+          "evidence_matches": true,
+          "identical_inputs": true,
+          "completed": true,
+          "audio_opened": true,
+          "baseline_frames": [
+            6000
+          ],
+          "candidate_frames": [
+            6000
+          ],
+          "baseline_failures": {
+            "interpreter_step_cap": 0,
+            "scheduler_bail": 0,
+            "apu_sync_timeout": 0
+          },
+          "candidate_failures": {
+            "interpreter_step_cap": 0,
+            "scheduler_bail": 0,
+            "apu_sync_timeout": 0
+          },
+          "baseline_warnings": [],
+          "candidate_warnings": [],
+          "no_new_failures": true,
+          "same_frames": true,
+          "regression_matches": true,
+          "arms": {
+            "baseline": {
+              "binary_sha256": "9a6111b72aa8d8462de07d997f37632d1507df76d734d3e4b1620d4dfa4cf0eb",
+              "case_digest": "72119193a1ddd8b54ab71a12b4cc601208fb2fc7143d916b55031c701af8c971",
+              "evidence_sha256": {
+                "frames/frame_005997.bmp": "c74c701fec8cecc6a386036ef2202b0e7a1daa46ed9b357c18195513c43d4822",
+                "frames/frame_005997_cgram.bin": "740a6d3c3d9ec96239fe8d2e4e76b8658584b4f1593b5df4e601a9b928b25b3f",
+                "frames/frame_005997_ppu.json": "8bfd3066961b8d46341499bbb3f32c7819c183ab80d7c6bd90bb429a324febb1",
+                "frames/frame_005997_vram.bin": "120a32742a806bce1e1e3b57b59ed97d5668bff5927d3af961038e442df46249",
+                "frames/frame_005997_wram.bin": "69a50c75b6ca9b4fbb5d20deebe436367dc8905a2ffb9c0087476b5a6060a991",
+                "frames/frame_005998.bmp": "a934dcf8789b69be61a0b23bedb698f330a2c901fc1c99dd1e65a4424eb83bf5",
+                "frames/frame_005998_cgram.bin": "df0f99feaf568a95d6a6488ca3053dfaa0d0b17c324bf094881911833f7ec2fe",
+                "frames/frame_005998_ppu.json": "35ebe62cb9b0e7b7a97b021463ad8153bcda496a6bdce78254b770b09184e80f",
+                "frames/frame_005998_vram.bin": "120a32742a806bce1e1e3b57b59ed97d5668bff5927d3af961038e442df46249",
+                "frames/frame_005998_wram.bin": "b24b565712ac71404ce12522b1eee0da00199486c5b98bdb49f359ccbf9a30da",
+                "frames/frame_005999.bmp": "b94dbc6cc074f922bb02683fdaae5f017145dcebad535500728c1cff5cf00312",
+                "frames/frame_005999_cgram.bin": "df0f99feaf568a95d6a6488ca3053dfaa0d0b17c324bf094881911833f7ec2fe",
+                "frames/frame_005999_ppu.json": "ae454ce442f13a6c46cf015d25e9be529e6ba471f1f6b73889ca91da1567068e",
+                "frames/frame_005999_vram.bin": "748ab3c02072f046f7180ce2ddefd4ac912c672a263cfa1c9dfba9b171b7290c",
+                "frames/frame_005999_wram.bin": "3ebc5f76f9e022df7ed59f82155d6e772b4d4989e8b777d71b8624ffd85bb311",
+                "trace.jsonl": "5f337407f96494da2d8fb99208af3e6375cbf31ab9d820ab1f7b6fc07336c089"
+              },
+              "command": [
+                "F:\\Projects\\_regression-review-20261014\\runs\\smw\\basic\\baseline/SuperMarioWorldSNESRecomp.exe",
+                "F:\\Projects\\_regression-review-20261014\\source\\smw\\smw.sfc",
+                "--no-launcher",
+                "--config",
+                "F:\\Projects\\_regression-review-20261014\\runs\\smw\\basic\\baseline/config.ini",
+                "--script",
+                "F:\\Projects\\_regression-review-20261014\\runs\\smw\\basic\\baseline/input.txt",
+                "--framedump",
+                "F:\\Projects\\_regression-review-20261014\\runs\\smw\\basic\\baseline/frames",
+                "--benchmark-audio",
+                "6000"
+              ],
+              "input_files": {
+                "config.ini": "[General]\nAutosave=0\nSkipLauncher=1\nDisableFrameDelay=1\n[Graphics]\nFullscreen=0\nWindowScale=2\nOutputMethod=SDL\nNewRenderer=1\nNoSpriteLimits=1\nDisplayAspect=4:3\nWidescreen=0\nFrameBlend=0\n[Sound]\nEnableAudio=1\nAudioFreq=32040\nAudioChannels=2\nAudioSamples=512\n",
+                "input.txt": "wait 300\npress start 1\nwait 120\npress start 1\nwait 120\npress a 1\nwait 180\npress a 1\nwait 180\npress y 45\nwait 29\npress y 46\nwait 8\npress down 30\nwait 12\npress left 72\nwait 10\npress right 26\nwait 26\npress a 66\nwait 26\npress left 23\nwait 17\npress x 51\nwait 24\npress down 57\nwait 16\npress left 32\nwait 24\npress x 74\nwait 13\npress up 46\nwait 17\npress y 49\nwait 19\npress down 37\nwait 15\npress right 80\nwait 22\npress y 66\nwait 28\npress down 40\nwait 8\npress y 41\nwait 13\npress up 41\nwait 10\npress right 48\nwait 14\npress y 30\nwait 30\npress x 60\nwait 17\npress y 49\nwait 13\npress left 43\nwait 25\npress down 44\nwait 25\npress x 63\nwait 11\npress x 32\nwait 24\npress down 42\nwait 30\npress right 38\nwait 26\npress right 62\nwait 8\npress up 43\nwait 15\npress a 43\nwait 11\npress right 55\nwait 13\npress y 38\nwait 15\npress y 80\nwait 12\npress x 25\nwait 26\npress x 25\nwait 20\npress a 50\nwait 22\npress up 22\nwait 26\npress a 49\nwait 17\npress up 45\nwait 19\npress a 63\nwait 10\npress right 35\nwait 11\npress y 52\nwait 14\npress x 48\nwait 22\npress down 44\nwait 23\npress left 27\nwait 26\npress down 30\nwait 15\n"
+              },
+              "input_save_sha256": {
+                "saves/save.srm": "69dd7c0090880a1068cfdc2840c5d5b84180987eb9624b28d0ea8ae180ced5f6"
+              },
+              "environment": {
+                "SNESRECOMP_STATE_TRACE": "{run}/cpu.csv",
+                "SNESRECOMP_RUN_FRAMES": "6000",
+                "SNESRECOMP_WRAM_TRACE_FILE": "{run}/trace.jsonl",
+                "SNESRECOMP_SAVE_ROOT": "{run}/saves",
+                "SNESRECOMP_FRAMEDUMP_START": "5997",
+                "SNESRECOMP_FRAMEDUMP_END": "5999",
+                "SNESRECOMP_FRAMEDUMP_PIXELS": "1",
+                "SNESRECOMP_FRAMEDUMP_VIDEO": "1",
+                "SNESRECOMP_DUMP_DIR": "{run}"
+              }
+            },
+            "candidate": {
+              "binary_sha256": "e4f32ba05a9323238a6d72152cf6e9f0e52c529b4672b2fd9d98a69ea2854fd2",
+              "case_digest": "72119193a1ddd8b54ab71a12b4cc601208fb2fc7143d916b55031c701af8c971",
+              "evidence_sha256": {
+                "frames/frame_005997.bmp": "c74c701fec8cecc6a386036ef2202b0e7a1daa46ed9b357c18195513c43d4822",
+                "frames/frame_005997_cgram.bin": "740a6d3c3d9ec96239fe8d2e4e76b8658584b4f1593b5df4e601a9b928b25b3f",
+                "frames/frame_005997_ppu.json": "8bfd3066961b8d46341499bbb3f32c7819c183ab80d7c6bd90bb429a324febb1",
+                "frames/frame_005997_vram.bin": "120a32742a806bce1e1e3b57b59ed97d5668bff5927d3af961038e442df46249",
+                "frames/frame_005997_wram.bin": "69a50c75b6ca9b4fbb5d20deebe436367dc8905a2ffb9c0087476b5a6060a991",
+                "frames/frame_005998.bmp": "a934dcf8789b69be61a0b23bedb698f330a2c901fc1c99dd1e65a4424eb83bf5",
+                "frames/frame_005998_cgram.bin": "df0f99feaf568a95d6a6488ca3053dfaa0d0b17c324bf094881911833f7ec2fe",
+                "frames/frame_005998_ppu.json": "35ebe62cb9b0e7b7a97b021463ad8153bcda496a6bdce78254b770b09184e80f",
+                "frames/frame_005998_vram.bin": "120a32742a806bce1e1e3b57b59ed97d5668bff5927d3af961038e442df46249",
+                "frames/frame_005998_wram.bin": "b24b565712ac71404ce12522b1eee0da00199486c5b98bdb49f359ccbf9a30da",
+                "frames/frame_005999.bmp": "b94dbc6cc074f922bb02683fdaae5f017145dcebad535500728c1cff5cf00312",
+                "frames/frame_005999_cgram.bin": "df0f99feaf568a95d6a6488ca3053dfaa0d0b17c324bf094881911833f7ec2fe",
+                "frames/frame_005999_ppu.json": "ae454ce442f13a6c46cf015d25e9be529e6ba471f1f6b73889ca91da1567068e",
+                "frames/frame_005999_vram.bin": "748ab3c02072f046f7180ce2ddefd4ac912c672a263cfa1c9dfba9b171b7290c",
+                "frames/frame_005999_wram.bin": "3ebc5f76f9e022df7ed59f82155d6e772b4d4989e8b777d71b8624ffd85bb311",
+                "trace.jsonl": "5f337407f96494da2d8fb99208af3e6375cbf31ab9d820ab1f7b6fc07336c089"
+              },
+              "command": [
+                "F:\\Projects\\_regression-review-20261014\\runs\\smw\\basic\\candidate/SuperMarioWorldSNESRecomp.exe",
+                "F:\\Projects\\_regression-review-20261014\\source\\smw\\smw.sfc",
+                "--no-launcher",
+                "--config",
+                "F:\\Projects\\_regression-review-20261014\\runs\\smw\\basic\\candidate/config.ini",
+                "--script",
+                "F:\\Projects\\_regression-review-20261014\\runs\\smw\\basic\\candidate/input.txt",
+                "--framedump",
+                "F:\\Projects\\_regression-review-20261014\\runs\\smw\\basic\\candidate/frames",
+                "--benchmark-audio",
+                "6000"
+              ],
+              "input_files": {
+                "config.ini": "[General]\nAutosave=0\nSkipLauncher=1\nDisableFrameDelay=1\n[Graphics]\nFullscreen=0\nWindowScale=2\nOutputMethod=SDL\nNewRenderer=1\nNoSpriteLimits=1\nDisplayAspect=4:3\nWidescreen=0\nFrameBlend=0\n[Sound]\nEnableAudio=1\nAudioFreq=32040\nAudioChannels=2\nAudioSamples=512\n",
+                "input.txt": "wait 300\npress start 1\nwait 120\npress start 1\nwait 120\npress a 1\nwait 180\npress a 1\nwait 180\npress y 45\nwait 29\npress y 46\nwait 8\npress down 30\nwait 12\npress left 72\nwait 10\npress right 26\nwait 26\npress a 66\nwait 26\npress left 23\nwait 17\npress x 51\nwait 24\npress down 57\nwait 16\npress left 32\nwait 24\npress x 74\nwait 13\npress up 46\nwait 17\npress y 49\nwait 19\npress down 37\nwait 15\npress right 80\nwait 22\npress y 66\nwait 28\npress down 40\nwait 8\npress y 41\nwait 13\npress up 41\nwait 10\npress right 48\nwait 14\npress y 30\nwait 30\npress x 60\nwait 17\npress y 49\nwait 13\npress left 43\nwait 25\npress down 44\nwait 25\npress x 63\nwait 11\npress x 32\nwait 24\npress down 42\nwait 30\npress right 38\nwait 26\npress right 62\nwait 8\npress up 43\nwait 15\npress a 43\nwait 11\npress right 55\nwait 13\npress y 38\nwait 15\npress y 80\nwait 12\npress x 25\nwait 26\npress x 25\nwait 20\npress a 50\nwait 22\npress up 22\nwait 26\npress a 49\nwait 17\npress up 45\nwait 19\npress a 63\nwait 10\npress right 35\nwait 11\npress y 52\nwait 14\npress x 48\nwait 22\npress down 44\nwait 23\npress left 27\nwait 26\npress down 30\nwait 15\n"
+              },
+              "input_save_sha256": {
+                "saves/save.srm": "69dd7c0090880a1068cfdc2840c5d5b84180987eb9624b28d0ea8ae180ced5f6"
+              },
+              "environment": {
+                "SNESRECOMP_STATE_TRACE": "{run}/cpu.csv",
+                "SNESRECOMP_RUN_FRAMES": "6000",
+                "SNESRECOMP_WRAM_TRACE_FILE": "{run}/trace.jsonl",
+                "SNESRECOMP_SAVE_ROOT": "{run}/saves",
+                "SNESRECOMP_FRAMEDUMP_START": "5997",
+                "SNESRECOMP_FRAMEDUMP_END": "5999",
+                "SNESRECOMP_FRAMEDUMP_PIXELS": "1",
+                "SNESRECOMP_FRAMEDUMP_VIDEO": "1",
+                "SNESRECOMP_DUMP_DIR": "{run}"
+              }
+            }
+          }
+        }
+      }
+    },
+    "alttp": {
+      "builds": {
+        "baseline": {
+          "game": "alttp",
+          "arm": "baseline",
+          "framework": "b4e2e0a478e0ae36d4dcfc4fa3887b39a9d0bfe2",
+          "title": "7bf444ee2030ad935c8383e9b02854edc93a58f4",
+          "ui": "01bff9477e6847b2281260f0a9526a85e45b8ba2",
+          "binary": "F:\\Projects\\_regression-review-20261014\\builds\\alttp\\baseline\\ZeldaALttPSNESRecomp.exe",
+          "binary_sha256": "941aa41585eb4e277856fd0c51627636c5dd46dbf565e5d0ea5deaca5540e419",
+          "rom": "F:\\Projects\\_regression-review-20261014\\source\\alttp\\zelda.sfc",
+          "rom_sha256": "66871d66be19ad2c34c927d6b14cd8eb6fc3181965b6e517cb361f7316009cfb",
+          "analyzer_sha256": "6fa2d7604896676c78cdabad2327cd8cb46855f3c0cd35806742717db57b3da9",
+          "generated_files": 199,
+          "cmake_command": [
+            "C:/msys64/mingw64/bin/cmake.exe",
+            "-S",
+            "F:\\Projects\\_regression-review-20261014\\source\\alttp",
+            "-B",
+            "F:\\Projects\\_regression-review-20261014\\builds\\alttp\\baseline",
+            "-G",
+            "Ninja",
+            "-DCMAKE_BUILD_TYPE=Release",
+            "-DCMAKE_C_COMPILER=C:/msys64/mingw64/bin/gcc.exe",
+            "-DCMAKE_CXX_COMPILER=C:/msys64/mingw64/bin/g++.exe",
+            "-DCMAKE_MAKE_PROGRAM=C:/msys64/mingw64/bin/ninja.exe",
+            "-DPython3_EXECUTABLE=C:/Users/Matthew/AppData/Local/Programs/Python/Python312/python.exe",
+            "-DSNESRECOMP_ROOT=F:/Projects/snesrecomp/_regression-20261014-baseline",
+            "-DRECOMP_UI_ROOT=F:/Projects/snesrecomp/MegamanXRecomp/recomp-ui",
+            "-DSNESRECOMP_ENABLE_TRACE=OFF",
+            "-DSNESRECOMP_SDL_BACKEND=SDL3",
+            "-DSNESRECOMP_SDL3_FETCH=OFF",
+            "-DBUILD_TESTING=OFF",
+            "-DSNESRECOMP_BUILD_VERSION=regression-171-173-baseline"
+          ],
+          "generated_hash_manifest_sha256": "a27ce846b9a47b929dff0fd086d552926b3c5caa33b3bab4f1f8fe9c7e632f22"
+        },
+        "candidate": {
+          "game": "alttp",
+          "arm": "candidate",
+          "framework": "835c30e40b5d0890c276335e30ae61573c28112f",
+          "title": "7bf444ee2030ad935c8383e9b02854edc93a58f4",
+          "ui": "01bff9477e6847b2281260f0a9526a85e45b8ba2",
+          "binary": "F:\\Projects\\_regression-review-20261014\\builds\\alttp\\candidate\\ZeldaALttPSNESRecomp.exe",
+          "binary_sha256": "740f067efabdc0c7f27c67795dd9091d80ce2cd09559050bed8bbc962c8b3f70",
+          "rom": "F:\\Projects\\_regression-review-20261014\\source\\alttp\\zelda.sfc",
+          "rom_sha256": "66871d66be19ad2c34c927d6b14cd8eb6fc3181965b6e517cb361f7316009cfb",
+          "analyzer_sha256": "47cf6a2136b61b378d42cca35d5c9fd7888eddbc1b777c2383c78f46624d25c1",
+          "generated_files": 199,
+          "cmake_command": [
+            "C:/msys64/mingw64/bin/cmake.exe",
+            "-S",
+            "F:\\Projects\\_regression-review-20261014\\source\\alttp",
+            "-B",
+            "F:\\Projects\\_regression-review-20261014\\builds\\alttp\\candidate",
+            "-G",
+            "Ninja",
+            "-DCMAKE_BUILD_TYPE=Release",
+            "-DCMAKE_C_COMPILER=C:/msys64/mingw64/bin/gcc.exe",
+            "-DCMAKE_CXX_COMPILER=C:/msys64/mingw64/bin/g++.exe",
+            "-DCMAKE_MAKE_PROGRAM=C:/msys64/mingw64/bin/ninja.exe",
+            "-DPython3_EXECUTABLE=C:/Users/Matthew/AppData/Local/Programs/Python/Python312/python.exe",
+            "-DSNESRECOMP_ROOT=F:/Projects/snesrecomp/_regression-20261014-pr171-173",
+            "-DRECOMP_UI_ROOT=F:/Projects/snesrecomp/MegamanXRecomp/recomp-ui",
+            "-DSNESRECOMP_ENABLE_TRACE=OFF",
+            "-DSNESRECOMP_SDL_BACKEND=SDL3",
+            "-DSNESRECOMP_SDL3_FETCH=OFF",
+            "-DBUILD_TESTING=OFF",
+            "-DSNESRECOMP_BUILD_VERSION=regression-171-173-candidate"
+          ],
+          "generated_hash_manifest_sha256": "05091850ddc548aae337236df6448542eee192947c8c890a3dfb6298b33f6769"
+        }
+      },
+      "routes": {
+        "attract": {
+          "game": "alttp",
+          "route": "attract",
+          "evidence_matches": true,
+          "identical_inputs": true,
+          "completed": true,
+          "audio_opened": true,
+          "baseline_frames": [
+            6000
+          ],
+          "candidate_frames": [
+            6000
+          ],
+          "baseline_failures": {
+            "interpreter_step_cap": 0,
+            "scheduler_bail": 0,
+            "apu_sync_timeout": 0
+          },
+          "candidate_failures": {
+            "interpreter_step_cap": 0,
+            "scheduler_bail": 0,
+            "apu_sync_timeout": 0
+          },
+          "baseline_warnings": [],
+          "candidate_warnings": [],
+          "no_new_failures": true,
+          "same_frames": true,
+          "regression_matches": true,
+          "arms": {
+            "baseline": {
+              "binary_sha256": "941aa41585eb4e277856fd0c51627636c5dd46dbf565e5d0ea5deaca5540e419",
+              "case_digest": "9064205705895db30032bbc73618dd74d7618f923a5cd531490b36e1fcea8046",
+              "evidence_sha256": {
+                "frames/frame_005997.bmp": "0b3036667eaacc2ecc6ce443b9bda000018ff22420239d19792f009c0d5bcc8d",
+                "frames/frame_005997_cgram.bin": "5793c474698532a261b5176d819ddd8ec3cf870a7ce26f72eb07fdda585da374",
+                "frames/frame_005997_ppu.json": "70d96694a1829fadb89c00409726b420d7fa280b608ef1148e7a554b45f9792e",
+                "frames/frame_005997_vram.bin": "eddaf148577f44d7c07db87198e8f56c0825db186ae7289b03da26610b5f74c7",
+                "frames/frame_005997_wram.bin": "3a034a46976121fd4e964dd4227f184978acd0338f96540e294ed1ce0ad2c619",
+                "frames/frame_005998.bmp": "0b3036667eaacc2ecc6ce443b9bda000018ff22420239d19792f009c0d5bcc8d",
+                "frames/frame_005998_cgram.bin": "5793c474698532a261b5176d819ddd8ec3cf870a7ce26f72eb07fdda585da374",
+                "frames/frame_005998_ppu.json": "3a59d523ec7e9053df6d254d5139bee8eb7c8b49286c833469ed6281e5a57e96",
+                "frames/frame_005998_vram.bin": "eddaf148577f44d7c07db87198e8f56c0825db186ae7289b03da26610b5f74c7",
+                "frames/frame_005998_wram.bin": "8899c280e206c1e3ee7c755d7f3745a3dbb69eabe3d9d72a9975254a60a4ab37",
+                "frames/frame_005999.bmp": "0bfa760a5ca1058f7d93ecb1cfbb1971a0770e2f00bd7cb9fd01e165a8725f0f",
+                "frames/frame_005999_cgram.bin": "5793c474698532a261b5176d819ddd8ec3cf870a7ce26f72eb07fdda585da374",
+                "frames/frame_005999_ppu.json": "83b91e057364da46581a1e273ae97c46a50b0570dff3575f2b5f071d6f0b633a",
+                "frames/frame_005999_vram.bin": "8eb9079846bab1d70f2f4fcf17e1a1e91fc7ea50763e2f8c9980f690d034e91d",
+                "frames/frame_005999_wram.bin": "c5c9e56c1f229b9024ab800d44fc231e31083de11be44c217fcfe5264bda5227",
+                "trace.jsonl": "34f7921ea7c9a04a7958c5c3596982b2a740d6be579d8e14f9fef633675dcb01"
+              },
+              "command": [
+                "F:\\Projects\\_regression-review-20261014\\runs\\alttp\\attract\\baseline/ZeldaALttPSNESRecomp.exe",
+                "F:\\Projects\\_regression-review-20261014\\source\\alttp\\zelda.sfc",
+                "--no-launcher",
+                "--config",
+                "F:\\Projects\\_regression-review-20261014\\runs\\alttp\\attract\\baseline/config.ini",
+                "--script",
+                "F:\\Projects\\_regression-review-20261014\\runs\\alttp\\attract\\baseline/input.txt",
+                "--framedump",
+                "F:\\Projects\\_regression-review-20261014\\runs\\alttp\\attract\\baseline/frames"
+              ],
+              "input_files": {
+                "config.ini": "[General]\nAutosave=0\nSkipLauncher=1\nDisableFrameDelay=1\n[Graphics]\nFullscreen=0\nWindowScale=2\nOutputMethod=SDL\nNewRenderer=1\nNoSpriteLimits=1\nDisplayAspect=4:3\nWidescreen=0\nFrameBlend=0\n[Sound]\nEnableAudio=1\nAudioFreq=32040\nAudioChannels=2\nAudioSamples=512\n",
+                "input.txt": "wait 6000\n"
+              },
+              "input_save_sha256": {},
+              "environment": {
+                "SNESRECOMP_STATE_TRACE": "{run}/cpu.csv",
+                "SNESRECOMP_RUN_FRAMES": "6000",
+                "SNESRECOMP_WRAM_TRACE_FILE": "{run}/trace.jsonl",
+                "SNESRECOMP_SAVE_ROOT": "{run}/saves",
+                "SNESRECOMP_FRAMEDUMP_START": "5997",
+                "SNESRECOMP_FRAMEDUMP_END": "5999",
+                "SNESRECOMP_FRAMEDUMP_PIXELS": "1",
+                "SNESRECOMP_FRAMEDUMP_VIDEO": "1",
+                "SNESRECOMP_DUMP_DIR": "{run}"
+              }
+            },
+            "candidate": {
+              "binary_sha256": "740f067efabdc0c7f27c67795dd9091d80ce2cd09559050bed8bbc962c8b3f70",
+              "case_digest": "9064205705895db30032bbc73618dd74d7618f923a5cd531490b36e1fcea8046",
+              "evidence_sha256": {
+                "frames/frame_005997.bmp": "0b3036667eaacc2ecc6ce443b9bda000018ff22420239d19792f009c0d5bcc8d",
+                "frames/frame_005997_cgram.bin": "5793c474698532a261b5176d819ddd8ec3cf870a7ce26f72eb07fdda585da374",
+                "frames/frame_005997_ppu.json": "70d96694a1829fadb89c00409726b420d7fa280b608ef1148e7a554b45f9792e",
+                "frames/frame_005997_vram.bin": "eddaf148577f44d7c07db87198e8f56c0825db186ae7289b03da26610b5f74c7",
+                "frames/frame_005997_wram.bin": "3a034a46976121fd4e964dd4227f184978acd0338f96540e294ed1ce0ad2c619",
+                "frames/frame_005998.bmp": "0b3036667eaacc2ecc6ce443b9bda000018ff22420239d19792f009c0d5bcc8d",
+                "frames/frame_005998_cgram.bin": "5793c474698532a261b5176d819ddd8ec3cf870a7ce26f72eb07fdda585da374",
+                "frames/frame_005998_ppu.json": "3a59d523ec7e9053df6d254d5139bee8eb7c8b49286c833469ed6281e5a57e96",
+                "frames/frame_005998_vram.bin": "eddaf148577f44d7c07db87198e8f56c0825db186ae7289b03da26610b5f74c7",
+                "frames/frame_005998_wram.bin": "8899c280e206c1e3ee7c755d7f3745a3dbb69eabe3d9d72a9975254a60a4ab37",
+                "frames/frame_005999.bmp": "0bfa760a5ca1058f7d93ecb1cfbb1971a0770e2f00bd7cb9fd01e165a8725f0f",
+                "frames/frame_005999_cgram.bin": "5793c474698532a261b5176d819ddd8ec3cf870a7ce26f72eb07fdda585da374",
+                "frames/frame_005999_ppu.json": "83b91e057364da46581a1e273ae97c46a50b0570dff3575f2b5f071d6f0b633a",
+                "frames/frame_005999_vram.bin": "8eb9079846bab1d70f2f4fcf17e1a1e91fc7ea50763e2f8c9980f690d034e91d",
+                "frames/frame_005999_wram.bin": "c5c9e56c1f229b9024ab800d44fc231e31083de11be44c217fcfe5264bda5227",
+                "trace.jsonl": "34f7921ea7c9a04a7958c5c3596982b2a740d6be579d8e14f9fef633675dcb01"
+              },
+              "command": [
+                "F:\\Projects\\_regression-review-20261014\\runs\\alttp\\attract\\candidate/ZeldaALttPSNESRecomp.exe",
+                "F:\\Projects\\_regression-review-20261014\\source\\alttp\\zelda.sfc",
+                "--no-launcher",
+                "--config",
+                "F:\\Projects\\_regression-review-20261014\\runs\\alttp\\attract\\candidate/config.ini",
+                "--script",
+                "F:\\Projects\\_regression-review-20261014\\runs\\alttp\\attract\\candidate/input.txt",
+                "--framedump",
+                "F:\\Projects\\_regression-review-20261014\\runs\\alttp\\attract\\candidate/frames"
+              ],
+              "input_files": {
+                "config.ini": "[General]\nAutosave=0\nSkipLauncher=1\nDisableFrameDelay=1\n[Graphics]\nFullscreen=0\nWindowScale=2\nOutputMethod=SDL\nNewRenderer=1\nNoSpriteLimits=1\nDisplayAspect=4:3\nWidescreen=0\nFrameBlend=0\n[Sound]\nEnableAudio=1\nAudioFreq=32040\nAudioChannels=2\nAudioSamples=512\n",
+                "input.txt": "wait 6000\n"
+              },
+              "input_save_sha256": {},
+              "environment": {
+                "SNESRECOMP_STATE_TRACE": "{run}/cpu.csv",
+                "SNESRECOMP_RUN_FRAMES": "6000",
+                "SNESRECOMP_WRAM_TRACE_FILE": "{run}/trace.jsonl",
+                "SNESRECOMP_SAVE_ROOT": "{run}/saves",
+                "SNESRECOMP_FRAMEDUMP_START": "5997",
+                "SNESRECOMP_FRAMEDUMP_END": "5999",
+                "SNESRECOMP_FRAMEDUMP_PIXELS": "1",
+                "SNESRECOMP_FRAMEDUMP_VIDEO": "1",
+                "SNESRECOMP_DUMP_DIR": "{run}"
+              }
+            }
+          }
+        },
+        "basic": {
+          "game": "alttp",
+          "route": "basic",
+          "evidence_matches": true,
+          "identical_inputs": true,
+          "completed": true,
+          "audio_opened": true,
+          "baseline_frames": [
+            6000
+          ],
+          "candidate_frames": [
+            6000
+          ],
+          "baseline_failures": {
+            "interpreter_step_cap": 0,
+            "scheduler_bail": 0,
+            "apu_sync_timeout": 0
+          },
+          "candidate_failures": {
+            "interpreter_step_cap": 0,
+            "scheduler_bail": 0,
+            "apu_sync_timeout": 0
+          },
+          "baseline_warnings": [],
+          "candidate_warnings": [],
+          "no_new_failures": true,
+          "same_frames": true,
+          "regression_matches": true,
+          "arms": {
+            "baseline": {
+              "binary_sha256": "941aa41585eb4e277856fd0c51627636c5dd46dbf565e5d0ea5deaca5540e419",
+              "case_digest": "c8191d2e16dc3e72fbe5e2b8ebefe47f5b9ceae47082fbd9ea260bc40967e9a6",
+              "evidence_sha256": {
+                "frames/frame_005997.bmp": "81a3bc943f791e1b9c2549829462da7359f029b330f331cff0506d7c201ddb9b",
+                "frames/frame_005997_cgram.bin": "7f8808f2448d20d1dcd807c0cf216b3ff0cefb98d85df40e97a19f6527c38b38",
+                "frames/frame_005997_ppu.json": "f3847f3e995075be20048ffeca6295e3b768a0a12c4ef96c518ec243584570f0",
+                "frames/frame_005997_vram.bin": "8746d15d147c1b246c6d5540f75aa9b880ec04467c52f777c3611977aba23e31",
+                "frames/frame_005997_wram.bin": "1b70221c1cf014b1b221bd6085622c4b73b4954f4821eb4aab3c18e0921ce784",
+                "frames/frame_005998.bmp": "81a3bc943f791e1b9c2549829462da7359f029b330f331cff0506d7c201ddb9b",
+                "frames/frame_005998_cgram.bin": "7f8808f2448d20d1dcd807c0cf216b3ff0cefb98d85df40e97a19f6527c38b38",
+                "frames/frame_005998_ppu.json": "fc2dfa165572d952f5234196abcbd41698be6cf3888eb37796b57f50816f00de",
+                "frames/frame_005998_vram.bin": "0b0ad08a6dbf24ae8bd061532b5aee5e1dc92834111d5b7c3c7c27b7d0cffac4",
+                "frames/frame_005998_wram.bin": "f3cf9dacab2f938e0ce3911f98a77195d85add0d7eabda8f8ba4eba8ce155be1",
+                "frames/frame_005999.bmp": "81a3bc943f791e1b9c2549829462da7359f029b330f331cff0506d7c201ddb9b",
+                "frames/frame_005999_cgram.bin": "7f8808f2448d20d1dcd807c0cf216b3ff0cefb98d85df40e97a19f6527c38b38",
+                "frames/frame_005999_ppu.json": "5a9edb2c087512d8de245b24627d2da04ce833f0a95ea819fbc9ed18bd3bd551",
+                "frames/frame_005999_vram.bin": "0b0ad08a6dbf24ae8bd061532b5aee5e1dc92834111d5b7c3c7c27b7d0cffac4",
+                "frames/frame_005999_wram.bin": "50864920601a2f61c8d61bcb7717c4a0f2dea1a33702d3726d057ec69cc432e3",
+                "trace.jsonl": "7640c0f3e2bbedd3a5813479fc33e4d9305327f2c3a57bcd63e1f9baa4905e0c"
+              },
+              "command": [
+                "F:\\Projects\\_regression-review-20261014\\runs\\alttp\\basic\\baseline/ZeldaALttPSNESRecomp.exe",
+                "F:\\Projects\\_regression-review-20261014\\source\\alttp\\zelda.sfc",
+                "--no-launcher",
+                "--config",
+                "F:\\Projects\\_regression-review-20261014\\runs\\alttp\\basic\\baseline/config.ini",
+                "--script",
+                "F:\\Projects\\_regression-review-20261014\\runs\\alttp\\basic\\baseline/input.txt",
+                "--framedump",
+                "F:\\Projects\\_regression-review-20261014\\runs\\alttp\\basic\\baseline/frames"
+              ],
+              "input_files": {
+                "config.ini": "[General]\nAutosave=0\nSkipLauncher=1\nDisableFrameDelay=1\n[Graphics]\nFullscreen=0\nWindowScale=2\nOutputMethod=SDL\nNewRenderer=1\nNoSpriteLimits=1\nDisplayAspect=4:3\nWidescreen=0\nFrameBlend=0\n[Sound]\nEnableAudio=1\nAudioFreq=32040\nAudioChannels=2\nAudioSamples=512\n",
+                "input.txt": "wait 300\npress start 1\nwait 120\npress start 1\nwait 120\npress a 1\nwait 180\npress a 1\nwait 180\nwait 90\npress a 2\nwait 90\npress b 2\nwait 90\npress a 2\nwait 90\npress b 2\nwait 90\npress a 2\nwait 90\npress b 2\nwait 90\npress a 2\nwait 90\npress b 2\nwait 90\npress a 2\nwait 90\npress b 2\nwait 90\npress a 2\nwait 90\npress b 2\npress y 45\nwait 29\npress y 46\nwait 8\npress down 30\nwait 12\npress left 72\nwait 10\npress right 26\nwait 26\npress a 66\nwait 26\npress left 23\nwait 17\npress x 51\nwait 24\npress down 57\nwait 16\npress left 32\nwait 24\npress x 74\nwait 13\npress up 46\nwait 17\npress y 49\nwait 19\npress down 37\nwait 15\npress right 80\nwait 22\npress y 66\nwait 28\npress down 40\nwait 8\npress y 41\nwait 13\npress up 41\nwait 10\npress right 48\nwait 14\npress y 30\nwait 30\npress x 60\nwait 17\npress y 49\nwait 13\npress left 43\nwait 25\npress down 44\nwait 25\npress x 63\nwait 11\npress x 32\nwait 24\npress down 42\nwait 30\npress right 38\nwait 26\npress right 62\nwait 8\npress up 43\nwait 15\npress a 43\nwait 11\npress right 55\nwait 13\npress y 38\nwait 15\npress y 80\nwait 12\npress x 25\nwait 26\npress x 25\nwait 20\npress a 50\nwait 22\npress up 22\nwait 26\npress a 49\nwait 17\npress up 45\nwait 19\npress a 63\nwait 10\npress right 35\nwait 11\npress y 52\nwait 14\npress x 48\nwait 22\npress down 44\nwait 23\npress left 27\nwait 26\npress down 30\nwait 15\n"
+              },
+              "input_save_sha256": {
+                "saves/save.srm": "5e62aee7332afc1bae9853d50aabd7349b49d8dfa699ef657dc88a9a7fd1bab5"
+              },
+              "environment": {
+                "SNESRECOMP_STATE_TRACE": "{run}/cpu.csv",
+                "SNESRECOMP_RUN_FRAMES": "6000",
+                "SNESRECOMP_WRAM_TRACE_FILE": "{run}/trace.jsonl",
+                "SNESRECOMP_SAVE_ROOT": "{run}/saves",
+                "SNESRECOMP_FRAMEDUMP_START": "5997",
+                "SNESRECOMP_FRAMEDUMP_END": "5999",
+                "SNESRECOMP_FRAMEDUMP_PIXELS": "1",
+                "SNESRECOMP_FRAMEDUMP_VIDEO": "1",
+                "SNESRECOMP_DUMP_DIR": "{run}"
+              }
+            },
+            "candidate": {
+              "binary_sha256": "740f067efabdc0c7f27c67795dd9091d80ce2cd09559050bed8bbc962c8b3f70",
+              "case_digest": "c8191d2e16dc3e72fbe5e2b8ebefe47f5b9ceae47082fbd9ea260bc40967e9a6",
+              "evidence_sha256": {
+                "frames/frame_005997.bmp": "81a3bc943f791e1b9c2549829462da7359f029b330f331cff0506d7c201ddb9b",
+                "frames/frame_005997_cgram.bin": "7f8808f2448d20d1dcd807c0cf216b3ff0cefb98d85df40e97a19f6527c38b38",
+                "frames/frame_005997_ppu.json": "f3847f3e995075be20048ffeca6295e3b768a0a12c4ef96c518ec243584570f0",
+                "frames/frame_005997_vram.bin": "8746d15d147c1b246c6d5540f75aa9b880ec04467c52f777c3611977aba23e31",
+                "frames/frame_005997_wram.bin": "1b70221c1cf014b1b221bd6085622c4b73b4954f4821eb4aab3c18e0921ce784",
+                "frames/frame_005998.bmp": "81a3bc943f791e1b9c2549829462da7359f029b330f331cff0506d7c201ddb9b",
+                "frames/frame_005998_cgram.bin": "7f8808f2448d20d1dcd807c0cf216b3ff0cefb98d85df40e97a19f6527c38b38",
+                "frames/frame_005998_ppu.json": "fc2dfa165572d952f5234196abcbd41698be6cf3888eb37796b57f50816f00de",
+                "frames/frame_005998_vram.bin": "0b0ad08a6dbf24ae8bd061532b5aee5e1dc92834111d5b7c3c7c27b7d0cffac4",
+                "frames/frame_005998_wram.bin": "f3cf9dacab2f938e0ce3911f98a77195d85add0d7eabda8f8ba4eba8ce155be1",
+                "frames/frame_005999.bmp": "81a3bc943f791e1b9c2549829462da7359f029b330f331cff0506d7c201ddb9b",
+                "frames/frame_005999_cgram.bin": "7f8808f2448d20d1dcd807c0cf216b3ff0cefb98d85df40e97a19f6527c38b38",
+                "frames/frame_005999_ppu.json": "5a9edb2c087512d8de245b24627d2da04ce833f0a95ea819fbc9ed18bd3bd551",
+                "frames/frame_005999_vram.bin": "0b0ad08a6dbf24ae8bd061532b5aee5e1dc92834111d5b7c3c7c27b7d0cffac4",
+                "frames/frame_005999_wram.bin": "50864920601a2f61c8d61bcb7717c4a0f2dea1a33702d3726d057ec69cc432e3",
+                "trace.jsonl": "7640c0f3e2bbedd3a5813479fc33e4d9305327f2c3a57bcd63e1f9baa4905e0c"
+              },
+              "command": [
+                "F:\\Projects\\_regression-review-20261014\\runs\\alttp\\basic\\candidate/ZeldaALttPSNESRecomp.exe",
+                "F:\\Projects\\_regression-review-20261014\\source\\alttp\\zelda.sfc",
+                "--no-launcher",
+                "--config",
+                "F:\\Projects\\_regression-review-20261014\\runs\\alttp\\basic\\candidate/config.ini",
+                "--script",
+                "F:\\Projects\\_regression-review-20261014\\runs\\alttp\\basic\\candidate/input.txt",
+                "--framedump",
+                "F:\\Projects\\_regression-review-20261014\\runs\\alttp\\basic\\candidate/frames"
+              ],
+              "input_files": {
+                "config.ini": "[General]\nAutosave=0\nSkipLauncher=1\nDisableFrameDelay=1\n[Graphics]\nFullscreen=0\nWindowScale=2\nOutputMethod=SDL\nNewRenderer=1\nNoSpriteLimits=1\nDisplayAspect=4:3\nWidescreen=0\nFrameBlend=0\n[Sound]\nEnableAudio=1\nAudioFreq=32040\nAudioChannels=2\nAudioSamples=512\n",
+                "input.txt": "wait 300\npress start 1\nwait 120\npress start 1\nwait 120\npress a 1\nwait 180\npress a 1\nwait 180\nwait 90\npress a 2\nwait 90\npress b 2\nwait 90\npress a 2\nwait 90\npress b 2\nwait 90\npress a 2\nwait 90\npress b 2\nwait 90\npress a 2\nwait 90\npress b 2\nwait 90\npress a 2\nwait 90\npress b 2\nwait 90\npress a 2\nwait 90\npress b 2\npress y 45\nwait 29\npress y 46\nwait 8\npress down 30\nwait 12\npress left 72\nwait 10\npress right 26\nwait 26\npress a 66\nwait 26\npress left 23\nwait 17\npress x 51\nwait 24\npress down 57\nwait 16\npress left 32\nwait 24\npress x 74\nwait 13\npress up 46\nwait 17\npress y 49\nwait 19\npress down 37\nwait 15\npress right 80\nwait 22\npress y 66\nwait 28\npress down 40\nwait 8\npress y 41\nwait 13\npress up 41\nwait 10\npress right 48\nwait 14\npress y 30\nwait 30\npress x 60\nwait 17\npress y 49\nwait 13\npress left 43\nwait 25\npress down 44\nwait 25\npress x 63\nwait 11\npress x 32\nwait 24\npress down 42\nwait 30\npress right 38\nwait 26\npress right 62\nwait 8\npress up 43\nwait 15\npress a 43\nwait 11\npress right 55\nwait 13\npress y 38\nwait 15\npress y 80\nwait 12\npress x 25\nwait 26\npress x 25\nwait 20\npress a 50\nwait 22\npress up 22\nwait 26\npress a 49\nwait 17\npress up 45\nwait 19\npress a 63\nwait 10\npress right 35\nwait 11\npress y 52\nwait 14\npress x 48\nwait 22\npress down 44\nwait 23\npress left 27\nwait 26\npress down 30\nwait 15\n"
+              },
+              "input_save_sha256": {
+                "saves/save.srm": "5e62aee7332afc1bae9853d50aabd7349b49d8dfa699ef657dc88a9a7fd1bab5"
+              },
+              "environment": {
+                "SNESRECOMP_STATE_TRACE": "{run}/cpu.csv",
+                "SNESRECOMP_RUN_FRAMES": "6000",
+                "SNESRECOMP_WRAM_TRACE_FILE": "{run}/trace.jsonl",
+                "SNESRECOMP_SAVE_ROOT": "{run}/saves",
+                "SNESRECOMP_FRAMEDUMP_START": "5997",
+                "SNESRECOMP_FRAMEDUMP_END": "5999",
+                "SNESRECOMP_FRAMEDUMP_PIXELS": "1",
+                "SNESRECOMP_FRAMEDUMP_VIDEO": "1",
+                "SNESRECOMP_DUMP_DIR": "{run}"
+              }
+            }
+          }
+        }
+      }
+    },
+    "sm": {
+      "builds": {
+        "baseline": {
+          "game": "sm",
+          "arm": "baseline",
+          "framework": "b4e2e0a478e0ae36d4dcfc4fa3887b39a9d0bfe2",
+          "title": "76a6b0de1d4767702753178b4b0e03425b8b299c",
+          "ui": "01bff9477e6847b2281260f0a9526a85e45b8ba2",
+          "binary": "F:\\Projects\\_regression-review-20261014\\builds\\sm\\baseline\\SuperMetroidSNESRecomp.exe",
+          "binary_sha256": "b7a8cba1e484863a8e0ef6ae38a9131296fc1c6879c59d43197c1cb023c45d61",
+          "rom": "F:\\Projects\\_regression-review-20261014\\source\\sm\\Super Metroid (Japan, USA) (En,Ja).sfc",
+          "rom_sha256": "12b77c4bc9c1832cee8881244659065ee1d84c70c3d29e6eaf92e6798cc2ca72",
+          "analyzer_sha256": "6fa2d7604896676c78cdabad2327cd8cb46855f3c0cd35806742717db57b3da9",
+          "generated_files": 346,
+          "cmake_command": [
+            "C:/msys64/mingw64/bin/cmake.exe",
+            "-S",
+            "F:\\Projects\\_regression-review-20261014\\source\\sm",
+            "-B",
+            "F:\\Projects\\_regression-review-20261014\\builds\\sm\\baseline",
+            "-G",
+            "Ninja",
+            "-DCMAKE_BUILD_TYPE=Release",
+            "-DCMAKE_C_COMPILER=C:/msys64/mingw64/bin/gcc.exe",
+            "-DCMAKE_CXX_COMPILER=C:/msys64/mingw64/bin/g++.exe",
+            "-DCMAKE_MAKE_PROGRAM=C:/msys64/mingw64/bin/ninja.exe",
+            "-DPython3_EXECUTABLE=C:/Users/Matthew/AppData/Local/Programs/Python/Python312/python.exe",
+            "-DSNESRECOMP_ROOT=F:/Projects/snesrecomp/_regression-20261014-baseline",
+            "-DRECOMP_UI_ROOT=F:/Projects/snesrecomp/MegamanXRecomp/recomp-ui",
+            "-DSNESRECOMP_ENABLE_TRACE=OFF",
+            "-DSNESRECOMP_SDL_BACKEND=SDL3",
+            "-DSNESRECOMP_SDL3_FETCH=OFF",
+            "-DBUILD_TESTING=OFF",
+            "-DSNESRECOMP_BUILD_VERSION=regression-171-173-baseline"
+          ],
+          "generated_hash_manifest_sha256": "bc3a6e283ee17b743935f821c765776e54cca3730edbd7c7c2de543520cc70de"
+        },
+        "candidate": {
+          "game": "sm",
+          "arm": "candidate",
+          "framework": "835c30e40b5d0890c276335e30ae61573c28112f",
+          "title": "76a6b0de1d4767702753178b4b0e03425b8b299c",
+          "ui": "01bff9477e6847b2281260f0a9526a85e45b8ba2",
+          "binary": "F:\\Projects\\_regression-review-20261014\\builds\\sm\\candidate\\SuperMetroidSNESRecomp.exe",
+          "binary_sha256": "a01af61ab6ce9c2e116813742aaeaed6c4f0d090d25febc52125961f32f4f700",
+          "rom": "F:\\Projects\\_regression-review-20261014\\source\\sm\\Super Metroid (Japan, USA) (En,Ja).sfc",
+          "rom_sha256": "12b77c4bc9c1832cee8881244659065ee1d84c70c3d29e6eaf92e6798cc2ca72",
+          "analyzer_sha256": "47cf6a2136b61b378d42cca35d5c9fd7888eddbc1b777c2383c78f46624d25c1",
+          "generated_files": 333,
+          "cmake_command": [
+            "C:/msys64/mingw64/bin/cmake.exe",
+            "-S",
+            "F:\\Projects\\_regression-review-20261014\\source\\sm",
+            "-B",
+            "F:\\Projects\\_regression-review-20261014\\builds\\sm\\candidate",
+            "-G",
+            "Ninja",
+            "-DCMAKE_BUILD_TYPE=Release",
+            "-DCMAKE_C_COMPILER=C:/msys64/mingw64/bin/gcc.exe",
+            "-DCMAKE_CXX_COMPILER=C:/msys64/mingw64/bin/g++.exe",
+            "-DCMAKE_MAKE_PROGRAM=C:/msys64/mingw64/bin/ninja.exe",
+            "-DPython3_EXECUTABLE=C:/Users/Matthew/AppData/Local/Programs/Python/Python312/python.exe",
+            "-DSNESRECOMP_ROOT=F:/Projects/snesrecomp/_regression-20261014-pr171-173",
+            "-DRECOMP_UI_ROOT=F:/Projects/snesrecomp/MegamanXRecomp/recomp-ui",
+            "-DSNESRECOMP_ENABLE_TRACE=OFF",
+            "-DSNESRECOMP_SDL_BACKEND=SDL3",
+            "-DSNESRECOMP_SDL3_FETCH=OFF",
+            "-DBUILD_TESTING=OFF",
+            "-DSNESRECOMP_BUILD_VERSION=regression-171-173-candidate"
+          ],
+          "generated_hash_manifest_sha256": "341e3510a0d3a60f57af95d356211f8026e614d4a66216ddb050a20b47236b54"
+        }
+      },
+      "routes": {
+        "attract": {
+          "game": "sm",
+          "route": "attract",
+          "evidence_matches": false,
+          "identical_inputs": true,
+          "completed": true,
+          "audio_opened": true,
+          "baseline_frames": [
+            6000,
+            6000
+          ],
+          "candidate_frames": [
+            6000,
+            6000
+          ],
+          "baseline_failures": {
+            "interpreter_step_cap": 0,
+            "scheduler_bail": 0,
+            "apu_sync_timeout": 0
+          },
+          "candidate_failures": {
+            "interpreter_step_cap": 0,
+            "scheduler_bail": 0,
+            "apu_sync_timeout": 0
+          },
+          "baseline_warnings": [],
+          "candidate_warnings": [],
+          "no_new_failures": true,
+          "same_frames": true,
+          "regression_matches": false,
+          "arms": {
+            "baseline": {
+              "binary_sha256": "b7a8cba1e484863a8e0ef6ae38a9131296fc1c6879c59d43197c1cb023c45d61",
+              "case_digest": "bf3d6af3dfe923fdd4abd05469e33f9f612fba15e5dfa70ac0ad2f0c16c834d8",
+              "evidence_sha256": {
+                "cpu.csv": "1d91f5870ab5d1a324eb33f7386261108f81b53331ec9add852dc0c4542c3cb7",
+                "frames/frame_005997.bmp": "ff0d603554b92b5f047f8447160204ca6c6a2798a67726d1f5a7a6a32d420d6a",
+                "frames/frame_005997_cgram.bin": "c9c22b942a1c9dc49f6924f59b0956b45789bec9be9dea88fada2b9c5ae7499f",
+                "frames/frame_005997_ppu.json": "31afb44da67761cc04bebed2faad3380dece126a3424d98c2337d77146a047c9",
+                "frames/frame_005997_vram.bin": "99a1031db49ac9a55c79a84a9d631b26f59f99cfde0fc804429914a89774de5b",
+                "frames/frame_005997_wram.bin": "e07343bfee7091e511a32f5633745cd6781648f1411cd01307f874560b900a5a",
+                "frames/frame_005998.bmp": "0d5a515b2275e9c23cacdb698c1a582eb8499976381b8af3d904d11ae35b2a1c",
+                "frames/frame_005998_cgram.bin": "c9c22b942a1c9dc49f6924f59b0956b45789bec9be9dea88fada2b9c5ae7499f",
+                "frames/frame_005998_ppu.json": "397c94873ef5d870a4b4af8d6b0b0eacd677518afa65d1b2b415cb11fe4c0965",
+                "frames/frame_005998_vram.bin": "99a1031db49ac9a55c79a84a9d631b26f59f99cfde0fc804429914a89774de5b",
+                "frames/frame_005998_wram.bin": "6e0b6fbbae3a83b9e9c2b5e781c108426f6866de00de262b359f97e3720f34ee",
+                "frames/frame_005999.bmp": "a456e0ff4ac918d663307d8183bc8d3f797747751db85845ae7b511eb6980c79",
+                "frames/frame_005999_cgram.bin": "c9c22b942a1c9dc49f6924f59b0956b45789bec9be9dea88fada2b9c5ae7499f",
+                "frames/frame_005999_ppu.json": "ba3150fb27ee37a4148c61d87f35ba8afee95a467e0daaecda4dd3659f5e6f8c",
+                "frames/frame_005999_vram.bin": "d6c274fa897142602f5bf8db2c422054d485e062ec79162538d2ba981c165027",
+                "frames/frame_005999_wram.bin": "55e9eef99bd2e31e2da02d9322000a0a5aac47618429e3d8bcc184b7b7c236fc",
+                "trace.jsonl": "6901dc80d91cc5c95051a47c32ee78a2948a96291c9af2f55dab0ed0b6a3603e"
+              },
+              "command": [
+                "F:\\Projects\\_regression-review-20261014\\runs\\sm\\attract\\baseline/SuperMetroidSNESRecomp.exe",
+                "F:\\Projects\\_regression-review-20261014\\source\\sm\\Super Metroid (Japan, USA) (En,Ja).sfc",
+                "--no-launcher",
+                "--config",
+                "F:\\Projects\\_regression-review-20261014\\runs\\sm\\attract\\baseline/config.ini",
+                "--script",
+                "F:\\Projects\\_regression-review-20261014\\runs\\sm\\attract\\baseline/input.txt",
+                "--framedump",
+                "F:\\Projects\\_regression-review-20261014\\runs\\sm\\attract\\baseline/frames"
+              ],
+              "input_files": {
+                "config.ini": "[General]\nAutosave=0\nSkipLauncher=1\nDisableFrameDelay=1\n[Graphics]\nFullscreen=0\nWindowScale=2\nOutputMethod=SDL\nNewRenderer=1\nNoSpriteLimits=1\nDisplayAspect=4:3\nWidescreen=0\nFrameBlend=0\n[Sound]\nEnableAudio=1\nAudioFreq=32040\nAudioChannels=2\nAudioSamples=512\n",
+                "input.txt": "wait 6000\n"
+              },
+              "input_save_sha256": {},
+              "environment": {
+                "SNESRECOMP_STATE_TRACE": "{run}/cpu.csv",
+                "SNESRECOMP_RUN_FRAMES": "6000",
+                "SNESRECOMP_WRAM_TRACE_FILE": "{run}/trace.jsonl",
+                "SNESRECOMP_SAVE_ROOT": "{run}/saves",
+                "SNESRECOMP_FRAMEDUMP_START": "5997",
+                "SNESRECOMP_FRAMEDUMP_END": "5999",
+                "SNESRECOMP_FRAMEDUMP_PIXELS": "1",
+                "SNESRECOMP_FRAMEDUMP_VIDEO": "1",
+                "SNESRECOMP_DUMP_DIR": "{run}"
+              }
+            },
+            "candidate": {
+              "binary_sha256": "a01af61ab6ce9c2e116813742aaeaed6c4f0d090d25febc52125961f32f4f700",
+              "case_digest": "bf3d6af3dfe923fdd4abd05469e33f9f612fba15e5dfa70ac0ad2f0c16c834d8",
+              "evidence_sha256": {
+                "cpu.csv": "8718bf148807accbe401292511dba0d49180993622aff671d775270d07c7b8e7",
+                "frames/frame_005997.bmp": "ff0d603554b92b5f047f8447160204ca6c6a2798a67726d1f5a7a6a32d420d6a",
+                "frames/frame_005997_cgram.bin": "c9c22b942a1c9dc49f6924f59b0956b45789bec9be9dea88fada2b9c5ae7499f",
+                "frames/frame_005997_ppu.json": "31afb44da67761cc04bebed2faad3380dece126a3424d98c2337d77146a047c9",
+                "frames/frame_005997_vram.bin": "99a1031db49ac9a55c79a84a9d631b26f59f99cfde0fc804429914a89774de5b",
+                "frames/frame_005997_wram.bin": "e07343bfee7091e511a32f5633745cd6781648f1411cd01307f874560b900a5a",
+                "frames/frame_005998.bmp": "0d5a515b2275e9c23cacdb698c1a582eb8499976381b8af3d904d11ae35b2a1c",
+                "frames/frame_005998_cgram.bin": "c9c22b942a1c9dc49f6924f59b0956b45789bec9be9dea88fada2b9c5ae7499f",
+                "frames/frame_005998_ppu.json": "397c94873ef5d870a4b4af8d6b0b0eacd677518afa65d1b2b415cb11fe4c0965",
+                "frames/frame_005998_vram.bin": "99a1031db49ac9a55c79a84a9d631b26f59f99cfde0fc804429914a89774de5b",
+                "frames/frame_005998_wram.bin": "6e0b6fbbae3a83b9e9c2b5e781c108426f6866de00de262b359f97e3720f34ee",
+                "frames/frame_005999.bmp": "a456e0ff4ac918d663307d8183bc8d3f797747751db85845ae7b511eb6980c79",
+                "frames/frame_005999_cgram.bin": "c9c22b942a1c9dc49f6924f59b0956b45789bec9be9dea88fada2b9c5ae7499f",
+                "frames/frame_005999_ppu.json": "ba3150fb27ee37a4148c61d87f35ba8afee95a467e0daaecda4dd3659f5e6f8c",
+                "frames/frame_005999_vram.bin": "d6c274fa897142602f5bf8db2c422054d485e062ec79162538d2ba981c165027",
+                "frames/frame_005999_wram.bin": "55e9eef99bd2e31e2da02d9322000a0a5aac47618429e3d8bcc184b7b7c236fc",
+                "trace.jsonl": "0a0f30b28b16cefea3f3bb8f8d6c7459d718cb41d35f720823477c2bd744a314"
+              },
+              "command": [
+                "F:\\Projects\\_regression-review-20261014\\runs\\sm\\attract\\candidate/SuperMetroidSNESRecomp.exe",
+                "F:\\Projects\\_regression-review-20261014\\source\\sm\\Super Metroid (Japan, USA) (En,Ja).sfc",
+                "--no-launcher",
+                "--config",
+                "F:\\Projects\\_regression-review-20261014\\runs\\sm\\attract\\candidate/config.ini",
+                "--script",
+                "F:\\Projects\\_regression-review-20261014\\runs\\sm\\attract\\candidate/input.txt",
+                "--framedump",
+                "F:\\Projects\\_regression-review-20261014\\runs\\sm\\attract\\candidate/frames"
+              ],
+              "input_files": {
+                "config.ini": "[General]\nAutosave=0\nSkipLauncher=1\nDisableFrameDelay=1\n[Graphics]\nFullscreen=0\nWindowScale=2\nOutputMethod=SDL\nNewRenderer=1\nNoSpriteLimits=1\nDisplayAspect=4:3\nWidescreen=0\nFrameBlend=0\n[Sound]\nEnableAudio=1\nAudioFreq=32040\nAudioChannels=2\nAudioSamples=512\n",
+                "input.txt": "wait 6000\n"
+              },
+              "input_save_sha256": {},
+              "environment": {
+                "SNESRECOMP_STATE_TRACE": "{run}/cpu.csv",
+                "SNESRECOMP_RUN_FRAMES": "6000",
+                "SNESRECOMP_WRAM_TRACE_FILE": "{run}/trace.jsonl",
+                "SNESRECOMP_SAVE_ROOT": "{run}/saves",
+                "SNESRECOMP_FRAMEDUMP_START": "5997",
+                "SNESRECOMP_FRAMEDUMP_END": "5999",
+                "SNESRECOMP_FRAMEDUMP_PIXELS": "1",
+                "SNESRECOMP_FRAMEDUMP_VIDEO": "1",
+                "SNESRECOMP_DUMP_DIR": "{run}"
+              }
+            }
+          },
+          "sound_timing_analysis": {
+            "route": "attract",
+            "frames": 6000,
+            "wram_different_frames": 4,
+            "addresses": [
+              "0x64b",
+              "0x64f",
+              "0x652"
+            ],
+            "only_known_sound_handshake_addresses": true,
+            "only_sound_state_and_read_positions": true,
+            "cpu_register_different_frames": 0,
+            "different_evidence_files": [
+              "cpu.csv",
+              "trace.jsonl"
+            ],
+            "all_scene_snapshots_identical": true,
+            "nonzero_sound_command_onsets_identical": true,
+            "sound_command_onset_counts": [
+              13,
+              13
+            ],
+            "sound_command_values_and_order_per_library_identical": true,
+            "maximum_sound_command_onset_frame_shift": 0,
+            "baseline_failures": {
+              "interpreter_step_cap": 0,
+              "scheduler_bail": 0,
+              "apu_sync_timeout": 0
+            },
+            "candidate_failures": {
+              "interpreter_step_cap": 0,
+              "scheduler_bail": 0,
+              "apu_sync_timeout": 0
+            },
+            "first_differences": [
+              {
+                "frame": 1326,
+                "changes": [
+                  [
+                    "0x64b",
+                    2,
+                    1
+                  ],
+                  [
+                    "0x652",
+                    2,
+                    0
+                  ]
+                ]
+              },
+              {
+                "frame": 1327,
+                "changes": [
+                  [
+                    "0x652",
+                    1,
+                    2
+                  ]
+                ]
+              },
+              {
+                "frame": 1328,
+                "changes": [
+                  [
+                    "0x64b",
+                    3,
+                    2
+                  ],
+                  [
+                    "0x64f",
+                    0,
+                    35
+                  ],
+                  [
+                    "0x652",
+                    0,
+                    1
+                  ]
+                ]
+              },
+              {
+                "frame": 1330,
+                "changes": [
+                  [
+                    "0x64b",
+                    0,
+                    3
+                  ]
+                ]
+              }
+            ],
+            "strict_replay_match": false,
+            "limitation": "Sound-handshake timing differs; waveforms were not compared. Owner listening/play approval is pending."
+          }
+        },
+        "basic": {
+          "game": "sm",
+          "route": "basic",
+          "evidence_matches": false,
+          "identical_inputs": true,
+          "completed": true,
+          "audio_opened": true,
+          "baseline_frames": [
+            6000,
+            6000
+          ],
+          "candidate_frames": [
+            6000,
+            6000
+          ],
+          "baseline_failures": {
+            "interpreter_step_cap": 0,
+            "scheduler_bail": 0,
+            "apu_sync_timeout": 0
+          },
+          "candidate_failures": {
+            "interpreter_step_cap": 0,
+            "scheduler_bail": 0,
+            "apu_sync_timeout": 0
+          },
+          "baseline_warnings": [],
+          "candidate_warnings": [],
+          "no_new_failures": true,
+          "same_frames": true,
+          "regression_matches": false,
+          "arms": {
+            "baseline": {
+              "binary_sha256": "b7a8cba1e484863a8e0ef6ae38a9131296fc1c6879c59d43197c1cb023c45d61",
+              "case_digest": "d607e165700a11418d912858fb9255a0dd672cf17ff5a7e592392457aec707a0",
+              "evidence_sha256": {
+                "cpu.csv": "5c511222903ec0aca9a206aa4d663f372ae208dd45e34120fb84d0afdde2f8cc",
+                "frames/frame_005997.bmp": "83ad6659abfdcea9b4fd2928ad11a9ff4068cb6c1f6c1e2c082bb00f1c0d492d",
+                "frames/frame_005997_cgram.bin": "ffa89d31572408b93cd69cca86a7a61a32cf944da98eb710f5de7a0c3a6f6c8a",
+                "frames/frame_005997_ppu.json": "d8599eba2b8a5907f03e1a35338a92d7ca836ce89c52f68389527e1e5d809e25",
+                "frames/frame_005997_vram.bin": "373af1f59122f55e108e7a282276d517534d5fc3a44fb23ae6699d69281d26c6",
+                "frames/frame_005997_wram.bin": "91220e05319261a98299a78a82f8c31c4c6440005b788172a5d876ed9386ad17",
+                "frames/frame_005998.bmp": "eb75ea710ffe264a9da557c68965b3e4904b7eecc4a31c075f3d039045c4b223",
+                "frames/frame_005998_cgram.bin": "ffa89d31572408b93cd69cca86a7a61a32cf944da98eb710f5de7a0c3a6f6c8a",
+                "frames/frame_005998_ppu.json": "fe403437c4bd6c723b2ea304a861ddf45982296468fbf3f62f258498cb442d2f",
+                "frames/frame_005998_vram.bin": "373af1f59122f55e108e7a282276d517534d5fc3a44fb23ae6699d69281d26c6",
+                "frames/frame_005998_wram.bin": "f60a2d8c6a954e283743f4a3502c4ccd85adb1b9adc8763a6b0b98d00e6b8151",
+                "frames/frame_005999.bmp": "516102ab379fa1ba43b952698408532f64534a7bac23962ae11e46a9d21555bd",
+                "frames/frame_005999_cgram.bin": "ffa89d31572408b93cd69cca86a7a61a32cf944da98eb710f5de7a0c3a6f6c8a",
+                "frames/frame_005999_ppu.json": "fb42047d0a33be477633e90b52bcdb683ca1069f6ced4a082370f4ef20100b70",
+                "frames/frame_005999_vram.bin": "373af1f59122f55e108e7a282276d517534d5fc3a44fb23ae6699d69281d26c6",
+                "frames/frame_005999_wram.bin": "5211df20979a157c7d8158bf685c2b5641aaf58532e8694a9ef57eb1d2484160",
+                "trace.jsonl": "10047eb422dc4091bce97ebed5bad7c9df96ae708f0bb3c339b46d34bf9ba87c"
+              },
+              "command": [
+                "F:\\Projects\\_regression-review-20261014\\runs\\sm\\basic\\baseline/SuperMetroidSNESRecomp.exe",
+                "F:\\Projects\\_regression-review-20261014\\source\\sm\\Super Metroid (Japan, USA) (En,Ja).sfc",
+                "--no-launcher",
+                "--config",
+                "F:\\Projects\\_regression-review-20261014\\runs\\sm\\basic\\baseline/config.ini",
+                "--script",
+                "F:\\Projects\\_regression-review-20261014\\runs\\sm\\basic\\baseline/input.txt",
+                "--framedump",
+                "F:\\Projects\\_regression-review-20261014\\runs\\sm\\basic\\baseline/frames"
+              ],
+              "input_files": {
+                "config.ini": "[General]\nAutosave=0\nSkipLauncher=1\nDisableFrameDelay=1\n[Graphics]\nFullscreen=0\nWindowScale=2\nOutputMethod=SDL\nNewRenderer=1\nNoSpriteLimits=1\nDisplayAspect=4:3\nWidescreen=0\nFrameBlend=0\n[Sound]\nEnableAudio=1\nAudioFreq=32040\nAudioChannels=2\nAudioSamples=512\n",
+                "input.txt": "wait 300\npress start 1\nwait 120\npress start 1\nwait 120\npress a 1\nwait 180\npress a 1\nwait 180\nwait 120\npress start 1\nwait 240\npress y 45\nwait 29\npress y 46\nwait 8\npress down 30\nwait 12\npress left 72\nwait 10\npress right 26\nwait 26\npress a 66\nwait 26\npress left 23\nwait 17\npress x 51\nwait 24\npress down 57\nwait 16\npress left 32\nwait 24\npress x 74\nwait 13\npress up 46\nwait 17\npress y 49\nwait 19\npress down 37\nwait 15\npress right 80\nwait 22\npress y 66\nwait 28\npress down 40\nwait 8\npress y 41\nwait 13\npress up 41\nwait 10\npress right 48\nwait 14\npress y 30\nwait 30\npress x 60\nwait 17\npress y 49\nwait 13\npress left 43\nwait 25\npress down 44\nwait 25\npress x 63\nwait 11\npress x 32\nwait 24\npress down 42\nwait 30\npress right 38\nwait 26\npress right 62\nwait 8\npress up 43\nwait 15\npress a 43\nwait 11\npress right 55\nwait 13\npress y 38\nwait 15\npress y 80\nwait 12\npress x 25\nwait 26\npress x 25\nwait 20\npress a 50\nwait 22\npress up 22\nwait 26\npress a 49\nwait 17\npress up 45\nwait 19\npress a 63\nwait 10\npress right 35\nwait 11\npress y 52\nwait 14\npress x 48\nwait 22\npress down 44\nwait 23\npress left 27\nwait 26\npress down 30\nwait 15\n"
+              },
+              "input_save_sha256": {
+                "saves/save.srm": "ed6eeaf2fef87b33074fb001163609f9f345a144af2072b20a5f5d97b6711078"
+              },
+              "environment": {
+                "SNESRECOMP_STATE_TRACE": "{run}/cpu.csv",
+                "SNESRECOMP_RUN_FRAMES": "6000",
+                "SNESRECOMP_WRAM_TRACE_FILE": "{run}/trace.jsonl",
+                "SNESRECOMP_SAVE_ROOT": "{run}/saves",
+                "SNESRECOMP_FRAMEDUMP_START": "5997",
+                "SNESRECOMP_FRAMEDUMP_END": "5999",
+                "SNESRECOMP_FRAMEDUMP_PIXELS": "1",
+                "SNESRECOMP_FRAMEDUMP_VIDEO": "1",
+                "SNESRECOMP_DUMP_DIR": "{run}"
+              }
+            },
+            "candidate": {
+              "binary_sha256": "a01af61ab6ce9c2e116813742aaeaed6c4f0d090d25febc52125961f32f4f700",
+              "case_digest": "d607e165700a11418d912858fb9255a0dd672cf17ff5a7e592392457aec707a0",
+              "evidence_sha256": {
+                "cpu.csv": "0d796020f7c573acd65d9505f55cc24eda09945b0e6048e9880a2e9ab1306475",
+                "frames/frame_005997.bmp": "83ad6659abfdcea9b4fd2928ad11a9ff4068cb6c1f6c1e2c082bb00f1c0d492d",
+                "frames/frame_005997_cgram.bin": "ffa89d31572408b93cd69cca86a7a61a32cf944da98eb710f5de7a0c3a6f6c8a",
+                "frames/frame_005997_ppu.json": "d8599eba2b8a5907f03e1a35338a92d7ca836ce89c52f68389527e1e5d809e25",
+                "frames/frame_005997_vram.bin": "373af1f59122f55e108e7a282276d517534d5fc3a44fb23ae6699d69281d26c6",
+                "frames/frame_005997_wram.bin": "91220e05319261a98299a78a82f8c31c4c6440005b788172a5d876ed9386ad17",
+                "frames/frame_005998.bmp": "eb75ea710ffe264a9da557c68965b3e4904b7eecc4a31c075f3d039045c4b223",
+                "frames/frame_005998_cgram.bin": "ffa89d31572408b93cd69cca86a7a61a32cf944da98eb710f5de7a0c3a6f6c8a",
+                "frames/frame_005998_ppu.json": "fe403437c4bd6c723b2ea304a861ddf45982296468fbf3f62f258498cb442d2f",
+                "frames/frame_005998_vram.bin": "373af1f59122f55e108e7a282276d517534d5fc3a44fb23ae6699d69281d26c6",
+                "frames/frame_005998_wram.bin": "f60a2d8c6a954e283743f4a3502c4ccd85adb1b9adc8763a6b0b98d00e6b8151",
+                "frames/frame_005999.bmp": "516102ab379fa1ba43b952698408532f64534a7bac23962ae11e46a9d21555bd",
+                "frames/frame_005999_cgram.bin": "ffa89d31572408b93cd69cca86a7a61a32cf944da98eb710f5de7a0c3a6f6c8a",
+                "frames/frame_005999_ppu.json": "fb42047d0a33be477633e90b52bcdb683ca1069f6ced4a082370f4ef20100b70",
+                "frames/frame_005999_vram.bin": "373af1f59122f55e108e7a282276d517534d5fc3a44fb23ae6699d69281d26c6",
+                "frames/frame_005999_wram.bin": "5211df20979a157c7d8158bf685c2b5641aaf58532e8694a9ef57eb1d2484160",
+                "trace.jsonl": "4c8b2293d05b1c65aec4118aa311c8cbcad47017c7cd6c23046513991c511915"
+              },
+              "command": [
+                "F:\\Projects\\_regression-review-20261014\\runs\\sm\\basic\\candidate/SuperMetroidSNESRecomp.exe",
+                "F:\\Projects\\_regression-review-20261014\\source\\sm\\Super Metroid (Japan, USA) (En,Ja).sfc",
+                "--no-launcher",
+                "--config",
+                "F:\\Projects\\_regression-review-20261014\\runs\\sm\\basic\\candidate/config.ini",
+                "--script",
+                "F:\\Projects\\_regression-review-20261014\\runs\\sm\\basic\\candidate/input.txt",
+                "--framedump",
+                "F:\\Projects\\_regression-review-20261014\\runs\\sm\\basic\\candidate/frames"
+              ],
+              "input_files": {
+                "config.ini": "[General]\nAutosave=0\nSkipLauncher=1\nDisableFrameDelay=1\n[Graphics]\nFullscreen=0\nWindowScale=2\nOutputMethod=SDL\nNewRenderer=1\nNoSpriteLimits=1\nDisplayAspect=4:3\nWidescreen=0\nFrameBlend=0\n[Sound]\nEnableAudio=1\nAudioFreq=32040\nAudioChannels=2\nAudioSamples=512\n",
+                "input.txt": "wait 300\npress start 1\nwait 120\npress start 1\nwait 120\npress a 1\nwait 180\npress a 1\nwait 180\nwait 120\npress start 1\nwait 240\npress y 45\nwait 29\npress y 46\nwait 8\npress down 30\nwait 12\npress left 72\nwait 10\npress right 26\nwait 26\npress a 66\nwait 26\npress left 23\nwait 17\npress x 51\nwait 24\npress down 57\nwait 16\npress left 32\nwait 24\npress x 74\nwait 13\npress up 46\nwait 17\npress y 49\nwait 19\npress down 37\nwait 15\npress right 80\nwait 22\npress y 66\nwait 28\npress down 40\nwait 8\npress y 41\nwait 13\npress up 41\nwait 10\npress right 48\nwait 14\npress y 30\nwait 30\npress x 60\nwait 17\npress y 49\nwait 13\npress left 43\nwait 25\npress down 44\nwait 25\npress x 63\nwait 11\npress x 32\nwait 24\npress down 42\nwait 30\npress right 38\nwait 26\npress right 62\nwait 8\npress up 43\nwait 15\npress a 43\nwait 11\npress right 55\nwait 13\npress y 38\nwait 15\npress y 80\nwait 12\npress x 25\nwait 26\npress x 25\nwait 20\npress a 50\nwait 22\npress up 22\nwait 26\npress a 49\nwait 17\npress up 45\nwait 19\npress a 63\nwait 10\npress right 35\nwait 11\npress y 52\nwait 14\npress x 48\nwait 22\npress down 44\nwait 23\npress left 27\nwait 26\npress down 30\nwait 15\n"
+              },
+              "input_save_sha256": {
+                "saves/save.srm": "ed6eeaf2fef87b33074fb001163609f9f345a144af2072b20a5f5d97b6711078"
+              },
+              "environment": {
+                "SNESRECOMP_STATE_TRACE": "{run}/cpu.csv",
+                "SNESRECOMP_RUN_FRAMES": "6000",
+                "SNESRECOMP_WRAM_TRACE_FILE": "{run}/trace.jsonl",
+                "SNESRECOMP_SAVE_ROOT": "{run}/saves",
+                "SNESRECOMP_FRAMEDUMP_START": "5997",
+                "SNESRECOMP_FRAMEDUMP_END": "5999",
+                "SNESRECOMP_FRAMEDUMP_PIXELS": "1",
+                "SNESRECOMP_FRAMEDUMP_VIDEO": "1",
+                "SNESRECOMP_DUMP_DIR": "{run}"
+              }
+            }
+          },
+          "sound_timing_analysis": {
+            "route": "basic",
+            "frames": 6000,
+            "wram_different_frames": 5,
+            "addresses": [
+              "0x64a",
+              "0x64e",
+              "0x651"
+            ],
+            "only_known_sound_handshake_addresses": true,
+            "only_sound_state_and_read_positions": true,
+            "cpu_register_different_frames": 0,
+            "different_evidence_files": [
+              "cpu.csv",
+              "trace.jsonl"
+            ],
+            "all_scene_snapshots_identical": true,
+            "nonzero_sound_command_onsets_identical": true,
+            "sound_command_onset_counts": [
+              79,
+              79
+            ],
+            "sound_command_values_and_order_per_library_identical": true,
+            "maximum_sound_command_onset_frame_shift": 0,
+            "baseline_failures": {
+              "interpreter_step_cap": 0,
+              "scheduler_bail": 0,
+              "apu_sync_timeout": 0
+            },
+            "candidate_failures": {
+              "interpreter_step_cap": 0,
+              "scheduler_bail": 0,
+              "apu_sync_timeout": 0
+            },
+            "first_differences": [
+              {
+                "frame": 3801,
+                "changes": [
+                  [
+                    "0x64a",
+                    0,
+                    3
+                  ]
+                ]
+              },
+              {
+                "frame": 3937,
+                "changes": [
+                  [
+                    "0x64a",
+                    2,
+                    1
+                  ],
+                  [
+                    "0x651",
+                    2,
+                    0
+                  ]
+                ]
+              },
+              {
+                "frame": 3938,
+                "changes": [
+                  [
+                    "0x651",
+                    1,
+                    2
+                  ]
+                ]
+              },
+              {
+                "frame": 3939,
+                "changes": [
+                  [
+                    "0x64a",
+                    3,
+                    2
+                  ],
+                  [
+                    "0x64e",
+                    0,
+                    77
+                  ],
+                  [
+                    "0x651",
+                    0,
+                    1
+                  ]
+                ]
+              },
+              {
+                "frame": 3941,
+                "changes": [
+                  [
+                    "0x64a",
+                    0,
+                    3
+                  ]
+                ]
+              }
+            ],
+            "strict_replay_match": false,
+            "limitation": "Sound-handshake timing differs; waveforms were not compared. Owner listening/play approval is pending."
+          }
+        },
+        "ceres": {
+          "game": "sm",
+          "route": "ceres",
+          "evidence_matches": false,
+          "identical_inputs": true,
+          "completed": true,
+          "audio_opened": true,
+          "baseline_frames": [
+            16244,
+            6652
+          ],
+          "candidate_frames": [
+            16244,
+            6652
+          ],
+          "baseline_failures": {
+            "interpreter_step_cap": 0,
+            "scheduler_bail": 0,
+            "apu_sync_timeout": 1
+          },
+          "candidate_failures": {
+            "interpreter_step_cap": 0,
+            "scheduler_bail": 0,
+            "apu_sync_timeout": 1
+          },
+          "baseline_warnings": [
+            "guest execution failed: apu_sync_timeout (1 occurrences)"
+          ],
+          "candidate_warnings": [
+            "guest execution failed: apu_sync_timeout (1 occurrences)"
+          ],
+          "no_new_failures": true,
+          "same_frames": true,
+          "regression_matches": false,
+          "arms": {
+            "baseline": {
+              "binary_sha256": "b7a8cba1e484863a8e0ef6ae38a9131296fc1c6879c59d43197c1cb023c45d61",
+              "case_digest": "ae95b001068499ceb94528584e63abae8b1fc4a165e2596f98e78d6f6de0cbf9",
+              "evidence_sha256": {
+                "after-left.fb.bmp": "3afb04d32bae2d8e983b1153e1a34a5a7877f96ee0cf7ef6c66091e94d51c8fb",
+                "after-left.regs.json": "1d56d9748385259e35e7366c52173200faa3b5ac109edcd77ffc459db909eebe",
+                "after-left.wram.bin": "bf04ddb9a4a4a5c6b63cf5ca814a742061fed37e418b99c1ed0c9e0a7105a669",
+                "ceres-start.fb.bmp": "815d6c8d04e671a2e8ceefe5a58f70d54eb8d14d109d87620e117a0d76ed9b25",
+                "ceres-start.regs.json": "ab79a8e1a68a805f1be2224b5fe4a68d8704165353ad416d36e03e1e2660c969",
+                "ceres-start.wram.bin": "5a45d09ec4b9c6384af3d38fac3bd879da596acd05718247c368457eeeb77913",
+                "cpu.csv": "8857b3bad24051a18146408400bd6811d1282b303232c89851e5842f0452a471",
+                "final.fb.bmp": "1110345ef64332b67fa9eccd16cea18b21bd5533f5c1f3504bb2ed08ea708469",
+                "final.regs.json": "b9dd848a508871ebc2d98bf661033e01e97b0c60a4f5f23aa44318e934ca879a",
+                "final.wram.bin": "05a34300ba1cb7c68a673e283022b76430cbbb44d5adf28ec9c282e0834f138c",
+                "trace.jsonl": "fef2e92eaec9faa46bb44cc5bae87ea8c17964cb606815854890bdc811c72a3a",
+                "after-left.cgram.bin": "3688973c1344ffa7854945b8fbe779c381d5215887002a497838689c89d9d475",
+                "after-left.oam.bin": "38bddbfac5486322e774076f7b0ce0bd4e9d09cbc5156afca2df384813188d55",
+                "after-left.sram.bin": "17ece4522e44733ecf0a27bc6be03b5d7d4041cd7354443588dd646aa81cf27c",
+                "after-left.vram.bin": "0101b73fed8f20e2fafc40f3e52e0f92c80fc6cd5144adc58b275fc0179ae778",
+                "ceres-start.cgram.bin": "98289c1a8638b2b6d559cc2f39ac7d178e9f75d4880c730d97b2ec5ff3ec1b59",
+                "ceres-start.oam.bin": "51acecdbaaa809f68c9a595aa615ce9bc147b26171e56903afa4a6546941abfc",
+                "ceres-start.sram.bin": "17ece4522e44733ecf0a27bc6be03b5d7d4041cd7354443588dd646aa81cf27c",
+                "ceres-start.vram.bin": "50c4b9a90b3ae4606dff1c1df10b5785898e12637c964b21ad8fff09a5691895",
+                "final.cgram.bin": "90389c18e0d2fe51404ce304aaac063db4e10d13539c63f7dd956136ee3a329a",
+                "final.oam.bin": "dbff1fd6405ad63deb7e4c937789383f8c79074d01ebd105d7103c7f8aa4d4e9",
+                "final.sram.bin": "17ece4522e44733ecf0a27bc6be03b5d7d4041cd7354443588dd646aa81cf27c",
+                "final.vram.bin": "53c46f8684e88ae03109ec41e09a5bce142a27f8b3d3053878277dc3e1d4c549",
+                "shaft-bottom.cgram.bin": "98289c1a8638b2b6d559cc2f39ac7d178e9f75d4880c730d97b2ec5ff3ec1b59",
+                "shaft-bottom.oam.bin": "96452bf15c7d4d7e497a9d7f01147d26c7f22fba44997e00fe53606c3cd6c974",
+                "shaft-bottom.sram.bin": "17ece4522e44733ecf0a27bc6be03b5d7d4041cd7354443588dd646aa81cf27c",
+                "shaft-bottom.vram.bin": "c8f520f725ffdbcbdef2fe0df551adc966a4fe8dca4c6b571478cd7e4bde3011",
+                "shaft-bottom.wram.bin": "5483b2c0654cd3c978a492a76ee79eb40c6d30294d1293a1c72f654c478d7f68",
+                "stairs-bottom.cgram.bin": "cd147f0cc7d09e2af8fe2d232c116ff3dad9e6f3bf99d97b03ee29b7d6deafc3",
+                "stairs-bottom.oam.bin": "7a299d4cda9ecb41268e1ac07670523183cc59f1a0979d8cbe87d33ff692f0f0",
+                "stairs-bottom.sram.bin": "17ece4522e44733ecf0a27bc6be03b5d7d4041cd7354443588dd646aa81cf27c",
+                "stairs-bottom.vram.bin": "c826da15f37a66f1ffc10b994a4ea199b7e46c05d6dbf3824aafc71e0e545e77",
+                "stairs-bottom.wram.bin": "bf67f7e4002c17a5c6f182c5566f03eb2e3d54b11db2a6d81d8ed30d5879d39d",
+                "stairs-top.cgram.bin": "cd147f0cc7d09e2af8fe2d232c116ff3dad9e6f3bf99d97b03ee29b7d6deafc3",
+                "stairs-top.oam.bin": "e9e409b57e24175e8bc691eab72f7968ce96b78f8e373ce3c76c83c6e1415e4a",
+                "stairs-top.sram.bin": "17ece4522e44733ecf0a27bc6be03b5d7d4041cd7354443588dd646aa81cf27c",
+                "stairs-top.vram.bin": "1794b0d62266aa0190fbda803ab32de116f1f09c1b60257b414607c21ccf11f9",
+                "stairs-top.wram.bin": "ff76ad0c42babdf175966a706ba9071fcb6f64afc0cd5c361e9697b22adc2753",
+                "after-left.fb.bgrx": "ac6d79c6976178c79d59b8c8a9fb218f1cdd9c7e5a333d4b9201c7769c95f945",
+                "ceres-start.fb.bgrx": "1ba0f275637571deacd0a08e706ca372d1f11c0599e0cee3985814667c6f75cf",
+                "final.fb.bgrx": "371655a29dbf5e1f9c9720ecc02828548f779fcfc25a8505b06d18fc483554d7",
+                "shaft-bottom.fb.bgrx": "fe873754364a6a02bc4fd31b062e54b05e6c808682f0004e25b5411fb12f464c",
+                "stairs-bottom.fb.bgrx": "86e1e462b3706c74e39d37f55d01c7e8e5c3fb5ae2d2c98cf118800c905c4de8",
+                "stairs-top.fb.bgrx": "5387190b6d0d95066ffb51a54200c98e10896897956922a71292dbae79815d94"
+              },
+              "command": [
+                "F:\\Projects\\_regression-review-20261014\\runs\\sm\\ceres\\baseline/SuperMetroidSNESRecomp.exe",
+                "F:\\Projects\\_regression-review-20261014\\source\\sm\\Super Metroid (Japan, USA) (En,Ja).sfc",
+                "--no-launcher",
+                "--config",
+                "F:\\Projects\\_regression-review-20261014\\runs\\sm\\ceres\\baseline/config.ini",
+                "--script",
+                "F:\\Projects\\_regression-review-20261014\\runs\\sm\\ceres\\baseline/input.txt",
+                "--framedump",
+                "F:\\Projects\\_regression-review-20261014\\runs\\sm\\ceres\\baseline/frames"
+              ],
+              "input_files": {
+                "config.ini": "[General]\nAutosave=0\nSkipLauncher=1\nDisableFrameDelay=1\n[Graphics]\nFullscreen=0\nWindowScale=2\nOutputMethod=SDL\nNewRenderer=1\nNoSpriteLimits=1\nDisplayAspect=4:3\nWidescreen=0\nFrameBlend=0\n[Sound]\nEnableAudio=1\nAudioFreq=32040\nAudioChannels=2\nAudioSamples=512\n",
+                "input.txt": "turbo on\n# Diagnostic: normal new-game input to Ceres, then escape-flag/position\n# setup only. Rotation is produced by the guest room code, not forced matrices.\nwait 210\npress start 8\nwait 120\npress start 8\nwait 360\npress start 12\nwait 240\npress a 8\nwait 300\npress a 8\nwait 300\npress a 8\nwait 300\npress a 8\nwait 300\npress a 8\nwait 300\npress a 8\nwait 300\npress a 8\nwait 300\npress a 8\nwait 300\npress a 8\nwait 300\npress a 8\nwait 300\npress a 8\nwait 300\npress a 8\nwait 300\npress a 8\nwait 300\npress a 8\nwait 300\npress a 8\nwait 300\npress a 8\nwait 300\npress a 8\nwait 300\npress a 8\nwait 300\npress a 8\nwait 300\npress a 8\nwait 300\npress a 8\nwait 300\npress a 8\nwait 300\npress a 8\nwait 300\npress a 8\nwait 300\npress a 8\nwait 300\npress a 8\nwait 300\npress a 8\nwait 300\npress a 8\nwait 300\npress a 8\nwait 300\npress a 8\nwait 300\nuntil16 0998 == 0008 6000\ndump ceres-start\nturbo off\npress left 90\npress right 90\npress left 90\npress right 90\npress left 90\npress right 90\npress left 90\npress right 90\npress left 90\npress right 90\npress left 90\npress right 90\ndump shaft-bottom\npress right+a+x 100\nwait 3\npress right+a+x 100\nwait 3\npress right+a+x 100\nwait 3\npress right+a+x 100\nwait 3\npress right+a+x 100\nwait 3\npress right+a+x 100\nwait 3\npress right+a+x 100\nwait 3\npress right+a+x 100\nwait 3\npress right+a+x 100\nwait 3\npress right+a+x 100\nwait 3\npress right+a+x 100\nwait 3\npress right+a+x 100\nwait 3\npress right+a+x 100\nwait 3\npress right+a+x 100\nwait 3\npress right+a+x 100\nwait 3\npress right+a+x 100\nwait 3\npress right+a+x 100\nwait 3\npress right+a+x 100\nwait 3\npress right+a+x 100\nwait 3\npress right+a+x 100\nwait 3\ndump stairs-top\npress left 80\nwait 180\ndump stairs-bottom\npress right+x 100\nwait 3\npress right+x 100\nwait 3\npress right+x 100\nwait 3\npress right+x 100\nwait 3\npress right+x 100\nwait 3\npress right+x 100\nwait 3\npress right+x 100\nwait 3\npress right+x 100\nwait 3\npress right+x 100\nwait 3\npress right+x 100\nwait 3\npress right+x 100\nwait 3\npress right+x 100\nwait 3\npress right+x 100\nwait 3\npress right+x 100\nwait 3\npress right+x 100\nwait 3\npress right+x 100\nwait 3\npress right+x 100\nwait 3\npress right+x 100\nwait 3\npress right+x 100\nwait 3\npress right+x 100\nwait 3\ndump after-left\nwait 500\ndump final\nquit\n"
+              },
+              "input_save_sha256": {},
+              "environment": {
+                "SNESRECOMP_RUN_FRAMES": "30000",
+                "SNESRECOMP_DUMP_DIR": "{run}",
+                "SNESRECOMP_WRAM_TRACE_FILE": "{run}/trace.jsonl",
+                "SNESRECOMP_STATE_TRACE": "{run}/cpu.csv",
+                "SNESRECOMP_SAVE_ROOT": "{run}/saves"
+              }
+            },
+            "candidate": {
+              "binary_sha256": "a01af61ab6ce9c2e116813742aaeaed6c4f0d090d25febc52125961f32f4f700",
+              "case_digest": "ae95b001068499ceb94528584e63abae8b1fc4a165e2596f98e78d6f6de0cbf9",
+              "evidence_sha256": {
+                "after-left.fb.bmp": "3afb04d32bae2d8e983b1153e1a34a5a7877f96ee0cf7ef6c66091e94d51c8fb",
+                "after-left.regs.json": "1d56d9748385259e35e7366c52173200faa3b5ac109edcd77ffc459db909eebe",
+                "after-left.wram.bin": "bf04ddb9a4a4a5c6b63cf5ca814a742061fed37e418b99c1ed0c9e0a7105a669",
+                "ceres-start.fb.bmp": "815d6c8d04e671a2e8ceefe5a58f70d54eb8d14d109d87620e117a0d76ed9b25",
+                "ceres-start.regs.json": "ab79a8e1a68a805f1be2224b5fe4a68d8704165353ad416d36e03e1e2660c969",
+                "ceres-start.wram.bin": "5a45d09ec4b9c6384af3d38fac3bd879da596acd05718247c368457eeeb77913",
+                "cpu.csv": "e85a97913f2e43d63594de005a9576c466a5fc727c61dcc2f688ebd754d90573",
+                "final.fb.bmp": "1110345ef64332b67fa9eccd16cea18b21bd5533f5c1f3504bb2ed08ea708469",
+                "final.regs.json": "b9dd848a508871ebc2d98bf661033e01e97b0c60a4f5f23aa44318e934ca879a",
+                "final.wram.bin": "05a34300ba1cb7c68a673e283022b76430cbbb44d5adf28ec9c282e0834f138c",
+                "trace.jsonl": "565f2bf6b381a895b26a0b34f9006f0327670fde1db9e4b83577cb132023ed52",
+                "after-left.cgram.bin": "3688973c1344ffa7854945b8fbe779c381d5215887002a497838689c89d9d475",
+                "after-left.oam.bin": "38bddbfac5486322e774076f7b0ce0bd4e9d09cbc5156afca2df384813188d55",
+                "after-left.sram.bin": "17ece4522e44733ecf0a27bc6be03b5d7d4041cd7354443588dd646aa81cf27c",
+                "after-left.vram.bin": "0101b73fed8f20e2fafc40f3e52e0f92c80fc6cd5144adc58b275fc0179ae778",
+                "ceres-start.cgram.bin": "98289c1a8638b2b6d559cc2f39ac7d178e9f75d4880c730d97b2ec5ff3ec1b59",
+                "ceres-start.oam.bin": "51acecdbaaa809f68c9a595aa615ce9bc147b26171e56903afa4a6546941abfc",
+                "ceres-start.sram.bin": "17ece4522e44733ecf0a27bc6be03b5d7d4041cd7354443588dd646aa81cf27c",
+                "ceres-start.vram.bin": "50c4b9a90b3ae4606dff1c1df10b5785898e12637c964b21ad8fff09a5691895",
+                "final.cgram.bin": "90389c18e0d2fe51404ce304aaac063db4e10d13539c63f7dd956136ee3a329a",
+                "final.oam.bin": "dbff1fd6405ad63deb7e4c937789383f8c79074d01ebd105d7103c7f8aa4d4e9",
+                "final.sram.bin": "17ece4522e44733ecf0a27bc6be03b5d7d4041cd7354443588dd646aa81cf27c",
+                "final.vram.bin": "53c46f8684e88ae03109ec41e09a5bce142a27f8b3d3053878277dc3e1d4c549",
+                "shaft-bottom.cgram.bin": "98289c1a8638b2b6d559cc2f39ac7d178e9f75d4880c730d97b2ec5ff3ec1b59",
+                "shaft-bottom.oam.bin": "96452bf15c7d4d7e497a9d7f01147d26c7f22fba44997e00fe53606c3cd6c974",
+                "shaft-bottom.sram.bin": "17ece4522e44733ecf0a27bc6be03b5d7d4041cd7354443588dd646aa81cf27c",
+                "shaft-bottom.vram.bin": "c8f520f725ffdbcbdef2fe0df551adc966a4fe8dca4c6b571478cd7e4bde3011",
+                "shaft-bottom.wram.bin": "5483b2c0654cd3c978a492a76ee79eb40c6d30294d1293a1c72f654c478d7f68",
+                "stairs-bottom.cgram.bin": "cd147f0cc7d09e2af8fe2d232c116ff3dad9e6f3bf99d97b03ee29b7d6deafc3",
+                "stairs-bottom.oam.bin": "7a299d4cda9ecb41268e1ac07670523183cc59f1a0979d8cbe87d33ff692f0f0",
+                "stairs-bottom.sram.bin": "17ece4522e44733ecf0a27bc6be03b5d7d4041cd7354443588dd646aa81cf27c",
+                "stairs-bottom.vram.bin": "c826da15f37a66f1ffc10b994a4ea199b7e46c05d6dbf3824aafc71e0e545e77",
+                "stairs-bottom.wram.bin": "bf67f7e4002c17a5c6f182c5566f03eb2e3d54b11db2a6d81d8ed30d5879d39d",
+                "stairs-top.cgram.bin": "cd147f0cc7d09e2af8fe2d232c116ff3dad9e6f3bf99d97b03ee29b7d6deafc3",
+                "stairs-top.oam.bin": "e9e409b57e24175e8bc691eab72f7968ce96b78f8e373ce3c76c83c6e1415e4a",
+                "stairs-top.sram.bin": "17ece4522e44733ecf0a27bc6be03b5d7d4041cd7354443588dd646aa81cf27c",
+                "stairs-top.vram.bin": "1794b0d62266aa0190fbda803ab32de116f1f09c1b60257b414607c21ccf11f9",
+                "stairs-top.wram.bin": "ff76ad0c42babdf175966a706ba9071fcb6f64afc0cd5c361e9697b22adc2753",
+                "after-left.fb.bgrx": "ac6d79c6976178c79d59b8c8a9fb218f1cdd9c7e5a333d4b9201c7769c95f945",
+                "ceres-start.fb.bgrx": "1ba0f275637571deacd0a08e706ca372d1f11c0599e0cee3985814667c6f75cf",
+                "final.fb.bgrx": "371655a29dbf5e1f9c9720ecc02828548f779fcfc25a8505b06d18fc483554d7",
+                "shaft-bottom.fb.bgrx": "fe873754364a6a02bc4fd31b062e54b05e6c808682f0004e25b5411fb12f464c",
+                "stairs-bottom.fb.bgrx": "86e1e462b3706c74e39d37f55d01c7e8e5c3fb5ae2d2c98cf118800c905c4de8",
+                "stairs-top.fb.bgrx": "5387190b6d0d95066ffb51a54200c98e10896897956922a71292dbae79815d94"
+              },
+              "command": [
+                "F:\\Projects\\_regression-review-20261014\\runs\\sm\\ceres\\candidate/SuperMetroidSNESRecomp.exe",
+                "F:\\Projects\\_regression-review-20261014\\source\\sm\\Super Metroid (Japan, USA) (En,Ja).sfc",
+                "--no-launcher",
+                "--config",
+                "F:\\Projects\\_regression-review-20261014\\runs\\sm\\ceres\\candidate/config.ini",
+                "--script",
+                "F:\\Projects\\_regression-review-20261014\\runs\\sm\\ceres\\candidate/input.txt",
+                "--framedump",
+                "F:\\Projects\\_regression-review-20261014\\runs\\sm\\ceres\\candidate/frames"
+              ],
+              "input_files": {
+                "config.ini": "[General]\nAutosave=0\nSkipLauncher=1\nDisableFrameDelay=1\n[Graphics]\nFullscreen=0\nWindowScale=2\nOutputMethod=SDL\nNewRenderer=1\nNoSpriteLimits=1\nDisplayAspect=4:3\nWidescreen=0\nFrameBlend=0\n[Sound]\nEnableAudio=1\nAudioFreq=32040\nAudioChannels=2\nAudioSamples=512\n",
+                "input.txt": "turbo on\n# Diagnostic: normal new-game input to Ceres, then escape-flag/position\n# setup only. Rotation is produced by the guest room code, not forced matrices.\nwait 210\npress start 8\nwait 120\npress start 8\nwait 360\npress start 12\nwait 240\npress a 8\nwait 300\npress a 8\nwait 300\npress a 8\nwait 300\npress a 8\nwait 300\npress a 8\nwait 300\npress a 8\nwait 300\npress a 8\nwait 300\npress a 8\nwait 300\npress a 8\nwait 300\npress a 8\nwait 300\npress a 8\nwait 300\npress a 8\nwait 300\npress a 8\nwait 300\npress a 8\nwait 300\npress a 8\nwait 300\npress a 8\nwait 300\npress a 8\nwait 300\npress a 8\nwait 300\npress a 8\nwait 300\npress a 8\nwait 300\npress a 8\nwait 300\npress a 8\nwait 300\npress a 8\nwait 300\npress a 8\nwait 300\npress a 8\nwait 300\npress a 8\nwait 300\npress a 8\nwait 300\npress a 8\nwait 300\npress a 8\nwait 300\npress a 8\nwait 300\nuntil16 0998 == 0008 6000\ndump ceres-start\nturbo off\npress left 90\npress right 90\npress left 90\npress right 90\npress left 90\npress right 90\npress left 90\npress right 90\npress left 90\npress right 90\npress left 90\npress right 90\ndump shaft-bottom\npress right+a+x 100\nwait 3\npress right+a+x 100\nwait 3\npress right+a+x 100\nwait 3\npress right+a+x 100\nwait 3\npress right+a+x 100\nwait 3\npress right+a+x 100\nwait 3\npress right+a+x 100\nwait 3\npress right+a+x 100\nwait 3\npress right+a+x 100\nwait 3\npress right+a+x 100\nwait 3\npress right+a+x 100\nwait 3\npress right+a+x 100\nwait 3\npress right+a+x 100\nwait 3\npress right+a+x 100\nwait 3\npress right+a+x 100\nwait 3\npress right+a+x 100\nwait 3\npress right+a+x 100\nwait 3\npress right+a+x 100\nwait 3\npress right+a+x 100\nwait 3\npress right+a+x 100\nwait 3\ndump stairs-top\npress left 80\nwait 180\ndump stairs-bottom\npress right+x 100\nwait 3\npress right+x 100\nwait 3\npress right+x 100\nwait 3\npress right+x 100\nwait 3\npress right+x 100\nwait 3\npress right+x 100\nwait 3\npress right+x 100\nwait 3\npress right+x 100\nwait 3\npress right+x 100\nwait 3\npress right+x 100\nwait 3\npress right+x 100\nwait 3\npress right+x 100\nwait 3\npress right+x 100\nwait 3\npress right+x 100\nwait 3\npress right+x 100\nwait 3\npress right+x 100\nwait 3\npress right+x 100\nwait 3\npress right+x 100\nwait 3\npress right+x 100\nwait 3\npress right+x 100\nwait 3\ndump after-left\nwait 500\ndump final\nquit\n"
+              },
+              "input_save_sha256": {},
+              "environment": {
+                "SNESRECOMP_RUN_FRAMES": "30000",
+                "SNESRECOMP_DUMP_DIR": "{run}",
+                "SNESRECOMP_WRAM_TRACE_FILE": "{run}/trace.jsonl",
+                "SNESRECOMP_STATE_TRACE": "{run}/cpu.csv",
+                "SNESRECOMP_SAVE_ROOT": "{run}/saves"
+              }
+            }
+          },
+          "sound_timing_analysis": {
+            "route": "ceres",
+            "frames": 16244,
+            "wram_different_frames": 174,
+            "addresses": [
+              "0x643",
+              "0x645",
+              "0x649",
+              "0x64a",
+              "0x64b",
+              "0x64d",
+              "0x64e",
+              "0x64f",
+              "0x650",
+              "0x651",
+              "0x652"
+            ],
+            "only_known_sound_handshake_addresses": false,
+            "only_sound_state_and_read_positions": true,
+            "cpu_register_different_frames": 0,
+            "different_evidence_files": [
+              "cpu.csv",
+              "trace.jsonl"
+            ],
+            "all_scene_snapshots_identical": true,
+            "nonzero_sound_command_onsets_identical": false,
+            "sound_command_onset_counts": [
+              801,
+              801
+            ],
+            "sound_command_values_and_order_per_library_identical": true,
+            "maximum_sound_command_onset_frame_shift": 1,
+            "baseline_failures": {
+              "interpreter_step_cap": 0,
+              "scheduler_bail": 0,
+              "apu_sync_timeout": 1
+            },
+            "candidate_failures": {
+              "interpreter_step_cap": 0,
+              "scheduler_bail": 0,
+              "apu_sync_timeout": 1
+            },
+            "first_differences": [
+              {
+                "frame": 1917,
+                "changes": [
+                  [
+                    "0x64b",
+                    3,
+                    0
+                  ]
+                ]
+              },
+              {
+                "frame": 1987,
+                "changes": [
+                  [
+                    "0x64b",
+                    0,
+                    3
+                  ]
+                ]
+              },
+              {
+                "frame": 2197,
+                "changes": [
+                  [
+                    "0x64b",
+                    3,
+                    0
+                  ]
+                ]
+              },
+              {
+                "frame": 2243,
+                "changes": [
+                  [
+                    "0x64b",
+                    2,
+                    1
+                  ],
+                  [
+                    "0x652",
+                    2,
+                    0
+                  ]
+                ]
+              },
+              {
+                "frame": 2244,
+                "changes": [
+                  [
+                    "0x652",
+                    1,
+                    2
+                  ]
+                ]
+              },
+              {
+                "frame": 2245,
+                "changes": [
+                  [
+                    "0x64b",
+                    3,
+                    2
+                  ],
+                  [
+                    "0x64f",
+                    0,
+                    13
+                  ],
+                  [
+                    "0x652",
+                    0,
+                    1
+                  ]
+                ]
+              },
+              {
+                "frame": 2246,
+                "changes": [
+                  [
+                    "0x64b",
+                    0,
+                    3
+                  ]
+                ]
+              },
+              {
+                "frame": 2247,
+                "changes": [
+                  [
+                    "0x64b",
+                    0,
+                    3
+                  ]
+                ]
+              }
+            ],
+            "strict_replay_match": false,
+            "limitation": "Sound-handshake timing differs; waveforms were not compared. Owner listening/play approval is pending."
+          }
+        }
+      }
+    },
+    "mmx": {
+      "builds": {
+        "baseline": {
+          "game": "mmx",
+          "arm": "baseline",
+          "framework": "b4e2e0a478e0ae36d4dcfc4fa3887b39a9d0bfe2",
+          "title": "38a39fde57e51d1d0f24b198ef6e206193cdc68b",
+          "ui": "41c88ffea852b970af8d50312620b17404e455ad",
+          "binary": "F:\\Projects\\_regression-review-20261014\\builds\\mmx\\baseline\\MegaManXSNESRecomp.exe",
+          "binary_sha256": "4c1f47e934c8a183dbe8eeb7c0cd17bfb07497cd9d15525ee51a248d8de237b0",
+          "rom": "F:\\Projects\\_regression-review-20261014\\source\\mmx\\mmx.sfc",
+          "rom_sha256": "152eb370f988b33291d2dddfc48abb42bfa236a08ddc7362e07dd2795e3e37d0",
+          "analyzer_sha256": "6fa2d7604896676c78cdabad2327cd8cb46855f3c0cd35806742717db57b3da9",
+          "generated_files": 116,
+          "cmake_command": [
+            "C:/msys64/mingw64/bin/cmake.exe",
+            "-S",
+            "F:\\Projects\\_regression-review-20261014\\source\\mmx",
+            "-B",
+            "F:\\Projects\\_regression-review-20261014\\builds\\mmx\\baseline",
+            "-G",
+            "Ninja",
+            "-DCMAKE_BUILD_TYPE=Release",
+            "-DCMAKE_C_COMPILER=C:/msys64/mingw64/bin/gcc.exe",
+            "-DCMAKE_CXX_COMPILER=C:/msys64/mingw64/bin/g++.exe",
+            "-DCMAKE_MAKE_PROGRAM=C:/msys64/mingw64/bin/ninja.exe",
+            "-DPython3_EXECUTABLE=C:/Users/Matthew/AppData/Local/Programs/Python/Python312/python.exe",
+            "-DSNESRECOMP_ROOT=F:/Projects/snesrecomp/_regression-20261014-baseline",
+            "-DRECOMP_UI_ROOT=F:/Projects/_regression-review-20261014/ui-mmx",
+            "-DSNESRECOMP_ENABLE_TRACE=OFF",
+            "-DSNESRECOMP_SDL_BACKEND=SDL3",
+            "-DSNESRECOMP_SDL3_FETCH=OFF",
+            "-DBUILD_TESTING=OFF",
+            "-DSNESRECOMP_BUILD_VERSION=regression-171-173-baseline"
+          ],
+          "generated_hash_manifest_sha256": "41b2febc5e447c2ca6e3e1469c52933445636d40507b2050e4511e62fabf19bf"
+        },
+        "candidate": {
+          "game": "mmx",
+          "arm": "candidate",
+          "framework": "835c30e40b5d0890c276335e30ae61573c28112f",
+          "title": "38a39fde57e51d1d0f24b198ef6e206193cdc68b",
+          "ui": "41c88ffea852b970af8d50312620b17404e455ad",
+          "binary": "F:\\Projects\\_regression-review-20261014\\builds\\mmx\\candidate\\MegaManXSNESRecomp.exe",
+          "binary_sha256": "c609c98487ce545040afc5fb69a63ebd27e42670f56c99da091eff6095bf447f",
+          "rom": "F:\\Projects\\_regression-review-20261014\\source\\mmx\\mmx.sfc",
+          "rom_sha256": "152eb370f988b33291d2dddfc48abb42bfa236a08ddc7362e07dd2795e3e37d0",
+          "analyzer_sha256": "47cf6a2136b61b378d42cca35d5c9fd7888eddbc1b777c2383c78f46624d25c1",
+          "generated_files": 116,
+          "cmake_command": [
+            "C:/msys64/mingw64/bin/cmake.exe",
+            "-S",
+            "F:\\Projects\\_regression-review-20261014\\source\\mmx",
+            "-B",
+            "F:\\Projects\\_regression-review-20261014\\builds\\mmx\\candidate",
+            "-G",
+            "Ninja",
+            "-DCMAKE_BUILD_TYPE=Release",
+            "-DCMAKE_C_COMPILER=C:/msys64/mingw64/bin/gcc.exe",
+            "-DCMAKE_CXX_COMPILER=C:/msys64/mingw64/bin/g++.exe",
+            "-DCMAKE_MAKE_PROGRAM=C:/msys64/mingw64/bin/ninja.exe",
+            "-DPython3_EXECUTABLE=C:/Users/Matthew/AppData/Local/Programs/Python/Python312/python.exe",
+            "-DSNESRECOMP_ROOT=F:/Projects/snesrecomp/_regression-20261014-pr171-173",
+            "-DRECOMP_UI_ROOT=F:/Projects/_regression-review-20261014/ui-mmx",
+            "-DSNESRECOMP_ENABLE_TRACE=OFF",
+            "-DSNESRECOMP_SDL_BACKEND=SDL3",
+            "-DSNESRECOMP_SDL3_FETCH=OFF",
+            "-DBUILD_TESTING=OFF",
+            "-DSNESRECOMP_BUILD_VERSION=regression-171-173-candidate"
+          ],
+          "generated_hash_manifest_sha256": "e704ff28fbe75b0553adc478ba1fe63e3b1c69371077a55c01d1bacc4ec2c325"
+        }
+      },
+      "routes": {
+        "attract": {
+          "game": "mmx",
+          "route": "attract",
+          "evidence_matches": true,
+          "identical_inputs": true,
+          "completed": true,
+          "audio_opened": true,
+          "baseline_frames": [
+            12000,
+            12000
+          ],
+          "candidate_frames": [
+            12000,
+            12000
+          ],
+          "baseline_failures": {
+            "interpreter_step_cap": 0,
+            "scheduler_bail": 0,
+            "apu_sync_timeout": 0
+          },
+          "candidate_failures": {
+            "interpreter_step_cap": 0,
+            "scheduler_bail": 0,
+            "apu_sync_timeout": 0
+          },
+          "baseline_warnings": [],
+          "candidate_warnings": [],
+          "no_new_failures": true,
+          "same_frames": true,
+          "regression_matches": true,
+          "arms": {
+            "baseline": {
+              "binary_sha256": "4c1f47e934c8a183dbe8eeb7c0cd17bfb07497cd9d15525ee51a248d8de237b0",
+              "case_digest": "6fd7870e346ae5680205401079ee41c2c5db9cfdc20d5e405165933c85cd16a6",
+              "evidence_sha256": {
+                "cpu.csv": "2f39f2aeae511bfb0782e63a0810951113eead284c89dceff3ec3243ae0699ac",
+                "frames/frame_011997.bmp": "3ae979b228c2fc9e6b31959a3775fec6fff3b958746a50d0cb1f76a35394bce3",
+                "frames/frame_011997_cgram.bin": "90e7068c820027e63ceb0642c4c9efa0005d3a8e76373831d421b4af7bc5d43c",
+                "frames/frame_011997_ppu.json": "b50e3776b949616ba9df91a9cfc1f6ece3364597d928bc9850650eaf24a906c8",
+                "frames/frame_011997_vram.bin": "3d91e714f66c64199722ab9192c7e74ae1d823da1ad6e2eff5600033ad9c3cb3",
+                "frames/frame_011997_wram.bin": "5c5dbcee5eebfa65d5e96015ea6eda17dd8ab48b3ce30b809e78e5a4ea1ca90e",
+                "frames/frame_011998.bmp": "c80745b388e5ff0ecffbf1bce6f0bea20073156cfbc2dcff42a90f7fb04cdc83",
+                "frames/frame_011998_cgram.bin": "90e7068c820027e63ceb0642c4c9efa0005d3a8e76373831d421b4af7bc5d43c",
+                "frames/frame_011998_ppu.json": "06544870574856818c383475de8dc234137393f11adbd3d0f43bca971e0a92ad",
+                "frames/frame_011998_vram.bin": "3d91e714f66c64199722ab9192c7e74ae1d823da1ad6e2eff5600033ad9c3cb3",
+                "frames/frame_011998_wram.bin": "4c6d657a9d17542a92042f26fe92a251746d01e51976cde601b44980189e01b4",
+                "frames/frame_011999.bmp": "feedc01e6e91e03da56bdd78f9f63e8f666ea5e43994a06cb8b4462f487fe22b",
+                "frames/frame_011999_cgram.bin": "336080565abf6d127e25ce99c7d38ff56c474a6933dff572b4ecff2adc5d505d",
+                "frames/frame_011999_ppu.json": "7db46b2b1381f0530814c00b7ceb538e3b1bbb3b1ec26d92449ea3e4a76d0416",
+                "frames/frame_011999_vram.bin": "3d91e714f66c64199722ab9192c7e74ae1d823da1ad6e2eff5600033ad9c3cb3",
+                "frames/frame_011999_wram.bin": "d41430a92e5528f33af9febb5f422797cdeeeb029fc565dead54ce281a71183c",
+                "trace.jsonl": "f0ad5bc2786ddf86e6e706c2787857e910589acdc09722ee02c9baa9d9ba72e0"
+              },
+              "command": [
+                "F:\\Projects\\_regression-review-20261014\\runs\\mmx\\attract\\baseline/MegaManXSNESRecomp.exe",
+                "F:\\Projects\\_regression-review-20261014\\source\\mmx\\mmx.sfc",
+                "--no-launcher",
+                "--config",
+                "F:\\Projects\\_regression-review-20261014\\runs\\mmx\\attract\\baseline/config.ini",
+                "--script",
+                "F:\\Projects\\_regression-review-20261014\\runs\\mmx\\attract\\baseline/input.txt",
+                "--framedump",
+                "F:\\Projects\\_regression-review-20261014\\runs\\mmx\\attract\\baseline/frames"
+              ],
+              "input_files": {
+                "config.ini": "[General]\nAutosave=0\nSkipLauncher=1\nDisableFrameDelay=1\n[Graphics]\nFullscreen=0\nWindowScale=2\nOutputMethod=SDL-Software\nNewRenderer=1\nNoSpriteLimits=1\nDisplayAspect=4:3\nWidescreen=0\nFrameBlend=0\n[Sound]\nEnableAudio=1\nAudioFreq=32040\nAudioChannels=2\nAudioSamples=512\n",
+                "input.txt": "wait 12000\n"
+              },
+              "input_save_sha256": {},
+              "environment": {
+                "SNESRECOMP_RUN_FRAMES": "12000",
+                "SNESRECOMP_WRAM_TRACE_FILE": "{run}/trace.jsonl",
+                "SNESRECOMP_STATE_TRACE": "{run}/cpu.csv",
+                "SNESRECOMP_SAVE_ROOT": "{run}/saves",
+                "SNESRECOMP_FRAMEDUMP_START": "11997",
+                "SNESRECOMP_FRAMEDUMP_END": "11999",
+                "SNESRECOMP_FRAMEDUMP_PIXELS": "1",
+                "SNESRECOMP_FRAMEDUMP_VIDEO": "1",
+                "SNESRECOMP_DUMP_DIR": "{run}",
+                "SDL_VIDEODRIVER": "dummy"
+              }
+            },
+            "candidate": {
+              "binary_sha256": "c609c98487ce545040afc5fb69a63ebd27e42670f56c99da091eff6095bf447f",
+              "case_digest": "6fd7870e346ae5680205401079ee41c2c5db9cfdc20d5e405165933c85cd16a6",
+              "evidence_sha256": {
+                "cpu.csv": "2f39f2aeae511bfb0782e63a0810951113eead284c89dceff3ec3243ae0699ac",
+                "frames/frame_011997.bmp": "3ae979b228c2fc9e6b31959a3775fec6fff3b958746a50d0cb1f76a35394bce3",
+                "frames/frame_011997_cgram.bin": "90e7068c820027e63ceb0642c4c9efa0005d3a8e76373831d421b4af7bc5d43c",
+                "frames/frame_011997_ppu.json": "b50e3776b949616ba9df91a9cfc1f6ece3364597d928bc9850650eaf24a906c8",
+                "frames/frame_011997_vram.bin": "3d91e714f66c64199722ab9192c7e74ae1d823da1ad6e2eff5600033ad9c3cb3",
+                "frames/frame_011997_wram.bin": "5c5dbcee5eebfa65d5e96015ea6eda17dd8ab48b3ce30b809e78e5a4ea1ca90e",
+                "frames/frame_011998.bmp": "c80745b388e5ff0ecffbf1bce6f0bea20073156cfbc2dcff42a90f7fb04cdc83",
+                "frames/frame_011998_cgram.bin": "90e7068c820027e63ceb0642c4c9efa0005d3a8e76373831d421b4af7bc5d43c",
+                "frames/frame_011998_ppu.json": "06544870574856818c383475de8dc234137393f11adbd3d0f43bca971e0a92ad",
+                "frames/frame_011998_vram.bin": "3d91e714f66c64199722ab9192c7e74ae1d823da1ad6e2eff5600033ad9c3cb3",
+                "frames/frame_011998_wram.bin": "4c6d657a9d17542a92042f26fe92a251746d01e51976cde601b44980189e01b4",
+                "frames/frame_011999.bmp": "feedc01e6e91e03da56bdd78f9f63e8f666ea5e43994a06cb8b4462f487fe22b",
+                "frames/frame_011999_cgram.bin": "336080565abf6d127e25ce99c7d38ff56c474a6933dff572b4ecff2adc5d505d",
+                "frames/frame_011999_ppu.json": "7db46b2b1381f0530814c00b7ceb538e3b1bbb3b1ec26d92449ea3e4a76d0416",
+                "frames/frame_011999_vram.bin": "3d91e714f66c64199722ab9192c7e74ae1d823da1ad6e2eff5600033ad9c3cb3",
+                "frames/frame_011999_wram.bin": "d41430a92e5528f33af9febb5f422797cdeeeb029fc565dead54ce281a71183c",
+                "trace.jsonl": "f0ad5bc2786ddf86e6e706c2787857e910589acdc09722ee02c9baa9d9ba72e0"
+              },
+              "command": [
+                "F:\\Projects\\_regression-review-20261014\\runs\\mmx\\attract\\candidate/MegaManXSNESRecomp.exe",
+                "F:\\Projects\\_regression-review-20261014\\source\\mmx\\mmx.sfc",
+                "--no-launcher",
+                "--config",
+                "F:\\Projects\\_regression-review-20261014\\runs\\mmx\\attract\\candidate/config.ini",
+                "--script",
+                "F:\\Projects\\_regression-review-20261014\\runs\\mmx\\attract\\candidate/input.txt",
+                "--framedump",
+                "F:\\Projects\\_regression-review-20261014\\runs\\mmx\\attract\\candidate/frames"
+              ],
+              "input_files": {
+                "config.ini": "[General]\nAutosave=0\nSkipLauncher=1\nDisableFrameDelay=1\n[Graphics]\nFullscreen=0\nWindowScale=2\nOutputMethod=SDL-Software\nNewRenderer=1\nNoSpriteLimits=1\nDisplayAspect=4:3\nWidescreen=0\nFrameBlend=0\n[Sound]\nEnableAudio=1\nAudioFreq=32040\nAudioChannels=2\nAudioSamples=512\n",
+                "input.txt": "wait 12000\n"
+              },
+              "input_save_sha256": {},
+              "environment": {
+                "SNESRECOMP_RUN_FRAMES": "12000",
+                "SNESRECOMP_WRAM_TRACE_FILE": "{run}/trace.jsonl",
+                "SNESRECOMP_STATE_TRACE": "{run}/cpu.csv",
+                "SNESRECOMP_SAVE_ROOT": "{run}/saves",
+                "SNESRECOMP_FRAMEDUMP_START": "11997",
+                "SNESRECOMP_FRAMEDUMP_END": "11999",
+                "SNESRECOMP_FRAMEDUMP_PIXELS": "1",
+                "SNESRECOMP_FRAMEDUMP_VIDEO": "1",
+                "SNESRECOMP_DUMP_DIR": "{run}",
+                "SDL_VIDEODRIVER": "dummy"
+              }
+            }
+          }
+        },
+        "highway": {
+          "game": "mmx",
+          "route": "highway",
+          "evidence_matches": true,
+          "identical_inputs": true,
+          "completed": true,
+          "audio_opened": true,
+          "baseline_frames": [
+            12000,
+            12000
+          ],
+          "candidate_frames": [
+            12000,
+            12000
+          ],
+          "baseline_failures": {
+            "interpreter_step_cap": 0,
+            "scheduler_bail": 0,
+            "apu_sync_timeout": 0
+          },
+          "candidate_failures": {
+            "interpreter_step_cap": 0,
+            "scheduler_bail": 0,
+            "apu_sync_timeout": 0
+          },
+          "baseline_warnings": [],
+          "candidate_warnings": [],
+          "no_new_failures": true,
+          "same_frames": true,
+          "regression_matches": true,
+          "arms": {
+            "baseline": {
+              "binary_sha256": "4c1f47e934c8a183dbe8eeb7c0cd17bfb07497cd9d15525ee51a248d8de237b0",
+              "case_digest": "37437f4b5eabcf72ed6b9294fb0122c60add47f19db5c05e7029e19ca77d6d89",
+              "evidence_sha256": {
+                "cpu.csv": "bec49497a9d7847abd8720eb8385da1a5fde0e35628ef2aedb54e9fac72ab1cf",
+                "frames/frame_011997.bmp": "5ba705b333d16b10da11a14f5685c3279aa85f2a64d968582d63cb1f3a39022c",
+                "frames/frame_011997_cgram.bin": "75025f9d1c126bf04d3ee46e97fe2512f695eb35a071438119384eb2bf99d647",
+                "frames/frame_011997_ppu.json": "5f2fedd51de971f38d945ab03a14be2745fdf7d5d4baa61f64e1aad636e54b85",
+                "frames/frame_011997_vram.bin": "a37a1fedc547f5ed6856ad4f7b2b948e617e7f711b1829b9b6027c4b9adcdb9e",
+                "frames/frame_011997_wram.bin": "541ebad7f5f7fbfc9e33aa9aeb51dd14045aa572cf755267368dac8a690d986c",
+                "frames/frame_011998.bmp": "5ba705b333d16b10da11a14f5685c3279aa85f2a64d968582d63cb1f3a39022c",
+                "frames/frame_011998_cgram.bin": "75025f9d1c126bf04d3ee46e97fe2512f695eb35a071438119384eb2bf99d647",
+                "frames/frame_011998_ppu.json": "fc4f34b998f981f002d0af9283bdc2527970aabd19b8fe4237d5220541d5e31a",
+                "frames/frame_011998_vram.bin": "a37a1fedc547f5ed6856ad4f7b2b948e617e7f711b1829b9b6027c4b9adcdb9e",
+                "frames/frame_011998_wram.bin": "70076badeba4b2188ba5bf49458a974c63bdb87c77df0269ed244e41cf6ea335",
+                "frames/frame_011999.bmp": "5ba705b333d16b10da11a14f5685c3279aa85f2a64d968582d63cb1f3a39022c",
+                "frames/frame_011999_cgram.bin": "75025f9d1c126bf04d3ee46e97fe2512f695eb35a071438119384eb2bf99d647",
+                "frames/frame_011999_ppu.json": "df0d21b63236a2739a7741165bdc22d29d8398796b51b01fa97713fc8f6855e5",
+                "frames/frame_011999_vram.bin": "a37a1fedc547f5ed6856ad4f7b2b948e617e7f711b1829b9b6027c4b9adcdb9e",
+                "frames/frame_011999_wram.bin": "c901ec28251cc9d6dfc8be7a355526e201f042ee42fc8ac704cd8a26e78b756c",
+                "trace.jsonl": "1f21cabeaaaf8b4ce4cf8bbee1bd696128f98ff645ec843b5b6fe82cd3405963"
+              },
+              "command": [
+                "F:\\Projects\\_regression-review-20261014\\runs\\mmx\\highway\\baseline/MegaManXSNESRecomp.exe",
+                "F:\\Projects\\_regression-review-20261014\\source\\mmx\\mmx.sfc",
+                "--no-launcher",
+                "--config",
+                "F:\\Projects\\_regression-review-20261014\\runs\\mmx\\highway\\baseline/config.ini",
+                "--script",
+                "F:\\Projects\\_regression-review-20261014\\runs\\mmx\\highway\\baseline/input.txt",
+                "--framedump",
+                "F:\\Projects\\_regression-review-20261014\\runs\\mmx\\highway\\baseline/frames"
+              ],
+              "input_files": {
+                "config.ini": "[General]\nAutosave=0\nSkipLauncher=1\nDisableFrameDelay=1\n[Graphics]\nFullscreen=0\nWindowScale=2\nOutputMethod=SDL-Software\nNewRenderer=1\nNoSpriteLimits=1\nDisplayAspect=4:3\nWidescreen=0\nFrameBlend=0\n[Sound]\nEnableAudio=1\nAudioFreq=32040\nAudioChannels=2\nAudioSamples=512\n",
+                "input.txt": "wait 900\npress start 1\nwait 1800\npress start 1\nwait 120\npress start 1\nwait 300\npress right+y 50\nwait 11\npress right+y 51\nwait 1\npress left+b+y 40\nwait 3\npress right+b+y 58\nwait 2\npress right+y 25\nwait 2\npress left+b+y 43\nwait 12\npress left+b+y 29\nwait 1\npress right+b 55\nwait 8\npress left+b+y 39\nwait 10\npress right+b 30\nwait 4\npress left+b+y 56\nwait 3\npress left+b+y 36\nwait 7\npress right+b 69\nwait 9\npress right+y 54\nwait 6\npress left+b+y 72\nwait 4\npress right+b 40\nwait 1\npress right+y 49\nwait 12\npress left+b+y 59\nwait 4\npress right+b 25\nwait 11\npress right+y 46\nwait 12\npress right+b+y 67\nwait 9\npress right+b+y 46\nwait 2\npress left+b+y 26\nwait 8\npress right+b+y 52\nwait 3\npress right+y 65\nwait 5\npress right+y 54\nwait 3\npress right+y 48\nwait 9\npress left+b+y 67\nwait 11\npress left+b+y 38\nwait 7\npress left+b+y 60\nwait 12\npress right+y 68\nwait 2\npress right+y 37\nwait 9\npress right+b+y 47\nwait 12\npress right+y 43\nwait 10\npress right+y 67\nwait 1\npress right+b+y 48\nwait 4\npress right+b 48\nwait 2\npress right+y 60\nwait 3\npress left+b+y 57\nwait 7\npress right+b 39\nwait 7\npress right+b+y 55\nwait 2\npress left+b+y 56\nwait 2\npress right+y 58\nwait 5\npress right+y 54\nwait 3\npress right+y 62\nwait 5\npress right+y 43\nwait 3\npress right+y 47\nwait 5\npress right+y 27\nwait 4\npress right+y 50\nwait 9\npress right+b+y 55\nwait 8\npress right+y 40\nwait 7\npress right+y 32\nwait 2\npress left+b+y 67\nwait 12\npress right+b+y 35\nwait 4\npress right+y 43\nwait 3\npress right+b+y 70\nwait 6\npress right+y 58\nwait 8\npress right+b+y 51\nwait 10\npress right+b+y 56\nwait 8\npress right+b+y 30\nwait 10\npress right+b 48\nwait 1\npress right+b 70\nwait 8\npress right+b+y 75\nwait 9\npress right+b 60\nwait 6\npress right+b 63\nwait 12\npress right+b 28\nwait 4\npress right+y 64\nwait 2\npress right+b+y 69\nwait 11\npress right+b 59\nwait 11\npress left+b+y 66\nwait 4\npress right+b+y 36\nwait 11\npress right+b 64\nwait 4\npress right+b 28\nwait 9\npress right+b 70\nwait 1\npress right+y 43\nwait 3\npress right+y 75\nwait 11\npress right+y 72\nwait 10\npress right+b 66\nwait 4\npress left+b+y 60\nwait 7\npress right+b 27\nwait 9\npress right+y 73\nwait 3\npress right+b 69\nwait 7\npress right+y 28\nwait 7\npress right+b+y 69\nwait 2\npress right+b 67\nwait 5\npress right+b 36\nwait 2\npress left+b+y 41\nwait 2\npress left+b+y 71\nwait 1\npress right+y 34\nwait 2\npress left+b+y 57\nwait 1\npress right+y 67\nwait 6\npress left+b+y 53\nwait 9\npress right+b+y 36\nwait 6\npress right+y 48\nwait 12\npress right+y 75\nwait 3\npress right+y 49\nwait 9\npress right+b 42\nwait 6\npress right+b 44\nwait 4\npress left+b+y 48\nwait 2\npress right+y 57\nwait 5\n"
+              },
+              "input_save_sha256": {},
+              "environment": {
+                "SNESRECOMP_RUN_FRAMES": "12000",
+                "SNESRECOMP_WRAM_TRACE_FILE": "{run}/trace.jsonl",
+                "SNESRECOMP_STATE_TRACE": "{run}/cpu.csv",
+                "SNESRECOMP_SAVE_ROOT": "{run}/saves",
+                "SNESRECOMP_FRAMEDUMP_START": "11997",
+                "SNESRECOMP_FRAMEDUMP_END": "11999",
+                "SNESRECOMP_FRAMEDUMP_PIXELS": "1",
+                "SNESRECOMP_FRAMEDUMP_VIDEO": "1",
+                "SNESRECOMP_DUMP_DIR": "{run}",
+                "SDL_VIDEODRIVER": "dummy"
+              }
+            },
+            "candidate": {
+              "binary_sha256": "c609c98487ce545040afc5fb69a63ebd27e42670f56c99da091eff6095bf447f",
+              "case_digest": "37437f4b5eabcf72ed6b9294fb0122c60add47f19db5c05e7029e19ca77d6d89",
+              "evidence_sha256": {
+                "cpu.csv": "bec49497a9d7847abd8720eb8385da1a5fde0e35628ef2aedb54e9fac72ab1cf",
+                "frames/frame_011997.bmp": "5ba705b333d16b10da11a14f5685c3279aa85f2a64d968582d63cb1f3a39022c",
+                "frames/frame_011997_cgram.bin": "75025f9d1c126bf04d3ee46e97fe2512f695eb35a071438119384eb2bf99d647",
+                "frames/frame_011997_ppu.json": "5f2fedd51de971f38d945ab03a14be2745fdf7d5d4baa61f64e1aad636e54b85",
+                "frames/frame_011997_vram.bin": "a37a1fedc547f5ed6856ad4f7b2b948e617e7f711b1829b9b6027c4b9adcdb9e",
+                "frames/frame_011997_wram.bin": "541ebad7f5f7fbfc9e33aa9aeb51dd14045aa572cf755267368dac8a690d986c",
+                "frames/frame_011998.bmp": "5ba705b333d16b10da11a14f5685c3279aa85f2a64d968582d63cb1f3a39022c",
+                "frames/frame_011998_cgram.bin": "75025f9d1c126bf04d3ee46e97fe2512f695eb35a071438119384eb2bf99d647",
+                "frames/frame_011998_ppu.json": "fc4f34b998f981f002d0af9283bdc2527970aabd19b8fe4237d5220541d5e31a",
+                "frames/frame_011998_vram.bin": "a37a1fedc547f5ed6856ad4f7b2b948e617e7f711b1829b9b6027c4b9adcdb9e",
+                "frames/frame_011998_wram.bin": "70076badeba4b2188ba5bf49458a974c63bdb87c77df0269ed244e41cf6ea335",
+                "frames/frame_011999.bmp": "5ba705b333d16b10da11a14f5685c3279aa85f2a64d968582d63cb1f3a39022c",
+                "frames/frame_011999_cgram.bin": "75025f9d1c126bf04d3ee46e97fe2512f695eb35a071438119384eb2bf99d647",
+                "frames/frame_011999_ppu.json": "df0d21b63236a2739a7741165bdc22d29d8398796b51b01fa97713fc8f6855e5",
+                "frames/frame_011999_vram.bin": "a37a1fedc547f5ed6856ad4f7b2b948e617e7f711b1829b9b6027c4b9adcdb9e",
+                "frames/frame_011999_wram.bin": "c901ec28251cc9d6dfc8be7a355526e201f042ee42fc8ac704cd8a26e78b756c",
+                "trace.jsonl": "1f21cabeaaaf8b4ce4cf8bbee1bd696128f98ff645ec843b5b6fe82cd3405963"
+              },
+              "command": [
+                "F:\\Projects\\_regression-review-20261014\\runs\\mmx\\highway\\candidate/MegaManXSNESRecomp.exe",
+                "F:\\Projects\\_regression-review-20261014\\source\\mmx\\mmx.sfc",
+                "--no-launcher",
+                "--config",
+                "F:\\Projects\\_regression-review-20261014\\runs\\mmx\\highway\\candidate/config.ini",
+                "--script",
+                "F:\\Projects\\_regression-review-20261014\\runs\\mmx\\highway\\candidate/input.txt",
+                "--framedump",
+                "F:\\Projects\\_regression-review-20261014\\runs\\mmx\\highway\\candidate/frames"
+              ],
+              "input_files": {
+                "config.ini": "[General]\nAutosave=0\nSkipLauncher=1\nDisableFrameDelay=1\n[Graphics]\nFullscreen=0\nWindowScale=2\nOutputMethod=SDL-Software\nNewRenderer=1\nNoSpriteLimits=1\nDisplayAspect=4:3\nWidescreen=0\nFrameBlend=0\n[Sound]\nEnableAudio=1\nAudioFreq=32040\nAudioChannels=2\nAudioSamples=512\n",
+                "input.txt": "wait 900\npress start 1\nwait 1800\npress start 1\nwait 120\npress start 1\nwait 300\npress right+y 50\nwait 11\npress right+y 51\nwait 1\npress left+b+y 40\nwait 3\npress right+b+y 58\nwait 2\npress right+y 25\nwait 2\npress left+b+y 43\nwait 12\npress left+b+y 29\nwait 1\npress right+b 55\nwait 8\npress left+b+y 39\nwait 10\npress right+b 30\nwait 4\npress left+b+y 56\nwait 3\npress left+b+y 36\nwait 7\npress right+b 69\nwait 9\npress right+y 54\nwait 6\npress left+b+y 72\nwait 4\npress right+b 40\nwait 1\npress right+y 49\nwait 12\npress left+b+y 59\nwait 4\npress right+b 25\nwait 11\npress right+y 46\nwait 12\npress right+b+y 67\nwait 9\npress right+b+y 46\nwait 2\npress left+b+y 26\nwait 8\npress right+b+y 52\nwait 3\npress right+y 65\nwait 5\npress right+y 54\nwait 3\npress right+y 48\nwait 9\npress left+b+y 67\nwait 11\npress left+b+y 38\nwait 7\npress left+b+y 60\nwait 12\npress right+y 68\nwait 2\npress right+y 37\nwait 9\npress right+b+y 47\nwait 12\npress right+y 43\nwait 10\npress right+y 67\nwait 1\npress right+b+y 48\nwait 4\npress right+b 48\nwait 2\npress right+y 60\nwait 3\npress left+b+y 57\nwait 7\npress right+b 39\nwait 7\npress right+b+y 55\nwait 2\npress left+b+y 56\nwait 2\npress right+y 58\nwait 5\npress right+y 54\nwait 3\npress right+y 62\nwait 5\npress right+y 43\nwait 3\npress right+y 47\nwait 5\npress right+y 27\nwait 4\npress right+y 50\nwait 9\npress right+b+y 55\nwait 8\npress right+y 40\nwait 7\npress right+y 32\nwait 2\npress left+b+y 67\nwait 12\npress right+b+y 35\nwait 4\npress right+y 43\nwait 3\npress right+b+y 70\nwait 6\npress right+y 58\nwait 8\npress right+b+y 51\nwait 10\npress right+b+y 56\nwait 8\npress right+b+y 30\nwait 10\npress right+b 48\nwait 1\npress right+b 70\nwait 8\npress right+b+y 75\nwait 9\npress right+b 60\nwait 6\npress right+b 63\nwait 12\npress right+b 28\nwait 4\npress right+y 64\nwait 2\npress right+b+y 69\nwait 11\npress right+b 59\nwait 11\npress left+b+y 66\nwait 4\npress right+b+y 36\nwait 11\npress right+b 64\nwait 4\npress right+b 28\nwait 9\npress right+b 70\nwait 1\npress right+y 43\nwait 3\npress right+y 75\nwait 11\npress right+y 72\nwait 10\npress right+b 66\nwait 4\npress left+b+y 60\nwait 7\npress right+b 27\nwait 9\npress right+y 73\nwait 3\npress right+b 69\nwait 7\npress right+y 28\nwait 7\npress right+b+y 69\nwait 2\npress right+b 67\nwait 5\npress right+b 36\nwait 2\npress left+b+y 41\nwait 2\npress left+b+y 71\nwait 1\npress right+y 34\nwait 2\npress left+b+y 57\nwait 1\npress right+y 67\nwait 6\npress left+b+y 53\nwait 9\npress right+b+y 36\nwait 6\npress right+y 48\nwait 12\npress right+y 75\nwait 3\npress right+y 49\nwait 9\npress right+b 42\nwait 6\npress right+b 44\nwait 4\npress left+b+y 48\nwait 2\npress right+y 57\nwait 5\n"
+              },
+              "input_save_sha256": {},
+              "environment": {
+                "SNESRECOMP_RUN_FRAMES": "12000",
+                "SNESRECOMP_WRAM_TRACE_FILE": "{run}/trace.jsonl",
+                "SNESRECOMP_STATE_TRACE": "{run}/cpu.csv",
+                "SNESRECOMP_SAVE_ROOT": "{run}/saves",
+                "SNESRECOMP_FRAMEDUMP_START": "11997",
+                "SNESRECOMP_FRAMEDUMP_END": "11999",
+                "SNESRECOMP_FRAMEDUMP_PIXELS": "1",
+                "SNESRECOMP_FRAMEDUMP_VIDEO": "1",
+                "SNESRECOMP_DUMP_DIR": "{run}",
+                "SDL_VIDEODRIVER": "dummy"
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "candidate_simulated_frames": 76244,
+  "paired_simulated_frames": 152488,
+  "sm_same_binary_baseline_repeat": {
+    "same_binary_baseline_repeat": true,
+    "evidence_matches": true,
+    "returncode": 0,
+    "runtime_failures": {
+      "interpreter_step_cap": 0,
+      "scheduler_bail": 0,
+      "apu_sync_timeout": 0
+    }
+  }
+}
