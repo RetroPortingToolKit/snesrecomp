@@ -70,6 +70,9 @@ uint32_t snes_state_digest_apu_of(struct Apu *apu);
 
 /* One partition. Unknown partition ids return 0. */
 uint32_t snes_state_digest(uint32_t partition);
+/* Optional game-owned simulation outside WRAM (must also be snapshotted).
+ * Installed once by a host. NULL preserves the original digest domain. */
+void snes_state_digest_set_extra(uint32_t (*digest)(void));
 
 /* Every partition in one walk (cheaper than 7 calls). */
 void snes_state_digest_parts(SnesStateDigestParts *out);

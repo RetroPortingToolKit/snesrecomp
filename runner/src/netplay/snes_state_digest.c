@@ -15,6 +15,8 @@
 #include "snes/saveload.h"
 
 extern Snes *g_snes;
+static uint32_t (*s_game_digest)(void);
+void snes_state_digest_set_extra(uint32_t (*digest)(void)) {s_game_digest=digest;}
 
 /*
  * Streaming CRC over a *_saveload byte stream.
@@ -100,6 +102,11 @@ static uint32_t digest_wram(void)
     crc = crc32_update(crc, (const uint8_t *)&g_snes->hPos,
                        sizeof(*g_snes) - offsetof(Snes, hPos));
     crc = crc32_update(crc, (const uint8_t *)g_snes->ram, 0x20000u);
+    if(s_game_digest) {
+        uint32_t game=s_game_digest();uint8_t bytes[4];
+        for(unsigned i=0;i<4;++i)bytes[i]=(uint8_t)(game>>(i*8));
+        crc=crc32_update(crc,bytes,sizeof(bytes));
+    }
     crc = crc32_update(crc, (const uint8_t *)&g_snes->ramAdr, sizeof(g_snes->ramAdr));
     crc = crc32_update(crc, (const uint8_t *)&g_snes->joypadStrobe,
                        sizeof(g_snes->joypadStrobe));
