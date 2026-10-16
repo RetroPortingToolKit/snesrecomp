@@ -877,6 +877,12 @@ def emit_program(*, rom: bytes, parsed, manifest: ProgramManifest,
                     (bank << 16) | (site & 0xFFFF)
                     for site in cfg.noreturn_jsr
                 }
+            entry_hooks = None
+            if cfg is not None and getattr(cfg, "entry_hook", None):
+                entry_hooks = {
+                    (bank << 16) | (pc & 0xFFFF): name
+                    for pc, name in cfg.entry_hook.items()
+                }
             if indirect_call_tables:
                 remapped_tables = dict(indirect_call_tables)
                 for site, value in indirect_call_tables.items():
@@ -899,6 +905,7 @@ def emit_program(*, rom: bytes, parsed, manifest: ProgramManifest,
                 indirect_dispatch=indirect_dispatch or None,
                 terminal_jsr_sites=terminal_jsr_sites,
                 noreturn_jsr_sites=noreturn_jsr_sites,
+                entry_hooks=entry_hooks,
                 data_regions=data_regions,
                 exclude_ranges=(getattr(cfg, "exclude_ranges", None)
                                 if cfg is not None else None),
