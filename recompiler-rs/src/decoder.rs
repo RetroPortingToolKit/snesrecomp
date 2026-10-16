@@ -230,6 +230,8 @@ pub struct DecodeEnv<'a> {
     pub callee_inline_skip: Option<&'a HashMap<u32, i32>>,
     pub inline_dispatch_loop_pcs: Option<&'a std::collections::BTreeSet<u32>>,
     pub terminal_jsr_sites: Option<&'a std::collections::BTreeSet<u32>>,
+    /// `brk_rti` sites (24-bit, mirrors included): BRK falls through.
+    pub brk_rti_sites: Option<&'a std::collections::BTreeSet<u32>>,
     /// Folded-in process-global the Python decode path read (set_global_inline_skip).
     pub global_inline_skip: Option<&'a HashMap<u32, i32>>,
     /// LLE-first analysis must not guess that a callee preserves M/X.  Stop
@@ -793,6 +795,18 @@ fn labeled_successors(
     let next_pc = (pc + insn.length as u32) & 0xFFFF;
     let mnem = insn.mnem;
 
+    if mnem == "BRK"
+        && env
+            .brk_rti_sites
+            .map_or(false, |s| s.contains(&(insn.addr & 0xFFFFFF)))
+    {
+        // brk_rti: the round trip through a bare RTI returns past the
+        // signature byte with P restored -- widths and PHP stack unchanged.
+        return vec![(
+            DecodeKey::with_stack(addr24(bank, next_pc), key.m, key.x, key.p_stack.clone()),
+            "fall",
+        )];
+    }
     if is_terminator(mnem) {
         return vec![];
     }
@@ -4302,6 +4316,19 @@ mod tests {
         let rts = g.get(&k(0x8002)).unwrap();
         assert_eq!(rts.insn.mnem, "RTS");
         assert!(rts.successors.is_empty());
+    }
+
+    #[test]
+    fn brk_rti_site_falls_through() {
+        // 8000 BRK #$00 / LDA #$01 / RTS
+        let rom = rom_at_8000(&[0x00, 0x00, 0xA9, 0x01, 0x60]);
+        let plain = decode_function(&rom, 0, 0x8000, 1, 1, None, &DecodeEnv::default());
+        assert!(plain.get(&k(0x8002)).is_none());
+        let sites = std::collections::BTreeSet::from([0x008000u32]);
+        let env = DecodeEnv { brk_rti_sites: Some(&sites), ..DecodeEnv::default() };
+        let graph = decode_function(&rom, 0, 0x8000, 1, 1, None, &env);
+        assert!(graph.get(&k(0x8002)).is_some());
+        assert!(graph.get(&k(0x8004)).is_some());
     }
 
     #[test]

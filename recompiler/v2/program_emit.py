@@ -877,6 +877,15 @@ def emit_program(*, rom: bytes, parsed, manifest: ProgramManifest,
                     (bank << 16) | (site & 0xFFFF)
                     for site in cfg.noreturn_jsr
                 }
+            brk_rti_sites = None
+            if cfg is not None and getattr(cfg, "brk_rti", None):
+                from v2.brk_rti import check_brk_rti_site
+                brk_rti_sites = {
+                    (bank << 16) | (site & 0xFFFF)
+                    for site in cfg.brk_rti
+                }
+                for site in sorted(brk_rti_sites):
+                    check_brk_rti_site(rom, site)
             if indirect_call_tables:
                 remapped_tables = dict(indirect_call_tables)
                 for site, value in indirect_call_tables.items():
@@ -899,6 +908,7 @@ def emit_program(*, rom: bytes, parsed, manifest: ProgramManifest,
                 indirect_dispatch=indirect_dispatch or None,
                 terminal_jsr_sites=terminal_jsr_sites,
                 noreturn_jsr_sites=noreturn_jsr_sites,
+                brk_rti_sites=brk_rti_sites,
                 data_regions=data_regions,
                 exclude_ranges=(getattr(cfg, "exclude_ranges", None)
                                 if cfg is not None else None),

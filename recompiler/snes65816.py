@@ -225,7 +225,7 @@ class Insn:
                   'dispatch_forced_x', 'dispatch_consumed_stack_bytes',
                   'dispatch_configured_stack_bytes',
                   'const_z_fold_unconditional', 'const_z_fold_dead_pc24',
-                  'data_region_exec', 'terminal_jsr', 'noreturn_jsr')
+                  'data_region_exec', 'terminal_jsr', 'noreturn_jsr', 'brk_rti')
 
     def __init__(self, addr, opcode, mnem, mode, operand, length):
         self.addr = addr
@@ -296,6 +296,7 @@ class Insn:
         # distinct from terminal_jsr: the target does not consume its frame as
         # inline data, and the exceptional target remains an LLE safety path.
         self.noreturn_jsr = False
+        self.brk_rti = False
         self.m_flag = 1
         self.x_flag = 1
         # Constant-Z branch fold: when set on a BEQ/BNE, the preceding
