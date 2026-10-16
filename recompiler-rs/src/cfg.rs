@@ -130,6 +130,11 @@ pub struct BankCfg {
     pub inline_dispatch_loops: BTreeSet<u32>,
     pub terminal_jsr: BTreeSet<u32>,
     pub noreturn_jsr: BTreeSet<u32>,
+    /// `live_operand <site_pc16>`: the immediate at this site is read from
+    /// the ROM image at run time. The analyzer keeps the instruction (its
+    /// width and control flow do not depend on the value) but must not fold
+    /// a fact out of the decoded bytes, which the host may since have edited.
+    pub live_operand: BTreeSet<u32>,
     pub hle_spc_upload: Vec<u32>,
     pub hle_func: BTreeMap<u32, String>, // pc16 -> c_function_name
     pub hle_dispatch: BTreeMap<u32, String>, // site_pc16 -> c_function_name
@@ -632,6 +637,22 @@ pub fn parse_bank_cfg(text: &str, path: &str) -> Result<BankCfg, String> {
             if !cfg.noreturn_jsr.insert(site_pc16) {
                 return Err(format!(
                     "{path}: noreturn_jsr duplicate site ${site_pc16:04X}"
+                ));
+            }
+            continue;
+        }
+        // live_operand <site_pc16>
+        if head == "live_operand" {
+            if tokens.len() != 2 {
+                return Err(format!(
+                    "{path}: live_operand needs exactly one <site_pc16>, got: {stripped:?}"
+                ));
+            }
+            let site_pc16 =
+                parse_hex(tokens[1]).map_err(|e| format!("{path}: live_operand {e}"))? & 0xFFFF;
+            if !cfg.live_operand.insert(site_pc16) {
+                return Err(format!(
+                    "{path}: live_operand duplicate site ${site_pc16:04X}"
                 ));
             }
             continue;
@@ -1247,6 +1268,15 @@ exit_mx_set 028000 M0X0 M0X1
     fn terminal_jsr_parse() {
         let cfg = parse_bank_cfg("bank = B3\nterminal_jsr A436\n", "test.cfg").unwrap();
         assert_eq!(cfg.terminal_jsr, BTreeSet::from([0xA436]));
+    }
+
+    #[test]
+    fn live_operand_parse() {
+        let cfg = parse_bank_cfg("bank = 00\nlive_operand C236\n", "test.cfg").unwrap();
+        assert_eq!(cfg.live_operand, BTreeSet::from([0xC236]));
+        assert!(parse_bank_cfg("bank = 00\nlive_operand C236\nlive_operand C236\n",
+                               "test.cfg").is_err());
+        assert!(parse_bank_cfg("bank = 00\nlive_operand\n", "test.cfg").is_err());
     }
 
     #[test]
