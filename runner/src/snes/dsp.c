@@ -58,11 +58,70 @@ const uint16_t gaussValues[512] = {
 };
 
 static void dsp_cycleChannel(Dsp* dsp, int ch);
-static void dsp_handleEcho(Dsp* dsp, int* outputL, int* outputR);
+static void dsp_handleEcho(Dsp* dsp, int* outputL, int* outputR, bool audit);
 static void dsp_handleGain(Dsp* dsp, int ch, bool liveGain);
 static void dsp_decodeBrr(Dsp* dsp, int ch);
 /* dsp_getSample is declared non-static in dsp.h (dev faithful reference uses it). */
 static void dsp_handleNoise(Dsp* dsp);
+
+/* A DAC-only echo line. The mirror copies current canonical channel/register
+ * values, retaining only its own FIR history and echo RAM. It never executes
+ * a channel/CPU or writes guest memory. Its pointer precedes Dsp.ram, so the
+ * saveload region and netplay digest layout remain exactly unchanged. */
+typedef struct DspOutputFilter {
+  Dsp mirror;
+  uint8_t ram[0x10000];
+  uint8_t voices;
+  bool suspended;
+} DspOutputFilter;
+
+bool dsp_set_output_voices(Dsp *dsp, uint8_t voices) {
+  if (!dsp) return false;
+  DspOutputFilter *filter = dsp->output_filter;
+  if (!filter && voices == 0xff) return true;
+  if (!filter) {
+    filter = calloc(1, sizeof(*filter));
+    if (!filter) return false;
+    dsp->output_filter = filter;
+    filter->voices = 0xff;
+  }
+  if (filter->voices != voices) {
+    memset(&filter->mirror, 0, sizeof(filter->mirror));
+    memset(filter->ram, 0, sizeof(filter->ram));
+    filter->mirror.apu_ram = filter->ram;
+    filter->voices = voices;
+  }
+  return true;
+}
+
+void dsp_suspend_output_filter(Dsp *dsp, bool suspended) {
+  DspOutputFilter *filter = dsp ? dsp->output_filter : NULL;
+  if (filter) filter->suspended = suspended;
+}
+
+static void output_voices(Dsp *dsp, int *left, int *right) {
+  DspOutputFilter *filter = dsp->output_filter;
+  if (!filter || filter->voices == 0xff || filter->suspended) return;
+  Dsp *mirror = &filter->mirror;
+  /* FIR sample history follows firValues; preserve it while importing the
+   * canonical cursor, coefficients and complete current voice outputs. */
+  memcpy(mirror->ram, dsp->ram, offsetof(Dsp, firBufferL) - offsetof(Dsp, ram));
+  int l = 0, r = 0;
+  for (unsigned i = 0; i < 8; ++i) {
+    DspChannel *channel = &mirror->channel[i];
+    if (!(filter->voices & (1u << i))) channel->sampleOut = 0;
+    l += (channel->sampleOut * channel->volumeL) >> 6;
+    r += (channel->sampleOut * channel->volumeR) >> 6;
+    l = l < -32768 ? -32768 : l > 32767 ? 32767 : l;
+    r = r < -32768 ? -32768 : r > 32767 ? 32767 : r;
+  }
+  l = (l * mirror->masterVolumeL) >> 7;
+  r = (r * mirror->masterVolumeR) >> 7;
+  l = l < -32768 ? -32768 : l > 32767 ? 32767 : l;
+  r = r < -32768 ? -32768 : r > 32767 ? 32767 : r;
+  dsp_handleEcho(mirror, &l, &r, false);
+  *left = l; *right = r;
+}
 
 Dsp* dsp_init(uint8_t *ram) {
   Dsp* dsp = calloc(1, sizeof(Dsp));  /* zero padding: saveload/co-sim hash determinism */
@@ -73,10 +132,17 @@ Dsp* dsp_init(uint8_t *ram) {
 
 void dsp_free(Dsp* dsp) {
   dsp_shadow_free((DspShadow*)dsp->shadow);
+  free(dsp->output_filter);
   free(dsp);
 }
 
 void dsp_reset(Dsp* dsp) {
+  DspOutputFilter *filter = dsp->output_filter;
+  if (filter) {
+    uint8_t voices = filter->voices;
+    filter->voices = (uint8_t)~voices;
+    (void)dsp_set_output_voices(dsp, voices);
+  }
   memset(dsp->ram, 0, sizeof(dsp->ram));
   dsp->ram[0x7c] = 0xff; // set ENDx
   for(int i = 0; i < 8; i++) {
@@ -188,7 +254,11 @@ void dsp_cycle(Dsp* dsp) {
     totalL = sL;
     totalR = sR;
   }
-  dsp_handleEcho(dsp, &totalL, &totalR);
+  int routedL = totalL, routedR = totalR;
+  output_voices(dsp, &routedL, &routedR);
+  dsp_handleEcho(dsp, &totalL, &totalR, true);
+  DspOutputFilter *filter = dsp->output_filter;
+  if (filter && filter->voices != 0xff && !filter->suspended) { totalL = routedL; totalR = routedR; }
   if(dsp->mute) {
     totalL = 0;
     totalR = 0;
@@ -211,7 +281,7 @@ void dsp_cycle(Dsp* dsp) {
   dsp->evenCycle = !dsp->evenCycle;
 }
 
-static void dsp_handleEcho(Dsp* dsp, int* outputL, int* outputR) {
+static void dsp_handleEcho(Dsp* dsp, int* outputL, int* outputR, bool audit) {
   // get value out of ram
   uint16_t adr = dsp->echoBufferAdr + dsp->echoBufferIndex * 4;
   dsp->firBufferL[dsp->firBufferIndex] = (
@@ -239,8 +309,10 @@ static void dsp_handleEcho(Dsp* dsp, int* outputL, int* outputR) {
   sumL &= ~1;
   sumR &= ~1;
 #if SNESRECOMP_DSP_FORENSICS
-  dsp_shadow_verify_echo(dsp->firBufferL, dsp->firBufferR, dsp->firValues,
+  if (audit) dsp_shadow_verify_echo(dsp->firBufferL, dsp->firBufferR, dsp->firValues,
                          dsp->firBufferIndex, sumL, sumR);
+#else
+  (void)audit;
 #endif
   // modify output with sum
   int outL = *outputL + ((sumL * dsp->echoVolumeL) >> 7);

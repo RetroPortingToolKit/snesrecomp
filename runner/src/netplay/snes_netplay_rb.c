@@ -10,6 +10,8 @@
 #include "common_rtl.h"
 #include "common_cpu_infra.h"  /* snes_refresh_state_get */
 #include "snes/snes.h"
+#include "snes/apu.h"
+#include "snes/dsp.h"
 
 extern Snes *g_snes;
 
@@ -236,6 +238,9 @@ static void rb_host_resim_begin(void *ctx)
     (void)ctx;
     g_rb.resim_audio_cursor = RtlAudioProducerCursor();
     if (g_snes) {
+        RtlApuLock();
+        dsp_suspend_output_filter(g_snes->apu->dsp, true);
+        RtlApuUnlock();
         g_rb.saved_disable_render = g_snes->disableRender ? 1 : 0;
         g_snes->disableRender = true;
     }
@@ -245,8 +250,12 @@ static void rb_host_resim_end(void *ctx)
 {
     (void)ctx;
     RtlAudioRewindProducer(g_rb.resim_audio_cursor);
-    if (g_snes)
+    if (g_snes) {
+        RtlApuLock();
+        dsp_suspend_output_filter(g_snes->apu->dsp, false);
+        RtlApuUnlock();
         g_snes->disableRender = g_rb.saved_disable_render ? true : false;
+    }
 }
 
 /* ── digests ─────────────────────────────────────────────────────────── */
