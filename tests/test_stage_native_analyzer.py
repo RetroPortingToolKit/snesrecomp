@@ -33,6 +33,17 @@ def test_staged_sdk_uses_its_bundled_analyzer(tmp_path):
     assert staged.returncode == 0, staged.stdout + staged.stderr
     name = "snesrecomp-analyze.exe" if os.name == "nt" else "snesrecomp-analyze"
     assert (stage / "recompiler-rs/target/release" / name).is_file()
+    # Exercise the same dependency walk as the real setup pack, including
+    # Windows OS imports used by Rust's random-number support.
+    git_bash = Path(os.environ.get("ProgramFiles", "C:/Program Files")) / "Git/bin/bash.exe"
+    bash = str(git_bash) if os.name == "nt" and git_bash.is_file() else shutil.which("bash")
+    assert bash, "setup packaging requires bash"
+    bundled = subprocess.run([bash, (ROOT / "tools/ci/bundle_runtime_libs.sh").as_posix(),
+                              "--exe", (stage / "recompiler-rs/target/release" / name).as_posix(),
+                              "--build-dir", (ROOT / "recompiler-rs/target/release").as_posix(),
+                              "--strict"], env=env, capture_output=True, text=True)
+    assert bundled.returncode == 0, bundled.stdout + bundled.stderr
+    assert not list((stage / "recompiler-rs/target/release").glob("[Bb][Cc]rypt[Pp]rimitives.dll"))
     smoke = subprocess.run([*command, "--smoke-only"], env=env,
                            capture_output=True, text=True)
     assert smoke.returncode == 0, smoke.stdout + smoke.stderr
