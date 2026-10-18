@@ -4,6 +4,15 @@ Headless contract for regenerating an existing SNESRecomp game project from a
 user-supplied ROM. Intended for `recomp-ui` setup flows and RetComM launcher
 automation. This does **not** redistribute ROM data.
 
+Setup packs include the native analyzer beside the framework sources at
+`recompiler-rs/target/release/snesrecomp-analyze[.exe]`. The packager builds it
+for the packaging host, bundles its runtime dependencies, and smoke-tests the
+staged SDK. The player's bundled Python and C/C++ toolchain can then generate
+without installing Rust. A source checkout still builds the analyzer with the
+pinned Rust toolchain when needed. Cross-platform packaging must supply a
+host matching the requested artifact; it cannot copy an analyzer for another
+CPU or OS.
+
 ## Commands
 
 ```bash

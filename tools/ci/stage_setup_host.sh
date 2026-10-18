@@ -191,6 +191,20 @@ fi
 # ── shared libraries beside the executable ──────────────────────────────────
 bash "${SCRIPT_DIR}/bundle_runtime_libs.sh" --exe "${STAGE_EXE}" --build-dir "${EXE_DIR}"
 
+# The SDK is native-analyzer-only. Tracked-source staging above deliberately
+# excludes Cargo's target directory, and cmake-clang-v1 contains no Rust. Build
+# the host analyzer here, include it, and validate the staged SDK itself.
+FRAMEWORK_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
+python3 "${FRAMEWORK_ROOT}/tools/stage_native_analyzer.py" \
+  --stage-root "${STAGE}/snesrecomp" --artifact "${ARTIFACT}"
+ANALYZER_NAME=snesrecomp-analyze
+[[ "${ARTIFACT}" == windows-* ]] && ANALYZER_NAME=snesrecomp-analyze.exe
+bash "${SCRIPT_DIR}/bundle_runtime_libs.sh" \
+  --exe "${STAGE}/snesrecomp/recompiler-rs/target/release/${ANALYZER_NAME}" \
+  --build-dir "${FRAMEWORK_ROOT}/recompiler-rs/target/release" --strict
+python3 "${FRAMEWORK_ROOT}/tools/stage_native_analyzer.py" \
+  --stage-root "${STAGE}/snesrecomp" --smoke-only
+
 # ── README + VERSION ────────────────────────────────────────────────────────
 printf '%s\n' "${VERSION}" > "${STAGE}/VERSION"
 {
