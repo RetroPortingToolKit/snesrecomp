@@ -167,6 +167,24 @@ int main(void) {
         fail("file check refused the headered required dump", why);
     remove("rom_identity_old.smc");
 
+    /* The right dump is accepted even if it begins with archive magic. */
+    {
+        static uint8_t zipish[kLen];
+        char zipish_sha[65];
+        make_rom(zipish, kLen, "TEST QUEST", 1, 1, 0x66);
+        zipish[0] = 'P'; zipish[1] = 'K'; zipish[2] = 3; zipish[3] = 4;
+        sha256_compute(zipish, kLen, d); to_hex(d, 32, zipish_sha);
+        if (snes_rom_identity_check_image(zipish, kLen, NULL, 0, zipish_sha,
+                                          "Test Quest", NULL, &facts, why,
+                                          sizeof(why)) != kSnesRom_Ok)
+            fail("archive magic overrode a matching digest", why);
+    }
+    /* Without a requirement a file is accepted unread, even a missing one. */
+    if (snes_rom_identity_check_file("rom_identity_missing.sfc", catalog, 3, NULL,
+                                     "Test Quest", NULL, &facts, why,
+                                     sizeof(why)) != kSnesRom_Ok)
+        fail("no requirement read the file", why);
+
     /* No requirement: anything readable is accepted. */
     if (snes_rom_identity_check_image(old, kLen, catalog, 3, NULL, "Test Quest",
                                       NULL, &facts, why, sizeof(why)) != kSnesRom_Ok)

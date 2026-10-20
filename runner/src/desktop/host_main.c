@@ -2596,9 +2596,12 @@ static int HostHexEqual(const char *a, const char *b) {
   return *a == '\0' && *b == '\0';
 }
 
-/* Whether a catalog entry is a dump this build runs. */
+/* Whether a catalog entry is a dump this build runs. With a SHA-256 the
+ * console path also enforces, that alone decides; the SHA-1 list only speaks
+ * for a port catalogued by SHA-1. */
 static int HostRomRevisionSupported(const SnesRomRevision *r) {
-  if (HostHexEqual(r->sha256_hex, g_game->expected_sha256_hex)) return 1;
+  const char *sha = g_game->expected_sha256_hex;
+  if (sha && strlen(sha) == 64) return HostHexEqual(r->sha256_hex, sha);
   for (int i = 0; g_game->known_sha1_hex && i < g_game->num_known_sha1; ++i)
     if (HostHexEqual(r->sha1_hex, g_game->known_sha1_hex[i])) return 1;
   return 0;
@@ -2689,7 +2692,7 @@ static void ReassignGamepads(void) {
   OpenAllGamepads();
 }
 
-#if defined(RECOMP_LAUNCHER)
+#if defined(RECOMP_LAUNCHER) && defined(RECOMP_LAUNCHER_HAS_ROM_REVISIONS)
 /* The catalog in recomp-ui's shape, with each entry's support decided here. */
 static RecompLauncherCRomRevision *g_launcher_revisions;
 
@@ -2721,6 +2724,9 @@ static void LauncherSeedRomCatalog(RecompLauncherCGameInfo *gi) {
   gi->rom_describe = HostDescribeRom;
   gi->rom_describe_ctx = NULL;
 }
+#endif
+
+#if defined(RECOMP_LAUNCHER)
 
 /* What the launcher opens on: the live settings, and what this host offers.
  * In session, netplay and Generate & rebuild are withheld -- the first would
@@ -2803,8 +2809,10 @@ static void LauncherSeed(RecompLauncherCSettings *ls, RecompLauncherCGameInfo *g
   gi->known_sha1_hex = game->known_sha1_hex;
   gi->num_known_sha1 = (size_t)(game->known_sha1_hex
                                     ? game->num_known_sha1 : 0);
+#if defined(RECOMP_LAUNCHER_HAS_ROM_REVISIONS)
   /* Name a refused ROM instead of only "not recognized". */
   LauncherSeedRomCatalog(gi);
+#endif
   gi->widescreen_supported = game->widescreen_supported;
   gi->msu1_supported = game->msu1_supported;
   /* Capability rows: each is drawn only because this host wires it. A

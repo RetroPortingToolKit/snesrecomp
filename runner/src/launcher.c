@@ -126,6 +126,10 @@ static int validate_identity(const char *path, int positional,
     if (verdict == kSnesRom_Ok) return 1;
     fprintf(stderr, "[Launcher] %s: '%s'\n[Launcher] %s\n",
             verdict_title(verdict), path, why);
+    /* A cached path to a ROM that has since moved just reopens the picker. */
+    if (!positional && verdict == kSnesRom_Unreadable &&
+        !snesrecomp_rom_is_readable(path))
+        return 0;
     /* Positional validators preserve the historical warning-and-continue
      * behavior for explicit command-line overrides. */
     if (positional) {

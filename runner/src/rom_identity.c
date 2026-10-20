@@ -203,18 +203,6 @@ SnesRomVerdict snes_rom_identity_check_image(
                        : "This file is empty.");
     return f->verdict;
   }
-  f->archive_kind = archive_kind(raw, raw_len);
-  if (f->archive_kind) {
-    f->verdict = kSnesRom_Archive;
-    if (explain)
-      snprintf(explain, explain_cap,
-               compact ? "This is a %s archive: extract the ROM from it first."
-                       : "This is a %s archive, not a ROM. Extract it first, "
-                         "then select the .sfc or .smc file that was inside.",
-               f->archive_kind);
-    return f->verdict;
-  }
-
   const size_t header = (raw_len % 1024 == 512) ? 512 : 0;
   const uint8_t *img = raw + header;
   const size_t len = raw_len - header;
@@ -237,6 +225,18 @@ SnesRomVerdict snes_rom_identity_check_image(
   if (!required_sha256_hex || !required_sha256_hex[0] ||
       hex_equal(f->sha256_hex, required_sha256_hex)) {
     f->verdict = kSnesRom_Ok;
+    return f->verdict;
+  }
+  /* Only after the digests disagree: a ROM may begin with any bytes. */
+  f->archive_kind = f->revision < 0 ? archive_kind(raw, raw_len) : NULL;
+  if (f->archive_kind) {
+    f->verdict = kSnesRom_Archive;
+    if (explain)
+      snprintf(explain, explain_cap,
+               compact ? "This is a %s archive: extract the ROM from it first."
+                       : "This is a %s archive, not a ROM. Extract it first, "
+                         "then select the .sfc or .smc file that was inside.",
+               f->archive_kind);
     return f->verdict;
   }
   if (!explain) {
@@ -285,6 +285,15 @@ SnesRomVerdict snes_rom_identity_check_file(
     SnesRomFacts *facts, char *explain, size_t explain_cap) {
   uint8_t *data = NULL;
   long size = -1;
+  if (!required_sha256_hex || !required_sha256_hex[0]) {
+    /* Nothing to verify: accept without reading, as before. */
+    if (facts) {
+      memset(facts, 0, sizeof(*facts));
+      facts->revision = -1;
+    }
+    if (explain && explain_cap) explain[0] = '\0';
+    return kSnesRom_Ok;
+  }
   FILE *f = path && path[0] ? fopen(path, "rb") : NULL;
   if (f) {
     if (fseek(f, 0, SEEK_END) == 0) size = ftell(f);
