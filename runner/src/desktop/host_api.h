@@ -20,11 +20,14 @@
  * below. */
 extern SDL_Window *g_window;
 
-/* Set when the fullscreen hotkey is pressed in-game.  The shutdown path
- * writes the config based on this flag so the launcher opens on the same
- * mode next run.  Removing `static` from the definition in host_main.c makes
- * this visible through the extern declaration below. */
-extern bool g_fullscreen_changed;
+/* Set when a config parameter has been changed live this session -- the
+ * fullscreen hotkey, any snesrecomp_set_* helper below, or dependent code
+ * that writes a g_config field directly.  The shutdown path rewrites
+ * config.ini when it is set, so the change survives the restart and the
+ * launcher opens on what the player left.  Also declared in config.h, so a
+ * game that only includes that header can mark its own writes without
+ * pulling in this one. */
+extern bool g_config_dirty;
 
 /* Enables or disables fullscreen/borderless mode from dependent project code.
  * Clamps mode to {0,1}: 0 = windowed, 1 = borderless
@@ -53,14 +56,29 @@ int snesrecomp_get_fullscreen(void);
  * (late-swap tearing where the driver has it).  Clamped to {0,1,2}. */
 void snesrecomp_set_vsync(int mode);
 
+/* The vertical sync currently in effect: 0 = off, 1 = on, 2 = adaptive
+ * (late-swap tearing where the driver has it).  A menu that offers a vsync
+ * toggle needs to know which way round it is before it can toggle it. */
+int snesrecomp_get_vsync(void);
+
 /* Average each presented frame with the previous one, so alternate-frame
  * flicker reads as translucency.  enabled: 0 = off, nonzero = on. */
 void snesrecomp_set_frame_blend(int enabled);
+
+/* The frame blending currently in effect: 0 = off, 1 = on. */
+int snesrecomp_get_frame_blend(void);
 
 /* Frames of local input-latency hiding.  frames: 0 = off.  Negative values
  * are clamped to 0. */
 void snesrecomp_set_run_ahead(int frames);
 
+/* The frames of local run-ahead currently in effect: 0 = off. */
+int snesrecomp_get_run_ahead(void);
+
 /* Window scale factor.  scale: 1..kMaxWindowScale (10).  Values outside that
  * range are clamped.  Does nothing while the window is fullscreen. */
 void snesrecomp_set_window_scale(int scale);
+
+/* The window scale currently in effect: 1..kMaxWindowScale (10).  Ignored
+ * while the window is fullscreen, but it is what the windowed window uses. */
+int snesrecomp_get_window_scale(void);

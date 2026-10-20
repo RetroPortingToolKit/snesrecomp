@@ -153,10 +153,13 @@ static void OpenOneJoystick(int i);
 static uint32 GetActiveControllers(void);
 static void HandleVolumeAdjustment(int volume_adjustment);
 static void ApplyVolume(void);
-static bool g_volume_changed;
-/* Alt+Enter moved the window between windowed and borderless; the config is
- * rewritten once at shutdown so the launcher opens on what the player left. */
-bool g_fullscreen_changed;
+/* Set when a config parameter has been changed live this session: the volume
+ * or fullscreen hotkeys, any snesrecomp_set_* helper, or dependent code that
+ * writes a g_config field directly (a native menu). The shutdown path
+ * rewrites config.ini once when it is set, so the change survives the restart
+ * and the launcher opens on what the player left. One flag covers every
+ * persistable setting; volume used to keep its own copy of the same bit. */
+bool g_config_dirty;
 static void HandleGamepadAxisInput(GamepadInfo *gi, int axis, Sint16 value);
 static int RemapSdlButton(int button);
 static void HandleGamepadInput(GamepadInfo *gi, int button, bool pressed);
@@ -448,7 +451,7 @@ void snesrecomp_set_fullscreen(int mode)
     if (mode < 0) mode = 0;
     if (mode > 1) mode = 1;
     g_config.fullscreen = (uint8)mode;
-    g_fullscreen_changed = true;          // forces config write
+    g_config_dirty = true;                // forces config write
     uint32_t want = (mode == 1) ? SNESRECOMP_SDL_WINDOW_FULLSCREEN_DESKTOP : 0;
     SDL_SetWindowFullscreen(g_window, want);
     g_cursor = (want == 0);
@@ -463,32 +466,48 @@ int snesrecomp_get_fullscreen(void)
 /* Forward declarations: the exported snesrecomp_set_* helpers below call
  * these, and they are defined further down the file. */
 static void FrameBlendConfigure(void);
+void ChangeWindowScale(int scale_step);
 
 void snesrecomp_set_vsync(int mode)
 {
     if (mode < 0) mode = 0;
     if (mode > 2) mode = 2;
     g_config.vsync = (uint8)mode;
-    g_fullscreen_changed = true; /* forces config write */
+    g_config_dirty = true; /* forces config write */
 #ifndef __ANDROID__
     snesrecomp_opengl_set_vsync(VSyncInterval());
 #endif
     if (g_renderer_funcs.Reconfigure) g_renderer_funcs.Reconfigure();
 }
 
+int snesrecomp_get_vsync(void)
+{
+    return (int)g_config.vsync;
+}
+
 void snesrecomp_set_frame_blend(int enabled)
 {
     g_config.frame_blend = enabled != 0;
-    g_fullscreen_changed = true; /* forces config write */
+    g_config_dirty = true; /* forces config write */
     FrameBlendConfigure();
+}
+
+int snesrecomp_get_frame_blend(void)
+{
+    return g_config.frame_blend;
 }
 
 void snesrecomp_set_run_ahead(int frames)
 {
     if (frames < 0) frames = 0;
     g_config.run_ahead = frames;
-    g_fullscreen_changed = true; /* forces config write */
+    g_config_dirty = true; /* forces config write */
     snes_runahead_set_frames(g_config.run_ahead);
+}
+
+int snesrecomp_get_run_ahead(void)
+{
+    return (int)g_config.run_ahead;
 }
 
 void snesrecomp_set_window_scale(int scale)
@@ -496,8 +515,13 @@ void snesrecomp_set_window_scale(int scale)
     if (scale < 1) scale = 1;
     if (scale > kMaxWindowScale) scale = kMaxWindowScale;
     g_config.window_scale = (uint8)scale;
-    g_fullscreen_changed = true; /* forces config write */
+    g_config_dirty = true; /* forces config write */
     ChangeWindowScale(0);
+}
+
+int snesrecomp_get_window_scale(void)
+{
+    return (int)g_config.window_scale;
 }
 
 /* Presentation frame blending (config.ini [Graphics] FrameBlend, the
@@ -4387,9 +4411,10 @@ error_reading:;
 
   if (g_config.autosave && !g_netplay_session)
     HandleCommand(kKeys_Save + 0, true);
-  /* A volume or fullscreen change made with the keys survives the session,
-   * like the launcher's. */
-  if (g_volume_changed || g_fullscreen_changed)
+  /* A live config change made in-game -- a hotkey, a snesrecomp_set_* helper,
+   * or a dependent game's own menu -- survives the session, like the
+   * launcher's. */
+  if (g_config_dirty)
     WriteConfigFile(g_active_config_file);
 
   if (!g_netplay_session) RtlWriteSram();
@@ -4541,7 +4566,7 @@ static void HandleCommand(uint32 j, bool pressed) {
        * this key only moves between windowed and borderless. */
       g_config.fullscreen =
           (g_win_flags & SNESRECOMP_SDL_WINDOW_FULLSCREEN_DESKTOP) ? 1 : 0;
-      g_fullscreen_changed = true;
+      g_config_dirty = true;
       break;
     case kKeys_Reset:
       ConsoleReset();
@@ -4771,7 +4796,7 @@ static void ApplyVolume(void) {
 static void HandleVolumeAdjustment(int volume_adjustment) {
   g_config.volume = IntMin(IntMax(0, g_config.volume + volume_adjustment * 5), 100);
   ApplyVolume();
-  g_volume_changed = true;
+  g_config_dirty = true;
   /* The bar at the right edge of the frame, for a moment. */
   snes_osd_note_volume(g_config.volume);
 }
