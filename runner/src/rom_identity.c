@@ -155,15 +155,11 @@ static int describe_header(const uint8_t *img, size_t len, int compact,
     if (region_name) appendf(out, cap, ", %s", region_name);
     if (!sum_ok) appendf(out, cap, ", checksum mismatch");
   } else {
-    snprintf(out, cap, "Its internal header reads \"%s\", version 1.%u", title,
-             h[0x1B]);
-    if (region_name) appendf(out, cap, ", %s", region_name);
-    appendf(out, cap, ".");
-    if (!sum_ok)
-      appendf(out, cap,
-              " Its data no longer matches the header checksum, so it has "
-              "been patched (hack, translation, randomizer, MSU-1 patch) or "
-              "is a bad dump.");
+    snprintf(out, cap, "Its header reads \"%s\" v1.%u", title, h[0x1B]);
+    if (region_name) appendf(out, cap, " (%s)", region_name);
+    appendf(out, cap, "%s", sum_ok ? "."
+                                   : ", but its checksum no longer matches, so "
+                                     "it has been patched or is a bad dump.");
   }
   return 1;
 }

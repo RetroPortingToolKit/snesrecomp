@@ -114,9 +114,8 @@ int main(void) {
                                       "Test Quest", NULL, &facts, why,
                                       sizeof(why)) != kSnesRom_Unknown)
         fail("hacked dump not unknown", why);
-    require_has(why, "Its internal header reads \"TEST QUEST\", version 1.0, North America.",
-                "header description");
-    require_has(why, "no longer matches the header checksum", "checksum mismatch");
+    require_has(why, "Its header reads \"TEST QUEST\" v1.0 (North America), but its "
+                     "checksum no longer matches", "header description");
     require_has(why, hacked_sha, "file digest");
     require_has(why, good_sha, "required digest");
     snes_rom_identity_check_image(hacked, kLen, catalog, 3, good_sha, NULL, NULL,
@@ -132,7 +131,7 @@ int main(void) {
         make_rom(clean, kLen, "TEST QUEST", 2, 0, 0x55);
         snes_rom_identity_check_image(clean, kLen, catalog, 3, good_sha, "Test Quest",
                                       NULL, &facts, why, sizeof(why));
-        require_has(why, "\"TEST QUEST\", version 1.2, Japan.", "clean header");
+        require_has(why, "\"TEST QUEST\" v1.2 (Japan).", "clean header");
         if (strstr(why, "checksum")) fail("clean dump blamed on checksum", why);
     }
 
