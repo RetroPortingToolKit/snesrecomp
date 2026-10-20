@@ -312,6 +312,11 @@ void RtlReadSram();
  * (the previous file is left in place). */
 int RtlWriteSram(void);
 int RtlTryWriteSram(void);
+/* Publish an immutable SRAM image to an explicit file using the same durable
+ * temporary-file/backup protocol. The caller creates its directory and keeps
+ * the bytes alive until return. Does not read guest globals or save-root state;
+ * independent paths may run on workers, but writes to one path must serialize. */
+int RtlWriteSramImage(const char *path, const uint8 *bytes, size_t size);
 /* Save-directory root for SRAM + savestate slots. Default "saves". Netplay
  * guests use "saves/netplay" so host-driven sync cannot clobber personal files.
  * Pass NULL/"" to restore the default. */

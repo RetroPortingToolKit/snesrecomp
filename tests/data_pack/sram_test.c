@@ -30,6 +30,25 @@ int main(void) {
   assert(!RtlWriteSram());expect("sram-test/save.srm",2);expect("sram-test/save.srm.bak",1);
   RMDIR("sram-test/save.srm.tmp");
   assert(RtlWriteSram());expect("sram-test/save.srm",3);expect("sram-test/save.srm.bak",2);
+  /* The explicit writer cannot follow a changed global root or live SRAM.
+   * Its immutable caller image and file path are the complete write inputs. */
+  uint8 image[4]={9,9,9,9};
+  MKDIR("image-test");
+  memset(bytes,0xee,4);
+  assert(RtlWriteSramImage("image-test/save.srm",image,sizeof(image)));
+  expect("image-test/save.srm",9);expect("sram-test/save.srm",3);
+  memset(image,8,4);
+  assert(RtlWriteSramImage("image-test/save.srm",image,sizeof(image)));
+  expect("image-test/save.srm",8);expect("image-test/save.srm.bak",9);
+  MKDIR("image-test/save.srm.tmp");
+  memset(image,7,4);
+  assert(!RtlWriteSramImage("image-test/save.srm",image,sizeof(image)));
+  expect("image-test/save.srm",8);expect("image-test/save.srm.bak",9);
+  assert(!RtlWriteSramImage(NULL,image,sizeof(image)));
+  assert(!RtlWriteSramImage("image-test/save.srm",NULL,4));
+  expect("image-test/save.srm",8);
+  RMDIR("image-test/save.srm.tmp");
+  remove("image-test/save.srm");remove("image-test/save.srm.bak");RMDIR("image-test");
   remove("sram-test/save.srm");remove("sram-test/save.srm.bak");RMDIR("sram-test");
   puts("SRAM publication, backup and failed-write preservation passed");return 0;
 }

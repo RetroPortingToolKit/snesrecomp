@@ -2620,20 +2620,25 @@ void RtlReadSram(void) {
   }
 }
 
-int RtlTryWriteSram(void) {
-  if (!g_sram || g_sram_size <= 0)
-    return 1;
-  char path[128], bak[140], tmp[140];
-  RtlEnsureSaveDir();
-  RtlSramFilePath(path, sizeof(path));
-  snprintf(bak, sizeof(bak), "%s.bak", path);
-  snprintf(tmp, sizeof(tmp), "%s.tmp", path);
+int RtlWriteSramImage(const char *path, const uint8 *bytes, size_t size) {
+  if (!path || !*path || (!bytes && size))
+    return 0;
+  size_t length = strlen(path);
+  if (length > SIZE_MAX / 2 - 5)
+    return 0;
+  char *bak = malloc((length + 5) * 2);
+  if (!bak)
+    return 0;
+  char *tmp = bak + length + 5;
+  memcpy(bak, path, length); memcpy(bak + length, ".bak", 5);
+  memcpy(tmp, path, length); memcpy(tmp + length, ".tmp", 5);
   FILE *f = fopen(tmp, "wb");
   if (!f) {
     fprintf(stderr, "Unable to write %s\n", tmp);
+    free(bak);
     return 0;
   }
-  int ok = fwrite(g_sram, 1, g_sram_size, f) == (size_t)g_sram_size;
+  int ok = !size || fwrite(bytes, 1, size, f) == size;
   ok = ok && fflush(f) == 0;
 #ifdef _WIN32
   ok = ok && _commit(_fileno(f)) == 0;
@@ -2644,6 +2649,7 @@ int RtlTryWriteSram(void) {
   if (!ok) {
     fprintf(stderr, "Unable to write %s\n", tmp);
     remove(tmp);
+    free(bak);
     return 0;
   }
   /* Keep exactly one previous revision. A missing current file (first save
@@ -2655,6 +2661,7 @@ int RtlTryWriteSram(void) {
     if (rename(path, bak) != 0) {
       fprintf(stderr, "Unable to rotate %s to %s\n", path, bak);
       remove(tmp);
+      free(bak);
       return 0;
     }
   }
@@ -2663,9 +2670,20 @@ int RtlTryWriteSram(void) {
     /* Put the previous revision back so the namespace still has a file. */
     rename(bak, path);
     remove(tmp);
+    free(bak);
     return 0;
   }
+  free(bak);
   return 1;
+}
+
+int RtlTryWriteSram(void) {
+  if (!g_sram || g_sram_size <= 0)
+    return 1;
+  char path[128];
+  RtlEnsureSaveDir();
+  RtlSramFilePath(path, sizeof(path));
+  return RtlWriteSramImage(path, g_sram, (size_t)g_sram_size);
 }
 
 int RtlWriteSram(void) { return RtlTryWriteSram(); }
