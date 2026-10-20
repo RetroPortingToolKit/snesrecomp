@@ -340,6 +340,9 @@ typedef struct MemorySli {
   size_t position;
   bool is_save;
   bool error;
+  const void *locate;
+  size_t locate_size;
+  size_t *locate_offset;
 } MemorySli;
 
 static void file_sli_func(SaveLoadInfo *sli, void *data, size_t n) {
@@ -369,6 +372,8 @@ static void memory_sli_func(SaveLoadInfo *sli, void *data, size_t n) {
     memory->error = true;
     return;
   }
+  if (memory->locate_offset && memory->locate == data && memory->locate_size == n)
+    *memory->locate_offset = memory->position;
   memory->position += n;
 }
 
@@ -1004,8 +1009,12 @@ bool RtlLoadSnapshot(const char *filename) {
   return true;
 }
 
-size_t RtlSnapshotGuestSize(uint32 *version_out) {
+size_t RtlSnapshotGuestLayout(uint32 *version_out, size_t *wram_offset_out) {
+  size_t offset = SIZE_MAX;
   MemorySli count = {{&memory_sli_func}, NULL, 0, sizeof(uint32)*2, true, false};
+  count.locate = g_snes->ram;
+  count.locate_size = 0x20000;
+  count.locate_offset = &offset;
   RtlApuLock();
   uint32 previous = snes_saveload_get_version();
   /* snes_saveload normalizes the emulator-only E mirror even when counting.
@@ -1017,7 +1026,12 @@ size_t RtlSnapshotGuestSize(uint32 *version_out) {
   g_snes->cpu->e = e;
   RtlApuUnlock();
   if (version_out) *version_out = RTL_SAV_VERSION;
-  return count.error ? 0 : count.position;
+  if (wram_offset_out) *wram_offset_out = offset;
+  return count.error || offset == SIZE_MAX ? 0 : count.position;
+}
+
+size_t RtlSnapshotGuestSize(uint32 *version_out) {
+  return RtlSnapshotGuestLayout(version_out, NULL);
 }
 
 size_t RtlSaveSnapshotToMemory(void *data, size_t capacity) {
