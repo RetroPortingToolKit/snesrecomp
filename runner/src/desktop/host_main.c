@@ -435,6 +435,11 @@ static uint8 g_frame_stage[kSnesDesktopMaxFrameWidth * 4 * 240];
 #endif
 
 static GamepadInfo g_gamepad[kSnesHostPadSeats];
+/* Device the launcher picked for each gamepad seat (SDL joystick id + 1, 0 =
+ * any). Identical controllers - two DualSense - share a GUID, so the launcher
+ * names the physical device; seats then follow that choice instead of the
+ * order the pads were plugged in. Same SDL session, so the ids agree. */
+static uint32 g_seat_instance[kSnesHostPadSeats];
 
 extern Snes *g_snes;
 
@@ -2898,6 +2903,9 @@ static void LauncherCommit(const RecompLauncherCSettings *ls, const char *config
     if (seat >= 2 && seat >= HostConfiguredSeats()) break;
     g_config.player_src[seat]     = ls->player_src[seat];
     g_config.enable_gamepad[seat] = ls->player_src[seat] == 2;
+#if defined(RECOMP_LAUNCHER_HAS_PLAYER_GAMEPAD_INSTANCE) && SNESRECOMP_SDL3
+    g_seat_instance[seat] = ls->player_src[seat] == 2 ? ls->player_gamepad_instance[seat] : 0;
+#endif
   }
   g_config.gamepad_deadzone    = (ls->deadzone[0] * 32767 + 50) / 100;
   g_config.skip_launcher       = ls->skip_launcher != 0;
@@ -4676,6 +4684,22 @@ static uint32 GetActiveControllers(void) {
   return ctrl << 30;
 }
 
+/* Seat `j` is reserved by the launcher for a different pad that is connected. */
+static bool SeatHeldForOtherPad(int j, uint32 joystick_id) {
+  uint32 want = g_seat_instance[j];
+  if (!want || want == joystick_id + 1) return false;
+#if SNESRECOMP_SDL3
+  int n = 0;
+  SDL_JoystickID *ids = SDL_GetGamepads(&n);
+  bool connected = false;
+  for (int i = 0; ids && i < n; ++i) connected |= (uint32)ids[i] + 1 == want;
+  SDL_free(ids);
+  return connected;
+#else
+  return false;
+#endif
+}
+
 static void OpenOneGamepad(int i) {
   if (!SDL_IsGameController(i)) {
     OpenOneJoystick(i);
@@ -4702,9 +4726,21 @@ static void OpenOneGamepad(int i) {
 
   int found_idx = -1;
   const int seats = HostConfiguredSeats();
-  for (int k = 0; k < 1 + kSnesHostPadSeats; k++) {
+  /* The seat the launcher picked this very device for comes first. */
+  for (int j = 0; j < seats; ++j)
+    if (g_config.enable_gamepad[j] && g_seat_instance[j] == joystick_id + 1 &&
+        g_gamepad[j].joystick_id == -1) {
+      found_idx = j;
+      break;
+    }
+  /* Otherwise SDL's player index, then the first free seat. Never a seat
+   * another pad already drives (the preferred index used to take it over,
+   * leaving that pad without a seat), nor one held for another connected
+   * device the launcher picked. */
+  for (int k = 0; found_idx < 0 && k < 1 + kSnesHostPadSeats; k++) {
     uint8 j = scan_order[k];
-    if (j < seats && g_config.enable_gamepad[j] && (k == 0 || g_gamepad[j].joystick_id == -1)) {
+    if (j < seats && g_config.enable_gamepad[j] && g_gamepad[j].joystick_id == -1 &&
+        !SeatHeldForOtherPad(j, joystick_id)) {
       found_idx = j;
       break;
     }
