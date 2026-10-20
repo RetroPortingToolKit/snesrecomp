@@ -1274,8 +1274,11 @@ exit_mx_set 028000 M0X0 M0X1
     fn live_operand_parse() {
         let cfg = parse_bank_cfg("bank = 00\nlive_operand C236\n", "test.cfg").unwrap();
         assert_eq!(cfg.live_operand, BTreeSet::from([0xC236]));
-        assert!(parse_bank_cfg("bank = 00\nlive_operand C236\nlive_operand C236\n",
-                               "test.cfg").is_err());
+        assert!(parse_bank_cfg(
+            "bank = 00\nlive_operand C236\nlive_operand C236\n",
+            "test.cfg"
+        )
+        .is_err());
         assert!(parse_bank_cfg("bank = 00\nlive_operand\n", "test.cfg").is_err());
     }
 
