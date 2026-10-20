@@ -156,7 +156,7 @@ static void ApplyVolume(void);
 static bool g_volume_changed;
 /* Alt+Enter moved the window between windowed and borderless; the config is
  * rewritten once at shutdown so the launcher opens on what the player left. */
-static bool g_fullscreen_changed;
+bool g_fullscreen_changed;
 static void HandleGamepadAxisInput(GamepadInfo *gi, int axis, Sint16 value);
 static int RemapSdlButton(int button);
 static void HandleGamepadInput(GamepadInfo *gi, int button, bool pressed);
@@ -245,7 +245,7 @@ static const char *HostGetenv(const char *name) {
 }
 
 static uint32 g_win_flags = SDL_WINDOW_RESIZABLE;
-static SDL_Window *g_window;
+SDL_Window *g_window;
 
 static uint8 g_paused, g_turbo, g_cursor = true;
 static uint8 g_current_window_scale;
@@ -441,6 +441,63 @@ extern Snes *g_snes;
 void snesrecomp_desktop_set_widescreen(int enabled) {
   g_config.widescreen = enabled != 0;
   WriteConfigFile(g_active_config_file);
+}
+
+void snesrecomp_set_fullscreen(int mode)
+{
+    if (mode < 0) mode = 0;
+    if (mode > 1) mode = 1;
+    g_config.fullscreen = (uint8)mode;
+    g_fullscreen_changed = true;          // forces config write
+    uint32_t want = (mode == 1) ? SNESRECOMP_SDL_WINDOW_FULLSCREEN_DESKTOP : 0;
+    SDL_SetWindowFullscreen(g_window, want);
+    g_cursor = (want == 0);
+    snesrecomp_sdl_show_cursor(g_cursor);
+}
+
+int snesrecomp_get_fullscreen(void)
+{
+    return (int)g_config.fullscreen;
+}
+
+/* Forward declarations: the exported snesrecomp_set_* helpers below call
+ * these, and they are defined further down the file. */
+static void FrameBlendConfigure(void);
+
+void snesrecomp_set_vsync(int mode)
+{
+    if (mode < 0) mode = 0;
+    if (mode > 2) mode = 2;
+    g_config.vsync = (uint8)mode;
+    g_fullscreen_changed = true; /* forces config write */
+#ifndef __ANDROID__
+    snesrecomp_opengl_set_vsync(VSyncInterval());
+#endif
+    if (g_renderer_funcs.Reconfigure) g_renderer_funcs.Reconfigure();
+}
+
+void snesrecomp_set_frame_blend(int enabled)
+{
+    g_config.frame_blend = enabled != 0;
+    g_fullscreen_changed = true; /* forces config write */
+    FrameBlendConfigure();
+}
+
+void snesrecomp_set_run_ahead(int frames)
+{
+    if (frames < 0) frames = 0;
+    g_config.run_ahead = frames;
+    g_fullscreen_changed = true; /* forces config write */
+    snes_runahead_set_frames(g_config.run_ahead);
+}
+
+void snesrecomp_set_window_scale(int scale)
+{
+    if (scale < 1) scale = 1;
+    if (scale > kMaxWindowScale) scale = kMaxWindowScale;
+    g_config.window_scale = (uint8)scale;
+    g_fullscreen_changed = true; /* forces config write */
+    ChangeWindowScale(0);
 }
 
 /* Presentation frame blending (config.ini [Graphics] FrameBlend, the
@@ -4518,6 +4575,15 @@ static void HandleCommand(uint32 j, bool pressed) {
       break;
     case kKeys_ToggleWidescreen:
       printf("Widescreen is a per-title presentation setting; see the launcher's Mods page.\n");
+      break;
+    case kKeys_ToggleVSync:
+      snesrecomp_set_vsync(g_config.vsync ? 0 : 1);
+      break;
+    case kKeys_ToggleFrameBlend:
+      snesrecomp_set_frame_blend(!g_config.frame_blend);
+      break;
+    case kKeys_ToggleRunAhead:
+      snesrecomp_set_run_ahead(g_config.run_ahead + 1);
       break;
     case kKeys_VolumeUp:
     case kKeys_VolumeDown: HandleVolumeAdjustment(j == kKeys_VolumeUp ? 1 : -1); break;
