@@ -2570,6 +2570,65 @@ static uint32_t g_rom_crc32;
 static int g_rom_identity_ok;
 static const char *g_program_path;       /* argv[0]: keybinds.ini sits beside it */
 static const char *g_rom_path = "";      /* the running ROM, once resolved */
+
+/* The port's catalog of known dumps, plus a "<display_name> (<region>)" entry
+ * for the generated-from ROM when the port's catalog does not list it. Built
+ * once per process by HostBuildRomCatalog; every ROM prompt names a refused
+ * ROM from it. */
+static SnesRomRevision *g_rom_catalog;
+static int g_rom_catalog_count;
+static char g_rom_fallback_label[160];
+
+static const char *HostRomHelp(void) {
+  if (g_game->rom_help && g_game->rom_help[0]) return g_game->rom_help;
+  return "Headered (.smc) and headerless (.sfc) copies of the right dump both "
+         "work; renaming a file does not change which dump it is.";
+}
+
+static int HostHexEqual(const char *a, const char *b) {
+  if (!a || !b || !a[0]) return 0;
+  for (; *a && *b; ++a, ++b) {
+    char x = *a, y = *b;
+    if (x >= 'A' && x <= 'F') x = (char)(x - 'A' + 'a');
+    if (y >= 'A' && y <= 'F') y = (char)(y - 'A' + 'a');
+    if (x != y) return 0;
+  }
+  return *a == '\0' && *b == '\0';
+}
+
+/* Whether a catalog entry is a dump this build runs. */
+static int HostRomRevisionSupported(const SnesRomRevision *r) {
+  if (HostHexEqual(r->sha256_hex, g_game->expected_sha256_hex)) return 1;
+  for (int i = 0; g_game->known_sha1_hex && i < g_game->num_known_sha1; ++i)
+    if (HostHexEqual(r->sha1_hex, g_game->known_sha1_hex[i])) return 1;
+  return 0;
+}
+
+static void HostBuildRomCatalog(void) {
+  const SnesDesktopHostGame *game = g_game;
+  const int listed = game->rom_revisions && game->num_rom_revisions > 0
+                         ? game->num_rom_revisions : 0;
+  free(g_rom_catalog);
+  g_rom_catalog = (SnesRomRevision *)calloc((size_t)listed + 1, sizeof(*g_rom_catalog));
+  g_rom_catalog_count = 0;
+  if (!g_rom_catalog) return;
+  if (listed) memcpy(g_rom_catalog, game->rom_revisions, (size_t)listed * sizeof(*g_rom_catalog));
+  g_rom_catalog_count = listed;
+  const char *sha = game->expected_sha256_hex;
+  if (sha && strlen(sha) == 64 &&
+      snes_rom_revision_find_sha256(g_rom_catalog, listed, sha) < 0) {
+    if (game->region && game->region[0])
+      snprintf(g_rom_fallback_label, sizeof(g_rom_fallback_label), "%s (%s)",
+               game->display_name, game->region);
+    else
+      snprintf(g_rom_fallback_label, sizeof(g_rom_fallback_label), "%s",
+               game->display_name);
+    SnesRomRevision *own = &g_rom_catalog[g_rom_catalog_count++];
+    own->label = g_rom_fallback_label;
+    own->sha256_hex = sha;
+    own->crc32_hex = game->expected_crc32_hex;
+  }
+}
 static char g_mod_state_path[1100];      /* <catalog>/state.toml; "" without mods */
 
 /* A restart the in-game launcher asked for, carried out after shutdown. */
@@ -2631,6 +2690,38 @@ static void ReassignGamepads(void) {
 }
 
 #if defined(RECOMP_LAUNCHER)
+/* The catalog in recomp-ui's shape, with each entry's support decided here. */
+static RecompLauncherCRomRevision *g_launcher_revisions;
+
+static int HostDescribeRom(void *ctx, const uint8_t *image, size_t len,
+                           char *out, size_t out_size) {
+  (void)ctx;
+  return snes_rom_describe_header(image, len, out, out_size);
+}
+
+static void LauncherSeedRomCatalog(RecompLauncherCGameInfo *gi) {
+  free(g_launcher_revisions);
+  g_launcher_revisions = NULL;
+  if (g_rom_catalog_count > 0)
+    g_launcher_revisions = (RecompLauncherCRomRevision *)calloc(
+        (size_t)g_rom_catalog_count, sizeof(*g_launcher_revisions));
+  for (int i = 0; g_launcher_revisions && i < g_rom_catalog_count; ++i) {
+    const SnesRomRevision *r = &g_rom_catalog[i];
+    RecompLauncherCRomRevision *out = &g_launcher_revisions[i];
+    out->label = r->label;
+    out->sha256_hex = r->sha256_hex;
+    out->sha1_hex = r->sha1_hex;
+    out->crc32_hex = r->crc32_hex;
+    out->note = r->note;
+    out->supported = HostRomRevisionSupported(r);
+  }
+  gi->rom_revisions = g_launcher_revisions;
+  gi->num_rom_revisions = g_launcher_revisions ? g_rom_catalog_count : 0;
+  gi->rom_help = HostRomHelp();
+  gi->rom_describe = HostDescribeRom;
+  gi->rom_describe_ctx = NULL;
+}
+
 /* What the launcher opens on: the live settings, and what this host offers.
  * In session, netplay and Generate & rebuild are withheld -- the first would
  * replace a session that is still alive, the second the binary running it. */
@@ -2712,6 +2803,8 @@ static void LauncherSeed(RecompLauncherCSettings *ls, RecompLauncherCGameInfo *g
   gi->known_sha1_hex = game->known_sha1_hex;
   gi->num_known_sha1 = (size_t)(game->known_sha1_hex
                                     ? game->num_known_sha1 : 0);
+  /* Name a refused ROM instead of only "not recognized". */
+  LauncherSeedRomCatalog(gi);
   gi->widescreen_supported = game->widescreen_supported;
   gi->msu1_supported = game->msu1_supported;
   /* Capability rows: each is drawn only because this host wires it. A
@@ -3221,7 +3314,10 @@ int snesrecomp_desktop_main(const SnesDesktopHostGame *game, int argc, char **ar
   tier2_capture_configure(args.expose_coverage_mod || g_config.expose_coverage_mod,
                           g_config.coverage_capture, args.coverage_capture);
 
+  HostBuildRomCatalog();
 #if SNESRECOMP_ENABLE_MODS
+  /* Mod source-ROM pickers name a wrong ROM from the same catalog. */
+  snes_mod_runtime_set_rom_catalog_c(g_rom_catalog, g_rom_catalog_count);
   /* Before the launcher, which needs the provider to show the Mods page.
    * The catalog is mods/preloaded beside the executable, staged by the build;
    * an empty one is valid. */
@@ -3369,10 +3465,13 @@ int snesrecomp_desktop_main(const SnesDesktopHostGame *game, int argc, char **ar
         (char *)(arg_rom ? arg_rom : (beside_exe[0] ? beside_exe : ""))
       };
       int la_argc = (la_argv[1][0] != '\0') ? 2 : 1;
-      if (!snesrecomp_launcher_resolve_rom_sha256(la_argc, la_argv, rom_path_buf,
-                                                  sizeof(rom_path_buf),
-                                                  g_rom_identity_ok ? g_rom_sha256
-                                                                  : NULL)) {
+      const SnesRomIdentityPolicy rom_policy = {
+        g_rom_identity_ok ? game->expected_sha256_hex : NULL,
+        g_rom_catalog, g_rom_catalog_count, game->display_name, HostRomHelp(),
+      };
+      if (!snesrecomp_launcher_resolve_rom_identity(la_argc, la_argv, rom_path_buf,
+                                                    sizeof(rom_path_buf),
+                                                    &rom_policy)) {
         /* User cancelled the picker or repeatedly chose a non-matching ROM. */
         snesrecomp_host_args_usage(program_path, NULL);
         fprintf(stderr, "\nYou must legally own a copy of %s.\n",

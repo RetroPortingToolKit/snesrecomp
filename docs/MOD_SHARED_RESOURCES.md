@@ -12,7 +12,11 @@ Resources without a key retain their existing independent behavior.
 feature can commit. A 512-byte copier header is stripped when the file length
 modulo 32768 is 512, matching the SNES runtime's ROM identity convention.
 Wrong/missing ROMs display a provider validation error; the launcher does not
-ask users to produce extracted caches. Hash checks are memoized by path, length
+ask users to produce extracted caches. A wrong ROM is named from the port's
+catalog (`snes_mod_runtime_set_rom_catalog_c`, fed from
+`SnesDesktopHostGame.rom_revisions`): "Wrong ROM: this is Mega Man X3 (Japan).
+Select Mega Man X3 (USA) (SHA-256 ...)." An uncatalogued file is described by
+its internal header and whether its checksum still matches. Hash checks are memoized by path, length
 and modification time to keep redraws inexpensive. Trusted game code performs
 its own final validation and extraction before loading imported content.
 

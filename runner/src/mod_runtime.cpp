@@ -1191,6 +1191,24 @@ std::string resource_path(Runtime& runtime, const Package& package,
 }
 
 bool sha256_file(const fs::path& path, std::string& out, std::string* error);
+
+const SnesRomRevision* g_rom_catalog = nullptr;
+int g_rom_catalog_count = 0;
+
+/* Status for a ROM resource whose digest is not the required one: which dump
+ * it is (from the port's catalog), or its header when unknown, and what to
+ * select instead. */
+std::string wrong_rom_status(const Resource& resource, const std::string& path_text) {
+    char why[256] = "";
+    const SnesRomVerdict verdict = snes_rom_identity_check_file(
+        path_text.c_str(), g_rom_catalog, g_rom_catalog_count,
+        resource.normalized_sha256.c_str(), nullptr, nullptr, nullptr, why,
+        sizeof(why));
+    if (verdict == kSnesRom_Ok || !why[0])
+        return "Wrong ROM: select the original supported version";
+    return why;
+}
+
 bool validate_resource_file(const Resource& resource,
                             const std::string& path_text,
                             std::string* status) {
@@ -1235,7 +1253,7 @@ bool validate_resource_file(const Resource& resource,
             found = memo.insert_or_assign(path_text, HashMemo{size,time,hash}).first;
         }
         if (found->second.hash != resource.normalized_sha256) {
-            if (status) *status = "Wrong ROM: select the original supported version";
+            if (status) *status = wrong_rom_status(resource, path_text);
             return false;
         }
         if (status) *status = "ROM verified";
@@ -3072,6 +3090,12 @@ extern "C" int snes_mod_runtime_commit_c(const char* rom_path) {
 
 extern "C" void snes_mod_runtime_activate_plugins_c(void) {
     SNESRecomp::mod_runtime_activate_plugins();
+}
+
+extern "C" void snes_mod_runtime_set_rom_catalog_c(const SnesRomRevision* catalog,
+                                                   int count) {
+    SNESRecomp::g_rom_catalog = count > 0 ? catalog : nullptr;
+    SNESRecomp::g_rom_catalog_count = count > 0 && catalog ? count : 0;
 }
 
 extern "C" const char* snes_mod_runtime_last_error_c(void) {

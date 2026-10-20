@@ -23,12 +23,25 @@ echo "=== launcher ==="
     "$ROOT/runner/src/launcher_cache.c" \
     "$ROOT/runner/src/launcher_picker.c" \
     "$ROOT/runner/src/rom_image_verify.c" \
+    "$ROOT/runner/src/rom_identity.c" \
     "$ROOT/runner/src/host_paths.c" \
     "$ROOT/runner/src/crc32.c" \
+    "$ROOT/runner/src/sha1.c" \
     "$ROOT/runner/src/sha256.c" \
     $LAUNCHER_LIBS \
     -o "$OUT/launcher_test"
 "$OUT/launcher_test"
+
+echo "=== ROM identity (wrong revision / unknown dump / archive messages) ==="
+"$CC" -std=c11 -Wall -Wextra -Werror -O1 \
+    -I "$ROOT/runner/src" \
+    "$ROOT/tests/launcher/rom_identity_test.c" \
+    "$ROOT/runner/src/rom_identity.c" \
+    "$ROOT/runner/src/crc32.c" \
+    "$ROOT/runner/src/sha1.c" \
+    "$ROOT/runner/src/sha256.c" \
+    -o "$OUT/rom_identity_test"
+(cd "$OUT" && ./rom_identity_test)
 
 echo "=== MSU soundtrack routing ==="
 "$CC" -std=c11 -Wall -Wextra -O1 \
@@ -428,6 +441,7 @@ echo "=== mod runtime: presentation_only is not compared by netplay ==="
     "$ROOT/runner/src/mod_runtime.cpp" \
     "$ROOT/runner/src/sha256.c" "$ROOT/runner/src/snes/tier2_capture.c" \
     "$ROOT/runner/src/crc32.c" \
+    "$ROOT/runner/src/rom_identity.c" "$ROOT/runner/src/sha1.c" \
     -o "$OUT/mod_presentation_only_test"
 rm -rf "$OUT/mod_presentation_only_fixture"
 "$OUT/mod_presentation_only_test" "$OUT/mod_presentation_only_fixture"

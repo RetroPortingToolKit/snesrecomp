@@ -200,6 +200,8 @@ set(SNESRECOMP_RUNNER_SOURCES
     ${SNESRECOMP_RUNNER_ROOT}/src/launcher_cache.c
     ${SNESRECOMP_RUNNER_ROOT}/src/launcher_picker.c
     ${SNESRECOMP_RUNNER_ROOT}/src/rom_image_verify.c
+    ${SNESRECOMP_RUNNER_ROOT}/src/rom_identity.c
+    ${SNESRECOMP_RUNNER_ROOT}/src/sha1.c
     ${SNESRECOMP_RUNNER_ROOT}/src/crc32.c
     ${SNESRECOMP_RUNNER_ROOT}/src/snapshot_guard.c
     ${SNESRECOMP_RUNNER_ROOT}/src/sha256.c
