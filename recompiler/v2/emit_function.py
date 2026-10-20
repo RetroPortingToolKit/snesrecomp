@@ -512,6 +512,7 @@ def emit_function(rom: bytes, bank: int, start: int,
                   terminal_jsr_sites=None,
                   noreturn_jsr_sites=None,
                   live_operand_sites=None,
+                  entry_hooks=None,
                   entry_s_offset: int = 0) -> str:
     """Emit a complete v2 C function source for one 65816 function.
 
@@ -657,7 +658,15 @@ def emit_function(rom: bytes, bank: int, start: int,
     # cfg directive, no auto-recovery). v2_regen hard-fails on any.
     if unresolved_indirect_collector is not None:
         unresolved_indirect_collector.extend(graph.unresolved_indirects)
-    cfg = build_cfg(graph, instruction_blocks=get_rom_mapping() == ROM_MAP_SA1)
+    # `entry_hook` sites of this bank. Each starts a block wherever it is
+    # decoded, so the call sits at an instruction boundary after the block's
+    # deadline check, in the routine's own body and in any other body that
+    # reaches the same instruction.
+    hook_by_pc24 = {pc24 & 0xFFFFFF: name
+                    for pc24, name in (entry_hooks or {}).items()
+                    if ((pc24 >> 16) & 0xFF) == bank}
+    cfg = build_cfg(graph, instruction_blocks=get_rom_mapping() == ROM_MAP_SA1,
+                    extra_leader_pcs={pc24 & 0xFFFF for pc24 in hook_by_pc24})
 
     # A tight, side-effect-free memory poll cannot execute atomically under
     # the LLE frame scheduler: the value it observes is commonly changed by
@@ -2157,6 +2166,12 @@ def emit_function(rom: bytes, bank: int, start: int,
     # resolved to a SKIP_N non-local return (cpu_resolve_ancestor_skip).
     # Index by the just-pushed g_recomp_stack_top; pop is implicit (top--).
     src.append(f'  if (g_recomp_stack_top >= 1) g_cpu_entry_s[g_recomp_stack_top - 1] = _entry_s;')
+    # `entry_hook`: observational host callbacks (docs/ENTRY_HOOK.md).
+    for hook_name in sorted({hook_by_pc24[(bank << 16) | (key.pc & 0xFFFF)]
+                             for key in block_order
+                             if ((bank << 16) | (key.pc & 0xFFFF))
+                             in hook_by_pc24}):
+        src.append(f'  extern void {hook_name}(const CpuState *cpu, uint32 pc24);')
     for i, key in enumerate(block_order):
         src.append(f"  {_label_for(key)}:")
         # Trace block entry — gives us the SNES PC chain in the trace ring.
@@ -2190,6 +2205,11 @@ def emit_function(rom: bytes, bank: int, start: int,
             f'      return interp_bridge_lle_yield_unwind('
             f'cpu, {_transfer_target_expr(block_pc24, False)});')
         src.append('    }')
+        # Once per execution of the hooked instruction: after the deadline
+        # check (a yield there hands the instruction, and with it the report,
+        # to the interpreter) and before the block's cycles are charged.
+        if block_pc24 in hook_by_pc24:
+            src.append(f'    {hook_by_pc24[block_pc24]}(cpu, 0x{block_pc24:06X}u);')
         # Cartridge coprocessors observe CPU bus accesses no earlier than this
         # architectural block boundary. The aggregate static charge below
         # advances the frame clock to the end of the block before its emitted

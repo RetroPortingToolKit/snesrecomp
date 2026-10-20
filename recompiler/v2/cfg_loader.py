@@ -181,6 +181,14 @@ class BankCfg:
     # code then sees the edit exactly as the interpreter would. Cycle cost
     # is unchanged -- it comes from the opcode, which is still the IMM form.
     live_operand: set = field(default_factory=set)
+    # `entry_hook <pc16> <c_function>` — compiled code calls the host's
+    # `void c_function(const CpuState *cpu, uint32 pc24)` each time it is
+    # about to execute the instruction at <pc16>, in any compiled body: the
+    # compiled counterpart of an interpreter pre-opcode hook at that PC, so a
+    # host that observes a routine's calls no longer has to keep it
+    # interpreted. Observational only. Map: pc16 -> c_function. Contract:
+    # docs/ENTRY_HOOK.md.
+    entry_hook: dict = field(default_factory=dict)
     # `hle_spc_upload <pc>` directives — replace the recompiled body of
     # the function starting at <pc> with a single call to the runtime
     # HLE helper RtlUploadSpcImageFromDp. The standard SNES SPC upload
@@ -530,6 +538,30 @@ def load_bank_cfg(path: str) -> BankCfg:
                         f"{path}: live_operand duplicate site "
                         f"${site_pc16:04X}")
                 cfg.live_operand.add(site_pc16)
+                continue
+
+            # entry_hook <pc16> <c_function> — call a host function on entry
+            # to the compiled routine at <pc16>. See BankCfg.entry_hook.
+            if head == 'entry_hook':
+                if len(tokens) != 3:
+                    raise ValueError(
+                        f"{path}: entry_hook needs <pc16> <c_function>, "
+                        f"got: {stripped!r}")
+                try:
+                    pc16 = _parse_hex(tokens[1]) & 0xFFFF
+                except ValueError as e:
+                    raise ValueError(
+                        f"{path}: entry_hook bad pc {tokens[1]!r}: {e}")
+                c_name = tokens[2]
+                if not c_name.replace('_', '').isalnum() or c_name[0].isdigit():
+                    raise ValueError(
+                        f"{path}: entry_hook c_function must be a valid C "
+                        f"identifier, got: {c_name!r}")
+                if pc16 in cfg.entry_hook:
+                    raise ValueError(
+                        f"{path}: entry_hook duplicate pc ${pc16:04X} "
+                        f"({cfg.entry_hook[pc16]} and {c_name})")
+                cfg.entry_hook[pc16] = c_name
                 continue
 
             # hle_dispatch <site_pc16> <c_function_name> — replace the
@@ -977,5 +1009,15 @@ def load_bank_cfg(path: str) -> BankCfg:
             continue
         cfg.entries.append(BankEntry(name=nd.name, start=local_pc))
         existing_starts.add(local_pc)
+
+    # An HLE-replaced routine runs no compiled instruction at its entry, so a
+    # hook there would silently never fire: observe it in the C helper.
+    for pc16 in sorted(cfg.entry_hook):
+        for directive, table in (('hle_func', cfg.hle_func),
+                                 ('hle_spc_upload', cfg.hle_spc_upload)):
+            if pc16 in table:
+                raise ValueError(
+                    f"{path}: entry_hook ${pc16:04X} names a routine replaced "
+                    f"by {directive}; no compiled instruction runs there")
 
     return cfg
