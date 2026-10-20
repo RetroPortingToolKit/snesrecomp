@@ -4862,7 +4862,8 @@ static void OpenOneJoystick(int i) {
   if (GetGamepadInfo(id) || SelftestPadExcludes(id)) { SDL_JoystickClose(joystick); return; }
   int slot = -1;
   for (int j = 0; j < HostConfiguredSeats(); ++j) {
-    if (g_config.enable_gamepad[j] && g_gamepad[j].joystick_id == -1) {
+    if (g_config.enable_gamepad[j] && g_gamepad[j].joystick_id == -1 &&
+        !SeatHeldForOtherPad(j, (uint32)id)) {
       slot = j; break;
     }
   }
