@@ -216,6 +216,13 @@ enum {
 
 extern Config g_config;
 
+/* Set by the fullscreen hotkey and by game-side fullscreen toggles (e.g. the
+ * pause menu's FULLSCREEN row). The shutdown path writes config.ini from it so
+ * the launcher opens on the mode the player left. Declared here rather than in
+ * host_api.h so a game that only includes config.h can toggle fullscreen without
+ * pulling in the desktop host's API header. */
+extern bool g_fullscreen_changed;
+
 void ConfigUseStateMenuDefaults(void);
 /* Opt in before parsing: binds [KeyMap] OpenLauncher to Ctrl+L by default. */
 void ConfigUseInGameLauncherDefaults(void);
