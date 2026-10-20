@@ -110,6 +110,30 @@ def test_one_reference_per_site_across_variants():
         assert sorted(r.variants) == ["008000:M0X0", "008000:M1X1"]
 
 
+def test_direct_page_uses_bank_zero_mapping_and_wraps_at_16_bits():
+    # $00:3010 is not WRAM, even under an explicit D assumption.
+    refs = _by_site(_refs(want_dp=True, assume_d=0x3000))
+    assert not {0x8025, 0x8027, 0x8029} & refs.keys()
+    # D + operand wraps within bank zero, rather than carrying to bank one.
+    refs = _by_site(_refs(want_dp=True, assume_d=0xFFF0))
+    assert refs[0x8025].address24 == 0x7E0000
+    assert refs[0x8027].address24 == 0x7E0010
+
+
+def test_indexed_direct_page_bases_keep_the_unknown_index():
+    rom = make_lorom_bank0({0x8000: bytes.fromhex('B5 10 B6 20 A1 30 B1 40 60')})
+    manifest = ProgramManifest.from_dict(_manifest([(1, 1)]))
+    refs = _by_site(wram_xref.collect(rom, manifest, want_dp=True))
+    for pc, index in ((0x8000, 'X'), (0x8002, 'Y'), (0x8004, 'X')):
+        ref = refs[pc]
+        assert ref.index_register == index
+        assert f'indexed base ({index})' in ref.qualification()
+        assert ref.to_dict()['index_register'] == index
+    # In (dp),Y the pointer itself is unindexed; Y applies to its contents.
+    assert refs[0x8006].kind == 'dp_pointer'
+    assert refs[0x8006].index_register is None
+
+
 def test_cli_json_and_addr_filter(tmp_path):
     rom = tmp_path / "fixture.sfc"
     rom.write_bytes(_rom())

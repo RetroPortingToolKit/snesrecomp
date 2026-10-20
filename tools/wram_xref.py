@@ -27,7 +27,9 @@ kind, and the kind says what was assumed:
               the base itself is exact (a long operand).
     dp        a direct-page operand, only with `--dp`: D plus the operand,
               under the D given by `--assume-d` (default `$0000`), which the
-              reference records. `dp_pointer` marks the pointer of an indirect
+              reference records. Only bank $00's low-WRAM mirror is reported;
+              an indexed operand is a base qualified by its index register.
+              `dp_pointer` marks the pointer of an indirect
               form -- `(dp),Y`, `[dp]` and the like -- which is read, while the
               access itself goes wherever the pointer points.
 
@@ -89,6 +91,7 @@ class Reference:
     mode: str
     exact_base: bool = False  # kind "base": the base itself is exact
     assumed_d: Optional[int] = None   # kind "dp"/"dp_pointer"
+    index_register: Optional[str] = None  # index applied to a direct-page base
     variants: List[str] = field(default_factory=list)
 
     def qualification(self) -> str:
@@ -101,6 +104,8 @@ class Reference:
                     else "indexed base, DB-relative")
         d = f"${self.assumed_d:04X}" if self.assumed_d is not None else "?"
         what = "direct page" if self.kind == "dp" else "pointer in direct page"
+        if self.index_register:
+            what = f"indexed base ({self.index_register}), {what}"
         return f"{what}, assuming D={d}"
 
     def to_dict(self) -> dict:
@@ -115,6 +120,7 @@ class Reference:
             "exact_base": self.exact_base,
             "assumed_d": (f"{self.assumed_d:04X}"
                           if self.assumed_d is not None else None),
+            "index_register": self.index_register,
             "variants": sorted(self.variants),
         }
 
@@ -151,7 +157,12 @@ def classify(insn, *, want_dp: bool, assume_d: int) -> Optional[Tuple[int, str, 
             return 0x7E0000 | operand, "base", False, None
         return 0x7E0000 | operand, "db", False, None
     if want_dp and (mode in DP_DIRECT or mode in DP_POINTER or insn.mnem == "PEI"):
-        address = 0x7E0000 | ((assume_d + operand) & 0xFFFF)
+        # Direct-page addressing is in bank $00, whose WRAM mirror ends at
+        # $1FFF. D does not turn MMIO/cartridge addresses into bank-$7E RAM.
+        low = (assume_d + operand) & 0xFFFF
+        if low >= 0x2000:
+            return None
+        address = 0x7E0000 | low
         kind = "dp_pointer" if mode in DP_POINTER and insn.mnem != "PEI" else "dp"
         return address, kind, False, assume_d
     return None
@@ -194,7 +205,9 @@ def collect(rom: bytes, manifest: ProgramManifest, *, want_dp: bool = False,
                     address24=address, kind=kind, access=access,
                     site_pc24=site, mnemonic=insn.mnem,
                     mode=MODE_STR.get(insn.mode, str(insn.mode)),
-                    exact_base=exact_base, assumed_d=d)
+                    exact_base=exact_base, assumed_d=d,
+                    index_register=("X" if insn.mode in (DP_X, INDIR_DPX)
+                                    else "Y" if insn.mode == DP_Y else None))
             if name not in ref.variants:
                 ref.variants.append(name)
     return sorted(merged.values(),
