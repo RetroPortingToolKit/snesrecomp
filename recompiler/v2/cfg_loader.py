@@ -174,6 +174,13 @@ class BankCfg:
     # terminal_jsr, the callee does not consume the call frame as inline data;
     # emission preserves the real frame and hands the exceptional path to LLE.
     noreturn_jsr: set = field(default_factory=set)
+    # `live_operand <site_pc16>` — the immediate operand of the instruction at
+    # this site is read from the ROM image at run time instead of being
+    # folded into the generated C. For an operand the host edits in the
+    # loaded ROM (a cheat raising a limit, a patch toggled live): compiled
+    # code then sees the edit exactly as the interpreter would. Cycle cost
+    # is unchanged -- it comes from the opcode, which is still the IMM form.
+    live_operand: set = field(default_factory=set)
     # `hle_spc_upload <pc>` directives — replace the recompiled body of
     # the function starting at <pc> with a single call to the runtime
     # HLE helper RtlUploadSpcImageFromDp. The standard SNES SPC upload
@@ -503,6 +510,26 @@ def load_bank_cfg(path: str) -> BankCfg:
                         f"{path}: JSR site ${site_pc16:04X} cannot be both "
                         "terminal_jsr and noreturn_jsr")
                 cfg.noreturn_jsr.add(site_pc16)
+                continue
+
+            # live_operand <site_pc16> — read this site's immediate from ROM
+            # at run time. The emitter validates the opcode against its
+            # supported set (data operands only: never REP/SEP/MVN/MVP).
+            if head == 'live_operand':
+                if len(tokens) != 2:
+                    raise ValueError(
+                        f"{path}: live_operand needs exactly one <site_pc16>, "
+                        f"got: {stripped!r}")
+                try:
+                    site_pc16 = _parse_hex(tokens[1]) & 0xFFFF
+                except ValueError as e:
+                    raise ValueError(
+                        f"{path}: live_operand bad site {tokens[1]!r}: {e}")
+                if site_pc16 in cfg.live_operand:
+                    raise ValueError(
+                        f"{path}: live_operand duplicate site "
+                        f"${site_pc16:04X}")
+                cfg.live_operand.add(site_pc16)
                 continue
 
             # hle_dispatch <site_pc16> <c_function_name> — replace the
