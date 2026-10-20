@@ -154,7 +154,10 @@ struct VariantRow {
     uint32_t boot_entry = 0;
 };
 
-/* An IPS/BPS applied in memory to a variant's verified source image. */
+/* DEPRECATED: legacy patched-ROM recompilation compatibility only.
+ * New mods reimplement hack behavior against the stock ROM through trusted
+ * plugins and supported package data, rather than recompiling patched ROMs.
+ * Title-specific ingestion/import engines are a separate integration path. */
 struct PatchRow {
     std::string feature_id;
     std::string id;
@@ -926,6 +929,13 @@ bool read_manifest(const fs::path& path, Package& out, std::string* error) {
                              "' names a patch that is not declared by its feature");
             return false;
         }
+    }
+    if (!out.patches.empty()) {
+        std::fprintf(stderr,
+            "snesrecomp: package '%s': [[patch]] patched-ROM recompilation "
+            "is deprecated; reimplement ROM-hack behavior as stock-ROM mods. "
+            "Legacy manifest accepted for compatibility.\n",
+            out.id.c_str());
     }
     return true;
 }

@@ -167,6 +167,11 @@ The transferable 2D-engine checklist lives in
 
 ## Mods
 
+Want to make a mod by hand? Start with
+[`snesmod.md`](snesmod.md), including a first plugin, packaging, installation,
+and testing. Existing ROM-hack features should be reimplemented as mods against
+the stock ROM; recompiling patched ROMs is deprecated.
+
 SNESRecomp supports opt-in, versioned `.snesmod` packages. A package is an
 installation, update, provenance, and trust boundary; it may expose multiple
 independently toggleable features and typed options in the launcher.
