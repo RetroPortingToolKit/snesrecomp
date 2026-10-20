@@ -801,7 +801,7 @@ fn labeled_successors(
     if mnem == "BRK"
         && env
             .brk_rti_sites
-            .map_or(false, |s| s.contains(&(insn.addr & 0xFFFFFF)))
+            .is_some_and(|s| s.contains(&(insn.addr & 0xFFFFFF)))
     {
         // brk_rti: the round trip through a bare RTI returns past the
         // signature byte with P restored -- widths and PHP stack unchanged.
