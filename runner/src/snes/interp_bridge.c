@@ -2037,10 +2037,17 @@ static int _interp_run_core(CpuState *cpu, uint32_t entry_pc24,
                         bridge_idle_replay_allowed(&in, steps - old->step)) {
                         const long first = old->step;
                         const long period = steps - old->step;
-                        int idle = 0;
-                        for (long j = 0; j < period && !idle; j++)
-                            idle = bridge_is_idle_poll(qring[(first + j) & 63].pc);
-                        if (idle) {
+                        int idle = 0, irq_unmasked = 0;
+                        for (long j = 0; j < period; j++) {
+                            const QuiescentState *state = &qring[(first + j) & 63];
+                            idle |= bridge_is_idle_poll(state->pc);
+                            irq_unmasked |= !state->i;
+                        }
+                        /* Equal endpoint flags do not prove I stayed set:
+                         * SEI / poll / CLI can recur at a masked phase while
+                         * an armed timer is observable elsewhere in the cycle. */
+                        if (idle && !(irq_unmasked &&
+                            (g_snes->hIrqEnabled || g_snes->vIrqEnabled))) {
                             const int apu_pending =
                                 rtl_apu_extended_frame_timing() ||
                                 !interp_bridge_use_absolute_apu_timeline(

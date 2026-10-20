@@ -57,6 +57,7 @@ static int      g_nested_chain_direct;
 int snes_frame_counter = 0;
 const char *rtl_game_title(void) { return "bridge_test"; }
 static Snes g_test_snes;
+static uint64_t g_test_irq_master;
 Snes *g_snes = &g_test_snes;
 uint64_t g_apu_last_sync_master;
 int g_interp_apu_driving;
@@ -129,7 +130,8 @@ void RecompStackPop(void) {
 }
 void snes_catchupApu(Snes *snes) { (void)snes; ++g_relative_syncs; }
 void snes_sync_master_clock(Snes *snes, uint64_t master_clock) {
-    (void)snes; (void)master_clock;
+    if (g_test_irq_master && master_clock >= g_test_irq_master)
+        snes->inIrq = true;
 }
 void cart_sync_coprocessors(Cart *cart, uint64_t master_clock) {
     (void)cart; (void)master_clock;
@@ -1496,6 +1498,28 @@ int main(void) {
         CHECK(s18_same(&si, &di) && di.interpreted * 10 < si.interpreted,
               "H-IRQ armed, I set: exp the same result, replayed"); }
       g_test_snes.hIrqEnabled = false;
+
+      /* I may differ inside a cycle even when its endpoint state repeats.
+       * The armed timer asserts after replay would have begun. */
+      printf("[S18] IRQ mask changes inside the idle cycle\n");
+      { static const uint8_t mask_cycle[] = {
+            0xA9,0xFF, 0x85,0x01,          /* LDA #$FF / STA $01 */
+            0x78, 0xA5,0x01, 0x58, 0xEA,  /* SEI / poll / CLI / NOP */
+            0xD0,0xF9};                   /* BNE $8904 */
+        g_test_snes.hIrqEnabled = true;
+        g_test_irq_master = 10000;
+        g_test_snes.inIrq = false;
+        const S18Run s = s18_run(mask_cycle, sizeof mask_cycle, 0, 1);
+        g_test_snes.inIrq = false;
+        const S18Run d = s18_run(mask_cycle, sizeof mask_cycle, 0x008905, 1);
+        if (!s18_same(&s, &d)) { s18_print("spin", &s); s18_print("declared", &d); }
+        CHECK(s18_same(&s, &d) && s.site == INTERP_RESUME_SITE_IRQ_PENDING &&
+              s.interpreted == d.interpreted && s.master < 51000,
+              "changing I skipped IRQ: site=%d/%d master=%llu/%llu", s.site,
+              d.site, (unsigned long long)s.master, (unsigned long long)d.master);
+        g_test_irq_master = 0;
+        g_test_snes.inIrq = false;
+        g_test_snes.hIrqEnabled = false; }
 
       printf("[S18] negative: a pending IRQ ends the run before any replay\n");
       g_test_snes.inIrq = true;

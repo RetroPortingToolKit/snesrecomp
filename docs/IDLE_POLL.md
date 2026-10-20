@@ -50,8 +50,9 @@ A cycle is replayed when, under a master deadline, all of the following hold:
 4. **No live read but the declared poll's.** A direct-page read from any
    other instruction is still live.
 5. **The cycle contains a declared PC.**
-6. **No IRQ can be taken.** Either I is set, which is stable across the
-   cycle, or neither the H nor the V timer is armed.
+6. **No IRQ can be taken.** Either I is set at every step in the recorded
+   cycle, or neither the H nor the V timer is armed. Equal endpoint flags
+   alone do not establish this: a cycle can contain both `SEI` and `CLI`.
 7. **No self-running coprocessor:** Super FX, Cx4 and SA-1 carts are never
    replayed.
 8. **No HDMA into the WRAM data port.** No active HDMA channel targets
@@ -120,6 +121,7 @@ A/X/Y/S/P, open bus, APU flush count and a hash of low RAM and WRAM:
 | table: 8 slots, a repeat accepted, the ninth refused, clear frees it | |
 | V-IRQ or H-IRQ armed, I clear | identical, every step interpreted |
 | H-IRQ armed, I set | identical, replayed |
+| H-IRQ armed, I changes within the cycle | identical IRQ exit, interpreted |
 | IRQ pending, I clear | both leave after one step with `IRQ_PENDING` |
 | the declared poll reads an APU port | identical, every step interpreted |
 | a `$4211` read elsewhere in the cycle | identical, every step interpreted |
