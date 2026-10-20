@@ -513,6 +513,7 @@ def emit_function(rom: bytes, bank: int, start: int,
                   noreturn_jsr_sites=None,
                   live_operand_sites=None,
                   entry_hooks=None,
+                  brk_rti_sites=None,
                   entry_s_offset: int = 0) -> str:
     """Emit a complete v2 C function source for one 65816 function.
 
@@ -639,6 +640,7 @@ def emit_function(rom: bytes, bank: int, start: int,
                             inline_arg_map=inline_arg_map,
                             terminal_jsr_sites=terminal_jsr_sites,
                             noreturn_jsr_sites=noreturn_jsr_sites,
+                            brk_rti_sites=brk_rti_sites,
                             hle_entry_pcs=(set(hle_func or ()) |
                                            set(hle_spc_upload or ())),
                             live_operand_sites=live_operand_sites)

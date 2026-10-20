@@ -135,6 +135,9 @@ pub struct BankCfg {
     /// width and control flow do not depend on the value) but must not fold
     /// a fact out of the decoded bytes, which the host may since have edited.
     pub live_operand: BTreeSet<u32>,
+    /// `brk_rti <site_pc16>`: a BRK whose native vector is a bare RTI -- a
+    /// two-byte no-op on hardware. Decoded as a fall-through, not poison.
+    pub brk_rti: BTreeSet<u32>,
     pub hle_spc_upload: Vec<u32>,
     pub hle_func: BTreeMap<u32, String>, // pc16 -> c_function_name
     pub hle_dispatch: BTreeMap<u32, String>, // site_pc16 -> c_function_name
@@ -654,6 +657,20 @@ pub fn parse_bank_cfg(text: &str, path: &str) -> Result<BankCfg, String> {
                 return Err(format!(
                     "{path}: live_operand duplicate site ${site_pc16:04X}"
                 ));
+            }
+            continue;
+        }
+        // brk_rti <site_pc16>
+        if head == "brk_rti" {
+            if tokens.len() != 2 {
+                return Err(format!(
+                    "{path}: brk_rti needs exactly one <site_pc16>, got: {stripped:?}"
+                ));
+            }
+            let site_pc16 =
+                parse_hex(tokens[1]).map_err(|e| format!("{path}: brk_rti {e}"))? & 0xFFFF;
+            if !cfg.brk_rti.insert(site_pc16) {
+                return Err(format!("{path}: brk_rti duplicate site ${site_pc16:04X}"));
             }
             continue;
         }
@@ -1277,6 +1294,14 @@ exit_mx_set 028000 M0X0 M0X1
         assert!(parse_bank_cfg("bank = 00\nlive_operand C236\nlive_operand C236\n",
                                "test.cfg").is_err());
         assert!(parse_bank_cfg("bank = 00\nlive_operand\n", "test.cfg").is_err());
+    }
+
+    #[test]
+    fn brk_rti_parse() {
+        let cfg = parse_bank_cfg("bank = 80\nbrk_rti B577\n", "test.cfg").unwrap();
+        assert_eq!(cfg.brk_rti, BTreeSet::from([0xB577]));
+        assert!(parse_bank_cfg("bank = 80\nbrk_rti B577\nbrk_rti B577\n", "test.cfg").is_err());
+        assert!(parse_bank_cfg("bank = 80\nbrk_rti\n", "test.cfg").is_err());
     }
 
     #[test]
