@@ -190,7 +190,8 @@ fn rom_byte(rom: &[u8], mapping: RomMapping, bank: u32, addr: u32) -> Option<u8>
     if !is_rom_address(mapping, bank, addr) {
         return None;
     }
-    rom.get(addr_to_rom_offset(mapping, bank, addr, &[])).copied()
+    rom.get(addr_to_rom_offset(mapping, bank, addr, &[]))
+        .copied()
 }
 
 /// `brk_rti` is sound only where the byte is a BRK and the native BRK vector

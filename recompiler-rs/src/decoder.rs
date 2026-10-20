@@ -4325,7 +4325,10 @@ mod tests {
         let plain = decode_function(&rom, 0, 0x8000, 1, 1, None, &DecodeEnv::default());
         assert!(plain.get(&k(0x8002)).is_none());
         let sites = std::collections::BTreeSet::from([0x008000u32]);
-        let env = DecodeEnv { brk_rti_sites: Some(&sites), ..DecodeEnv::default() };
+        let env = DecodeEnv {
+            brk_rti_sites: Some(&sites),
+            ..DecodeEnv::default()
+        };
         let graph = decode_function(&rom, 0, 0x8000, 1, 1, None, &env);
         assert!(graph.get(&k(0x8002)).is_some());
         assert!(graph.get(&k(0x8004)).is_some());
