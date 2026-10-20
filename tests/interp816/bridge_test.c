@@ -497,6 +497,37 @@ static void s18_print(const char *what, const S18Run *r) {
            (unsigned)r->resume, r->a, r->s, r->p, r->syncs, r->interpreted);
 }
 
+/* S19: one whole-program run of `code` at $00:8A00 to a master deadline, the
+ * interpreted opcodes counted through the per-opcode hook. The count is where
+ * the quiescent detector fired (or the deadline stopped the run): it pins the
+ * detector's match and repeat semantics, step for step. */
+static unsigned g_s19_steps;
+static void s19_count(uint32_t pc24, int m, int x) {(void)pc24;(void)m;(void)x;++g_s19_steps;}
+typedef struct { int rc, site; unsigned steps; uint32_t resume; uint16_t a; } S19Run;
+static S19Run s19_run(const uint8_t *code, int len, int x16) {
+    S19Run r; memset(&r, 0, sizeof r);
+    memset(RAM, 0, MEMSZ); init_cpu();
+    g_c.emulation = 0; g_c.x_flag = x16 ? 0 : 1; cpu_mirrors_to_p(&g_c);
+    load(0x8A00, code, len);
+    interp_bridge_reset_dynamic_cache();
+    g_c.master_cycles = 1000;
+    interp_bridge_set_master_deadline(1000 + 400000);
+    const uint64_t ev0 = interp_bridge_resume_total();
+    g_s19_steps = 0;
+    g_interp_bridge_pc_hook = s19_count;
+    r.rc = interp_bridge_run_until_quiescent(&g_c, 0x008A00);
+    g_interp_bridge_pc_hook = NULL;
+    interp_bridge_set_master_deadline(0);
+    r.steps = g_s19_steps;
+    r.resume = interp_bridge_lle_resume_pc();
+    r.a = g_c.A;
+    r.site = -1;
+    { InterpResumeEvent e;
+      const uint64_t n = interp_bridge_resume_total();
+      if (n > ev0 && interp_bridge_resume_get(n - 1, &e)) r.site = e.site; }
+    return r;
+}
+
 int main(void) {
     const char *journal = "tier2_bridge_test.jsonl";
     remove(journal);
@@ -1570,6 +1601,39 @@ int main(void) {
               "HDMA to VRAM: exp replayed");
         g_test_snes.dma = NULL; }
       interp_bridge_clear_idle_polls();
+    }
+    /* S19: the quiescent detector's candidates. A loop whose state at a PC
+     * alternates (EOR #$01 / BRA) recurs only every second visit, so the most
+     * recent visit to that PC never matches; the detector must still find the
+     * older entry. Each case pins the step at which it fires on the full
+     * 64-entry scan, so any faster lookup has to reproduce it exactly. */
+    printf("[S19] quiescent detector: candidates beyond the last same-PC visit\n");
+    { static const uint8_t alt[] = {0x49,0x01, 0x80,0xFC};      /* EOR #$01 / BRA -4 */
+      uint8_t alt_long[2 + 29 + 2];                             /* EOR, 29 NOPs, BRA */
+      alt_long[0] = 0x49; alt_long[1] = 0x01;
+      memset(alt_long + 2, 0xEA, 29);
+      alt_long[31] = 0x80; alt_long[32] = (uint8_t)(0x100 - 33);
+      static const uint8_t cyc4[] = {0x1A, 0x29,0x03, 0x80,0xFB};  /* INC A / AND #3 / BRA */
+      static const uint8_t wait[] = {0xAF,0x00,0x20,0x7E, 0xF0,0xFA}; /* LDA $7E2000 / BEQ */
+      static const uint8_t count[] = {0xE8, 0x80,0xFD};         /* INX / BRA (16-bit X) */
+      struct { const char *what; const uint8_t *code; int len, x16, quiescent;
+               unsigned expect; } cases[] = {
+        {"EOR #$01 / BRA alternates A", alt, (int)sizeof alt, 0, 1, 68u},
+        {"alternating over 31 PCs", alt_long, (int)sizeof alt_long, 0, 1, 125u},
+        {"A cycles through four values", cyc4, (int)sizeof cyc4, 0, 1, 73u},
+        {"stable WRAM wait", wait, (int)sizeof wait, 0, 1, 66u},
+        {"counting loop is never stable", count, (int)sizeof count, 1, 0, 22223u},
+      };
+      for (unsigned k = 0; k < sizeof cases / sizeof cases[0]; k++) {
+        const S19Run r = s19_run(cases[k].code, cases[k].len, cases[k].x16);
+        printf("    %s: rc=%d site=%d steps=%u resume=$%06X\n", cases[k].what,
+               r.rc, r.site, r.steps, (unsigned)r.resume);
+        CHECK(r.site == (cases[k].quiescent ? INTERP_RESUME_SITE_QUIESCENT
+                                            : INTERP_RESUME_SITE_DEADLINE),
+              "%s: site=%d", cases[k].what, r.site);
+        CHECK(r.steps == cases[k].expect, "%s: fired after %u steps, exp %u",
+              cases[k].what, r.steps, cases[k].expect);
+      }
     }
     printf("\n==== interp_bridge Phase-1: %d/%d checks passed ====\n", g_check - g_fail, g_check);
     if (g_fail) { printf("RESULT: FAIL (%d)\n", g_fail); return 1; }
