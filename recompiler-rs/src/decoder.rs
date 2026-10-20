@@ -230,6 +230,11 @@ pub struct DecodeEnv<'a> {
     pub callee_inline_skip: Option<&'a HashMap<u32, i32>>,
     pub inline_dispatch_loop_pcs: Option<&'a std::collections::BTreeSet<u32>>,
     pub terminal_jsr_sites: Option<&'a std::collections::BTreeSet<u32>>,
+    /// cfg `live_operand` sites (24-bit): immediates read from the ROM image
+    /// at run time, so the constant-Z fold must not use their decoded bytes.
+    pub live_operand_sites: Option<&'a std::collections::BTreeSet<u32>>,
+    /// `brk_rti` sites (24-bit, mirrors included): BRK falls through.
+    pub brk_rti_sites: Option<&'a std::collections::BTreeSet<u32>>,
     /// Folded-in process-global the Python decode path read (set_global_inline_skip).
     pub global_inline_skip: Option<&'a HashMap<u32, i32>>,
     /// LLE-first analysis must not guess that a callee preserves M/X.  Stop
@@ -793,6 +798,18 @@ fn labeled_successors(
     let next_pc = (pc + insn.length as u32) & 0xFFFF;
     let mnem = insn.mnem;
 
+    if mnem == "BRK"
+        && env
+            .brk_rti_sites
+            .is_some_and(|s| s.contains(&(insn.addr & 0xFFFFFF)))
+    {
+        // brk_rti: the round trip through a bare RTI returns past the
+        // signature byte with P restored -- widths and PHP stack unchanged.
+        return vec![(
+            DecodeKey::with_stack(addr24(bank, next_pc), key.m, key.x, key.p_stack.clone()),
+            "fall",
+        )];
+    }
     if is_terminator(mnem) {
         return vec![];
     }
@@ -1916,7 +1933,7 @@ pub fn decode_function(
     }
 
     dedupe_by_pcmx(&mut graph);
-    apply_constant_z_fold(&mut graph);
+    apply_constant_z_fold(&mut graph, env.live_operand_sites);
     graph
 }
 
@@ -1980,7 +1997,10 @@ fn dedupe_by_pcmx(graph: &mut FunctionDecodeGraph) {
 }
 
 /// Constant-Z branch fold + reachability prune. Port of `_apply_constant_z_fold`.
-fn apply_constant_z_fold(graph: &mut FunctionDecodeGraph) {
+fn apply_constant_z_fold(
+    graph: &mut FunctionDecodeGraph,
+    live_operand_sites: Option<&std::collections::BTreeSet<u32>>,
+) {
     if graph.is_empty() {
         return;
     }
@@ -2016,6 +2036,11 @@ fn apply_constant_z_fold(graph: &mut FunctionDecodeGraph) {
             continue;
         }
         if pred_insn.mode != Mode::Imm {
+            continue;
+        }
+        // A `live_operand` immediate is read from the ROM image at run time:
+        // the decoded bytes say nothing about Z when the branch executes.
+        if live_operand_sites.is_some_and(|s| s.contains(&(pred_insn.addr & 0xFFFFFF))) {
             continue;
         }
         if pred_di.successors.len() != 1 || pred_di.successors[0] != k {
@@ -4305,6 +4330,22 @@ mod tests {
     }
 
     #[test]
+    fn brk_rti_site_falls_through() {
+        // 8000 BRK #$00 / LDA #$01 / RTS
+        let rom = rom_at_8000(&[0x00, 0x00, 0xA9, 0x01, 0x60]);
+        let plain = decode_function(&rom, 0, 0x8000, 1, 1, None, &DecodeEnv::default());
+        assert!(plain.get(&k(0x8002)).is_none());
+        let sites = std::collections::BTreeSet::from([0x008000u32]);
+        let env = DecodeEnv {
+            brk_rti_sites: Some(&sites),
+            ..DecodeEnv::default()
+        };
+        let graph = decode_function(&rom, 0, 0x8000, 1, 1, None, &env);
+        assert!(graph.get(&k(0x8002)).is_some());
+        assert!(graph.get(&k(0x8004)).is_some());
+    }
+
+    #[test]
     fn ptrcall_uses_pea_return_without_inlining_explicit_target() {
         // PEA $8008; JMP ($0010). The dispatched RTS resumes at $8009,
         // while $8010 is an independently discovered handler target.
@@ -4619,6 +4660,31 @@ mod tests {
         assert!(g.get(&k(0x8004)).is_none());
         assert!(g.get(&k(0x8006)).is_some());
         assert_eq!(g.const_z_folds.len(), 1);
+    }
+
+    #[test]
+    fn const_z_fold_skips_a_live_operand() {
+        // The same LDA #$00 ; BEQ, but the immediate is a cfg live_operand: the
+        // host may edit it in the loaded image, so both paths must survive.
+        let mut bytes = vec![0u8; 7];
+        bytes[0] = 0xA9;
+        bytes[1] = 0x00;
+        bytes[2] = 0xF0;
+        bytes[3] = 0x02;
+        bytes[4] = 0x60;
+        bytes[6] = 0x60;
+        let rom = rom_at_8000(&bytes);
+        let live = std::collections::BTreeSet::from([0x008000u32]);
+        let env = DecodeEnv {
+            live_operand_sites: Some(&live),
+            ..DecodeEnv::default()
+        };
+        let g = decode_function(&rom, 0, 0x8000, 1, 1, None, &env);
+        let beq = g.get(&k(0x8002)).unwrap();
+        assert_eq!(beq.successors, vec![k(0x8004), k(0x8006)]);
+        assert!(!beq.insn.const_z_fold_unconditional);
+        assert!(g.get(&k(0x8004)).is_some() && g.get(&k(0x8006)).is_some());
+        assert!(g.const_z_folds.is_empty());
     }
 
     #[test]

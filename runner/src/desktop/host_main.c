@@ -153,10 +153,13 @@ static void OpenOneJoystick(int i);
 static uint32 GetActiveControllers(void);
 static void HandleVolumeAdjustment(int volume_adjustment);
 static void ApplyVolume(void);
-static bool g_volume_changed;
-/* Alt+Enter moved the window between windowed and borderless; the config is
- * rewritten once at shutdown so the launcher opens on what the player left. */
-static bool g_fullscreen_changed;
+/* Set when a config parameter has been changed live this session: the volume
+ * or fullscreen hotkeys, any snesrecomp_set_* helper, or dependent code that
+ * writes a g_config field directly (a native menu). The shutdown path
+ * rewrites config.ini once when it is set, so the change survives the restart
+ * and the launcher opens on what the player left. One flag covers every
+ * persistable setting; volume used to keep its own copy of the same bit. */
+bool g_config_dirty;
 static void HandleGamepadAxisInput(GamepadInfo *gi, int axis, Sint16 value);
 static int RemapSdlButton(int button);
 static void HandleGamepadInput(GamepadInfo *gi, int button, bool pressed);
@@ -245,7 +248,7 @@ static const char *HostGetenv(const char *name) {
 }
 
 static uint32 g_win_flags = SDL_WINDOW_RESIZABLE;
-static SDL_Window *g_window;
+SDL_Window *g_window;
 
 static uint8 g_paused, g_turbo, g_cursor = true;
 static uint8 g_current_window_scale;
@@ -435,12 +438,100 @@ static uint8 g_frame_stage[kSnesDesktopMaxFrameWidth * 4 * 240];
 #endif
 
 static GamepadInfo g_gamepad[kSnesHostPadSeats];
+/* Device the launcher picked for each gamepad seat (SDL joystick id + 1, 0 =
+ * any). Identical controllers - two DualSense - share a GUID, so the launcher
+ * names the physical device; seats then follow that choice instead of the
+ * order the pads were plugged in. Same SDL session, so the ids agree. */
+static uint32 g_seat_instance[kSnesHostPadSeats];
 
 extern Snes *g_snes;
 
 void snesrecomp_desktop_set_widescreen(int enabled) {
   g_config.widescreen = enabled != 0;
   WriteConfigFile(g_active_config_file);
+}
+
+void snesrecomp_set_fullscreen(int mode)
+{
+    if (mode < 0) mode = 0;
+    if (mode > 1) mode = 1;
+    g_config.fullscreen = (uint8)mode;
+    g_config_dirty = true;                // forces config write
+    uint32_t want = (mode == 1) ? SNESRECOMP_SDL_WINDOW_FULLSCREEN_DESKTOP : 0;
+    const uint32_t fs_mask = SNESRECOMP_SDL_WINDOW_FULLSCREEN_DESKTOP | SDL_WINDOW_FULLSCREEN;
+    g_win_flags = (g_win_flags & ~fs_mask) | want;
+    SDL_SetWindowFullscreen(g_window, want);
+    g_cursor = (want == 0);
+    snesrecomp_sdl_show_cursor(g_cursor);
+}
+
+int snesrecomp_get_fullscreen(void)
+{
+    return (int)g_config.fullscreen;
+}
+
+/* Forward declarations: the exported snesrecomp_set_* helpers below call
+ * these, and they are defined further down the file. */
+static void FrameBlendConfigure(void);
+void ChangeWindowScale(int scale_step);
+
+void snesrecomp_set_vsync(int mode)
+{
+    if (mode < 0) mode = 0;
+    if (mode > 2) mode = 2;
+    g_config.vsync = (uint8)mode;
+    g_config_dirty = true; /* forces config write */
+#ifndef __ANDROID__
+    snesrecomp_opengl_set_vsync(VSyncInterval());
+#endif
+    if (g_renderer_funcs.Reconfigure) g_renderer_funcs.Reconfigure();
+}
+
+int snesrecomp_get_vsync(void)
+{
+    return (int)g_config.vsync;
+}
+
+void snesrecomp_set_frame_blend(int enabled)
+{
+    g_config.frame_blend = enabled != 0;
+    g_config_dirty = true; /* forces config write */
+    FrameBlendConfigure();
+}
+
+int snesrecomp_get_frame_blend(void)
+{
+    return g_config.frame_blend;
+}
+
+void snesrecomp_set_run_ahead(int frames)
+{
+    if (frames < 0) frames = 0;
+    g_config.run_ahead = frames;
+    g_config_dirty = true; /* forces config write */
+    snes_runahead_set_frames(g_config.run_ahead);
+}
+
+int snesrecomp_get_run_ahead(void)
+{
+    return (int)g_config.run_ahead;
+}
+
+void snesrecomp_set_window_scale(int scale)
+{
+    const uint32_t fs_mask = SNESRECOMP_SDL_WINDOW_FULLSCREEN_DESKTOP | SDL_WINDOW_FULLSCREEN;
+    if (SDL_GetWindowFlags(g_window) & fs_mask) return;
+    if (scale < 1) scale = 1;
+    if (scale > kMaxWindowScale) scale = kMaxWindowScale;
+    g_current_window_scale = (uint8)scale;
+    ChangeWindowScale(0);
+    g_config.window_scale = g_current_window_scale;
+    g_config_dirty = true; /* forces config write */
+}
+
+int snesrecomp_get_window_scale(void)
+{
+    return (int)g_config.window_scale;
 }
 
 /* Presentation frame blending (config.ini [Graphics] FrameBlend, the
@@ -2898,6 +2989,9 @@ static void LauncherCommit(const RecompLauncherCSettings *ls, const char *config
     if (seat >= 2 && seat >= HostConfiguredSeats()) break;
     g_config.player_src[seat]     = ls->player_src[seat];
     g_config.enable_gamepad[seat] = ls->player_src[seat] == 2;
+#if defined(RECOMP_LAUNCHER_HAS_PLAYER_GAMEPAD_INSTANCE) && SNESRECOMP_SDL3
+    g_seat_instance[seat] = ls->player_src[seat] == 2 ? ls->player_gamepad_instance[seat] : 0;
+#endif
   }
   g_config.gamepad_deadzone    = (ls->deadzone[0] * 32767 + 50) / 100;
   g_config.skip_launcher       = ls->skip_launcher != 0;
@@ -4446,9 +4540,10 @@ error_reading:;
 
   if (g_config.autosave && !g_netplay_session)
     HandleCommand(kKeys_Save + 0, true);
-  /* A volume or fullscreen change made with the keys survives the session,
-   * like the launcher's. */
-  if (g_volume_changed || g_fullscreen_changed)
+  /* A live config change made in-game -- a hotkey, a snesrecomp_set_* helper,
+   * or a dependent game's own menu -- survives the session, like the
+   * launcher's. */
+  if (g_config_dirty)
     WriteConfigFile(g_active_config_file);
 
   if (!g_netplay_session) RtlWriteSram();
@@ -4600,7 +4695,7 @@ static void HandleCommand(uint32 j, bool pressed) {
        * this key only moves between windowed and borderless. */
       g_config.fullscreen =
           (g_win_flags & SNESRECOMP_SDL_WINDOW_FULLSCREEN_DESKTOP) ? 1 : 0;
-      g_fullscreen_changed = true;
+      g_config_dirty = true;
       break;
     case kKeys_Reset:
       ConsoleReset();
@@ -4634,6 +4729,15 @@ static void HandleCommand(uint32 j, bool pressed) {
       break;
     case kKeys_ToggleWidescreen:
       printf("Widescreen is a per-title presentation setting; see the launcher's Mods page.\n");
+      break;
+    case kKeys_ToggleVSync:
+      snesrecomp_set_vsync(g_config.vsync ? 0 : 1);
+      break;
+    case kKeys_ToggleFrameBlend:
+      snesrecomp_set_frame_blend(!g_config.frame_blend);
+      break;
+    case kKeys_ToggleRunAhead:
+      snesrecomp_set_run_ahead(g_config.run_ahead + 1);
       break;
     case kKeys_VolumeUp:
     case kKeys_VolumeDown: HandleVolumeAdjustment(j == kKeys_VolumeUp ? 1 : -1); break;
@@ -4676,6 +4780,22 @@ static uint32 GetActiveControllers(void) {
   return ctrl << 30;
 }
 
+/* Seat `j` is reserved by the launcher for a different pad that is connected. */
+static bool SeatHeldForOtherPad(int j, uint32 joystick_id) {
+  uint32 want = g_seat_instance[j];
+  if (!want || want == joystick_id + 1) return false;
+#if SNESRECOMP_SDL3
+  int n = 0;
+  SDL_JoystickID *ids = SDL_GetGamepads(&n);
+  bool connected = false;
+  for (int i = 0; ids && i < n; ++i) connected |= (uint32)ids[i] + 1 == want;
+  SDL_free(ids);
+  return connected;
+#else
+  return false;
+#endif
+}
+
 static void OpenOneGamepad(int i) {
   if (!SDL_IsGameController(i)) {
     OpenOneJoystick(i);
@@ -4702,9 +4822,21 @@ static void OpenOneGamepad(int i) {
 
   int found_idx = -1;
   const int seats = HostConfiguredSeats();
-  for (int k = 0; k < 1 + kSnesHostPadSeats; k++) {
+  /* The seat the launcher picked this very device for comes first. */
+  for (int j = 0; j < seats; ++j)
+    if (g_config.enable_gamepad[j] && g_seat_instance[j] == joystick_id + 1 &&
+        g_gamepad[j].joystick_id == -1) {
+      found_idx = j;
+      break;
+    }
+  /* Otherwise SDL's player index, then the first free seat. Never a seat
+   * another pad already drives (the preferred index used to take it over,
+   * leaving that pad without a seat), nor one held for another connected
+   * device the launcher picked. */
+  for (int k = 0; found_idx < 0 && k < 1 + kSnesHostPadSeats; k++) {
     uint8 j = scan_order[k];
-    if (j < seats && g_config.enable_gamepad[j] && (k == 0 || g_gamepad[j].joystick_id == -1)) {
+    if (j < seats && g_config.enable_gamepad[j] && g_gamepad[j].joystick_id == -1 &&
+        !SeatHeldForOtherPad(j, joystick_id)) {
       found_idx = j;
       break;
     }
@@ -4730,7 +4862,8 @@ static void OpenOneJoystick(int i) {
   if (GetGamepadInfo(id) || SelftestPadExcludes(id)) { SDL_JoystickClose(joystick); return; }
   int slot = -1;
   for (int j = 0; j < HostConfiguredSeats(); ++j) {
-    if (g_config.enable_gamepad[j] && g_gamepad[j].joystick_id == -1) {
+    if (g_config.enable_gamepad[j] && g_gamepad[j].joystick_id == -1 &&
+        !SeatHeldForOtherPad(j, (uint32)id)) {
       slot = j; break;
     }
   }
@@ -4821,7 +4954,7 @@ static void ApplyVolume(void) {
 static void HandleVolumeAdjustment(int volume_adjustment) {
   g_config.volume = IntMin(IntMax(0, g_config.volume + volume_adjustment * 5), 100);
   ApplyVolume();
-  g_volume_changed = true;
+  g_config_dirty = true;
   /* The bar at the right edge of the frame, for a moment. */
   snes_osd_note_volume(g_config.volume);
 }

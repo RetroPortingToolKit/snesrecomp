@@ -877,6 +877,27 @@ def emit_program(*, rom: bytes, parsed, manifest: ProgramManifest,
                     (bank << 16) | (site & 0xFFFF)
                     for site in cfg.noreturn_jsr
                 }
+            live_operand_sites = None
+            if cfg is not None and getattr(cfg, "live_operand", None):
+                live_operand_sites = {
+                    (bank << 16) | (site & 0xFFFF)
+                    for site in cfg.live_operand
+                }
+            entry_hooks = None
+            if cfg is not None and getattr(cfg, "entry_hook", None):
+                entry_hooks = {
+                    (bank << 16) | (pc & 0xFFFF): name
+                    for pc, name in cfg.entry_hook.items()
+                }
+            brk_rti_sites = None
+            if cfg is not None and getattr(cfg, "brk_rti", None):
+                from v2.brk_rti import check_brk_rti_site
+                brk_rti_sites = {
+                    (bank << 16) | (site & 0xFFFF)
+                    for site in cfg.brk_rti
+                }
+                for site in sorted(brk_rti_sites):
+                    check_brk_rti_site(rom, site)
             if indirect_call_tables:
                 remapped_tables = dict(indirect_call_tables)
                 for site, value in indirect_call_tables.items():
@@ -899,6 +920,9 @@ def emit_program(*, rom: bytes, parsed, manifest: ProgramManifest,
                 indirect_dispatch=indirect_dispatch or None,
                 terminal_jsr_sites=terminal_jsr_sites,
                 noreturn_jsr_sites=noreturn_jsr_sites,
+                live_operand_sites=live_operand_sites,
+                entry_hooks=entry_hooks,
+                brk_rti_sites=brk_rti_sites,
                 data_regions=data_regions,
                 exclude_ranges=(getattr(cfg, "exclude_ranges", None)
                                 if cfg is not None else None),

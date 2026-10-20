@@ -419,6 +419,8 @@ class Break(IROp):
     cop: bool
     source_pc24: Optional[int] = None
     tier_to_lle: bool = False
+    # brk_rti: compile the round trip to a bare-RTI vector and fall through.
+    rti_round_trip: bool = False
 
 
 @dataclass(frozen=True)

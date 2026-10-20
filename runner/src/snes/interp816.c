@@ -1012,6 +1012,7 @@ static void interp816_doOpcode(Interp816* cpu, uint8_t opcode) {
         if(!cpu->e) interp816_pushByte(cpu, cpu->k);
         interp816_pushWord(cpu, cpu->pc);
         interp816_pushByte(cpu, interp816_getFlags(cpu) | (cpu->e ? 0x10 : 0));
+        if(!cpu->e) cpu->cyclesUsed++; // native mode: 1 extra cycle (as COP)
         cpu->i = true;
         cpu->d = false;
         cpu->k = 0;

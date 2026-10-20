@@ -149,6 +149,19 @@ void interp_bridge_set_pre_opcode_hook(uint32_t pc24,
 bool interp_bridge_add_pre_opcode_hook(uint32_t pc24, InterpPreOpcodeHook hook);
 void interp_bridge_pre_opcode_redirect(uint32_t pc24);
 
+/* Declare the instruction at pc24 the poll of a pure interrupt wait: what it
+ * reads changes only when an interrupt handler runs. Under a master deadline,
+ * a stable cycle that contains it is then replayed to the deadline instead of
+ * interpreted: same guest clock, cycle count, refresh, open bus, APU time and
+ * flushes, resume PC and registers as interpreting it. A cycle that reads a
+ * device, writes, or could meet an IRQ is interpreted as if nothing were
+ * declared. Up to 8 PCs, LoROM FastROM bit 7 masked; returns false when the
+ * table is full. Host configuration: it lasts until
+ * interp_bridge_clear_idle_polls(), across runs, resets and savestate loads,
+ * and is not saved. Contract: docs/IDLE_POLL.md. */
+bool interp_bridge_set_idle_poll(uint32_t pc24);
+void interp_bridge_clear_idle_polls(void);
+
 /*
  * Run the interpreter over guest code at entry_pc24, in the context of `cpu`.
  * `cpu` is updated in place. Returns:
