@@ -35,6 +35,10 @@ enum {
   kKeys_ToggleWidescreen,
   kKeys_VolumeUp,
   kKeys_VolumeDown,
+  /* In-game toggle for live-applied config params (snesrecomp_set_*). */
+  kKeys_ToggleVSync,
+  kKeys_ToggleFrameBlend,
+  kKeys_ToggleRunAhead,
   /* Save-state slot browser (snes_savestate_menu.c). Appended here rather
    * than inserted above so the kKeys_Load / kKeys_Save 20-slot ranges keep
    * their numbering — those are index arithmetic, not just enum labels. */
@@ -211,6 +215,16 @@ enum {
 };
 
 extern Config g_config;
+
+/* Set when a config parameter has been changed live this session: the
+ * volume/fullscreen hotkeys, any snesrecomp_set_* helper (host_api.h), or a
+ * game that writes a g_config field directly (e.g. the pause menu's Display
+ * rows). The shutdown path rewrites config.ini from it so the launcher opens
+ * on the settings the player left. If you write a g_config field yourself,
+ * set this or the write will not be persisted. Declared here rather than in
+ * host_api.h so a game that only includes config.h can mark its writes
+ * without pulling in the desktop host's API header. */
+extern bool g_config_dirty;
 
 void ConfigUseStateMenuDefaults(void);
 /* Opt in before parsing: binds [KeyMap] OpenLauncher to Ctrl+L by default. */
