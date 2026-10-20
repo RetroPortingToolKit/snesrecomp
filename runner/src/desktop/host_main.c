@@ -458,6 +458,8 @@ void snesrecomp_set_fullscreen(int mode)
     g_config.fullscreen = (uint8)mode;
     g_config_dirty = true;                // forces config write
     uint32_t want = (mode == 1) ? SNESRECOMP_SDL_WINDOW_FULLSCREEN_DESKTOP : 0;
+    const uint32_t fs_mask = SNESRECOMP_SDL_WINDOW_FULLSCREEN_DESKTOP | SDL_WINDOW_FULLSCREEN;
+    g_win_flags = (g_win_flags & ~fs_mask) | want;
     SDL_SetWindowFullscreen(g_window, want);
     g_cursor = (want == 0);
     snesrecomp_sdl_show_cursor(g_cursor);
@@ -517,11 +519,14 @@ int snesrecomp_get_run_ahead(void)
 
 void snesrecomp_set_window_scale(int scale)
 {
+    const uint32_t fs_mask = SNESRECOMP_SDL_WINDOW_FULLSCREEN_DESKTOP | SDL_WINDOW_FULLSCREEN;
+    if (SDL_GetWindowFlags(g_window) & fs_mask) return;
     if (scale < 1) scale = 1;
     if (scale > kMaxWindowScale) scale = kMaxWindowScale;
-    g_config.window_scale = (uint8)scale;
-    g_config_dirty = true; /* forces config write */
+    g_current_window_scale = (uint8)scale;
     ChangeWindowScale(0);
+    g_config.window_scale = g_current_window_scale;
+    g_config_dirty = true; /* forces config write */
 }
 
 int snesrecomp_get_window_scale(void)

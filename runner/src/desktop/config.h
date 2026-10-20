@@ -35,10 +35,6 @@ enum {
   kKeys_ToggleWidescreen,
   kKeys_VolumeUp,
   kKeys_VolumeDown,
-  /* In-game toggle for live-applied config params (snesrecomp_set_*). */
-  kKeys_ToggleVSync,
-  kKeys_ToggleFrameBlend,
-  kKeys_ToggleRunAhead,
   /* Save-state slot browser (snes_savestate_menu.c). Appended here rather
    * than inserted above so the kKeys_Load / kKeys_Save 20-slot ranges keep
    * their numbering — those are index arithmetic, not just enum labels. */
@@ -67,6 +63,10 @@ enum {
   kKeys_ControlsP7_Last = kKeys_ControlsP7 + 11,
   kKeys_ControlsP8,
   kKeys_ControlsP8_Last = kKeys_ControlsP8 + 11,
+  /* Append commands so existing ids and positional defaults stay intact. */
+  kKeys_ToggleVSync,
+  kKeys_ToggleFrameBlend,
+  kKeys_ToggleRunAhead,
   kKeys_Total,
 };
 
