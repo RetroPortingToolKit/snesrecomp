@@ -263,6 +263,8 @@ void rtl_apu_restore_pacing(uint64_t frame_start_master, uint8_t frame_time_vali
 #define RTL_AUDIO_RECOVERY_RAMP 128u
 #define RTL_AUDIO_TARGET_NATIVES 2136u /* 4 native blocks, ~67 ms cushion */
 static bool g_audio_fast_forward;
+static void (*g_audio_producer_wait)(void);
+static _Thread_local bool g_audio_producer_wait_active;
 static uint32_t g_audio_recovery_frames;
 static uint32_t g_audio_recovery_remaining;
 static int16 g_audio_recovery_anchor_l;
@@ -2211,6 +2213,21 @@ static void rtl_sync_apu_frame_boundary(void) {
 
 void RtlSetSpeculativeFrame(bool on) { g_rtl_speculative_frame = on; }
 bool RtlSpeculativeFrame(void) { return g_rtl_speculative_frame; }
+
+void RtlAudioSetProducerWait(void (*wait_for_consumer)(void)) {
+  g_audio_producer_wait = wait_for_consumer;
+}
+
+void RtlAudioWaitForConsumer(void) {
+  if (!g_audio_producer_wait || g_audio_fast_forward ||
+      g_rtl_speculative_frame || g_audio_producer_wait_active)
+    return;
+  /* A host may inspect its FIFO using RtlApuLock/Unlock in the callback.
+   * That unlock must not recursively enter the same wait. */
+  g_audio_producer_wait_active = true;
+  g_audio_producer_wait();
+  g_audio_producer_wait_active = false;
+}
 
 void RtlAudioSetFastForward(bool active) {
   if (!active && !g_audio_fast_forward && g_audio_recovery_frames == 0)

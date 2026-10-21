@@ -2135,8 +2135,7 @@ static SDL_AudioDeviceID g_audio_device;
 static _Thread_local bool g_audio_producer_active;
 static _Thread_local unsigned g_apu_lock_depth;
 static _Thread_local bool g_audio_consumer_stalled;
-static _Thread_local uint64_t g_audio_stalled_callback;
-static uint64_t g_audio_callback_count;  /* protected by g_audio_mutex */
+static _Thread_local uint32_t g_audio_stalled_read;
 static bool g_audio_primed;  /* protected by g_audio_mutex */
 #define HOST_AUDIO_PREFILL 2136u
 #define HOST_AUDIO_HIGH_WATER 4096u
@@ -2167,32 +2166,34 @@ void RtlApuLock(void) {
 
 void RtlApuUnlock(void) {
   --g_apu_lock_depth;
-  if (g_apu_lock_depth == 0 && g_audio_producer_active &&
-      g_audio_consumer_stalled &&
-      g_audio_callback_count != g_audio_stalled_callback)
-    g_audio_consumer_stalled = false;
-  if (g_apu_lock_depth == 0 && g_audio_producer_active &&
-      !g_audio_consumer_stalled &&
-      dsp_available(g_snes->apu->dsp) > HOST_AUDIO_HIGH_WATER) {
-    /* Fast hosts can generate a multi-frame loader's PCM in milliseconds.
-     * Let the device drain it before the bounded ring overflows. Always
-     * release the mutex while waiting, and stop waiting if the device stalls. */
-    double limit = MonotonicSeconds() + 0.25;
-    while (dsp_available(g_snes->apu->dsp) > HOST_AUDIO_HIGH_WATER) {
-      SDL_UnlockMutex(g_audio_mutex);
-      SDL_Delay(1);
-      SDL_LockMutex(g_audio_mutex);
-      if (MonotonicSeconds() >= limit) {
-        /* A disconnected device must not add this timeout to every frame.
-         * Rearm only after the consumer has actually made progress. */
-        g_audio_consumer_stalled = true;
-        g_audio_stalled_callback = g_audio_callback_count;
-        g_audio_producer_active = false;
-        break;
-      }
-    }
-  }
   SDL_UnlockMutex(g_audio_mutex);
+  if (g_apu_lock_depth == 0 && g_audio_producer_active)
+    RtlAudioWaitForConsumer();
+}
+
+static void HostWaitForAudioProducer(void) {
+  if (!g_audio_producer_active || !g_snes || !g_snes->apu) return;
+  uint32_t start = (uint32_t)SDL_GetTicks();
+  for (;;) {
+    RtlApuLock();
+    uint32_t queued = dsp_available(g_snes->apu->dsp);
+    uint32_t read = g_snes->apu->dsp->sampleRead;
+    RtlApuUnlock();
+    if (queued <= HOST_AUDIO_HIGH_WATER) {
+      g_audio_consumer_stalled = false;
+      return;
+    }
+    /* Callbacks may run without consuming native PCM (startup priming or a
+     * stopped stream). Only FIFO progress rearms a stalled producer. */
+    if (g_audio_consumer_stalled && read == g_audio_stalled_read) return;
+    g_audio_consumer_stalled = false;
+    if ((uint32_t)((uint32_t)SDL_GetTicks() - start) >= 250u) {
+      g_audio_consumer_stalled = true;
+      g_audio_stalled_read = read;
+      return;
+    }
+    SDL_Delay(1);
+  }
 }
 
 /* Backend-agnostic mixer body. SDL2 calls it from its pull callback; SDL3 calls
@@ -2204,7 +2205,6 @@ static void FillAudioBuffer(Uint8 *stream, int len) {
   if (SDL_AtomicCAS(&first_cb, 0, 1))
     host_report_breadcrumb("first audio callback (len=%d)", len);
   if (!snesrecomp_sdl_lock_mutex(g_audio_mutex)) Die("Mutex lock failed!");
-  ++g_audio_callback_count;
   while (len != 0) {
     if (g_audiobuffer_end - g_audiobuffer_cur == 0) {
       uint32_t available = dsp_available(g_snes->apu->dsp);
@@ -3903,6 +3903,7 @@ error_reading:;
       return 1;
     }
     g_audio_channels = 2;
+    RtlAudioSetProducerWait(HostWaitForAudioProducer);
     /* The SPC's native rate is 32040 Hz (1.024 MHz / 32), not 32000. The
      * consumer converts onto the device rate and cannot infer it. */
     RtlSetAudioOutputRate(have.freq);
