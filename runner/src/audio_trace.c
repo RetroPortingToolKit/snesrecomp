@@ -336,7 +336,29 @@ static uint8_t s_spc_rd_last[4], s_cpu_rd_last[4];
 static uint8_t s_spc_rd_fresh[4], s_cpu_rd_fresh[4];
 static uint8_t s_cpu_wr_pending[4];
 
+static AudioTracePortEvent s_port_ring[AUDIO_TRACE_PORT_RING];
+static uint64_t s_port_count;
+static AudioTraceBeamProbe *s_beam_probe;
+
+void audio_trace_set_beam_probe(AudioTraceBeamProbe *probe) {
+  s_beam_probe = probe;
+}
+
 static AudioTraceEvent *push_port_event(uint8_t type, uint8_t port, uint8_t val) {
+  {
+    AudioTracePortEvent *p =
+        &s_port_ring[s_port_count & (AUDIO_TRACE_PORT_RING - 1)];
+    p->sample_idx = s_stats.produced;
+    p->frame = (uint32_t)snes_frame_counter;
+    p->vpos = p->hpos = 0;
+    if (s_beam_probe)
+      s_beam_probe(&p->vpos, &p->hpos);
+    p->type = type;
+    p->port = port;
+    p->val = val;
+    p->pad = 0;
+    s_port_count++;
+  }
   AudioTraceEvent *e = push_event(type);
   e->addr = port;
   e->val = val;
@@ -472,6 +494,24 @@ uint32_t audio_trace_copy_events(uint64_t first_idx, uint32_t max,
   RtlApuUnlock();
   return 0;
 #endif
+}
+
+uint32_t audio_trace_copy_port_events(uint64_t first_idx, uint32_t max,
+                                      AudioTracePortEvent *out,
+                                      uint64_t *oldest, uint64_t *total) {
+  RtlApuLock();
+  uint64_t count = s_port_count;
+  uint64_t old = count > AUDIO_TRACE_PORT_RING ? count - AUDIO_TRACE_PORT_RING : 0;
+  if (oldest) *oldest = old;
+  if (total) *total = count;
+  if (first_idx < old) first_idx = old;
+  uint32_t n = 0;
+  while (first_idx + n < count && n < max) {
+    out[n] = s_port_ring[(first_idx + n) & (AUDIO_TRACE_PORT_RING - 1)];
+    n++;
+  }
+  RtlApuUnlock();
+  return n;
 }
 
 uint32_t audio_trace_copy_snaps(uint64_t first_idx, uint32_t max,

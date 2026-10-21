@@ -6,14 +6,18 @@
  * ROM source, recompiled module, boot policy and save namespace.
  *
  *   variant  = "what the player picks" (Super Mario World, Super Mario Bros.,
- *              The Lost Levels, a ROM hack)
+ *              The Lost Levels)
  *   module   = the recompiled program that runs it (program_module.h); one
  *              module can back several variants (one All-Stars tree serves
  *              four games) and one variant can reuse the stock module (a
  *              save-namespace-only variant)
  *   source   = which ROM image: the title's own launched ROM, or a
- *              user-supplied external ROM declared by a mod package, optionally
- *              run through an in-memory IPS/BPS patch
+ *              user-supplied external ROM declared by a mod package.
+ *
+ * DEPRECATED: recompiling ROM hacks and selecting their patched images through
+ * patch_path is retained for legacy compatibility only. New mods reimplement
+ * hack behavior against the supported stock ROM. Title-specific ingestion and
+ * import engines are separate; this notice does not deprecate those systems.
  *
  * Where variants come from:
  *   - the port registers its stock variant with snes_variant_register_builtin
@@ -75,7 +79,8 @@ typedef struct SnesVariantDecl {
     char source_rom_id[SNES_VARIANT_ID_CAP];  /* [[external_rom]] id, "" = the launched ROM */
     uint8_t source_sha256[32];                /* required digest of the source image */
     int has_source_sha256;
-    /* Optional patch applied in memory to the verified source. */
+    /* DEPRECATED: legacy patched-ROM recompilation support. New mods should
+     * reimplement hack behavior against the stock ROM instead. */
     char patch_path[SNES_VARIANT_PATH_CAP];   /* absolute path, "" = none */
     uint8_t patch_target_sha256[32];          /* required digest of the patched image */
     int has_patch_target_sha256;

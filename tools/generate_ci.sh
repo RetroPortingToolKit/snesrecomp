@@ -11,6 +11,15 @@
 # --dry-run. `--help` prints the full list.
 set -eu
 SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
-PYTHON=${PYTHON:-$(command -v python3 || command -v python || true)}
+PYTHON=${PYTHON:-}
+if [ -z "$PYTHON" ]; then
+  # Windows App Execution Aliases can exist on PATH without running Python.
+  for _snes_python in python3 python; do
+    if "$_snes_python" -c 'import sys; sys.exit(sys.version_info[0] != 3)' >/dev/null 2>&1; then
+      PYTHON=$_snes_python
+      break
+    fi
+  done
+fi
 [ -n "$PYTHON" ] || { echo "generate_ci: python3 not found on PATH" >&2; exit 1; }
 exec "$PYTHON" "$SCRIPT_DIR/generate_ci.py" "$@"

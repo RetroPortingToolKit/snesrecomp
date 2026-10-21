@@ -1,7 +1,9 @@
 #ifndef SNES_SAVESTATE_MENU_H
 #define SNES_SAVESTATE_MENU_H
 
+#include <stddef.h>
 #include <stdint.h>
+#include "save_state_slots.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -40,14 +42,13 @@ extern "C" {
  * wire the overlay up and forget the part that does the work.
  */
 
-#define SNES_SAVESTATE_SLOTS 12
-
-/* Panel dimensions. 2x the SNES frame, so it overlays the game texture with
- * the same destination rect and needs no aspect correction of its own. */
+/* Raster dimensions. Present at a centered 4:3 display aspect, independent
+ * of the game's widescreen setting. */
 #define SNES_SSM_W 512
 #define SNES_SSM_H 448
 
 int  snes_savestate_menu_is_open(void);
+int  snes_savestate_menu_selected(void);
 
 /* Mask out any button that was still held when the menu closed, until it is
  * released. Call once per frame on seat 0's word and pass the result to both
@@ -76,9 +77,34 @@ void snes_savestate_menu_close(void);
  * thumbnail is of the game and not of the overlay. */
 void snes_savestate_menu_note_frame(const uint32_t *fb, int w, int h);
 
+/* A successful host save updates the same thumbnail/browser entry as a save
+ * made in this menu. Accepts numbered slots and SNES_SAVESTATE_QUICK_SLOT. */
+void snes_savestate_menu_note_slot_saved(int slot);
+
+/* Center a 4:3 panel in physical display pixels. */
+void snes_savestate_menu_viewport(int width, int height,
+                                 int *x, int *y, int *w, int *h);
+
+/* Optional: the picture the player actually sees, when a title composes its
+ * own (e.g. a co-op renderer that draws the second player over the PPU
+ * frame). Called while the game is paused, as a slot is written; fills `dst`
+ * (capacity `cap` pixels, XRGB, rows packed) and sets its size. Returns 0 to
+ * keep the PPU frame noted above. */
+typedef int (*SnesSavestateComposeFn)(uint32_t *dst, size_t cap, int *w, int *h);
+void snes_savestate_menu_set_compose(SnesSavestateComposeFn compose);
+
 /* The rasterized panel, ARGB8888, SNES_SSM_W x SNES_SSM_H. Returns 0 and
  * nulls the outputs when the menu is closed. */
 int  snes_savestate_menu_overlay_image(const uint32_t **pixels, int *w, int *h);
+
+/* Netplay's synchronized pause menu (snes_netplay.c) drives these on every
+ * peer. On a guest the menu is a read-only mirror of the host's. */
+void snes_savestate_menu_netplay_show(void);
+void snes_savestate_menu_netplay_hide(void);
+void snes_savestate_menu_netplay_cursor(int slot);
+void snes_savestate_menu_netplay_status(const char *fmt, int slot);
+/* Write the current state and thumbnail to `slot` on this peer. */
+int  snes_savestate_menu_netplay_write_slot(int slot);
 
 #ifdef __cplusplus
 }

@@ -255,11 +255,16 @@ def _compute_dominance_frontier(
     return {n: frozenset(s) for n, s in df_sets.items()}
 
 
-def build_cfg(graph: FunctionDecodeGraph, *, instruction_blocks=False) -> V2CFG:
+def build_cfg(graph: FunctionDecodeGraph, *, instruction_blocks=False,
+              extra_leader_pcs=None) -> V2CFG:
     """Build a V2CFG from a v2-decoded function graph.
 
     Block keys are DecodeKeys (pc, m, x). Same pc with different
     (m, x) is two distinct blocks.
+
+    `extra_leader_pcs`: 16-bit PCs that must start a block wherever they are
+    decoded, even mid-run (an `entry_hook` site reached by fall-through).
+    Splitting a block changes no semantics; it only places a block boundary.
     """
     # Reverse-edge map: for each key, which keys cite it as a successor?
     preds: Dict[DecodeKey, List[DecodeKey]] = defaultdict(list)
@@ -268,6 +273,9 @@ def build_cfg(graph: FunctionDecodeGraph, *, instruction_blocks=False) -> V2CFG:
             preds[s].append(key)
 
     leaders = set(graph.insns) if instruction_blocks else _identify_leaders(graph, preds)
+    if extra_leader_pcs:
+        leaders |= {key for key in graph.insns
+                    if (key.pc & 0xFFFF) in extra_leader_pcs}
     blocks = _build_blocks(graph, leaders)
     idom = _compute_dominators(blocks, graph.entry)
     df = _compute_dominance_frontier(blocks, idom)

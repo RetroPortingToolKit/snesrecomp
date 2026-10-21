@@ -1,4 +1,5 @@
 #include "common_cpu_infra.h"
+#include "audio_trace.h"
 #include "framedump.h"
 #include "types.h"
 #include "common_rtl.h"
@@ -74,6 +75,12 @@ void RtlRegisterGame(const RtlGameInfo *info) {
    * "auto" base-from-ROM-name mode. */
   msu1_init();
 
+}
+
+/* The audio trace's port ring stamps each event with the beam position. */
+static void snes_beam_probe_for_audio_trace(uint16_t *vpos, uint16_t *hpos) {
+  *vpos = g_snes ? g_snes->vPos : 0;
+  *hpos = g_snes ? g_snes->hPos : 0;
 }
 
 uint8_t *SnesRomPtr(uint32 v) {
@@ -1078,6 +1085,7 @@ Snes *SnesInit(const uint8 *data, int data_size) {
   g_snes_cpu = g_snes->cpu;
   g_dma = g_snes->dma;
   g_ppu = g_snes->ppu;
+  audio_trace_set_beam_probe(snes_beam_probe_for_audio_trace);
 
   if (data_size != 0) {
     bool loaded = snes_loadRom(g_snes, data, data_size);

@@ -11,6 +11,7 @@
 
 #if defined(SNESRECOMP_NET)
 #include "recomp_net/recomp_net.h"
+#include "snes_netplay_diagnostic_state.h"
 /*
  * Rollback is an optional build (snesrecomp_enable_rollback). A game that
  * links netplay without it must still compile, so everything the rollback
@@ -35,10 +36,19 @@ static inline uint32_t snes_netplay_rb_sim_tick(void) { return 0; }
 static inline int  snes_netplay_rb_quiesced(void) { return 0; }
 static inline int  snes_netplay_rb_draining(void) { return 0; }
 static inline const char *snes_netplay_rb_refusal(void) { return NULL; }
+static inline void snes_netplay_rb_set_hold(uint32_t tick) { (void)tick; }
+static inline void snes_netplay_rb_clear_hold(void) {}
+static inline int  snes_netplay_rb_hold_settled(void) { return 0; }
+static inline const char *snes_netplay_rb_stall_tag(void) { return "none"; }
 #endif
 #include "common_rtl.h"
 #include "common_cpu_infra.h"
+#include "snes_savestate_menu.h"
+#include "snes_osd.h"
 #if defined(SNES_HAS_LOBBY_CLIENT)
+#if defined(RNET_ENABLE_ICE)
+#include "recomp_net/host_ice.h" /* rnet_host_ice_destroy_agent */
+#endif
 #include "snes_lobby_client.h"
 #endif
 #include "desktop/sdl_compat.h"
@@ -181,6 +191,14 @@ void snes_netplay_clear_return_to_lobby(void) { g_return_to_lobby_stub = 0; }
 const char *snes_netplay_refusal(void) { return NULL; }
 
 int  snes_netplay_is_host(void) { return 0; }
+int snes_netplay_menu_open(void) { return 0; }
+int snes_netplay_menu_paused(void) { return 0; }
+int snes_netplay_menu_ready(void) { return 0; }
+int snes_netplay_menu_idle(void) { return 0; }
+void snes_netplay_menu_cursor(int slot) { (void)slot; }
+int snes_netplay_menu_save(int slot) { (void)slot; return 0; }
+int snes_netplay_menu_load(int slot) { (void)slot; return 0; }
+int snes_netplay_menu_close(void) { return 0; }
 int  snes_netplay_request_save(int slot)
 {
     (void)slot;
@@ -193,6 +211,12 @@ int  snes_netplay_request_load(int slot)
 }
 int  snes_netplay_state_barrier(void) { return 0; }
 void snes_netplay_diag_tick(void) {}
+void snes_netplay_log_peer_disconnect(uint32_t timeout_ms) { (void)timeout_ms; }
+void snes_netplay_note_slow_operation(const char *operation, uint64_t elapsed_ms)
+{
+    (void)operation;
+    (void)elapsed_ms;
+}
 
 #else /* SNESRECOMP_NET */
 
@@ -224,11 +248,28 @@ typedef struct {
     uint8_t      host_sync[2];       /* game-defined slot-0 sync bytes */
     int          host_sync_valid;
     int          use_ice;
+    int          ice_hub;     /* adopted waiting-room ICE agents */
     int          guest_sandbox;      /* save root redirected to saves/netplay */
     int          sram_sync_sent;     /* host: SRAM blob transfer started */
     int          sram_sync_done;     /* both: initial SRAM sync finished */
     int          host_sram_applied;  /* host already has live SRAM */
     /* LOAD sync FSM (MotK-style probe → optional xfer → ready → hard_resync). */
+    int          menu;               /* NP_MENU_* (synchronized pause menu) */
+    uint32_t     menu_serial;
+    uint32_t     menu_started_ms;
+    uint32_t     hold_tick;          /* every peer pauses on this tick */
+    int          hold_active;
+    int          menu_reset_epoch;   /* a peer's state was replaced: new epoch on resume */
+    int          menu_resynced;      /* input rings already cleared for that epoch */
+    int          menu_cmd;           /* host: command of the open control probe */
+    uint32_t     menu_arg;
+    uint32_t     menu_seq;           /* host: makes every command's probe distinct */
+    rnet_u32     menu_done_cmd;      /* guest: last command acted on (retransmits) */
+    int          menu_cursor, menu_cursor_sent;
+    int          menu_pending_op, menu_pending_slot;
+    uint8_t     *menu_blob;          /* host: snapshot at the hold tick */
+    size_t       menu_blob_size;
+    rnet_u32     menu_hash;
     int          xfer;               /* NP_XFER_* */
     int          xfer_slot;
     int          load_applied_local; /* snapshot applied; waiting ready/resync */
@@ -255,6 +296,9 @@ typedef struct {
     unsigned     ice_turn_port;
     int          diag_session; /* bumped each start; resets diag file */
     uint32_t     frames_finished; /* RtlRunFrame + finish_frame count */
+    NetplayDiagnosticState timing;
+    char         last_slow_operation[48];
+    char         max_slow_operation[48];
 } NetplayState;
 
 static NetplayState g_np;
@@ -287,6 +331,104 @@ static void np_apply_published(const uint16_t *buttons, int slots)
  * after the rollback host starts cleanly, so a failed start falls back to
  * delay-sync rather than leaving the session with no admit path at all. */
 static int g_np_rollback;
+
+static uint64_t np_diagnostic_clock_ms(void)
+{
+    uint64_t counter = SDL_GetPerformanceCounter();
+    uint64_t frequency = SDL_GetPerformanceFrequency();
+    /* Divide first so a long machine uptime cannot overflow counter*1000. */
+    return frequency ? (counter / frequency) * 1000u +
+                       (counter % frequency) * 1000u / frequency
+                     : (uint64_t)SDL_GetTicks();
+}
+
+static void np_diagnostic_slow(const char *kind, const char *operation,
+                                uint64_t elapsed_ms)
+{
+    RNetSessionStats st;
+    rnet_session_get_stats(g_np.session, &st);
+    fprintf(stderr,
+            "snes_netplay: local_slow kind=%s operation=%.47s elapsed_ms=%llu "
+            "monotonic_ms=%llu session=%u slot=%d transport=%s sim=%u "
+            "peer_rx_age_ms=%llu peer_gone=%d remote_wire=%u "
+            "pump_gap_max_ms=%llu pump_duration_max_ms=%llu\n",
+            kind, operation, (unsigned long long)elapsed_ms,
+            (unsigned long long)np_diagnostic_clock_ms(),
+            (unsigned)g_np.session_id, g_np.local_slot,
+            snes_netplay_transport_name(), (unsigned)st.sim_tick,
+            (unsigned long long)st.last_peer_rx_age_ms, st.peer_gone,
+            (unsigned)st.highest_remote_wire,
+            (unsigned long long)g_np.timing.max_gap_ms,
+            (unsigned long long)g_np.timing.max_duration_ms);
+}
+
+void snes_netplay_note_slow_operation(const char *operation, uint64_t elapsed_ms)
+{
+    uint64_t now;
+    if (!snes_netplay_active() || elapsed_ms < NP_SLOW_MS) return;
+    g_np.timing.operation_ms = elapsed_ms;
+    snprintf(g_np.last_slow_operation, sizeof(g_np.last_slow_operation), "%s",
+             operation && operation[0] ? operation : "unknown");
+    if (elapsed_ms > g_np.timing.max_operation_ms) {
+        g_np.timing.max_operation_ms = elapsed_ms;
+        snprintf(g_np.max_slow_operation, sizeof(g_np.max_slow_operation), "%s",
+                 g_np.last_slow_operation);
+    }
+    now = np_diagnostic_clock_ms();
+    if (np_diagnostic_report(&g_np.timing, NP_REPORT_OPERATION, elapsed_ms, now))
+        np_diagnostic_slow("operation", g_np.last_slow_operation, elapsed_ms);
+}
+
+void snes_netplay_log_peer_disconnect(uint32_t timeout_ms)
+{
+    RNetSessionStats st;
+    uint64_t budget, now;
+    const char *reason, *stall;
+    if (!snes_netplay_active() || g_np.timing.termination_logged) return;
+    if (!timeout_ms) timeout_ms = 1500u;
+    if (!snes_netplay_peer_disconnected(timeout_ms)) return;
+    rnet_session_get_stats(g_np.session, &st);
+    reason = np_diagnostic_disconnect_reason(&st);
+    budget = st.peer_gone ? 0 : timeout_ms;
+    if (!strcmp(reason, "initial_link_budget")) {
+        budget = (uint64_t)timeout_ms * 60u;
+        if (budget < 90000u) budget = 90000u;
+    }
+    now = np_diagnostic_clock_ms();
+    stall = g_np_rollback ? snes_netplay_rb_stall_tag() : rnet_admit_stall_name(st.last_stall);
+    g_np.timing.termination_logged = 1;
+    fprintf(stderr,
+            "snes_netplay: peer_disconnect_detail reason=%s timeout_ms=%u "
+            "effective_budget_ms=%llu monotonic_ms=%llu session=%u slot=%d "
+            "transport=%s sim=%u frames_finished=%u peer_rx_age_ms=%llu "
+            "peer_gone=%d peer_gone_mask=%08x remote_wire=%u remote_lead=%d "
+            "packets_rx=%u input_bundle_attempts=%u stall=%s "
+            "session_age_ms=%llu pump_gap_ms=%llu pump_gap_max_ms=%llu "
+            "last_slow_pump_gap_ms=%llu pump_duration_ms=%llu "
+            "pump_duration_max_ms=%llu slow_operation=%.47s "
+            "slow_operation_ms=%llu slow_operation_max_ms=%llu "
+            "slow_operation_max_name=%.47s\n",
+            reason, (unsigned)timeout_ms, (unsigned long long)budget,
+            (unsigned long long)now, (unsigned)g_np.session_id, g_np.local_slot,
+            snes_netplay_transport_name(), (unsigned)st.sim_tick,
+            (unsigned)g_np.frames_finished,
+            (unsigned long long)st.last_peer_rx_age_ms, st.peer_gone,
+            (unsigned)st.peer_gone_mask, (unsigned)st.highest_remote_wire,
+            st.remote_lead, (unsigned)st.packets_rx, (unsigned)st.input_bundle_sends,
+            stall ? stall : "unknown",
+            (unsigned long long)(now >= g_np.timing.session_started_ms
+                                     ? now - g_np.timing.session_started_ms : 0),
+            (unsigned long long)g_np.timing.gap_ms,
+            (unsigned long long)g_np.timing.max_gap_ms,
+            (unsigned long long)g_np.timing.last_slow_gap_ms,
+            (unsigned long long)g_np.timing.duration_ms,
+            (unsigned long long)g_np.timing.max_duration_ms,
+            g_np.last_slow_operation[0] ? g_np.last_slow_operation : "none",
+            (unsigned long long)g_np.timing.operation_ms,
+            (unsigned long long)g_np.timing.max_operation_ms,
+            g_np.max_slow_operation[0] ? g_np.max_slow_operation : "none");
+    fflush(stderr); /* Preserve the final observation before session teardown. */
+}
 
 /* Rollback resolves each seat's row itself (wire row or hold-last invent) and
  * hands the result back here, so snes_netplay_published_inputs() reads the
@@ -467,6 +609,8 @@ static int resolve_use_ice(const SnesNetplayConfig *cfg)
     int in_motk_room = 0;
 
     if (cfg->transport == 2) return 0; /* force LAN */
+    /* Host relay over ICE: the agents are adopted, not negotiated here. */
+    if (cfg->transport_ice_hub) return 0;
     /* Host relay (2026-10-01): the server launched transport "host" -- the
      * host binds its advertised port and every guest dials it. That is the
      * LAN transport (accept-first / hub), chosen by the server after each
@@ -557,6 +701,7 @@ const char *snes_netplay_transport_name(void)
 {
     if (!snes_netplay_active()) return "none";
     if (g_np.use_ice) return "ice";
+    if (g_np.ice_hub) return "ice_hub";
     /* "lan" and "relay" are the same UDP transport; they are not the same
      * thing to read in a log when a match misbehaves. */
     return g_np.force_input_relay ? "relay" : "lan";
@@ -603,6 +748,11 @@ uint32_t snes_netplay_frames_finished(void)
 void snes_netplay_stage_local(uint16_t buttons)
 {
     buttons &= 0x0FFFu;
+    /* While the synchronized menu is up -- including the few ticks every
+     * peer still runs to reach the pause tick -- menu navigation must not
+     * become game input. */
+    if (snes_netplay_active() && g_np.menu)
+        buttons = 0;
     if (g_np_rollback) {
         snes_netplay_rb_stage_local(buttons);
         g_np.staged_buttons = buttons;
@@ -770,6 +920,9 @@ int snes_netplay_start(const SnesNetplayConfig *cfg)
 
     g_np.session = rnet_session_create(&rcfg, &host);
     if (!g_np.session) return -2;
+    np_diagnostic_reset(&g_np.timing, np_diagnostic_clock_ms());
+    g_np.last_slow_operation[0] = '\0';
+    g_np.max_slow_operation[0] = '\0';
 
     if (use_ice) {
 #if defined(RNET_ENABLE_ICE)
@@ -929,7 +1082,52 @@ int snes_netplay_start(const SnesNetplayConfig *cfg)
 #endif
     }
 
-    if (!use_ice) {
+    if (cfg->transport_ice_hub) {
+        /* The lobby's waiting room already connected these agents (recomp-net
+         * host_ice.h); adopt them rather than bind or dial anything. Before
+         * this the launch fell through to LAN with an empty bind and peer, so
+         * both peers waited on nothing behind a black screen. Session slots
+         * are SEAT-mapped here (snes_host_lobby.c), so a guest's lobby seat is
+         * its session slot and the hub must be session slot 0. */
+        int rc = -1;
+        const char *why = "ice_hub: this build has no ICE lobby support";
+#if defined(SNES_HAS_LOBBY_CLIENT) && defined(RNET_ENABLE_ICE)
+        if (rcfg.local_slot == 0) {
+            RNetLobbyIceSeat seat[RNET_MAX_SLOTS];
+            RNetIceAdoptSeat adopt[RNET_MAX_SLOTS];
+            int n = rnet_lobby_ice_take_hub(seat, RNET_MAX_SLOTS), k;
+            why = "ice_hub: no connected agents to take";
+            if (n == (int)rcfg.slot_count - 1) {
+                for (k = 0; k < n; k++) {
+                    adopt[k].slot = seat[k].lobby_slot;
+                    adopt[k].agent = seat[k].agent;
+                }
+                rc = rnet_session_start_ice_hub_adopt(g_np.session, adopt, n);
+                why = "ice_hub: the agents do not match the seated guests";
+            }
+            if (rc != 0) {
+                for (k = 0; k < n; k++)
+                    rnet_host_ice_destroy_agent(seat[k].agent);
+            }
+        } else {
+            RNetIceAgent *agent = rnet_lobby_ice_take_guest_agent();
+            why = "ice_hub: no connected agent to the host";
+            if (agent) {
+                rc = rnet_session_adopt_ice_agent(g_np.session, agent);
+                if (rc != 0) rnet_host_ice_destroy_agent(agent);
+            }
+        }
+        if (rc != 0 && rnet_lobby_ice_launch_error()[0])
+            why = rnet_lobby_ice_launch_error();
+#endif
+        if (rc != 0) {
+            fprintf(stderr, "snes_netplay: %s (slot %u of %u)\n", why,
+                    (unsigned)rcfg.local_slot, (unsigned)rcfg.slot_count);
+            rnet_session_destroy(g_np.session);
+            g_np.session = NULL;
+            return -3;
+        }
+    } else if (!use_ice) {
         /* Host relay with 3+ seats: the host is the hub (recomp-net fans the
          * guests' rows out); every guest dials it. Two seats stay the plain
          * pair (host accept-first). LAN rooms are two seats and unaffected. */
@@ -959,6 +1157,7 @@ int snes_netplay_start(const SnesNetplayConfig *cfg)
     g_np.host_sync[0] = g_np.host_sync[1] = 0;
     memset(g_np.published, 0, sizeof(g_np.published));
     g_np.use_ice = use_ice;
+    g_np.ice_hub = cfg->transport_ice_hub ? 1 : 0;
     g_np.sram_sync_sent = 0;
     g_np.sram_sync_done = 0;
     g_np.host_sram_applied = 0;
@@ -1074,6 +1273,7 @@ void snes_netplay_shutdown(void)
         fprintf(stderr, "snes_netplay: guest restored personal save root -> %s\n",
                 RtlSaveRoot());
     }
+    free(g_np.menu_blob);
     memset(&g_np, 0, sizeof(g_np));
     snes_netplay_connect_wait_reset();
 }
@@ -1082,7 +1282,7 @@ static int np_read_slot_file(int slot, uint8_t **out, size_t *out_size);
 
 static int np_xfer_busy(void)
 {
-    if (g_np.xfer != NP_XFER_NONE)
+    if (g_np.menu || g_np.xfer != NP_XFER_NONE)
         return 1;
     return rnet_session_state_busy(g_np.session) ||
            rnet_session_state_take_ready(g_np.session, NULL, NULL, NULL, NULL);
@@ -1199,7 +1399,7 @@ static int np_read_slot_file(int slot, uint8_t **out, size_t *out_size)
         return -1;
     }
     sz = ftell(f);
-    if (sz <= 0 || (size_t)sz > 512u * 1024u) {
+    if (sz <= 0 || (size_t)sz > 8u * 1024u * 1024u - 8u) {
         fclose(f);
         return -1;
     }
@@ -1234,6 +1434,578 @@ static void np_apply_sram_blob(const void *data, size_t size)
     RtlWriteSram(); /* host → main; guest → sandbox */
 }
 
+/* ── Synchronized pause menu ────────────────────────────────────────────
+ *
+ * The host drives it; every peer pauses on the SAME tick, sees the menu,
+ * saves its OWN copy of a state, and checks that copy against the host's by
+ * hash. Only a peer whose hash differs receives the host's bytes (and, for a
+ * slot, its thumbnail). Guests keep their copies under saves/netplay/.
+ *
+ * Commands are size-0 probes on NP_CTL_SLOT with crc = cmd<<28 | arg. One
+ * probe is open at a time; every guest replies once it has acted on the
+ * command, and the host issues nothing new until all have.
+ *
+ *   HOLD(t)    every peer stops admitting at tick t (rollback: no prediction
+ *              while held, so t is final once reached).
+ *   SETTLE     answered once the peer stands at t. Only then does the host
+ *              probe its state hash at t (a sized probe stalls admission, so
+ *              it must not open while a guest is still approaching); the
+ *              mismatched guests get the host's state.
+ *   CURSOR(s)  guests mirror the host's selection.
+ *   SAVE(s)    every peer writes slot s itself; a hash probe of the file
+ *              follows, and mismatched guests get the host's file + thumb.
+ *   LOAD(s)    after a hash probe (and transfer) of slot s, every peer
+ *              applies its own verified copy.
+ *   RESUME(r)  every peer releases the hold. r=1 (a state was replaced on
+ *              some peer) restarts the input/rollback epoch instead, after
+ *   RESYNC     which first has every peer clear its input rings. A peer that
+ *              cleared them AFTER the others had primed the new epoch would
+ *              erase those primed wires and wait on them forever, so nobody
+ *              primes until everybody has cleared.
+ */
+#define NP_CTL_SLOT 255
+#define NP_CTL(cmd, arg) (((rnet_u32)(cmd) << 28) | ((rnet_u32)(arg) & 0x0FFFFFFFu))
+enum { NP_CMD_HOLD = 1, NP_CMD_SETTLE, NP_CMD_CURSOR, NP_CMD_SAVE, NP_CMD_LOAD, NP_CMD_RESUME,
+       NP_CMD_RESYNC };
+/* Non-HOLD arguments carry a sequence number above the 8-bit operand, so a
+ * second SAVE of the same slot is not mistaken for a retransmit. */
+#define NP_CMD_OPERAND(arg) ((arg) & 0xFFu)
+/* Ticks past the input delay: beyond the rollback prediction window, so no
+ * peer has simulated the hold tick when the command reaches it. */
+#define NP_HOLD_MARGIN 16u
+#define NP_MENU_TIMEOUT_MS 30000u
+#define NP_SLOT_BLOB_MAGIC 0x54534E50u /* 'PNST': state size, state, thumb */
+
+enum {
+    NP_MENU_OFF = 0,
+    NP_MENU_HOLD,        /* host: HOLD probe open */
+    NP_MENU_APPROACH,    /* running to the hold tick */
+    NP_MENU_SETTLE,      /* host: SETTLE probe open */
+    NP_MENU_VERIFY,      /* pause-state hash probe open (host) / unanswered (guest) */
+    NP_MENU_SYNC,        /* host state transfer to mismatched guests */
+    NP_MENU_READY,       /* browsing */
+    NP_MENU_CMD,         /* host: CURSOR/SAVE/LOAD/RESUME probe open */
+    NP_MENU_FILE_VERIFY, /* host: slot hash probe open (SAVE/LOAD) */
+    NP_MENU_FILE_XFER    /* host: slot transfer to mismatched guests */
+};
+
+static void np_menu_fail(const char *reason)
+{
+    fprintf(stderr, "snes_netplay: menu sync failed: %s\n", reason);
+    snes_netplay_request_return_to_lobby();
+    g_np.menu = NP_MENU_APPROACH; /* Fail closed: never resume split state. */
+    g_np.menu_reset_epoch = 1;
+}
+
+static void np_menu_set_hold(uint32_t tick)
+{
+    g_np.hold_tick = tick;
+    g_np.hold_active = 1;
+    if (g_np_rollback) snes_netplay_rb_set_hold(tick);
+}
+
+/* The state at the hold tick is final on this peer, or this peer passed the
+ * tick before the command reached it (it then mismatches and is sent the
+ * host's state). */
+static int np_menu_settled(void)
+{
+    uint32_t sim = snes_netplay_sim_tick();
+    if (!g_np.hold_active) return 0;
+    if (sim > g_np.hold_tick) return 1;
+    if (g_np_rollback) return snes_netplay_rb_hold_settled();
+    return sim == g_np.hold_tick;
+}
+
+/* Validation knob (guest): SNES_NET_MENU_FORCE_MISMATCH=1 really diverges
+ * this peer once -- one WRAM byte at the first pause, one byte of the first
+ * saved slot, and the slot file is gone before the first load (an empty
+ * slot here, full on the host) -- so the transfer path, not a lucky match,
+ * is what a test sees repair it. Never set in play. */
+static int np_force_mismatch(int which)
+{
+    static int armed = -1, used;
+    if (armed < 0) {
+        const char *v = getenv("SNES_NET_MENU_FORCE_MISMATCH");
+        armed = v && v[0] && v[0] != '0';
+    }
+    if (!armed || (used & which)) return 0;
+    used |= which;
+    return 1;
+}
+
+/* The pause state: the rollback format (with its timing residue, which a
+ * plain savestate lacks -- a guest given only the host's savestate kept its
+ * own residue and the resumed match refused on the APU digest), written so
+ * equal states give equal bytes. */
+static int np_snapshot(uint8_t **out, size_t *size, rnet_u32 *crc)
+{
+    size_t cap = RtlSaveSnapshotToMemory(NULL, 0);
+    uint8_t *blob;
+    size_t n;
+    if (!cap) return 0;
+    cap += 1024u * 1024u; /* execution position + residue */
+    blob = (uint8_t *)malloc(cap);
+    if (!blob) return 0;
+    n = RtlNetplaySnapshotToMemory(blob, cap);
+    if (!n || !RtlNetplaySnapshotHashedBytes(n)) { free(blob); return 0; }
+    *out = blob; *size = n; *crc = rnet_checksum(blob, RtlNetplaySnapshotHashedBytes(n));
+    return 1;
+}
+
+static void np_thumb_path(int slot, char *buf, size_t cap)
+{
+    char sav[192];
+    RtlSaveSlotPath(slot, sav, sizeof(sav));
+    snprintf(buf, cap, "%s.thumb", sav);
+}
+
+/* Slot transfer payload: magic, state size, state bytes, thumbnail bytes. */
+static int np_slot_blob(int slot, uint8_t **out, size_t *out_size)
+{
+    uint8_t *state = NULL, *blob;
+    size_t state_size = 0, thumb_size = 0;
+    char path[256];
+    FILE *f;
+    if (np_read_slot_file(slot, &state, &state_size) != 0) return 0;
+    np_thumb_path(slot, path, sizeof(path));
+    f = fopen(path, "rb");
+    if (f) {
+        if (fseek(f, 0, SEEK_END) == 0) { long t = ftell(f); thumb_size = t > 0 ? (size_t)t : 0; }
+        rewind(f);
+    }
+    blob = (uint8_t *)malloc(8 + state_size + thumb_size);
+    if (!blob) { free(state); if (f) fclose(f); return 0; }
+    memcpy(blob, &(uint32_t){NP_SLOT_BLOB_MAGIC}, 4);
+    memcpy(blob + 4, &(uint32_t){(uint32_t)state_size}, 4);
+    memcpy(blob + 8, state, state_size);
+    if (f && thumb_size && fread(blob + 8 + state_size, 1, thumb_size, f) != thumb_size)
+        thumb_size = 0;
+    if (f) fclose(f);
+    free(state);
+    *out = blob; *out_size = 8 + state_size + thumb_size;
+    return 1;
+}
+
+static int np_store_slot_blob(int slot, const uint8_t *blob, size_t size)
+{
+    uint32_t magic, state_size;
+    char path[256];
+    FILE *f;
+    if (size < 8) return 0;
+    memcpy(&magic, blob, 4); memcpy(&state_size, blob + 4, 4);
+    if (magic != NP_SLOT_BLOB_MAGIC || state_size > size - 8) return 0;
+    if (np_write_slot_file(slot, blob + 8, state_size) != 0) return 0;
+    np_thumb_path(slot, path, sizeof(path));
+    if (size > 8 + (size_t)state_size && (f = fopen(path, "wb")) != NULL) {
+        fwrite(blob + 8 + state_size, 1, size - 8 - state_size, f);
+        fclose(f);
+    }
+    return 1;
+}
+
+static int np_ctl(int cmd, uint32_t arg)
+{
+    if (cmd != NP_CMD_HOLD)
+        arg = ((++g_np.menu_seq & 0xFFFFFu) << 8) | NP_CMD_OPERAND(arg);
+    if (rnet_session_state_probe(g_np.session, RNET_STATE_OP_SAVE, NP_CTL_SLOT, 0,
+                                 NP_CTL(cmd, arg)) != 0)
+        return 0;
+    g_np.menu_cmd = cmd;
+    g_np.menu_arg = arg;
+    g_np.menu_started_ms = SDL_GetTicks();
+    return 1;
+}
+
+/* Host: expected/matched seats of the probe that just completed. */
+static rnet_u32 np_probe_mismatch(void)
+{
+    rnet_u32 expect = 0, replied = 0, matched = 0;
+    rnet_session_state_probe_replies(g_np.session, &expect, &replied, &matched);
+    return expect & ~matched;
+}
+
+/* Host: send `blob` to the seats in `mismatch` only. */
+static int np_send_to(rnet_u8 op, int slot, const uint8_t *blob, size_t size, rnet_u32 mismatch)
+{
+    int seat;
+    rnet_u32 expect = 0, replied = 0, matched = 0;
+    rnet_session_state_probe_replies(g_np.session, &expect, &replied, &matched);
+    rnet_session_state_probe_finish(g_np.session);
+    if (rnet_session_state_begin(g_np.session, op, (rnet_u8)slot, blob, size) != 0)
+        return 0;
+    for (seat = 0; seat < SNES_NETPLAY_MAX_SLOTS; ++seat)
+        if ((expect & (1u << seat)) && !(mismatch & (1u << seat)))
+            (void)rnet_session_state_drop_peer(g_np.session, seat);
+    g_np.menu_started_ms = SDL_GetTicks();
+    return 1;
+}
+
+static void np_menu_resync(void)
+{
+    if (g_np.menu_resynced) return;
+    rnet_session_hard_resync(g_np.session);
+    g_np.menu_resynced = 1;
+}
+
+static void np_menu_resume(int reset_epoch)
+{
+    g_np.hold_active = 0;
+    if (g_np_rollback) snes_netplay_rb_clear_hold();
+    if (reset_epoch) {
+        np_menu_resync(); /* normally done already, at RESYNC */
+        if (g_np_rollback && !snes_netplay_rb_start()) {
+            np_menu_fail("rollback restart");
+            return;
+        }
+        g_np.needs_advance = g_np.latched_for_tick = g_np.staged_valid = 0;
+        g_np.host_sync_valid = 0;
+        memset(g_np.published, 0, sizeof(g_np.published));
+        np_prime_after_hard_resync();
+        RtlNetplayAudioReset();
+    }
+    g_np.menu = NP_MENU_OFF;
+    g_np.menu_reset_epoch = 0;
+    g_np.menu_resynced = 0;
+    snes_savestate_menu_netplay_hide();
+    fprintf(stderr, "snes_netplay: menu resumed serial=%u hold=%u epoch=%s\n",
+            g_np.menu_serial, (unsigned)g_np.hold_tick, reset_epoch ? "new" : "kept");
+}
+
+int snes_netplay_menu_paused(void) { return snes_netplay_active() && g_np.menu != NP_MENU_OFF; }
+int snes_netplay_menu_idle(void)
+{
+    return snes_netplay_active() && g_np.menu == NP_MENU_READY && !g_np.menu_pending_op &&
+           g_np.menu_cursor == g_np.menu_cursor_sent;
+}
+int snes_netplay_menu_ready(void)
+{
+    return snes_netplay_active() && (g_np.menu == NP_MENU_READY || g_np.menu == NP_MENU_CMD ||
+                                     g_np.menu == NP_MENU_FILE_VERIFY ||
+                                     g_np.menu == NP_MENU_FILE_XFER);
+}
+
+int snes_netplay_menu_open(void)
+{
+    uint32_t hold;
+    if (!snes_netplay_is_host() || !snes_netplay_is_running() || g_np.menu ||
+        np_xfer_busy() || !g_np.sram_sync_done) return 0;
+    hold = snes_netplay_sim_tick() + (uint32_t)snes_netplay_input_delay() + NP_HOLD_MARGIN;
+    if (!np_ctl(NP_CMD_HOLD, hold)) return 0;
+    ++g_np.menu_serial;
+    g_np.menu = NP_MENU_HOLD;
+    g_np.menu_reset_epoch = 0;
+    g_np.menu_cursor_sent = -1;
+    g_np.menu_pending_op = 0;
+    np_menu_set_hold(hold);
+    fprintf(stderr, "snes_netplay: menu serial=%u hold at tick %u (sim %u)\n",
+            g_np.menu_serial, (unsigned)hold, (unsigned)snes_netplay_sim_tick());
+    return 1;
+}
+
+void snes_netplay_menu_cursor(int slot)
+{
+    if (snes_netplay_is_host() && g_np.menu != NP_MENU_OFF) g_np.menu_cursor = slot;
+}
+
+static int np_menu_queue(int op, int slot)
+{
+    if (!snes_netplay_is_host() || g_np.menu != NP_MENU_READY || g_np.menu_pending_op)
+        return 0;
+    g_np.menu_pending_op = op;
+    g_np.menu_pending_slot = slot;
+    return 1;
+}
+int snes_netplay_menu_save(int slot) { return slot >= 0 && slot < 12 && np_menu_queue(NP_CMD_SAVE, slot); }
+int snes_netplay_menu_load(int slot) { return slot >= 0 && slot < 12 && np_menu_queue(NP_CMD_LOAD, slot); }
+int snes_netplay_menu_close(void)
+{
+    if (!snes_netplay_is_host() || g_np.menu == NP_MENU_OFF) return 0;
+    if (g_np.menu_pending_op != NP_CMD_RESUME && g_np.menu_pending_op) return 0;
+    g_np.menu_pending_op = NP_CMD_RESUME;
+    return 1;
+}
+
+static void np_menu_host_ready(void)
+{
+    g_np.menu = NP_MENU_READY;
+    snes_savestate_menu_netplay_show();
+}
+
+/* Host: start the next queued command (cursor first, so guests show the
+ * slot an operation names before it runs). */
+static void np_menu_host_next(void)
+{
+    rnet_u32 size = 0, crc = 0;
+    if (g_np.menu_cursor != g_np.menu_cursor_sent && g_np.menu_cursor >= 0) {
+        if (np_ctl(NP_CMD_CURSOR, (uint32_t)g_np.menu_cursor)) {
+            g_np.menu_cursor_sent = g_np.menu_cursor;
+            g_np.menu = NP_MENU_CMD;
+        }
+        return;
+    }
+    switch (g_np.menu_pending_op) {
+    case NP_CMD_SAVE:
+        /* Write ours first: the guests write theirs on receipt. */
+        if (!snes_savestate_menu_netplay_write_slot(g_np.menu_pending_slot) ||
+            !np_ctl(NP_CMD_SAVE, (uint32_t)g_np.menu_pending_slot)) {
+            snes_savestate_menu_netplay_status("SAVE FAILED: SLOT %02d", g_np.menu_pending_slot);
+            g_np.menu_pending_op = 0;
+            return;
+        }
+        g_np.menu = NP_MENU_CMD;
+        return;
+    case NP_CMD_LOAD:
+        if (!np_slot_crc(g_np.menu_pending_slot, &size, &crc) ||
+            rnet_session_state_probe(g_np.session, RNET_STATE_OP_LOAD,
+                                     (rnet_u8)g_np.menu_pending_slot, size, crc) != 0) {
+            snes_savestate_menu_netplay_status("LOAD FAILED: SLOT %02d", g_np.menu_pending_slot);
+            g_np.menu_pending_op = 0;
+            return;
+        }
+        g_np.menu_started_ms = SDL_GetTicks();
+        g_np.menu = NP_MENU_FILE_VERIFY;
+        return;
+    case NP_CMD_RESUME:
+        if (np_ctl(g_np.menu_reset_epoch && !g_np.menu_resynced ? NP_CMD_RESYNC : NP_CMD_RESUME,
+                   (uint32_t)g_np.menu_reset_epoch))
+            g_np.menu = NP_MENU_CMD;
+        return;
+    default:
+        return;
+    }
+}
+
+/* Host: a CURSOR/SAVE/LOAD/RESUME command has been answered by every guest. */
+static void np_menu_host_cmd_done(int all_ok)
+{
+    int slot = (int)NP_CMD_OPERAND(g_np.menu_arg);
+    rnet_u32 size = 0, crc = 0;
+    rnet_session_state_probe_finish(g_np.session);
+    g_np.menu = NP_MENU_READY;
+    switch (g_np.menu_cmd) {
+    case NP_CMD_SAVE:
+        /* Every peer wrote its own copy; now compare them with ours. */
+        if (!np_slot_crc(slot, &size, &crc) ||
+            rnet_session_state_probe(g_np.session, RNET_STATE_OP_SAVE, (rnet_u8)slot, size, crc) != 0) {
+            np_menu_fail("save verify probe");
+            return;
+        }
+        g_np.menu_started_ms = SDL_GetTicks();
+        g_np.menu = NP_MENU_FILE_VERIFY;
+        return;
+    case NP_CMD_LOAD:
+        if (!all_ok) { np_menu_fail("guest could not apply the slot"); return; }
+        g_np.menu_pending_op = 0;
+        if (!np_apply_slot_file(slot)) { np_menu_fail("host could not apply the slot"); return; }
+        g_np.menu_reset_epoch = 1;
+        fprintf(stderr, "snes_netplay: menu load slot=%d applied on every peer\n", slot);
+        snes_osd_push_slot_loaded(slot);
+        g_np.menu_pending_op = NP_CMD_RESUME; /* A load closes the menu. */
+        return;
+    case NP_CMD_RESYNC:
+        /* Every guest has cleared; clear ours, then let everyone prime. */
+        np_menu_resync();
+        return; /* NP_CMD_RESUME is still pending */
+    case NP_CMD_RESUME:
+        g_np.menu_pending_op = 0;
+        np_menu_resume((int)NP_CMD_OPERAND(g_np.menu_arg));
+        return;
+    default:
+        return;
+    }
+}
+
+static void np_menu_drive(void)
+{
+    int match = 0;
+    rnet_u32 mismatch;
+    if (g_np.menu == NP_MENU_OFF || g_np.local_slot != 0) return;
+    if (g_np.menu != NP_MENU_READY &&
+        (uint32_t)(SDL_GetTicks() - g_np.menu_started_ms) > NP_MENU_TIMEOUT_MS) {
+        np_menu_fail("timeout");
+        return;
+    }
+    switch (g_np.menu) {
+    case NP_MENU_HOLD:
+        if (!rnet_session_state_probe_take_reply(g_np.session, &match)) return;
+        rnet_session_state_probe_finish(g_np.session);
+        g_np.menu = NP_MENU_APPROACH;
+        g_np.menu_started_ms = SDL_GetTicks();
+        return;
+    case NP_MENU_APPROACH:
+        if (!np_menu_settled()) return;
+        if (!np_ctl(NP_CMD_SETTLE, 0)) return;
+        g_np.menu = NP_MENU_SETTLE;
+        return;
+    case NP_MENU_SETTLE: {
+        uint8_t *blob = NULL;
+        size_t size = 0;
+        rnet_u32 crc = 0;
+        if (!rnet_session_state_probe_take_reply(g_np.session, &match)) return;
+        rnet_session_state_probe_finish(g_np.session);
+        if (!np_snapshot(&blob, &size, &crc)) { np_menu_fail("snapshot"); return; }
+        free(g_np.menu_blob);
+        g_np.menu_blob = blob; g_np.menu_blob_size = size; g_np.menu_hash = crc;
+        if (rnet_session_state_probe(g_np.session, RNET_STATE_OP_MENU, 0, (rnet_u32)size, crc) != 0) {
+            np_menu_fail("verify probe"); return;
+        }
+        g_np.menu = NP_MENU_VERIFY;
+        g_np.menu_started_ms = SDL_GetTicks();
+        return;
+    }
+    case NP_MENU_VERIFY:
+        if (!rnet_session_state_probe_take_reply(g_np.session, &match)) return;
+        mismatch = np_probe_mismatch();
+        fprintf(stderr, "snes_netplay: menu paused at tick %u hash=%08x peers %s\n",
+                (unsigned)g_np.hold_tick, (unsigned)g_np.menu_hash,
+                mismatch ? "MISMATCH - sending host state" : "match");
+        if (!mismatch) {
+            rnet_session_state_probe_finish(g_np.session);
+            np_menu_host_ready();
+            return;
+        }
+        if (!np_send_to(RNET_STATE_OP_MENU, 0, g_np.menu_blob, g_np.menu_blob_size, mismatch)) {
+            np_menu_fail("state transfer"); return;
+        }
+        g_np.menu_reset_epoch = 1;
+        g_np.menu = NP_MENU_SYNC;
+        return;
+    case NP_MENU_READY:
+        if (g_np.menu_pending_op || g_np.menu_cursor != g_np.menu_cursor_sent)
+            np_menu_host_next();
+        return;
+    case NP_MENU_CMD:
+        if (!rnet_session_state_probe_take_reply(g_np.session, &match)) return;
+        np_menu_host_cmd_done(match);
+        return;
+    case NP_MENU_FILE_VERIFY: {
+        uint8_t *blob = NULL;
+        size_t size = 0;
+        int slot = g_np.menu_pending_op == NP_CMD_LOAD ? g_np.menu_pending_slot
+                                                       : (int)NP_CMD_OPERAND(g_np.menu_arg);
+        if (!rnet_session_state_probe_take_reply(g_np.session, &match)) return;
+        mismatch = np_probe_mismatch();
+        fprintf(stderr, "snes_netplay: menu %s slot=%d verify peers %s\n",
+                g_np.menu_pending_op == NP_CMD_LOAD ? "load" : "save", slot,
+                mismatch ? "MISMATCH - sending host slot" : "match");
+        if (!mismatch) {
+            rnet_session_state_probe_finish(g_np.session);
+            g_np.menu = NP_MENU_READY;
+            goto file_verified;
+        }
+        if (!np_slot_blob(slot, &blob, &size) ||
+            !np_send_to(g_np.menu_pending_op == NP_CMD_LOAD ? RNET_STATE_OP_LOAD : RNET_STATE_OP_SAVE,
+                        slot, blob, size, mismatch)) {
+            free(blob);
+            np_menu_fail("slot transfer");
+            return;
+        }
+        free(blob);
+        g_np.menu = NP_MENU_FILE_XFER;
+        return;
+    }
+    default:
+        return;
+    }
+file_verified:
+    if (g_np.menu_pending_op == NP_CMD_LOAD) {
+        /* Every peer now holds the host's bytes: apply them together. */
+        if (np_ctl(NP_CMD_LOAD, (uint32_t)g_np.menu_pending_slot)) g_np.menu = NP_MENU_CMD;
+        else np_menu_fail("load command");
+        return;
+    }
+    g_np.menu_pending_op = 0;
+    snes_savestate_menu_netplay_status("SAVED SLOT %02d ON EVERY PEER",
+                                       (int)NP_CMD_OPERAND(g_np.menu_arg));
+    snes_osd_push_slot_saved((int)NP_CMD_OPERAND(g_np.menu_arg));
+}
+
+/* Host: an outbound SYNC/slot transfer finished on every receiver. */
+static void np_menu_host_xfer_done(void)
+{
+    if (g_np.menu == NP_MENU_SYNC) {
+        /* Apply the very bytes the guests applied, so every peer resumes from
+         * one restore path rather than the host from its live state. */
+        if (!RtlRollbackLoadFromMemory(g_np.menu_blob, g_np.menu_blob_size)) {
+            np_menu_fail("host could not apply its pause state");
+            return;
+        }
+        fprintf(stderr, "snes_netplay: menu state sent; every peer paused on host state\n");
+        np_menu_host_ready();
+        return;
+    }
+    if (g_np.menu == NP_MENU_FILE_XFER) {
+        g_np.menu = NP_MENU_READY;
+        if (g_np.menu_pending_op == NP_CMD_LOAD) {
+            if (np_ctl(NP_CMD_LOAD, (uint32_t)g_np.menu_pending_slot)) g_np.menu = NP_MENU_CMD;
+            else np_menu_fail("load command");
+            return;
+        }
+        g_np.menu_pending_op = 0;
+        snes_savestate_menu_netplay_status("SAVED SLOT %02d (SENT TO PEERS)",
+                                           (int)NP_CMD_OPERAND(g_np.menu_arg));
+        snes_osd_push_slot_saved((int)NP_CMD_OPERAND(g_np.menu_arg));
+    }
+}
+
+/* Guest: act on a host command; returns the reply (1 ok / 0 failed), or -1
+ * to leave the probe unanswered for now. */
+static int np_menu_guest_cmd(uint32_t crc)
+{
+    int cmd = (int)(crc >> 28);
+    uint32_t arg = crc & 0x0FFFFFFFu;
+    switch (cmd) {
+    case NP_CMD_HOLD:
+        if (g_np.menu != NP_MENU_OFF && g_np.hold_tick == arg) return 1; /* retransmit */
+        ++g_np.menu_serial;
+        g_np.menu = NP_MENU_APPROACH;
+        g_np.menu_reset_epoch = 0;
+        g_np.menu_started_ms = SDL_GetTicks();
+        np_menu_set_hold(arg);
+        fprintf(stderr, "snes_netplay: menu serial=%u hold at tick %u (sim %u%s)\n",
+                g_np.menu_serial, (unsigned)arg, (unsigned)snes_netplay_sim_tick(),
+                snes_netplay_sim_tick() > arg ? ", already past - host state will follow" : "");
+        return 1;
+    case NP_CMD_SETTLE:
+        return np_menu_settled() ? 1 : -1; /* answered once at the hold tick */
+    case NP_CMD_CURSOR:
+        snes_savestate_menu_netplay_cursor((int)NP_CMD_OPERAND(arg));
+        return 1;
+    case NP_CMD_SAVE:
+        if (g_np.menu_done_cmd == crc) return 1; /* retransmit */
+        g_np.menu_done_cmd = crc;
+        arg = NP_CMD_OPERAND(arg);
+        snes_savestate_menu_netplay_cursor((int)arg);
+        if (!snes_savestate_menu_netplay_write_slot((int)arg)) return 0;
+        fprintf(stderr, "snes_netplay: menu save slot=%u written locally\n", (unsigned)arg);
+        if (np_force_mismatch(2)) {
+            uint8_t *buf = NULL;
+            size_t n = 0;
+            if (np_read_slot_file((int)arg, &buf, &n) == 0 && n > 64) {
+                buf[n / 2] ^= 0x5A;
+                np_write_slot_file((int)arg, buf, n);
+                fprintf(stderr, "snes_netplay: menu FORCED save divergence (validation knob)\n");
+            }
+            free(buf);
+        }
+        return 1;
+    case NP_CMD_LOAD:
+        if (g_np.menu_done_cmd == crc) return 1;
+        g_np.menu_done_cmd = crc;
+        arg = NP_CMD_OPERAND(arg);
+        if (!np_apply_slot_file((int)arg)) return 0;
+        g_np.menu_reset_epoch = 1;
+        fprintf(stderr, "snes_netplay: menu load slot=%u applied\n", (unsigned)arg);
+        snes_osd_push_slot_loaded((int)arg);
+        return 1;
+    case NP_CMD_RESYNC:
+    case NP_CMD_RESUME:
+        return 1; /* acted on after the reply: see np_guest_handle_probe */
+    default:
+        return 1;
+    }
+}
+
 static void np_apply_ready_state(void)
 {
     rnet_u8 op = 0, slot = 0;
@@ -1246,10 +2018,53 @@ static void np_apply_ready_state(void)
         return;
     }
 
+    /* Host: its own menu transfer reached every receiver. */
+    if (g_np.local_slot == 0 && g_np.menu != NP_MENU_OFF &&
+        (op == RNET_STATE_OP_MENU || op == RNET_STATE_OP_SAVE || op == RNET_STATE_OP_LOAD)) {
+        rnet_session_state_finish(g_np.session, 0);
+        np_menu_host_xfer_done();
+        return;
+    }
+
+    if (op == RNET_STATE_OP_MENU) {
+        /* Guest whose state at the hold tick differed: take the host's. */
+        if (!RtlRollbackLoadFromMemory(data, size)) {
+            np_menu_fail("invalid snapshot");
+            return;
+        }
+        rnet_session_state_finish(g_np.session, 0);
+        g_np.menu_reset_epoch = 1;
+        g_np.menu = NP_MENU_READY;
+        fprintf(stderr, "snes_netplay: menu applied host state at tick %u (%zu bytes)\n",
+                (unsigned)g_np.hold_tick, size);
+        snes_savestate_menu_netplay_show();
+        return;
+    }
+
     if (op == RNET_STATE_OP_SAVE) {
-        /* Host already wrote immediately; guest stores into sandbox root. */
-        if (g_np.local_slot != 0)
-            np_write_slot_file((int)slot, data, size);
+        /* Menu saves carry the host's slot + thumbnail for a guest whose own
+         * copy differed; a legacy save is the raw snapshot. */
+        if (g_np.local_slot != 0) {
+            if (g_np.menu != NP_MENU_OFF) {
+                if (np_store_slot_blob((int)slot, (const uint8_t *)data, size)) {
+                    fprintf(stderr, "snes_netplay: menu save slot=%u replaced by host copy\n",
+                            (unsigned)slot);
+                    snes_savestate_menu_netplay_status("SLOT %02d: HOST COPY RECEIVED", (int)slot);
+                }
+            } else {
+                np_write_slot_file((int)slot, data, size);
+            }
+        }
+        rnet_session_state_finish(g_np.session, 0);
+        return;
+    }
+
+    if (op == RNET_STATE_OP_LOAD && g_np.menu != NP_MENU_OFF) {
+        /* Stored, not applied: every peer applies at the LOAD command. */
+        if (!np_store_slot_blob((int)slot, (const uint8_t *)data, size))
+            np_menu_fail("load slot transfer");
+        else
+            fprintf(stderr, "snes_netplay: menu load slot=%u received host copy\n", (unsigned)slot);
         rnet_session_state_finish(g_np.session, 0);
         return;
     }
@@ -1298,6 +2113,66 @@ static void np_guest_handle_probe(void)
         return;
     if (!rnet_session_state_probe_pending(g_np.session, &op, &slot, &size, &crc))
         return;
+
+    if (op == RNET_STATE_OP_SAVE && slot == NP_CTL_SLOT && size == 0) {
+        int reply = np_menu_guest_cmd(crc);
+        if (reply < 0) return; /* Not yet: the host retransmits until we answer. */
+        (void)rnet_session_state_probe_reply(g_np.session, reply);
+        if ((crc >> 28) == NP_CMD_RESYNC && g_np.menu != NP_MENU_OFF)
+            np_menu_resync();
+        if ((crc >> 28) == NP_CMD_RESUME && g_np.menu != NP_MENU_OFF)
+            np_menu_resume((int)NP_CMD_OPERAND(crc & 0x0FFFFFFFu));
+        return;
+    }
+
+    /* Pause verification: our state at the hold tick against the host's. */
+    if (op == RNET_STATE_OP_MENU && size != 0) {
+        uint8_t *blob = NULL;
+        size_t n = 0;
+        rnet_u32 local = 0;
+        if (g_np.menu == NP_MENU_OFF || !np_menu_settled()) return;
+        if (np_force_mismatch(1)) {
+            g_ram[0x1FFF0] ^= 0x5A;
+            fprintf(stderr, "snes_netplay: menu FORCED state divergence (validation knob)\n");
+        }
+        if (!np_snapshot(&blob, &n, &local)) return;
+        free(blob);
+        match = (rnet_u32)n == size && local == crc;
+        (void)rnet_session_state_probe_reply(g_np.session, match);
+        fprintf(stderr, "snes_netplay: menu paused at tick %u hash=%08x host=%08x %s\n",
+                (unsigned)snes_netplay_sim_tick(), (unsigned)local, (unsigned)crc,
+                match ? "match" : "MISMATCH - waiting for host state");
+        if (match) {
+            g_np.menu = NP_MENU_READY;
+            snes_savestate_menu_netplay_show();
+        } else {
+            g_np.menu = NP_MENU_VERIFY;
+        }
+        return;
+    }
+
+    /* Menu slot verification (SAVE after every peer wrote, LOAD before every
+     * peer applies): compare our own file; a mismatch is sent the host's. */
+    if ((op == RNET_STATE_OP_SAVE || op == RNET_STATE_OP_LOAD) && size != 0 &&
+        g_np.menu != NP_MENU_OFF) {
+        rnet_u32 local_sz = 0, local_crc = 0;
+        if (op == RNET_STATE_OP_LOAD && np_force_mismatch(4)) {
+            char path[256];
+            RtlSaveSlotPath((int)slot, path, sizeof(path));
+            remove(path);
+            fprintf(stderr, "snes_netplay: menu FORCED empty slot=%u (validation knob)\n",
+                    (unsigned)slot);
+        }
+        match = np_slot_crc((int)slot, &local_sz, &local_crc) && local_sz == size &&
+                local_crc == crc;
+        (void)rnet_session_state_probe_reply(g_np.session, match);
+        fprintf(stderr, "snes_netplay: menu %s slot=%u verify %s\n",
+                op == RNET_STATE_OP_SAVE ? "save" : "load", (unsigned)slot,
+                match ? "match" : "MISMATCH - waiting for host copy");
+        if (match && op == RNET_STATE_OP_SAVE)
+            snes_savestate_menu_netplay_status("SAVED SLOT %02d (VERIFIED)", (int)slot);
+        return;
+    }
 
     /* Post-load ready rendezvous. */
     if (op == RNET_STATE_OP_LOAD && size == 0 && crc == NP_LOAD_READY_CRC) {
@@ -1533,7 +2408,7 @@ int snes_netplay_state_barrier(void)
     RNetSessionStats st;
     if (!snes_netplay_active() || !g_np.session)
         return 0;
-    if (g_np.xfer != NP_XFER_NONE)
+    if (g_np.menu || g_np.xfer != NP_XFER_NONE)
         return 1;
     if (rnet_session_state_busy(g_np.session))
         return 1;
@@ -1790,6 +2665,12 @@ void snes_netplay_diag_tick(void)
 
 static void np_pump_session(void)
 {
+    uint64_t began = np_diagnostic_clock_ms(), ended;
+    np_diagnostic_pump_begin(&g_np.timing, began);
+    /* Observe the gap before pumping refreshes peer liveness; a recovered
+     * local stall must remain visible even when the queued packets are fresh. */
+    if (np_diagnostic_report(&g_np.timing, NP_REPORT_GAP, g_np.timing.gap_ms, began))
+        np_diagnostic_slow("pump_gap", "between_pumps", g_np.timing.gap_ms);
 #if defined(SNES_HAS_LOBBY_CLIENT)
     if (g_np.use_ice || snes_lobby_connected())
         snes_lobby_pump();
@@ -1799,8 +2680,14 @@ static void np_pump_session(void)
     np_guest_handle_probe();
     np_apply_ready_state();
     np_host_drive_load_xfer();
+    np_menu_drive();
     if (rnet_session_is_running(g_np.session))
         np_maybe_start_sram_sync();
+    ended = np_diagnostic_clock_ms();
+    np_diagnostic_pump_end(&g_np.timing, ended);
+    if (np_diagnostic_report(&g_np.timing, NP_REPORT_DURATION,
+                              g_np.timing.duration_ms, ended))
+        np_diagnostic_slow("pump_duration", "session_pump", g_np.timing.duration_ms);
 }
 
 void snes_netplay_pump(void)
@@ -1836,8 +2723,30 @@ int snes_netplay_poll_admit(void)
         snes_netplay_diag_tick();
         return 0;
     }
+    /* Synchronized pause: run to the hold tick (it admits nothing past it),
+     * so peers that opened behind the host still arrive there. A peer whose
+     * state was replaced, or one in a state transfer, does not run at all:
+     * the rollback history no longer describes its state. */
+    if (g_np.menu) {
+        int ok = 0;
+        if (!g_np.menu_reset_epoch && g_np.hold_active &&
+            !rnet_session_state_inbound_mask(g_np.session) &&
+            !rnet_session_state_pending_receivers(g_np.session)) {
+            if (g_np_rollback)
+                ok = snes_netplay_rb_poll_admit();
+            else if (rnet_session_sim_tick(g_np.session) < g_np.hold_tick &&
+                     !g_np.needs_advance &&
+                     rnet_session_try_admit(g_np.session, rnet_session_sim_tick(g_np.session))) {
+                g_np.needs_advance = 1;
+                snes_netplay_apply_host_sync();
+                ok = 1;
+            }
+        }
+        snes_netplay_diag_tick();
+        return ok;
+    }
     /* App-layer load barrier (probe / xfer / ready rendezvous). */
-    if (g_np.xfer != NP_XFER_NONE) {
+    if (rnet_session_state_busy(g_np.session) || g_np.xfer != NP_XFER_NONE) {
         snes_netplay_diag_tick();
         return 0;
     }

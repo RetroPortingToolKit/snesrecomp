@@ -13,6 +13,7 @@
 #include "snes/ppu.h"
 #include "snes/snes.h"
 #include "snes/superfx.h"
+#include "audio_trace.h"
 
 extern uint8_t g_ram[0x20000];
 extern Ppu *g_ppu;
@@ -195,6 +196,28 @@ int snes_state_dump(const char *dir, const char *tag, const uint8_t *pixels,
                 jobs[i].stop_master ? (long long)(jobs[i].stop_master - jobs[i].start_master) : -1LL,
                 (unsigned)jobs[i].pc24);
       fclose(f);
+    }
+  }
+
+  {
+    /* Everything the always-on port ring still holds: the recomp half of
+     * tools/mesen_scene's apu.tsv. */
+    static const char *const kName[] = {
+      "?", "?", "?", "?", "cpu_wr", "spc_rd", "spc_wr", "cpu_rd", "cpu_ap",
+    };
+    static AudioTracePortEvent ev[AUDIO_TRACE_PORT_RING];
+    uint64_t oldest = 0, total = 0;
+    uint32_t n = audio_trace_copy_port_events(0, AUDIO_TRACE_PORT_RING, ev,
+                                              &oldest, &total);
+    FILE *af = open_out(dir, tag, ".apu.tsv", "w");
+    if (af) {
+      fprintf(af, "# frame\tscanline\thclock\tevent\tport\tvalue\tsample\n");
+      for (uint32_t i = 0; i < n; i++)
+        fprintf(af, "%u\t%u\t%u\t%s\t%u\t%02X\t%llu\n", ev[i].frame,
+                ev[i].vpos, ev[i].hpos,
+                ev[i].type < sizeof(kName) / sizeof(kName[0]) ? kName[ev[i].type] : "?",
+                ev[i].port, ev[i].val, (unsigned long long)ev[i].sample_idx);
+      fclose(af);
     }
   }
 

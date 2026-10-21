@@ -221,10 +221,17 @@ static int m_install(const uint8_t *data, uint32_t len,
                                          ver, ver_cap, err, err_cap);
 }
 
+static int m_missing_files(void *ctx, const char *package_id, char *out,
+                           uint32_t cap)
+{
+  (void)ctx;
+  return snes_mod_runtime_missing_files_c(package_id, out, cap);
+}
+
 static const RecompNetplayModHooks g_snes_mods = {
   m_plan_rows, m_installed_rows, m_effective_set, m_set_cosmetic_allow,
   m_check_set, m_adopt_set, m_have_package, m_unapproved, m_exempted,
-  m_export, m_free, m_install, NULL
+  m_export, m_free, m_install, NULL, m_missing_files
 };
 #endif /* SNESRECOMP_ENABLE_MODS */
 

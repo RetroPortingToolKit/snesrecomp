@@ -1,0 +1,567 @@
+{
+  "framework_fix": "28823fcce1c12140930980b66c0d429e33053298",
+  "control_framework": "835c30e40b5d0890c276335e30ae61573c28112f",
+  "frames_per_arm": 76244,
+  "routes": [
+    {
+      "game": "alttp",
+      "route": "attract",
+      "frames": 6000,
+      "returncodes": [
+        0,
+        0
+      ],
+      "before_failures": {
+        "interpreter_step_cap": 0,
+        "scheduler_bail": 0,
+        "apu_sync_timeout": 0
+      },
+      "after_failures": {
+        "interpreter_step_cap": 0,
+        "scheduler_bail": 0,
+        "apu_sync_timeout": 0
+      },
+      "different_evidence": [],
+      "exact_match": true,
+      "no_new_failures": true,
+      "actual_frames_both": [
+        6000,
+        6000
+      ],
+      "evidence_present": true,
+      "unavailable_optional_evidence": [
+        "cpu.csv"
+      ]
+    },
+    {
+      "game": "alttp",
+      "route": "basic",
+      "frames": 6000,
+      "returncodes": [
+        0,
+        0
+      ],
+      "before_failures": {
+        "interpreter_step_cap": 0,
+        "scheduler_bail": 0,
+        "apu_sync_timeout": 0
+      },
+      "after_failures": {
+        "interpreter_step_cap": 0,
+        "scheduler_bail": 0,
+        "apu_sync_timeout": 0
+      },
+      "different_evidence": [],
+      "exact_match": true,
+      "no_new_failures": true,
+      "actual_frames_both": [
+        6000,
+        6000
+      ],
+      "evidence_present": true,
+      "unavailable_optional_evidence": []
+    },
+    {
+      "game": "mmx",
+      "route": "attract",
+      "frames": 12000,
+      "returncodes": [
+        0,
+        0
+      ],
+      "before_failures": {
+        "interpreter_step_cap": 0,
+        "scheduler_bail": 0,
+        "apu_sync_timeout": 0
+      },
+      "after_failures": {
+        "interpreter_step_cap": 0,
+        "scheduler_bail": 0,
+        "apu_sync_timeout": 0
+      },
+      "different_evidence": [],
+      "exact_match": true,
+      "no_new_failures": true,
+      "actual_frames_both": [
+        12000,
+        12000
+      ],
+      "evidence_present": true,
+      "unavailable_optional_evidence": []
+    },
+    {
+      "game": "mmx",
+      "route": "highway",
+      "frames": 12000,
+      "returncodes": [
+        0,
+        0
+      ],
+      "before_failures": {
+        "interpreter_step_cap": 0,
+        "scheduler_bail": 0,
+        "apu_sync_timeout": 0
+      },
+      "after_failures": {
+        "interpreter_step_cap": 0,
+        "scheduler_bail": 0,
+        "apu_sync_timeout": 0
+      },
+      "different_evidence": [],
+      "exact_match": true,
+      "no_new_failures": true,
+      "actual_frames_both": [
+        12000,
+        12000
+      ],
+      "evidence_present": true,
+      "unavailable_optional_evidence": []
+    },
+    {
+      "game": "sm",
+      "route": "attract",
+      "frames": 6000,
+      "returncodes": [
+        0,
+        0
+      ],
+      "before_failures": {
+        "interpreter_step_cap": 0,
+        "scheduler_bail": 0,
+        "apu_sync_timeout": 0
+      },
+      "after_failures": {
+        "interpreter_step_cap": 0,
+        "scheduler_bail": 0,
+        "apu_sync_timeout": 0
+      },
+      "different_evidence": [],
+      "exact_match": true,
+      "no_new_failures": true,
+      "actual_frames_both": [
+        6000,
+        6000
+      ],
+      "evidence_present": true,
+      "unavailable_optional_evidence": []
+    },
+    {
+      "game": "sm",
+      "route": "basic",
+      "frames": 6000,
+      "returncodes": [
+        0,
+        0
+      ],
+      "before_failures": {
+        "interpreter_step_cap": 0,
+        "scheduler_bail": 0,
+        "apu_sync_timeout": 0
+      },
+      "after_failures": {
+        "interpreter_step_cap": 0,
+        "scheduler_bail": 0,
+        "apu_sync_timeout": 0
+      },
+      "different_evidence": [],
+      "exact_match": true,
+      "no_new_failures": true,
+      "actual_frames_both": [
+        6000,
+        6000
+      ],
+      "evidence_present": true,
+      "unavailable_optional_evidence": []
+    },
+    {
+      "game": "sm",
+      "route": "ceres",
+      "frames": 16244,
+      "returncodes": [
+        0,
+        0
+      ],
+      "before_failures": {
+        "interpreter_step_cap": 0,
+        "scheduler_bail": 0,
+        "apu_sync_timeout": 1
+      },
+      "after_failures": {
+        "interpreter_step_cap": 0,
+        "scheduler_bail": 0,
+        "apu_sync_timeout": 1
+      },
+      "different_evidence": [],
+      "exact_match": true,
+      "no_new_failures": true,
+      "actual_frames_both": [
+        16244,
+        16244
+      ],
+      "evidence_present": true,
+      "unavailable_optional_evidence": []
+    },
+    {
+      "game": "smw",
+      "route": "attract",
+      "frames": 6000,
+      "returncodes": [
+        0,
+        0
+      ],
+      "before_failures": {
+        "interpreter_step_cap": 0,
+        "scheduler_bail": 0,
+        "apu_sync_timeout": 0
+      },
+      "after_failures": {
+        "interpreter_step_cap": 0,
+        "scheduler_bail": 0,
+        "apu_sync_timeout": 0
+      },
+      "different_evidence": [],
+      "exact_match": true,
+      "no_new_failures": true,
+      "actual_frames_both": [
+        6000,
+        6000
+      ],
+      "evidence_present": true,
+      "unavailable_optional_evidence": []
+    },
+    {
+      "game": "smw",
+      "route": "basic",
+      "frames": 6000,
+      "returncodes": [
+        0,
+        0
+      ],
+      "before_failures": {
+        "interpreter_step_cap": 0,
+        "scheduler_bail": 0,
+        "apu_sync_timeout": 0
+      },
+      "after_failures": {
+        "interpreter_step_cap": 0,
+        "scheduler_bail": 0,
+        "apu_sync_timeout": 0
+      },
+      "different_evidence": [],
+      "exact_match": true,
+      "no_new_failures": true,
+      "actual_frames_both": [
+        6000,
+        6000
+      ],
+      "evidence_present": true,
+      "unavailable_optional_evidence": []
+    }
+  ],
+  "builds": {
+    "smw": {
+      "game": "smw",
+      "arm": "cleanup",
+      "framework": "28823fcce1c12140930980b66c0d429e33053298",
+      "title": "8dedb2869414f20d1d86d34081be26594560cc15",
+      "ui": "01bff9477e6847b2281260f0a9526a85e45b8ba2",
+      "binary": "F:\\Projects\\_regression-review-20261014\\builds\\smw\\cleanup\\SuperMarioWorldSNESRecomp.exe",
+      "binary_sha256": "709c30be1f7d26fe6c07b46a2775f1a8db9f1b396a674330ae09f4714fb44caf",
+      "rom": "F:\\Projects\\_regression-review-20261014\\source\\smw\\smw.sfc",
+      "rom_sha256": "0838e531fe22c077528febe14cb3ff7c492f1f5fa8de354192bdff7137c27f5b",
+      "analyzer_sha256": "2e884a8e7f0f908317c60e1680a9cce8342f80905d734109c507776dc7163c10",
+      "generated_files": 104,
+      "cmake_command": [
+        "C:/msys64/mingw64/bin/cmake.exe",
+        "-S",
+        "F:\\Projects\\_regression-review-20261014\\source\\smw",
+        "-B",
+        "F:\\Projects\\_regression-review-20261014\\builds\\smw\\cleanup",
+        "-G",
+        "Ninja",
+        "-DCMAKE_BUILD_TYPE=Release",
+        "-DCMAKE_C_COMPILER=C:/msys64/mingw64/bin/gcc.exe",
+        "-DCMAKE_CXX_COMPILER=C:/msys64/mingw64/bin/g++.exe",
+        "-DCMAKE_MAKE_PROGRAM=C:/msys64/mingw64/bin/ninja.exe",
+        "-DPython3_EXECUTABLE=C:/Users/Matthew/AppData/Local/Programs/Python/Python312/python.exe",
+        "-DSNESRECOMP_ROOT=F:/Projects/snesrecomp/_fix-sm-callee-cleanup",
+        "-DRECOMP_UI_ROOT=F:/Projects/snesrecomp/MegamanXRecomp/recomp-ui",
+        "-DSNESRECOMP_ENABLE_TRACE=OFF",
+        "-DSNESRECOMP_SDL_BACKEND=SDL3",
+        "-DSNESRECOMP_SDL3_FETCH=OFF",
+        "-DBUILD_TESTING=OFF",
+        "-DSNESRECOMP_BUILD_VERSION=regression-171-173-cleanup"
+      ],
+      "generated_manifest_sha256": "42a1db86833a0577d8d94645b206905e9f7511f4644d6533faee1553523db835"
+    },
+    "alttp": {
+      "game": "alttp",
+      "arm": "cleanup",
+      "framework": "28823fcce1c12140930980b66c0d429e33053298",
+      "title": "7bf444ee2030ad935c8383e9b02854edc93a58f4",
+      "ui": "01bff9477e6847b2281260f0a9526a85e45b8ba2",
+      "binary": "F:\\Projects\\_regression-review-20261014\\builds\\alttp\\cleanup\\ZeldaALttPSNESRecomp.exe",
+      "binary_sha256": "0cb072c2b33a272559d0bb50557fe0e1bc29f604fc717ef15de38f417c9186fa",
+      "rom": "F:\\Projects\\_regression-review-20261014\\source\\alttp\\zelda.sfc",
+      "rom_sha256": "66871d66be19ad2c34c927d6b14cd8eb6fc3181965b6e517cb361f7316009cfb",
+      "analyzer_sha256": "2e884a8e7f0f908317c60e1680a9cce8342f80905d734109c507776dc7163c10",
+      "generated_files": 199,
+      "cmake_command": [
+        "C:/msys64/mingw64/bin/cmake.exe",
+        "-S",
+        "F:\\Projects\\_regression-review-20261014\\source\\alttp",
+        "-B",
+        "F:\\Projects\\_regression-review-20261014\\builds\\alttp\\cleanup",
+        "-G",
+        "Ninja",
+        "-DCMAKE_BUILD_TYPE=Release",
+        "-DCMAKE_C_COMPILER=C:/msys64/mingw64/bin/gcc.exe",
+        "-DCMAKE_CXX_COMPILER=C:/msys64/mingw64/bin/g++.exe",
+        "-DCMAKE_MAKE_PROGRAM=C:/msys64/mingw64/bin/ninja.exe",
+        "-DPython3_EXECUTABLE=C:/Users/Matthew/AppData/Local/Programs/Python/Python312/python.exe",
+        "-DSNESRECOMP_ROOT=F:/Projects/snesrecomp/_fix-sm-callee-cleanup",
+        "-DRECOMP_UI_ROOT=F:/Projects/snesrecomp/MegamanXRecomp/recomp-ui",
+        "-DSNESRECOMP_ENABLE_TRACE=OFF",
+        "-DSNESRECOMP_SDL_BACKEND=SDL3",
+        "-DSNESRECOMP_SDL3_FETCH=OFF",
+        "-DBUILD_TESTING=OFF",
+        "-DSNESRECOMP_BUILD_VERSION=regression-171-173-cleanup"
+      ],
+      "generated_manifest_sha256": "7c2c448432a562a18c00e4ba781b4bf24710546c21d06492e3cefa5257273703"
+    },
+    "sm": {
+      "game": "sm",
+      "arm": "fix",
+      "framework": "28823fcce1c12140930980b66c0d429e33053298",
+      "title": "76a6b0de1d4767702753178b4b0e03425b8b299c",
+      "ui": "01bff9477e6847b2281260f0a9526a85e45b8ba2",
+      "binary": "F:\\Projects\\_regression-review-20261014\\builds\\sm\\fix\\SuperMetroidSNESRecomp.exe",
+      "binary_sha256": "032c1b42d8ce9917622e0e1189ac66511ba704ea5d5ab40d21035032e9c9e0f6",
+      "rom": "F:\\Projects\\_regression-review-20261014\\source\\sm\\Super Metroid (Japan, USA) (En,Ja).sfc",
+      "rom_sha256": "12b77c4bc9c1832cee8881244659065ee1d84c70c3d29e6eaf92e6798cc2ca72",
+      "analyzer_sha256": "2e884a8e7f0f908317c60e1680a9cce8342f80905d734109c507776dc7163c10",
+      "generated_files": 333,
+      "cmake_command": [
+        "C:/msys64/mingw64/bin/cmake.exe",
+        "-S",
+        "F:\\Projects\\_regression-review-20261014\\source\\sm",
+        "-B",
+        "F:\\Projects\\_regression-review-20261014\\builds\\sm\\fix",
+        "-G",
+        "Ninja",
+        "-DCMAKE_BUILD_TYPE=Release",
+        "-DCMAKE_C_COMPILER=C:/msys64/mingw64/bin/gcc.exe",
+        "-DCMAKE_CXX_COMPILER=C:/msys64/mingw64/bin/g++.exe",
+        "-DCMAKE_MAKE_PROGRAM=C:/msys64/mingw64/bin/ninja.exe",
+        "-DPython3_EXECUTABLE=C:/Users/Matthew/AppData/Local/Programs/Python/Python312/python.exe",
+        "-DSNESRECOMP_ROOT=F:/Projects/snesrecomp/_fix-sm-callee-cleanup",
+        "-DRECOMP_UI_ROOT=F:/Projects/snesrecomp/MegamanXRecomp/recomp-ui",
+        "-DSNESRECOMP_ENABLE_TRACE=OFF",
+        "-DSNESRECOMP_SDL_BACKEND=SDL3",
+        "-DSNESRECOMP_SDL3_FETCH=OFF",
+        "-DBUILD_TESTING=OFF",
+        "-DSNESRECOMP_BUILD_VERSION=fix-sm-long-attract"
+      ],
+      "framework_diff": "",
+      "title_diff": "",
+      "generated_manifest_sha256": "cc15452b479fa49ff4ec1988ef4caf22aa4150b26178af3b4a8043eb49109676"
+    },
+    "mmx": {
+      "game": "mmx",
+      "arm": "cleanup",
+      "framework": "28823fcce1c12140930980b66c0d429e33053298",
+      "title": "38a39fde57e51d1d0f24b198ef6e206193cdc68b",
+      "ui": "41c88ffea852b970af8d50312620b17404e455ad",
+      "binary": "F:\\Projects\\_regression-review-20261014\\builds\\mmx\\cleanup\\MegaManXSNESRecomp.exe",
+      "binary_sha256": "4fe8146b977daa336a19f170a1b3a4ef2c7fa5fa7939ad0bc4c44c8c3837fde8",
+      "rom": "F:\\Projects\\_regression-review-20261014\\source\\mmx\\mmx.sfc",
+      "rom_sha256": "152eb370f988b33291d2dddfc48abb42bfa236a08ddc7362e07dd2795e3e37d0",
+      "analyzer_sha256": "2e884a8e7f0f908317c60e1680a9cce8342f80905d734109c507776dc7163c10",
+      "generated_files": 116,
+      "cmake_command": [
+        "C:/msys64/mingw64/bin/cmake.exe",
+        "-S",
+        "F:\\Projects\\_regression-review-20261014\\source\\mmx",
+        "-B",
+        "F:\\Projects\\_regression-review-20261014\\builds\\mmx\\cleanup",
+        "-G",
+        "Ninja",
+        "-DCMAKE_BUILD_TYPE=Release",
+        "-DCMAKE_C_COMPILER=C:/msys64/mingw64/bin/gcc.exe",
+        "-DCMAKE_CXX_COMPILER=C:/msys64/mingw64/bin/g++.exe",
+        "-DCMAKE_MAKE_PROGRAM=C:/msys64/mingw64/bin/ninja.exe",
+        "-DPython3_EXECUTABLE=C:/Users/Matthew/AppData/Local/Programs/Python/Python312/python.exe",
+        "-DSNESRECOMP_ROOT=F:/Projects/snesrecomp/_fix-sm-callee-cleanup",
+        "-DRECOMP_UI_ROOT=F:/Projects/_regression-review-20261014/ui-mmx",
+        "-DSNESRECOMP_ENABLE_TRACE=OFF",
+        "-DSNESRECOMP_SDL_BACKEND=SDL3",
+        "-DSNESRECOMP_SDL3_FETCH=OFF",
+        "-DBUILD_TESTING=OFF",
+        "-DSNESRECOMP_BUILD_VERSION=regression-171-173-cleanup"
+      ],
+      "generated_manifest_sha256": "62dfa287ca3bb8cd92741f7439d72d366dd86b82edaf100c7615ce9aed36ad75"
+    }
+  },
+  "long_attract": {
+    "stock-title": {
+      "frames": 20000,
+      "returncode": 0,
+      "runtime_failures": {
+        "interpreter_step_cap": 0,
+        "scheduler_bail": 0,
+        "apu_sync_timeout": 0
+      },
+      "last_nmi_counters": [
+        19847,
+        19848,
+        19849
+      ],
+      "evidence": {
+        "cpu.csv": "c574105508a6fcb1d0774db8107b3550d43c36b2e13fb2be555410c73daf9f74",
+        "frames/frame_019997.bmp": "0f1806c079963730e519135e1061cebbe861a43010fd513e787f5b67f601af18",
+        "frames/frame_019997_cgram.bin": "90207f8fa2fae0f5d3154a09053d73bae1de7dfb925c2567747d150d58a6df5b",
+        "frames/frame_019997_ppu.json": "ae94c2d08b00a46079bd3dc97bec70b2f2dc03920523009c7ccad7e301157a7a",
+        "frames/frame_019997_vram.bin": "ac9fa38e180dd7a7e4fd3d100b253687ae0d1ef0d21c3adf42c6a5852163193d",
+        "frames/frame_019997_wram.bin": "d508675097e4afc0a85da428c7327328581c2a9c664084fd2cec940adc1338cb",
+        "frames/frame_019998.bmp": "7a38fcd896cc13b3cdfd3192e3f30b3e8b808e7d3ad1f201c01efee1df67ef08",
+        "frames/frame_019998_cgram.bin": "9ec1dc92d85f21c28a1265ed967735482dd8a7ba73be489b615cfb935db9dafb",
+        "frames/frame_019998_ppu.json": "bb762a20c4a5d8590a4d6062e463249d99e96ec783cfbbf2ad26220f1a047ae6",
+        "frames/frame_019998_vram.bin": "ac9fa38e180dd7a7e4fd3d100b253687ae0d1ef0d21c3adf42c6a5852163193d",
+        "frames/frame_019998_wram.bin": "3922be722a18339996ae15010363a87e1f4eef69a4dc180cac41d366da0a1c17",
+        "frames/frame_019999.bmp": "3184374e70154882ede7300b66901de62533b27b2231db9ecfde7500a5e5bfa3",
+        "frames/frame_019999_cgram.bin": "90207f8fa2fae0f5d3154a09053d73bae1de7dfb925c2567747d150d58a6df5b",
+        "frames/frame_019999_ppu.json": "ac8385ae886532cdbaff6bb461cc5bd3b184553ade4830421efa7ec67c3d7263",
+        "frames/frame_019999_vram.bin": "ac9fa38e180dd7a7e4fd3d100b253687ae0d1ef0d21c3adf42c6a5852163193d",
+        "frames/frame_019999_wram.bin": "211369c56f4762223a25fef2c73fa8360a8a9ead202156ce1d687e0d75b44fa8",
+        "trace.jsonl": "76578601fdb367bd9eda23ee2babb10ef2146f7c6cf6604b73596b38f5901a58"
+      }
+    },
+    "stock-title-60k": {
+      "frames": 60000,
+      "returncode": 0,
+      "runtime_failures": {
+        "interpreter_step_cap": 0,
+        "scheduler_bail": 0,
+        "apu_sync_timeout": 0
+      },
+      "last_nmi_counters": [
+        59847,
+        59848,
+        59849
+      ],
+      "evidence": {
+        "cpu.csv": "0e5ef013981de17947815424038f432bd1aa22d935d301d40b4ae0ab647ddc5a",
+        "frames/frame_059997.bmp": "99013af2ad4c9d835da6cb36b3e539c1dd5b505d903907aea2dec58767feb6df",
+        "frames/frame_059997_cgram.bin": "d64a47501fd994fc3f546991ccd05d9ef01b75ac2cdc72a90142966f681a680a",
+        "frames/frame_059997_ppu.json": "744d397acced656dbdb80398dabdbb8c883067204936ae16ac8475b6ce7f8e43",
+        "frames/frame_059997_vram.bin": "ac095af4f0160062c7aa650a230ffe8f9724d16e40159a29c8954803159b3df8",
+        "frames/frame_059997_wram.bin": "f233b4405a19e9f0564a932d2d21cf903e4184bcbae818b5f6992a0737201d2f",
+        "frames/frame_059998.bmp": "c2fc128bea870259613e5e422fc7c7ba48df0c088097336556b3fe6832ba1ac6",
+        "frames/frame_059998_cgram.bin": "d8425287151b1ce54b0891d9dc2efb2f45fb7234d3a2a1fc1d9fcd60cc4274c4",
+        "frames/frame_059998_ppu.json": "3b99578606b4551a88bfd6a96984337e6b1a4c6f06afff5ce8764c5c333cc5a9",
+        "frames/frame_059998_vram.bin": "ac095af4f0160062c7aa650a230ffe8f9724d16e40159a29c8954803159b3df8",
+        "frames/frame_059998_wram.bin": "dd3f3542861a1283cdec92a302227d91e8c37ea33ef1c397af148dea1eb24303",
+        "frames/frame_059999.bmp": "fe600e328c85882f2d0577f7bbe3b727aaa445a82de896003a4829c45f1c66d5",
+        "frames/frame_059999_cgram.bin": "d45cfec15598fb896bdab2241e514850eabca323ddb259d0b94445df32105b6c",
+        "frames/frame_059999_ppu.json": "ccb06b591bc9715ee2d3ced0ced41321c9ef486e0d3f3ee5bd7ac0f5ae7ab0ec",
+        "frames/frame_059999_vram.bin": "ac095af4f0160062c7aa650a230ffe8f9724d16e40159a29c8954803159b3df8",
+        "frames/frame_059999_wram.bin": "8827d4952ede855d17cdad0aad3cb575299f5871ded51ca9ca88ae8dea75cc14",
+        "trace.jsonl": "24a60c9e1aca4ff2c52eeac12f0b08800aaeb6d264f3c8b3cf5bbc0cb9f9e2cf"
+      }
+    },
+    "oracle-current": {
+      "frames": 20000,
+      "returncode": 0,
+      "runtime_failures": {
+        "interpreter_step_cap": 0,
+        "scheduler_bail": 0,
+        "apu_sync_timeout": 0
+      },
+      "last_nmi_counters": [
+        19847,
+        19848,
+        19849
+      ],
+      "evidence": {
+        "cpu.csv": "ae654eb168b42e58772d9edd311dee15b3f2ae1330967a863a1bdf86ec53353f",
+        "frames/frame_019997.bmp": "0f1806c079963730e519135e1061cebbe861a43010fd513e787f5b67f601af18",
+        "frames/frame_019997_cgram.bin": "90207f8fa2fae0f5d3154a09053d73bae1de7dfb925c2567747d150d58a6df5b",
+        "frames/frame_019997_ppu.json": "ae94c2d08b00a46079bd3dc97bec70b2f2dc03920523009c7ccad7e301157a7a",
+        "frames/frame_019997_vram.bin": "ac9fa38e180dd7a7e4fd3d100b253687ae0d1ef0d21c3adf42c6a5852163193d",
+        "frames/frame_019997_wram.bin": "8c240a15dbf470bc4f00bddc5420d70a81221190093355233d1135943a9d41e7",
+        "frames/frame_019998.bmp": "7a38fcd896cc13b3cdfd3192e3f30b3e8b808e7d3ad1f201c01efee1df67ef08",
+        "frames/frame_019998_cgram.bin": "9ec1dc92d85f21c28a1265ed967735482dd8a7ba73be489b615cfb935db9dafb",
+        "frames/frame_019998_ppu.json": "bb762a20c4a5d8590a4d6062e463249d99e96ec783cfbbf2ad26220f1a047ae6",
+        "frames/frame_019998_vram.bin": "ac9fa38e180dd7a7e4fd3d100b253687ae0d1ef0d21c3adf42c6a5852163193d",
+        "frames/frame_019998_wram.bin": "f055674a78d64082e83070dce8ce0b93ffaccb42d6ca14e3b2d16a3047dba113",
+        "frames/frame_019999.bmp": "3184374e70154882ede7300b66901de62533b27b2231db9ecfde7500a5e5bfa3",
+        "frames/frame_019999_cgram.bin": "90207f8fa2fae0f5d3154a09053d73bae1de7dfb925c2567747d150d58a6df5b",
+        "frames/frame_019999_ppu.json": "ac8385ae886532cdbaff6bb461cc5bd3b184553ade4830421efa7ec67c3d7263",
+        "frames/frame_019999_vram.bin": "ac9fa38e180dd7a7e4fd3d100b253687ae0d1ef0d21c3adf42c6a5852163193d",
+        "frames/frame_019999_wram.bin": "a5c2d93351006f48d7b9c8ff33cde405520d9c8b31d8d7d0d7774183bae777a8",
+        "trace.jsonl": "78a6db21fc6d31cc622ce341486cd198b6bb19610d1abe19d3b735fdb0ab572a"
+      }
+    }
+  },
+  "ci": "https://github.com/RetroPortingToolKit/snesrecomp/actions/runs/38671881053",
+  "owner_validation": "pending",
+  "oracle_comparison": {
+    "frames": 20000,
+    "different_wram_frames": 19840,
+    "addresses": [
+      "0x2",
+      "0x641",
+      "0x642",
+      "0x64b",
+      "0x64f",
+      "0x652",
+      "0x1fe8",
+      "0x1fe9",
+      "0x1fea",
+      "0x1feb",
+      "0x1fec",
+      "0x1ff3",
+      "0x1ff4"
+    ],
+    "frames_with_non_sound_differences": 7540,
+    "cpu_register_different_frames": 0,
+    "first_non_sound_differences": [
+      {
+        "frame": 161,
+        "diff": [
+          "0x2",
+          "0x641",
+          "0x642",
+          "0x1fe8",
+          "0x1fe9",
+          "0x1fea",
+          "0x1feb",
+          "0x1fec"
+        ]
+      },
+      {
+        "frame": 162,
+        "diff": [
+          "0x2",
+          "0x641",
+          "0x642"
+        ]
+      },
+      {
+        "frame": 163,
+        "diff": [
+          "0x2",
+          "0x641",
+          "0x642"
+        ]
+      }
+    ],
+    "different_final_artifacts": [
+      "cpu.csv",
+      "frames/frame_019997_wram.bin",
+      "frames/frame_019998_wram.bin",
+      "frames/frame_019999_wram.bin",
+      "trace.jsonl"
+    ]
+  }
+}

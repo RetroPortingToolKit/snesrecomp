@@ -153,10 +153,13 @@ static void OpenOneJoystick(int i);
 static uint32 GetActiveControllers(void);
 static void HandleVolumeAdjustment(int volume_adjustment);
 static void ApplyVolume(void);
-static bool g_volume_changed;
-/* Alt+Enter moved the window between windowed and borderless; the config is
- * rewritten once at shutdown so the launcher opens on what the player left. */
-static bool g_fullscreen_changed;
+/* Set when a config parameter has been changed live this session: the volume
+ * or fullscreen hotkeys, any snesrecomp_set_* helper, or dependent code that
+ * writes a g_config field directly (a native menu). The shutdown path
+ * rewrites config.ini once when it is set, so the change survives the restart
+ * and the launcher opens on what the player left. One flag covers every
+ * persistable setting; volume used to keep its own copy of the same bit. */
+bool g_config_dirty;
 static void HandleGamepadAxisInput(GamepadInfo *gi, int axis, Sint16 value);
 static int RemapSdlButton(int button);
 static void HandleGamepadInput(GamepadInfo *gi, int button, bool pressed);
@@ -245,7 +248,7 @@ static const char *HostGetenv(const char *name) {
 }
 
 static uint32 g_win_flags = SDL_WINDOW_RESIZABLE;
-static SDL_Window *g_window;
+SDL_Window *g_window;
 
 static uint8 g_paused, g_turbo, g_cursor = true;
 static uint8 g_current_window_scale;
@@ -255,6 +258,13 @@ static uint32 g_input_state;
  * main loop doesn't clear bits the gamepad just set. OR'd into `inputs`
  * once per frame alongside g_input_state and axis_buttons. */
 static uint32 g_pad_buttons;
+/* Multitap seats 2.. (players 3..): keyboard (keybinds.ini [player3]..),
+ * [KeyMap]-bound and gamepad buttons, in the runner's 12-bit seat layout.
+ * Pushed through RtlSetPadState before each frame; seats 0 and 1 keep the
+ * packed word above. */
+static uint16 g_seat_keys[kSnesHostPadSeats];
+static uint16 g_seat_keymap[kSnesHostPadSeats];
+static uint16 g_seat_pad[kSnesHostPadSeats];
 static int g_ppu_render_flags = 0;
 static int g_snes_width = 256, g_snes_height = 224;
 static double g_present_alpha = 1;
@@ -275,6 +285,23 @@ static double MonotonicSeconds(void) {
     return (double)now.tv_sec + (double)now.tv_nsec / 1e9;
 #endif
   return (double)SDL_GetPerformanceCounter() / SDL_GetPerformanceFrequency();
+}
+
+/* All-thread process CPU, sampled only at the runtime window boundaries. */
+static double ProcessCpuSeconds(void) {
+#ifdef _WIN32
+  FILETIME created, exited, kernel, user;
+  if (GetProcessTimes(GetCurrentProcess(), &created, &exited, &kernel, &user)) {
+    uint64_t ticks = ((uint64_t)kernel.dwHighDateTime << 32) | kernel.dwLowDateTime;
+    ticks += ((uint64_t)user.dwHighDateTime << 32) | user.dwLowDateTime;
+    return (double)ticks / 1e7;
+  }
+#elif defined(CLOCK_PROCESS_CPUTIME_ID)
+  struct timespec now;
+  if (clock_gettime(CLOCK_PROCESS_CPUTIME_ID, &now) == 0)
+    return (double)now.tv_sec + (double)now.tv_nsec / 1e9;
+#endif
+  return -1;
 }
 
 /* Opt-in wall-time diagnostics (SNESRECOMP_HOST_PROFILE=1). No guest state is
@@ -401,13 +428,110 @@ static int g_frozen_w, g_frozen_h;
  * frame rather than once per present. */
 static unsigned g_present_frame;
 
-static GamepadInfo g_gamepad[2];
+#ifndef SNESRECOMP_FRAME_STAGING_HLE
+#define SNESRECOMP_FRAME_STAGING_HLE 0
+#endif
+#if defined(SNESRECOMP_HOST_HAS_BLEND) || SNESRECOMP_FRAME_STAGING_HLE
+/* Compose where reads are cheap, then upload with a write-only row copy.
+ * The frozen overlay snapshot and optional OSD/blend read this frame. */
+static uint8 g_frame_stage[kSnesDesktopMaxFrameWidth * 4 * 240];
+#endif
+
+static GamepadInfo g_gamepad[kSnesHostPadSeats];
+/* Device the launcher picked for each gamepad seat (SDL joystick id + 1, 0 =
+ * any). Identical controllers - two DualSense - share a GUID, so the launcher
+ * names the physical device; seats then follow that choice instead of the
+ * order the pads were plugged in. Same SDL session, so the ids agree. */
+static uint32 g_seat_instance[kSnesHostPadSeats];
 
 extern Snes *g_snes;
 
 void snesrecomp_desktop_set_widescreen(int enabled) {
   g_config.widescreen = enabled != 0;
   WriteConfigFile(g_active_config_file);
+}
+
+void snesrecomp_set_fullscreen(int mode)
+{
+    if (mode < 0) mode = 0;
+    if (mode > 1) mode = 1;
+    g_config.fullscreen = (uint8)mode;
+    g_config_dirty = true;                // forces config write
+    uint32_t want = (mode == 1) ? SNESRECOMP_SDL_WINDOW_FULLSCREEN_DESKTOP : 0;
+    const uint32_t fs_mask = SNESRECOMP_SDL_WINDOW_FULLSCREEN_DESKTOP | SDL_WINDOW_FULLSCREEN;
+    g_win_flags = (g_win_flags & ~fs_mask) | want;
+    SDL_SetWindowFullscreen(g_window, want);
+    g_cursor = (want == 0);
+    snesrecomp_sdl_show_cursor(g_cursor);
+}
+
+int snesrecomp_get_fullscreen(void)
+{
+    return (int)g_config.fullscreen;
+}
+
+/* Forward declarations: the exported snesrecomp_set_* helpers below call
+ * these, and they are defined further down the file. */
+static void FrameBlendConfigure(void);
+void ChangeWindowScale(int scale_step);
+
+void snesrecomp_set_vsync(int mode)
+{
+    if (mode < 0) mode = 0;
+    if (mode > 2) mode = 2;
+    g_config.vsync = (uint8)mode;
+    g_config_dirty = true; /* forces config write */
+#ifndef __ANDROID__
+    snesrecomp_opengl_set_vsync(VSyncInterval());
+#endif
+    if (g_renderer_funcs.Reconfigure) g_renderer_funcs.Reconfigure();
+}
+
+int snesrecomp_get_vsync(void)
+{
+    return (int)g_config.vsync;
+}
+
+void snesrecomp_set_frame_blend(int enabled)
+{
+    g_config.frame_blend = enabled != 0;
+    g_config_dirty = true; /* forces config write */
+    FrameBlendConfigure();
+}
+
+int snesrecomp_get_frame_blend(void)
+{
+    return g_config.frame_blend;
+}
+
+void snesrecomp_set_run_ahead(int frames)
+{
+    if (frames < 0) frames = 0;
+    g_config.run_ahead = frames;
+    g_config_dirty = true; /* forces config write */
+    snes_runahead_set_frames(g_config.run_ahead);
+}
+
+int snesrecomp_get_run_ahead(void)
+{
+    return (int)g_config.run_ahead;
+}
+
+void snesrecomp_set_window_scale(int scale)
+{
+    const uint32_t fs_mask = SNESRECOMP_SDL_WINDOW_FULLSCREEN_DESKTOP | SDL_WINDOW_FULLSCREEN;
+    if (SDL_GetWindowFlags(g_window) & fs_mask) return;
+    if (scale < 1) scale = 1;
+    if (scale > kMaxWindowScale) scale = kMaxWindowScale;
+    g_current_window_scale = (uint8)scale;
+    ChangeWindowScale(0);
+    g_config.window_scale = g_current_window_scale;
+    g_config_dirty = true; /* forces config write */
+}
+
+int snesrecomp_get_window_scale(void)
+{
+    return (int)g_config.window_scale;
 }
 
 /* Presentation frame blending (config.ini [Graphics] FrameBlend, the
@@ -418,9 +542,6 @@ void snesrecomp_desktop_set_widescreen(int enabled) {
 static RecompFrameBlend *g_blend;
 /* The simulated frame whose picture the blend is currently keeping. */
 static unsigned g_blend_frame;
-/* Cached-memory staging frame: see DrawPpuFrameWithPerf. Same bound as the
- * frozen-frame copy, which is the widest field this host presents. */
-static uint8 g_blend_stage[kPpuBufWidth * 4 * 240];
 #endif
 static void FrameBlendConfigure(void) {
 #if defined(SNESRECOMP_HOST_HAS_BLEND)
@@ -1005,8 +1126,34 @@ void NORETURN Die(const char *error) {
 }
 
 static GamepadInfo *GetGamepadInfo(SDL_JoystickID id) {
-  return (g_gamepad[0].joystick_id == id) ? &g_gamepad[0] :
-    (g_gamepad[1].joystick_id == id) ? &g_gamepad[1] : NULL;
+  for (int i = 0; i < kSnesHostPadSeats; ++i)
+    if (g_gamepad[i].joystick_id == id) return &g_gamepad[i];
+  return NULL;
+}
+
+/* Seats the game declares (GameInfo num_players), 2..kSnesHostPadSeats.
+ * Gamepads, config.ini and the launcher follow this count. */
+static int HostConfiguredSeats(void) {
+  int n = g_game && g_game->num_players > 2 ? g_game->num_players : 2;
+  return n > kSnesHostPadSeats ? kSnesHostPadSeats : n;
+}
+
+/* Seats routed into the guest this frame: the declared seats the configured
+ * multitaps actually reach (RtlPlayerCount). */
+static int HostPadSeats(void) {
+  int n = HostConfiguredSeats();
+  int reach = RtlPlayerCount();
+  return n > reach ? (reach < 2 ? 2 : reach) : n;
+}
+
+/* Hand seats 2.. to the multitap model. Netplay publishes remote seats
+ * through the same door, so a session leaves them to it. */
+static void PushExtraSeats(void) {
+  if (g_netplay_session) return;
+  const int seats = HostPadSeats();
+  for (int seat = 2; seat < seats; ++seat)
+    RtlSetPadState(seat, (uint16)(g_seat_keys[seat] | g_seat_keymap[seat] |
+                                  g_seat_pad[seat] | g_gamepad[seat].axis_buttons));
 }
 
 void ChangeWindowScale(int scale_step) {
@@ -1114,6 +1261,20 @@ static void RunaheadCapture(void *context, int for_picture) {
    * capture still belongs to the speculated frame that follows. */
   if (g_rtl_game_info && g_rtl_game_info->draw_ppu_frame)
     g_rtl_game_info->draw_ppu_frame();
+}
+
+/* A slot's thumbnail, composed the way the player sees it. A title-owned
+ * compositor (MMX's co-op renderer draws the partner over the PPU frame)
+ * draws from the frame it captured, so asking it again while paused yields
+ * the saved frame without touching the guest. */
+static int ComposeStateThumbnail(uint32_t *dst, size_t cap, int *w, int *h) {
+  if (!g_game->draw_frame || (size_t)g_snes_width * (size_t)g_snes_height > cap)
+    return 0;
+  if (!g_game->draw_frame((uint8 *)dst, (size_t)g_snes_width * 4, g_my_pixels,
+                          g_snes_width, g_snes_height, 1.0))
+    return 0;
+  *w = g_snes_width; *h = g_snes_height;
+  return 1;
 }
 
 /* Snapshots and their thumbnails share the same completed raster boundary. */
@@ -1226,27 +1387,25 @@ static void DrawPpuFrameWithPerf(void) {
     return;
   }
 
-  /* Where this frame is composed. Normally the presenter's own buffer, so the
-   * frame is written straight where it is going. WHILE BLENDING it is a host
-   * staging frame instead, uploaded with one linear copy at the end.
-   *
-   * The SDL presenter hands back a LOCKED STREAMING TEXTURE and a blend is a
-   * read-modify-write. Mapped texture memory is frequently write-combined:
-   * excellent for sequential writes, pathological to read, and whether it is
-   * depends on the backend and the driver -- so blending in place is fine on
-   * one machine and ruins the frame rate on another, the shape of a bug that
-   * never reproduces for the developer. recomp_frame_blend.h says exactly
-   * this and prescribes exactly this remedy. With blending off nothing
-   * changes: the frame is composed into the presenter's buffer as before. */
+  /* LLE composes directly into the presenter's mapped buffer except while
+   * blending. HLE stages every supported frame in cached host memory: even
+   * without blending, the frozen overlay snapshot reads the whole frame.
+   * Reading a write-combined texture can dominate this service. Preserve the
+   * draw/blend/snapshot/OSD order and upload the same bytes once at the end. */
   uint8 *pixel_buffer = present_buffer;
   int pitch = present_pitch;
-#if defined(SNESRECOMP_HOST_HAS_BLEND)
+#if defined(SNESRECOMP_HOST_HAS_BLEND) || SNESRECOMP_FRAME_STAGING_HLE
   const size_t frame_bytes = (size_t)(g_snes_width * render_scale) *
                              (size_t)(g_snes_height * render_scale) * 4u;
+  bool staged = SNESRECOMP_FRAME_STAGING_HLE &&
+                frame_bytes <= sizeof(g_frame_stage);
+#if defined(SNESRECOMP_HOST_HAS_BLEND)
   const bool blending = g_config.frame_blend && g_blend &&
-                        frame_bytes <= sizeof(g_blend_stage);
-  if (blending) {
-    pixel_buffer = g_blend_stage;
+                        frame_bytes <= (size_t)kPpuBufWidth * 4u * 240u;
+  staged |= blending;
+#endif
+  if (staged) {
+    pixel_buffer = g_frame_stage;
     pitch = g_snes_width * render_scale * 4;
   }
 #endif
@@ -1400,10 +1559,10 @@ static void DrawPpuFrameWithPerf(void) {
   }
 
 
-#if defined(SNESRECOMP_HOST_HAS_BLEND)
+#if defined(SNESRECOMP_HOST_HAS_BLEND) || SNESRECOMP_FRAME_STAGING_HLE
   /* One linear, write-only copy into the presenter's buffer -- the access
    * pattern write-combined memory is good at. */
-  if (blending) {
+  if (staged) {
     const int rows = g_snes_height * render_scale;
     const int row_bytes = g_snes_width * render_scale * 4;
     for (int y = 0; y < rows; y++)
@@ -1443,6 +1602,9 @@ static bool HandleDeviceEvent(const SDL_Event *event) {
   case SDL_CONTROLLERDEVICEREMOVED:
     gi = GetGamepadInfo(SNESRECOMP_SDL_EVENT_DEVICE(*event));
     if (gi) {
+      for (int button = 0; button < kGamepadBtn_Count; ++button)
+        if ((gi->modifiers & (1u << button)) && gi->last_cmd[button])
+          HandleGamepadInput(gi, button, false);
       memset(gi, 0, sizeof(GamepadInfo));
       gi->joystick_id = -1;
     }
@@ -1470,6 +1632,9 @@ static bool HandleDeviceEvent(const SDL_Event *event) {
   case SDL_JOYDEVICEREMOVED:
     gi = GetGamepadInfo(event->jdevice.which);
     if (gi && gi->raw_joystick) {
+      for (int button = 0; button < kGamepadBtn_Count; ++button)
+        if ((gi->modifiers & (1u << button)) && gi->last_cmd[button])
+          HandleGamepadInput(gi, button, false);
       if (gi->joystick) SDL_JoystickClose(gi->joystick);
       memset(gi, 0, sizeof(GamepadInfo));
       gi->joystick_id = -1;
@@ -1809,8 +1974,9 @@ static void PresentFrozenWithOverlay(void) {
 
   if (panel) {
     if (is_menu) {
-      snes_ovl_blit_panel_rect(pixel_buffer, pitch, draw_w, draw_h,
-                               panel, pw, ph, 0, 0, draw_w, draw_h);
+      /* EndDraw applies SNES pixel-aspect correction to this buffer. Keep
+       * the menu's stock proportions before that presentation step. */
+      snes_ovl_blit_panel(pixel_buffer, pitch, draw_w, draw_h, panel, pw, ph);
     } else {
       /* Full width, anchored to the bottom, at the strip's own height when
        * it fits (1:1 on the stock field, so its text stays crisp), else
@@ -2325,12 +2491,110 @@ static void host_lobby_ensure_init(void) {
     fprintf(stderr, "netplay: snes_host_lobby_init failed\n");
 }
 
+/* Self-test evidence: the menu panel this peer shows, as a BMP. */
+static void NetplayMenuSelftestShot(const char *who, int serial) {
+  const char *dir = getenv("SNES_NET_MENU_SELFTEST_SHOTS");
+  const uint32_t *px = NULL;
+  int w = 0, h = 0;
+  char path[512];
+  FILE *f;
+  if (!dir || !snes_savestate_menu_overlay_image(&px, &w, &h) || !px) return;
+  snprintf(path, sizeof(path), "%s/menu-%s-%d.bmp", dir, who, serial);
+  if (!(f = fopen(path, "wb"))) return;
+  uint32_t bytes = (uint32_t)(w * h * 4);
+  uint32_t hdr[13] = {54 + bytes, 0, 54, 40, (uint32_t)w, (uint32_t)-h, 0x200001, 0, bytes, 0, 0, 0, 0};
+  fwrite("BM", 1, 2, f); fwrite(hdr, sizeof(hdr), 1, f); fwrite(px, bytes, 1, f); fclose(f);
+}
+
+/* Explicit desktop integration test; the harness uses private installations.
+ * Exercises the synchronized menu: save, load and cancel, each opened on one
+ * agreed frame, with the guest mirroring the host and refused as a driver. */
+static void NetplayMenuSelftest(uint32_t frame) {
+  static int enabled = -1, phase, wait, mirror_logged;
+  static uint32_t hold_ms = 1000, idle_since, first_open = 60;
+  static uint32_t resumed_at;
+  if (enabled < 0) {
+    const char *hold = getenv("SNES_NET_MENU_SELFTEST_HOLD_MS"); /* time in each menu */
+    enabled = getenv("SNES_NET_MENU_SELFTEST") != NULL; /* like every SNES_NET_* knob */
+    if (hold && atoi(hold) > 0) hold_ms = (uint32_t)atoi(hold);
+    const char *start = getenv("SNES_NET_MENU_SELFTEST_START"); /* first menu's frame */
+    if (start && atoi(start) > 0) first_open = (uint32_t)atoi(start);
+  }
+  if (!enabled) return;
+  if (!snes_netplay_is_host()) {
+    if (!phase && frame >= 30) {
+      if (snes_netplay_menu_open() || snes_netplay_menu_save(11) || snes_netplay_menu_load(11) ||
+          snes_netplay_menu_close())
+        abort(); /* The harness requires a clean exit and the refusal marker. */
+      fprintf(stderr, "[netplay_menu_test] guest actions refused\n");
+      phase = 1;
+    }
+    if (snes_savestate_menu_is_open() && !mirror_logged) {
+      fprintf(stderr, "[netplay_menu_test] guest mirror open frame=%u\n", frame);
+      mirror_logged = 1;
+      wait = 0;
+    } else if (mirror_logged == 1 && snes_savestate_menu_is_open() &&
+               snes_savestate_menu_selected() == 11) {
+      /* The host's cursor has arrived: the mirror shows its slot 12. */
+      NetplayMenuSelftestShot("guest", ++phase);
+      mirror_logged = 2;
+    } else if (!snes_savestate_menu_is_open()) {
+      mirror_logged = 0;
+    }
+    return;
+  }
+  switch (phase) {
+  case 0: case 3: case 6: /* open, 60 frames after the previous resume */
+    if (frame < (phase ? resumed_at + 60 : first_open) || snes_netplay_menu_paused()) return;
+    (void)snes_savestate_menu_poll_open(0);
+    if (snes_savestate_menu_poll_open(SNES_PAD_SELECT | SNES_PAD_R)) {
+      ++phase;
+      wait = 0;
+    }
+    return;
+  case 1: case 4: case 7:
+    /* Stay paused a while: the guest tries inputs, and a long hold proves a
+     * paused match stays connected. */
+    if (!snes_netplay_menu_idle()) { wait = 0; return; }
+    if (!wait++) idle_since = SDL_GetTicks();
+    if (SDL_GetTicks() - idle_since < hold_ms) return;
+    if (phase == 7) {
+      snes_savestate_menu_handle_key(SDLK_ESCAPE, 0);
+      fprintf(stderr, "[netplay_menu_test] action=cancel frame=%u\n", frame);
+      phase = 8;
+      return;
+    }
+    snes_savestate_menu_handle_key(SDLK_EQUALS, 0); /* slot 12 */
+    snes_savestate_menu_poll_nav(0, SDL_GetTicks());
+    NetplayMenuSelftestShot("host", phase);
+    snes_savestate_menu_poll_nav(phase == 1 ? SNES_PAD_X : SNES_PAD_A, SDL_GetTicks());
+    snes_savestate_menu_poll_nav(0, SDL_GetTicks());
+    fprintf(stderr, "[netplay_menu_test] action=%s frame=%u\n", phase == 1 ? "save" : "load", frame);
+    ++phase;
+    return;
+  case 2: /* close once every peer has verified the save */
+    if (!snes_netplay_menu_idle()) return;
+    snes_savestate_menu_poll_nav(SNES_PAD_B, SDL_GetTicks());
+    snes_savestate_menu_poll_nav(0, SDL_GetTicks());
+    phase = 9;
+    return;
+  case 5: case 8: case 9: /* wait for the resume */
+    if (snes_netplay_menu_paused()) return;
+    resumed_at = frame;
+    phase = phase == 9 ? 3 : phase == 5 ? 6 : 10;
+    return;
+  default:
+    return;
+  }
+}
+
 static uint16_t netplay_capture_pad(void *ctx) {
   (void)ctx;
   PollKeyboardControls(snesrecomp_sdl_get_keyboard_state());
   const unsigned player = snes_netplay_input_player() == 1 ? 1 : 0;
-  return (uint16_t)((((g_input_state | g_pad_buttons) >> (player * 12)) |
-      g_gamepad[player].axis_buttons) & 0x0fffu);
+  return (uint16_t)snes_savestate_menu_filter_guest_input(
+      (((g_input_state | g_pad_buttons) >> (player * 12)) |
+       g_gamepad[player].axis_buttons) & 0x0fffu);
 }
 
 static void netplay_poll_events(void *ctx, int *want_soft_exit) {
@@ -2346,8 +2610,11 @@ static void netplay_poll_events(void *ctx, int *want_soft_exit) {
       *want_soft_exit = 2;
       g_netplay_from_lobby = 0; /* Closing the window exits the application. */
     }
-    if (event.type == SDL_KEYDOWN &&
-        SNESRECOMP_SDL_EVENT_KEY(event) == SDLK_ESCAPE)
+    if (event.type == SDL_KEYDOWN && snes_savestate_menu_is_open()) {
+      snes_savestate_menu_handle_key(SNESRECOMP_SDL_EVENT_KEY(event),
+                                    SNESRECOMP_SDL_EVENT_REPEAT(event));
+    } else if (event.type == SDL_KEYDOWN &&
+               SNESRECOMP_SDL_EVENT_KEY(event) == SDLK_ESCAPE)
       *want_soft_exit = 1;
     if (event.type == SDL_KEYDOWN)
       HandleInput(SNESRECOMP_SDL_EVENT_KEY(event), SNESRECOMP_SDL_EVENT_MOD(event), true);
@@ -2394,6 +2661,68 @@ static uint32_t g_rom_crc32;
 static int g_rom_identity_ok;
 static const char *g_program_path;       /* argv[0]: keybinds.ini sits beside it */
 static const char *g_rom_path = "";      /* the running ROM, once resolved */
+
+/* The port's catalog of known dumps, plus a "<display_name> (<region>)" entry
+ * for the generated-from ROM when the port's catalog does not list it. Built
+ * once per process by HostBuildRomCatalog; every ROM prompt names a refused
+ * ROM from it. */
+static SnesRomRevision *g_rom_catalog;
+static int g_rom_catalog_count;
+static char g_rom_fallback_label[160];
+
+static const char *HostRomHelp(void) {
+  if (g_game->rom_help && g_game->rom_help[0]) return g_game->rom_help;
+  return "Headered (.smc) and headerless (.sfc) copies of the right dump both "
+         "work; renaming a file does not change which dump it is.";
+}
+
+static int HostHexEqual(const char *a, const char *b) {
+  if (!a || !b || !a[0]) return 0;
+  for (; *a && *b; ++a, ++b) {
+    char x = *a, y = *b;
+    if (x >= 'A' && x <= 'F') x = (char)(x - 'A' + 'a');
+    if (y >= 'A' && y <= 'F') y = (char)(y - 'A' + 'a');
+    if (x != y) return 0;
+  }
+  return *a == '\0' && *b == '\0';
+}
+
+/* Whether a catalog entry is a dump this build runs. With a SHA-256 the
+ * console path also enforces, that alone decides; the SHA-1 list only speaks
+ * for a port catalogued by SHA-1. */
+static int HostRomRevisionSupported(const SnesRomRevision *r) {
+  const char *sha = g_game->expected_sha256_hex;
+  if (sha && strlen(sha) == 64) return HostHexEqual(r->sha256_hex, sha);
+  for (int i = 0; g_game->known_sha1_hex && i < g_game->num_known_sha1; ++i)
+    if (HostHexEqual(r->sha1_hex, g_game->known_sha1_hex[i])) return 1;
+  return 0;
+}
+
+static void HostBuildRomCatalog(void) {
+  const SnesDesktopHostGame *game = g_game;
+  const int listed = game->rom_revisions && game->num_rom_revisions > 0
+                         ? game->num_rom_revisions : 0;
+  free(g_rom_catalog);
+  g_rom_catalog = (SnesRomRevision *)calloc((size_t)listed + 1, sizeof(*g_rom_catalog));
+  g_rom_catalog_count = 0;
+  if (!g_rom_catalog) return;
+  if (listed) memcpy(g_rom_catalog, game->rom_revisions, (size_t)listed * sizeof(*g_rom_catalog));
+  g_rom_catalog_count = listed;
+  const char *sha = game->expected_sha256_hex;
+  if (sha && strlen(sha) == 64 &&
+      snes_rom_revision_find_sha256(g_rom_catalog, listed, sha) < 0) {
+    if (game->region && game->region[0])
+      snprintf(g_rom_fallback_label, sizeof(g_rom_fallback_label), "%s (%s)",
+               game->display_name, game->region);
+    else
+      snprintf(g_rom_fallback_label, sizeof(g_rom_fallback_label), "%s",
+               game->display_name);
+    SnesRomRevision *own = &g_rom_catalog[g_rom_catalog_count++];
+    own->label = g_rom_fallback_label;
+    own->sha256_hex = sha;
+    own->crc32_hex = game->expected_crc32_hex;
+  }
+}
 static char g_mod_state_path[1100];      /* <catalog>/state.toml; "" without mods */
 
 /* A restart the in-game launcher asked for, carried out after shutdown. */
@@ -2413,8 +2742,9 @@ static void OpenAllGamepads(void) {
 #else
   int njs = SDL_NumJoysticks();
 #endif
-  printf("[Gamepad] SDL reports %d joystick(s). enable_gamepad=[%d,%d]\n",
-         njs, g_config.enable_gamepad[0], g_config.enable_gamepad[1]);
+  printf("[Gamepad] SDL reports %d joystick(s). enable_gamepad=[%d,%d,%d,%d,%d]\n",
+         njs, g_config.enable_gamepad[0], g_config.enable_gamepad[1],
+         g_config.enable_gamepad[2], g_config.enable_gamepad[3], g_config.enable_gamepad[4]);
   for (int i = 0; i < njs; i++) {
 #if SNESRECOMP_SDL3
     /* SDL3 enumerates by instance ID rather than by index. */
@@ -2442,17 +2772,53 @@ static void OpenAllGamepads(void) {
 
 /* Re-seat the pads after the launcher changed which player uses one. */
 static void ReassignGamepads(void) {
-  for (int i = 0; i < 2; i++) {
+  for (int i = 0; i < kSnesHostPadSeats; i++) {
     if (g_gamepad[i].raw_joystick && g_gamepad[i].joystick)
       SDL_JoystickClose(g_gamepad[i].joystick);
     memset(&g_gamepad[i], 0, sizeof(g_gamepad[i]));
     g_gamepad[i].joystick_id = -1;
   }
   g_pad_buttons = 0;
+  memset(g_seat_pad, 0, sizeof(g_seat_pad));
   OpenAllGamepads();
 }
 
+#if defined(RECOMP_LAUNCHER) && defined(RECOMP_LAUNCHER_HAS_ROM_REVISIONS)
+/* The catalog in recomp-ui's shape, with each entry's support decided here. */
+static RecompLauncherCRomRevision *g_launcher_revisions;
+
+static int HostDescribeRom(void *ctx, const uint8_t *image, size_t len,
+                           char *out, size_t out_size) {
+  (void)ctx;
+  return snes_rom_describe_header(image, len, out, out_size);
+}
+
+static void LauncherSeedRomCatalog(RecompLauncherCGameInfo *gi) {
+  free(g_launcher_revisions);
+  g_launcher_revisions = NULL;
+  if (g_rom_catalog_count > 0)
+    g_launcher_revisions = (RecompLauncherCRomRevision *)calloc(
+        (size_t)g_rom_catalog_count, sizeof(*g_launcher_revisions));
+  for (int i = 0; g_launcher_revisions && i < g_rom_catalog_count; ++i) {
+    const SnesRomRevision *r = &g_rom_catalog[i];
+    RecompLauncherCRomRevision *out = &g_launcher_revisions[i];
+    out->label = r->label;
+    out->sha256_hex = r->sha256_hex;
+    out->sha1_hex = r->sha1_hex;
+    out->crc32_hex = r->crc32_hex;
+    out->note = r->note;
+    out->supported = HostRomRevisionSupported(r);
+  }
+  gi->rom_revisions = g_launcher_revisions;
+  gi->num_rom_revisions = g_launcher_revisions ? g_rom_catalog_count : 0;
+  gi->rom_help = HostRomHelp();
+  gi->rom_describe = HostDescribeRom;
+  gi->rom_describe_ctx = NULL;
+}
+#endif
+
 #if defined(RECOMP_LAUNCHER)
+
 /* What the launcher opens on: the live settings, and what this host offers.
  * In session, netplay and Generate & rebuild are withheld -- the first would
  * replace a session that is still alive, the second the binary running it. */
@@ -2481,13 +2847,16 @@ static void LauncherSeed(RecompLauncherCSettings *ls, RecompLauncherCGameInfo *g
                                                : (g_config.enable_gamepad[0] ? 2 : 1);
   ls->player_src[1] = ConfigHasPlayerSource(1) ? g_config.player_src[1]
                                                : (g_config.enable_gamepad[1] ? 2 : 0);
+  for (int seat = 2; seat < kSnesHostPadSeats && seat < RECOMP_LAUNCHER_MAX_PLAYERS; ++seat)
+    ls->player_src[seat] = ConfigHasPlayerSource(seat) ? g_config.player_src[seat]
+                                                       : (g_config.enable_gamepad[seat] ? 2 : 0);
   /* Config stores deadzone as a raw stick radius; the launcher edits a
    * 0-100%. Convert in both directions, ROUNDING each way: truncating
    * both made the round trip lossy -- 10% saved as 32767/10 = 3276 read
    * back as 9%, so the slider walked down a percent every time the
    * player pressed Play. */
-  ls->deadzone[0] = ls->deadzone[1] =
-      (g_config.gamepad_deadzone * 100 + 32767 / 2) / 32767;
+  for (int seat = 0; seat < RECOMP_LAUNCHER_MAX_PLAYERS; ++seat)
+    ls->deadzone[seat] = (g_config.gamepad_deadzone * 100 + 32767 / 2) / 32767;
   ls->skip_launcher = g_config.skip_launcher;
   ls->msu1_enabled  = 0;
   /* Display rows the framework host wires (see FrameBlendConfigure,
@@ -2531,6 +2900,10 @@ static void LauncherSeed(RecompLauncherCSettings *ls, RecompLauncherCGameInfo *g
   gi->known_sha1_hex = game->known_sha1_hex;
   gi->num_known_sha1 = (size_t)(game->known_sha1_hex
                                     ? game->num_known_sha1 : 0);
+#if defined(RECOMP_LAUNCHER_HAS_ROM_REVISIONS)
+  /* Name a refused ROM instead of only "not recognized". */
+  LauncherSeedRomCatalog(gi);
+#endif
   gi->widescreen_supported = game->widescreen_supported;
   gi->msu1_supported = game->msu1_supported;
   /* Capability rows: each is drawn only because this host wires it. A
@@ -2611,10 +2984,15 @@ static void LauncherCommit(const RecompLauncherCSettings *ls, const char *config
   g_config.audio_freq          = (uint16)ls->audio_freq;
   g_config.volume              = ls->volume;
   ApplyVolume();
-  g_config.player_src[0]       = ls->player_src[0];
-  g_config.player_src[1]       = ls->player_src[1];
-  g_config.enable_gamepad[0]   = ls->player_src[0] == 2;
-  g_config.enable_gamepad[1]   = ls->player_src[1] == 2;
+  for (int seat = 0; seat < kSnesHostPadSeats && seat < RECOMP_LAUNCHER_MAX_PLAYERS; ++seat) {
+    /* Seats past the game's count are not on the launcher's page; keep them. */
+    if (seat >= 2 && seat >= HostConfiguredSeats()) break;
+    g_config.player_src[seat]     = ls->player_src[seat];
+    g_config.enable_gamepad[seat] = ls->player_src[seat] == 2;
+#if defined(RECOMP_LAUNCHER_HAS_PLAYER_GAMEPAD_INSTANCE) && SNESRECOMP_SDL3
+    g_seat_instance[seat] = ls->player_src[seat] == 2 ? ls->player_gamepad_instance[seat] : 0;
+#endif
+  }
   g_config.gamepad_deadzone    = (ls->deadzone[0] * 32767 + 50) / 100;
   g_config.skip_launcher       = ls->skip_launcher != 0;
   g_config.frame_blend         = ls->frame_blend != 0;
@@ -2692,10 +3070,11 @@ static void ApplyLiveSettings(const Config *before) {
   }
   /* keybinds.ini: the controller page's keyboard half. */
   keybinds_init(g_program_path);
-  if (g_config.player_src[0] != before->player_src[0] ||
-      g_config.player_src[1] != before->player_src[1] ||
-      g_config.enable_gamepad[0] != before->enable_gamepad[0] ||
-      g_config.enable_gamepad[1] != before->enable_gamepad[1])
+  bool seats_changed = false;
+  for (int seat = 0; seat < kSnesHostPadSeats; ++seat)
+    seats_changed |= g_config.player_src[seat] != before->player_src[seat] ||
+                     g_config.enable_gamepad[seat] != before->enable_gamepad[seat];
+  if (seats_changed)
     ReassignGamepads();
 }
 
@@ -2961,6 +3340,8 @@ int snesrecomp_desktop_main(const SnesDesktopHostGame *game, int argc, char **ar
   }
   if (game->state_menu_hotkeys) ConfigUseStateMenuDefaults();
   if (game->in_game_launcher) ConfigUseInGameLauncherDefaults();
+  /* Before parsing: default [GamepadMap] rows exist for each routed seat. */
+  ConfigSetPadSeats(HostConfiguredSeats());
   ParseConfigFile(config_file);
   g_active_config_file = config_file;
   /* Local overrides (gitignored). Last parser to set a key wins. */
@@ -3027,6 +3408,15 @@ int snesrecomp_desktop_main(const SnesDesktopHostGame *game, int argc, char **ar
       g_config.output_method, g_config.new_renderer, g_config.window_scale,
       g_config.fullscreen, g_config.enable_audio, g_config.audio_freq,
       g_config.audio_samples);
+#ifdef _WIN32
+  /* runner/windows/snesrecomp_utf8.manifest makes narrow paths UTF-8. Windows
+   * older than 10 1903 ignores it; say so, because a non-ASCII install path
+   * then fails in ways that otherwise look unrelated. */
+  if (GetACP() != CP_UTF8)
+    host_report_breadcrumb("windows: process code page is %u, not UTF-8; "
+                           "paths with non-ASCII characters may fail",
+                           (unsigned)GetACP());
+#endif
   PadGestureConfigure(&g_rewind_gesture, g_config.rewind_gesture, "Select+R3",
                       "rewind", "RewindGesture");
   if (game->in_game_launcher)
@@ -3035,7 +3425,10 @@ int snesrecomp_desktop_main(const SnesDesktopHostGame *game, int argc, char **ar
   tier2_capture_configure(args.expose_coverage_mod || g_config.expose_coverage_mod,
                           g_config.coverage_capture, args.coverage_capture);
 
+  HostBuildRomCatalog();
 #if SNESRECOMP_ENABLE_MODS
+  /* Mod source-ROM pickers name a wrong ROM from the same catalog. */
+  snes_mod_runtime_set_rom_catalog_c(g_rom_catalog, g_rom_catalog_count);
   /* Before the launcher, which needs the provider to show the Mods page.
    * The catalog is mods/preloaded beside the executable, staged by the build;
    * an empty one is valid. */
@@ -3159,6 +3552,15 @@ int snesrecomp_desktop_main(const SnesDesktopHostGame *game, int argc, char **ar
           if (rom_path_buf[0]) {
             snesrecomp_rom_cache_write(rom_path_buf);
             rom_resolved_by_launcher = 1;
+          } else {
+            /* PLAY is gated on a verified ROM, so LAUNCH without one is a
+             * launcher bug. Never answer it with the console file picker: for
+             * a lobby launch the match has already started on the other
+             * peers, and a dialog here is a prompt after PLAY. */
+            fprintf(stderr, "launcher: LAUNCH returned without a ROM path%s; "
+                            "refusing to fall back to a file picker\n",
+                    ls.netplay_launch.enabled ? " (netplay match)" : "");
+            return 1;
           }
         }
         /* UNAVAILABLE (assets or GL missing) -> console resolver below */
@@ -3174,10 +3576,13 @@ int snesrecomp_desktop_main(const SnesDesktopHostGame *game, int argc, char **ar
         (char *)(arg_rom ? arg_rom : (beside_exe[0] ? beside_exe : ""))
       };
       int la_argc = (la_argv[1][0] != '\0') ? 2 : 1;
-      if (!snesrecomp_launcher_resolve_rom_sha256(la_argc, la_argv, rom_path_buf,
-                                                  sizeof(rom_path_buf),
-                                                  g_rom_identity_ok ? g_rom_sha256
-                                                                  : NULL)) {
+      const SnesRomIdentityPolicy rom_policy = {
+        g_rom_identity_ok ? game->expected_sha256_hex : NULL,
+        g_rom_catalog, g_rom_catalog_count, game->display_name, HostRomHelp(),
+      };
+      if (!snesrecomp_launcher_resolve_rom_identity(la_argc, la_argv, rom_path_buf,
+                                                    sizeof(rom_path_buf),
+                                                    &rom_policy)) {
         /* User cancelled the picker or repeatedly chose a non-matching ROM. */
         snesrecomp_host_args_usage(program_path, NULL);
         fprintf(stderr, "\nYou must legally own a copy of %s.\n",
@@ -3257,7 +3662,7 @@ int snesrecomp_desktop_main(const SnesDesktopHostGame *game, int argc, char **ar
     }
   }
 
-  g_gamepad[0].joystick_id = g_gamepad[1].joystick_id = -1;
+  for (int i = 0; i < kSnesHostPadSeats; ++i) g_gamepad[i].joystick_id = -1;
   g_ws_extra = g_game->native_widescreen ? (g_snes_width - 256) / 2 : 0;
   g_ws_active = g_ws_extra != 0;
   g_ppu_render_flags = g_config.new_renderer * kPpuRenderFlags_NewRenderer |
@@ -3573,6 +3978,7 @@ error_reading:;
   if (!profile_first) profile_first = 1;
   double profile_window_start = 0;
   double run_start = MonotonicSeconds();
+  const double run_cpu_start = ProcessCpuSeconds();
   uint8 audiopaused = true;
   SnesHostClock video_clock;
   double presentation_hz = WantedPresentationHz(DisplayRefresh());
@@ -3591,6 +3997,7 @@ error_reading:;
   }
   g_state_generation = RtlStateGeneration();
 
+  snes_savestate_menu_set_compose(ComposeStateThumbnail);
   host_report_breadcrumb("entering main loop");
 
   while (running) {
@@ -3630,6 +4037,12 @@ error_reading:;
         break;
       case SDL_KEYDOWN:
 #if defined(SNES_HAS_LOBBY_CLIENT)
+        if (g_netplay_session && snes_savestate_menu_is_open()) {
+          snes_savestate_menu_handle_key(SNESRECOMP_SDL_EVENT_KEY(event),
+                                        SNESRECOMP_SDL_EVENT_REPEAT(event));
+          HandleInput(SNESRECOMP_SDL_EVENT_KEY(event), SNESRECOMP_SDL_EVENT_MOD(event), true);
+          break;
+        }
         if (g_netplay_session && SNESRECOMP_SDL_EVENT_KEY(event) == SDLK_ESCAPE) {
           g_netplay_exit_requested = 1;
           break;
@@ -3683,16 +4096,16 @@ error_reading:;
       g_gamepad[1].axis_buttons = 0;
     {
       int ls = debug_server_consume_loadstate();
-      if (ls >= 0) {
+      if (ls >= 0 && !g_netplay_session) {
         RtlSaveLoad(kSaveLoad_Load, ls);
         GameReset();
       }
       int ss = debug_server_consume_savestate();
-      if (ss >= 0)
+      if (ss >= 0 && !g_netplay_session)
         RtlSaveLoad(kSaveLoad_Save, ss);
     }
     double before_debug_wait = MonotonicSeconds();
-    debug_server_wait_if_paused();
+    if (!g_netplay_session) debug_server_wait_if_paused();
     if (MonotonicSeconds() - before_debug_wait > 0.05)
       g_reset_clock = true;
 
@@ -3702,6 +4115,31 @@ error_reading:;
     if (snes_netplay_active()) {
       /* Refused mid-match; dropped rather than left to fire when it ends. */
       g_open_launcher_hotkey = 0;
+      snes_netplay_pump();
+      NetplayMenuSelftest(frameCtr);
+      if (snes_netplay_is_host()) {
+        uint32 human = snes_savestate_menu_filter_guest_input(netplay_capture_pad(NULL));
+        if (snes_savestate_menu_is_open()) {
+          snes_savestate_menu_poll_nav(human, SDL_GetTicks());
+        } else if (!snes_netplay_menu_paused()) {
+          (void)snes_savestate_menu_poll_open(g_savestate_menu_hotkey
+              ? (SNES_PAD_SELECT | SNES_PAD_R) : human);
+        }
+        g_savestate_menu_hotkey = 0;
+        if (snes_netplay_menu_ready() && !snes_savestate_menu_is_open())
+          (void)snes_netplay_menu_close();
+      }
+      if (snes_netplay_menu_paused() && !g_overlay_modal) {
+        g_overlay_modal = true;
+        SetAudioPaused(true);
+        snes_osd_push("Host is managing savestates", 3000);
+      } else if (!snes_netplay_menu_paused() && g_overlay_modal) {
+        g_overlay_modal = false;
+        GameReset();
+        ResetAudioTimeline();
+        SetAudioPaused(false);
+        OverlayNoteClosed();
+      }
       if (!snes_host_clock_simulation_due(&video_clock, MonotonicSeconds())) {
         snes_netplay_pump();
         WaitUntil(video_clock.next_simulation);
@@ -3767,7 +4205,8 @@ error_reading:;
         SDL_Delay(1);
       }
       g_present_alpha = 1;
-      DrawPpuFrameWithPerf();
+      if (snes_savestate_menu_is_open()) PresentFrozenWithOverlay();
+      else DrawPpuFrameWithPerf();
       ++presentations;
       continue;
     }
@@ -3966,6 +4405,7 @@ error_reading:;
     inputs |= debug_server_get_controller_inputs();
     double profile_start = ProfileStart();
     double guest_start = MonotonicSeconds();
+    PushExtraSeats();
     if (game->before_run_frame) game->before_run_frame();
     g_audio_producer_active = paced_realtime && g_audio_device != 0;
     /* Run-ahead owns the whole frame when it is on: it advances the guest
@@ -4055,6 +4495,7 @@ error_reading:;
   }
 
   const double run_end = MonotonicSeconds();
+  const double run_cpu_end = ProcessCpuSeconds();
   if (state_trace) fclose(state_trace);
   if (g_frame_timings) {
     FILE *f = fopen(frame_timing_path, "w");
@@ -4077,6 +4518,11 @@ error_reading:;
   host_report_breadcrumb("video totals: simulations=%u presentations=%llu seconds=%.3f",
                          frameCtr, (unsigned long long)presentations,
                          run_end - run_start);
+  host_report_breadcrumb("frame service: implementation=%s seconds=%.9f fps=%.3f cpu_seconds=%.9f",
+      SNESRECOMP_FRAME_STAGING_HLE ? "HLE" : "LLE", run_end - run_start,
+      run_end > run_start ? frameCtr / (run_end - run_start) : 0,
+      run_cpu_start >= 0 && run_cpu_end >= run_cpu_start
+          ? run_cpu_end - run_cpu_start : -1);
   if (g_profile) {
     double profile_seconds = run_end - profile_window_start;
     host_report_breadcrumb("video profile window: first=%u last=%u seconds=%.6f presentations=%u",
@@ -4094,9 +4540,10 @@ error_reading:;
 
   if (g_config.autosave && !g_netplay_session)
     HandleCommand(kKeys_Save + 0, true);
-  /* A volume or fullscreen change made with the keys survives the session,
-   * like the launcher's. */
-  if (g_volume_changed || g_fullscreen_changed)
+  /* A live config change made in-game -- a hotkey, a snesrecomp_set_* helper,
+   * or a dependent game's own menu -- survives the session, like the
+   * launcher's. */
+  if (g_config_dirty)
     WriteConfigFile(g_active_config_file);
 
   if (!g_netplay_session) RtlWriteSram();
@@ -4116,6 +4563,8 @@ error_reading:;
 #if defined(SNESRECOMP_HOST_HAS_BLEND)
   if (g_blend) recomp_frame_blend_destroy(g_blend);
 #endif
+
+  if (game->on_shutdown) game->on_shutdown();
 
   // clean sdl
   SetAudioPaused(true);
@@ -4171,6 +4620,9 @@ static void PollKeyboardControls(const uint8_t *keys) {
   uint32 p1 = g_config.player_src[0] == 1 ? keybinds_read_player_runner(keys, 1) : 0;
   uint32 p2 = g_config.player_src[1] == 1 ? keybinds_read_player_runner(keys, 2) : 0;
   g_input_state = p1 | (p2 << 12);
+  for (int seat = 2; seat < kSnesHostPadSeats; ++seat)
+    g_seat_keys[seat] = g_config.player_src[seat] == 1
+        ? keybinds_read_player_runner(keys, seat + 1) : 0;
 }
 
 static void HandleCommand(uint32 j, bool pressed) {
@@ -4190,8 +4642,23 @@ static void HandleCommand(uint32 j, bool pressed) {
     return;
   }
 
+  {
+    const int seat = ConfigSeatForControl((int)j);
+    if (seat >= 2) {
+      uint16 m = (uint16)(1u << kKbdRemap[(j - kKeys_ControlsP3) % 12]);
+      g_seat_keymap[seat] = pressed ? (uint16)(g_seat_keymap[seat] | m)
+                                    : (uint16)(g_seat_keymap[seat] & ~m);
+      return;
+    }
+  }
+
   if (g_netplay_session) {
     switch (j) {
+    case kKeys_SaveStateMenu:
+#if defined(SNES_HAS_LOBBY_CLIENT)
+      if (pressed && snes_netplay_is_host()) g_savestate_menu_hotkey = 1;
+#endif
+      return;
     case kKeys_Fullscreen: case kKeys_WindowBigger: case kKeys_WindowSmaller:
     case kKeys_DisplayPerf: case kKeys_Screenshot:
     case kKeys_VolumeUp: case kKeys_VolumeDown:
@@ -4228,7 +4695,7 @@ static void HandleCommand(uint32 j, bool pressed) {
        * this key only moves between windowed and borderless. */
       g_config.fullscreen =
           (g_win_flags & SNESRECOMP_SDL_WINDOW_FULLSCREEN_DESKTOP) ? 1 : 0;
-      g_fullscreen_changed = true;
+      g_config_dirty = true;
       break;
     case kKeys_Reset:
       ConsoleReset();
@@ -4262,6 +4729,15 @@ static void HandleCommand(uint32 j, bool pressed) {
       break;
     case kKeys_ToggleWidescreen:
       printf("Widescreen is a per-title presentation setting; see the launcher's Mods page.\n");
+      break;
+    case kKeys_ToggleVSync:
+      snesrecomp_set_vsync(g_config.vsync ? 0 : 1);
+      break;
+    case kKeys_ToggleFrameBlend:
+      snesrecomp_set_frame_blend(!g_config.frame_blend);
+      break;
+    case kKeys_ToggleRunAhead:
+      snesrecomp_set_run_ahead(g_config.run_ahead + 1);
       break;
     case kKeys_VolumeUp:
     case kKeys_VolumeDown: HandleVolumeAdjustment(j == kKeys_VolumeUp ? 1 : -1); break;
@@ -4304,6 +4780,22 @@ static uint32 GetActiveControllers(void) {
   return ctrl << 30;
 }
 
+/* Seat `j` is reserved by the launcher for a different pad that is connected. */
+static bool SeatHeldForOtherPad(int j, uint32 joystick_id) {
+  uint32 want = g_seat_instance[j];
+  if (!want || want == joystick_id + 1) return false;
+#if SNESRECOMP_SDL3
+  int n = 0;
+  SDL_JoystickID *ids = SDL_GetGamepads(&n);
+  bool connected = false;
+  for (int i = 0; ids && i < n; ++i) connected |= (uint32)ids[i] + 1 == want;
+  SDL_free(ids);
+  return connected;
+#else
+  return false;
+#endif
+}
+
 static void OpenOneGamepad(int i) {
   if (!SDL_IsGameController(i)) {
     OpenOneJoystick(i);
@@ -4321,15 +4813,30 @@ static void OpenOneGamepad(int i) {
     return;
   }
 
-  uint8 scan_order[3] = { SDL_GameControllerGetPlayerIndex(controller), 0, 1 };
+  uint8 scan_order[1 + kSnesHostPadSeats];
+  scan_order[0] = (uint8)SDL_GameControllerGetPlayerIndex(controller);
+  for (int k = 0; k < kSnesHostPadSeats; ++k) scan_order[1 + k] = (uint8)k;
   /* The self-test pad must be player 1: the overlay gestures read seat 0. */
   if (g_selftest_pad && SDL_JoystickInstanceID(g_selftest_pad) == joystick_id)
     scan_order[0] = 0;
 
   int found_idx = -1;
-  for (int k = 0; k < 3; k++) {
+  const int seats = HostConfiguredSeats();
+  /* The seat the launcher picked this very device for comes first. */
+  for (int j = 0; j < seats; ++j)
+    if (g_config.enable_gamepad[j] && g_seat_instance[j] == joystick_id + 1 &&
+        g_gamepad[j].joystick_id == -1) {
+      found_idx = j;
+      break;
+    }
+  /* Otherwise SDL's player index, then the first free seat. Never a seat
+   * another pad already drives (the preferred index used to take it over,
+   * leaving that pad without a seat), nor one held for another connected
+   * device the launcher picked. */
+  for (int k = 0; found_idx < 0 && k < 1 + kSnesHostPadSeats; k++) {
     uint8 j = scan_order[k];
-    if (j < 2 && g_config.enable_gamepad[j] && (k == 0 || g_gamepad[j].joystick_id == -1)) {
+    if (j < seats && g_config.enable_gamepad[j] && g_gamepad[j].joystick_id == -1 &&
+        !SeatHeldForOtherPad(j, joystick_id)) {
       found_idx = j;
       break;
     }
@@ -4354,8 +4861,9 @@ static void OpenOneJoystick(int i) {
   SDL_JoystickID id = SDL_JoystickInstanceID(joystick);
   if (GetGamepadInfo(id) || SelftestPadExcludes(id)) { SDL_JoystickClose(joystick); return; }
   int slot = -1;
-  for (int j = 0; j < 2; ++j) {
-    if (g_config.enable_gamepad[j] && g_gamepad[j].joystick_id == -1) {
+  for (int j = 0; j < HostConfiguredSeats(); ++j) {
+    if (g_config.enable_gamepad[j] && g_gamepad[j].joystick_id == -1 &&
+        !SeatHeldForOtherPad(j, (uint32)id)) {
       slot = j; break;
     }
   }
@@ -4409,6 +4917,15 @@ static void SetPadButtonOrFallthrough(uint32 j, bool pressed) {
     g_pad_buttons = pressed ? (g_pad_buttons | m) : (g_pad_buttons & ~m);
     return;
   }
+  {
+    const int seat = ConfigSeatForControl((int)j);
+    if (seat >= 2) {
+      uint16 m = (uint16)(1u << kKbdRemap[(j - kKeys_ControlsP3) % 12]);
+      g_seat_pad[seat] = pressed ? (uint16)(g_seat_pad[seat] | m)
+                                 : (uint16)(g_seat_pad[seat] & ~m);
+      return;
+    }
+  }
   if (g_overlay_modal)
     return;   /* a panel owns the screen: no state loads behind it */
   HandleCommand(j, pressed);
@@ -4437,7 +4954,7 @@ static void ApplyVolume(void) {
 static void HandleVolumeAdjustment(int volume_adjustment) {
   g_config.volume = IntMin(IntMax(0, g_config.volume + volume_adjustment * 5), 100);
   ApplyVolume();
-  g_volume_changed = true;
+  g_config_dirty = true;
   /* The bar at the right edge of the frame, for a moment. */
   snes_osd_note_volume(g_config.volume);
 }

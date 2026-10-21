@@ -7,6 +7,7 @@ import hashlib
 import json
 import os
 import pathlib
+import re
 import sys
 import time
 
@@ -179,6 +180,8 @@ def main() -> int:
         help="tier2 coverage manifest whose clean targets become optional "
              "AOT roots (repeatable)")
     parser.add_argument("--legacy-profile-rom-sha256", help="Explicitly associate legacy profiles with this ROM digest")
+    parser.add_argument("--generation-recipe-digest",
+                        help="SHA-256 of the SDK's project recipe and hook sources")
     parser.add_argument(
         "--historical-profile-manifest", action="append", default=[],
         help="Retain seeds from a separate historical checkpoint/bundle; "
@@ -327,9 +330,12 @@ def _generate(args, parser, cfg_dir, *, symbol_roots=()):
         # participate in the published-output cache key.  Treat any non-empty
         # value as enabled to match emit_function.py's codegen guard.
         deny_gate = bool(os.environ.get("SNESRECOMP_EMIT_AOT_DENY_GATE"))
-        return hashlib.sha256(
-            f"{tree_digest}\0aot_deny_gate={int(deny_gate)}".encode()
-        ).hexdigest()
+        inputs = f"{tree_digest}\0aot_deny_gate={int(deny_gate)}"
+        if args.generation_recipe_digest:
+            if not re.fullmatch(r"[0-9a-fA-F]{64}", args.generation_recipe_digest):
+                raise ValueError("generation recipe digest must be a SHA-256")
+            inputs += "\0recipe=" + args.generation_recipe_digest.lower()
+        return hashlib.sha256(inputs.encode()).hexdigest()
 
     generator_digest = generator_digest_for()
     config_digest = _config_digest(parsed)

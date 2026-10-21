@@ -312,14 +312,28 @@ void RtlReadSram();
  * (the previous file is left in place). */
 int RtlWriteSram(void);
 int RtlTryWriteSram(void);
+/* Publish an immutable SRAM image to an explicit file using the same durable
+ * temporary-file/backup protocol. The caller creates its directory and keeps
+ * the bytes alive until return. Does not read guest globals or save-root state;
+ * independent paths may run on workers, but writes to one path must serialize. */
+int RtlWriteSramImage(const char *path, const uint8 *bytes, size_t size);
 /* Save-directory root for SRAM + savestate slots. Default "saves". Netplay
  * guests use "saves/netplay" so host-driven sync cannot clobber personal files.
  * Pass NULL/"" to restore the default. */
 void RtlSetSaveRoot(const char *root);
 const char *RtlSaveRoot(void);
+/* Optional stable directory for the Quick slot when a host switches SRAM
+ * namespaces (e.g. course packs). NULL/"" follows the current save root.
+ * Numbered slots and battery saves retain their existing paths. */
+void RtlSetQuickSaveRoot(const char *root);
 /* Current RTLS guest prefix, including its header but excluding title extras.
  * For opt-in preflight of states written by this exact guest schema. */
 size_t RtlSnapshotGuestSize(uint32 *version_out);
+/* Same nonmutating current-schema query, also locating the serialized 128 KiB
+ * WRAM range via the actual serializer. The offset is relative to the RTLS
+ * header (not a guard envelope). Returns zero on failure; callers must still
+ * validate input version/length before viewing bytes at the returned offset. */
+size_t RtlSnapshotGuestLayout(uint32 *version_out, size_t *wram_offset_out);
 void RtlEnsureSaveDir(void);
 void RtlSaveSlotPath(int slot, char *buf, size_t buflen);
 void RtlSramFilePath(char *buf, size_t buflen);
@@ -346,6 +360,10 @@ void RtlApplyExecutionState(void);
 uint64_t RtlStateGeneration(void);
 size_t RtlSaveSnapshotToMemory(void *data, size_t capacity);
 bool RtlLoadSnapshotFromMemory(const void *data, size_t size);
+/* True only while a rollback restore invokes the game's load callbacks.
+ * Preserve presentation cue acknowledgements in this context; an ordinary
+ * save-state load still ends the old presentation timeline. */
+bool RtlIsRollbackLoad(void);
 
 /*
  * Rollback snapshots (netplay ROLLBACK mode).
@@ -372,6 +390,15 @@ bool RtlLoadSnapshotFromMemory(const void *data, size_t size);
  */
 size_t RtlRollbackSaveToMemory(void *data, size_t capacity);
 bool RtlRollbackLoadFromMemory(const void *data, size_t size);
+/* Netplay: snapshots two peers in the same guest state write byte-for-byte
+ * alike (the live audio output ring is blanked while writing). The memory
+ * form is the rollback format -- load it with RtlRollbackLoadFromMemory,
+ * which carries the timing residue and keeps the receiver's live ring. */
+size_t RtlNetplaySnapshotToMemory(void *data, size_t capacity);
+/* How much of such a snapshot two peers in one state agree on: all but the
+ * trailing residue, whose absolute cycle counters are host bookkeeping. */
+size_t RtlNetplaySnapshotHashedBytes(size_t size);
+bool RtlSaveSnapshotRingBlanked(const char *filename);
 /* Upper bound for one rollback snapshot; sizes the ring's allocations. */
 size_t RtlRollbackSnapshotBound(void);
 

@@ -1,5 +1,8 @@
 # SNESRecomp mod packages and trusted plugins
 
+For a hands-on guide to making mods with ordinary tools, start with
+[`../snesmod.md`](../snesmod.md).
+
 SNES mod support is an explicit per-game build feature:
 
 ```cmake
@@ -195,13 +198,16 @@ network start never silently falls back to offline play. Netplay cold boots
 without local SRAM/autosaves and blocks state-changing emulator shortcuts;
 the synchronized game's own pause controls remain available.
 
-## Content variants: `[[variant]]`, `[[patch]]`, `external_rom.sha256`
+## Deprecated patched-ROM recompilation path
 
-A package may declare selectable **content variants** -- another program run
-from a user-supplied image, or a ROM hack -- each with its own recompiled
-module and isolated saves. The manifest vocabulary, the runtime registry and
-the in-game Left/Right picker are documented in `CONTENT_VARIANTS.md`. Two
-rules carry over from the trust model above: an `[[external_rom]]` that a
-variant runs must declare `sha256`, and the engine (not a plugin) verifies it
-before any use; a `[[patch]]` is applied in memory to the verified source and
-its `target_sha256` is checked before a module may run the result.
+Do not recompile ROM hacks or use the legacy `[[patch]]` plus recompiled
+content-variant path for new mods. Reimplement the hack's intended behavior
+and data through a `.snesmod` against the supported stock ROM. See
+[the authoring guide](../snesmod.md#reimplement-an-existing-rom-hack).
+
+The engine retains legacy manifest parsing for compatibility and reports a
+deprecation warning when a package declares `[[patch]]`. This is not an
+authoring recommendation. The remaining program-module and selector internals
+are described in [Content Variants](CONTENT_VARIANTS.md) for maintainers.
+Title-specific ingestion/import engines, including Super Mario World's and
+F-Zero Forever's, are separate work and are not deprecated by this notice.

@@ -568,6 +568,9 @@ void snes_netplay_rb_finish_frame(void)
 /* ── diagnostics ─────────────────────────────────────────────────────── */
 
 uint32_t snes_netplay_rb_sim_tick(void) { return rnet_rb_driver_sim_tick(g_rb.drv); }
+void snes_netplay_rb_set_hold(uint32_t tick) { rnet_rb_driver_set_hold(g_rb.drv, tick); }
+void snes_netplay_rb_clear_hold(void) { rnet_rb_driver_clear_hold(g_rb.drv); }
+int snes_netplay_rb_hold_settled(void) { return rnet_rb_driver_hold_settled(g_rb.drv); }
 uint32_t snes_netplay_rb_episode_count(void) { return rnet_rb_driver_episode_count(g_rb.drv); }
 uint32_t snes_netplay_rb_invent_count(void) { return rnet_rb_driver_invent_count(g_rb.drv); }
 uint32_t snes_netplay_rb_promote_count(void) { return rnet_rb_driver_promote_count(g_rb.drv); }

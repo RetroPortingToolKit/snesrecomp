@@ -84,6 +84,11 @@ typedef struct SnesNetplayConfig {
      * (recomp-ui docs/HOST_NETPLAY.md "Host relay"). LAN transport, not ICE
      * and not the server relay. */
     int         transport_host;
+    /* 1 = the launch said transport "host" over ICE (relay_via "ice"): the
+     * match rides the ICE agents the lobby's waiting room already connected,
+     * adopted from recomp-net at start. No port is bound or dialled.
+     * transport_host is also 1 then; this is tested first. */
+    int         transport_ice_hub;
 } SnesNetplayConfig;
 
 void snes_netplay_config_defaults(SnesNetplayConfig *cfg);
@@ -220,6 +225,25 @@ const char *snes_netplay_refusal(void);
  * rendezvous before hard_resync. SAVE still ships async after host write.
  * Guests use saves/netplay/ so personal saves/ is never overwritten.
  * Returns 1 if netplay handled the request, 0 if offline — caller may RtlSaveLoad. */
+/* Synchronized pause menu, driven by seat zero only.
+ * open: every peer pauses on one agreed tick, checks its state there against
+ * the host's by hash, and only a peer that differs receives the host's state.
+ * Every peer then shows the menu; guests mirror the host's cursor.
+ * save: every peer writes the slot itself, the copies are compared by hash,
+ * and only a differing peer receives the host's file and thumbnail.
+ * load: the slot is verified (and sent where it differs) first, then every
+ * peer applies its own copy and play resumes in a new epoch.
+ * close: every peer resumes; the epoch is kept unless a state was replaced.
+ * Each returns 1 when the request was accepted, never an offline fallback. */
+int snes_netplay_menu_open(void);
+int snes_netplay_menu_paused(void);
+int snes_netplay_menu_ready(void);
+/* Host: browsing with no command in flight (tests wait on this). */
+int snes_netplay_menu_idle(void);
+void snes_netplay_menu_cursor(int slot);
+int snes_netplay_menu_save(int slot);
+int snes_netplay_menu_load(int slot);
+int snes_netplay_menu_close(void);
 int  snes_netplay_is_host(void);
 int  snes_netplay_request_save(int slot);
 int  snes_netplay_request_load(int slot);
@@ -236,6 +260,14 @@ int  snes_netplay_state_barrier(void);
  * poll_admit / frame; rate-limited internally.
  */
 void snes_netplay_diag_tick(void);
+
+/* Always-on, bounded observations. Call the termination logger only after the
+ * final disconnect decision and before shutdown; it logs once per session.
+ * Slow operations are measured by the caller (monotonic elapsed milliseconds),
+ * reported at >=250 ms, and rate-limited. Neither helper changes netplay policy.
+ * Both are no-ops when offline or when netplay is not compiled in. */
+void snes_netplay_log_peer_disconnect(uint32_t timeout_ms);
+void snes_netplay_note_slow_operation(const char *operation, uint64_t elapsed_ms);
 
 #ifdef __cplusplus
 }

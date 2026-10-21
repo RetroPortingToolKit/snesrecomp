@@ -122,6 +122,8 @@ struct Inputs {
     hle_dispatch: HashMap<u32, String>,
     inline_skip: HashMap<u32, i32>,
     terminal_jsr_sites: BTreeSet<u32>,
+    live_operand_sites: BTreeSet<u32>,
+    brk_rti_sites: BTreeSet<u32>,
     declared_exit_modes: HashMap<(u32, u8, u8), (u8, u8)>,
     declared_exit_sets: HashMap<(u32, u8, u8), Vec<(u8, u8)>>,
     /// Synthetic reloc regions redirecting WRAM ram_routine entries to blob
@@ -183,6 +185,31 @@ fn mirror_pc24(mapping: RomMapping, pc24: u32) -> Option<u32> {
 
 fn rom_u16(rom: &[u8], offset: usize) -> Option<u32> {
     Some(*rom.get(offset)? as u32 | ((*rom.get(offset + 1)? as u32) << 8))
+}
+
+fn rom_byte(rom: &[u8], mapping: RomMapping, bank: u32, addr: u32) -> Option<u8> {
+    if !is_rom_address(mapping, bank, addr) {
+        return None;
+    }
+    rom.get(addr_to_rom_offset(mapping, bank, addr, &[]))
+        .copied()
+}
+
+/// `brk_rti` is sound only where the byte is a BRK and the native BRK vector
+/// ($00:FFE6) is a bare RTI. Peer of recompiler/v2/brk_rti.py: same rule,
+/// same wording, checked for every declared site whether decoded or not.
+fn check_brk_rti_site(rom: &[u8], mapping: RomMapping, site: u32) -> Result<(), String> {
+    let site = site & 0xFFFFFF;
+    if rom_byte(rom, mapping, site >> 16, site & 0xFFFF) != Some(0x00) {
+        return Err(format!("brk_rti at ${site:06X}: not a BRK in ROM"));
+    }
+    let vector = rom_u16(rom, vector_table_offset(rom) + 6).unwrap_or(0);
+    if rom_byte(rom, mapping, 0, vector) != Some(0x40) {
+        return Err(format!(
+            "brk_rti at ${site:06X}: the native BRK vector ${vector:04X} is not a bare RTI"
+        ));
+    }
+    Ok(())
 }
 
 fn expand_auto_vectors(cfgs: &mut [BankCfg], rom: &[u8]) {
@@ -270,6 +297,8 @@ fn load_inputs(cfg_dir: &Path, rom: &mut Vec<u8>, all_cfg_roots: bool) -> Result
     let mut hle_dispatch = HashMap::new();
     let mut inline_skip = HashMap::new();
     let mut terminal_jsr_sites = BTreeSet::new();
+    let mut live_operand_sites = BTreeSet::new();
+    let mut brk_rti_sites = BTreeSet::new();
     let mut declared_exit_modes = HashMap::new();
     let mut declared_exit_sets: HashMap<(u32, u8, u8), Vec<(u8, u8)>> = HashMap::new();
 
@@ -363,6 +392,21 @@ fn load_inputs(cfg_dir: &Path, rom: &mut Vec<u8>, all_cfg_roots: bool) -> Result
             terminal_jsr_sites.insert(site);
             if let Some(mirror) = mirror_pc24(mapping, site) {
                 terminal_jsr_sites.insert(mirror);
+            }
+        }
+        for &site_pc16 in &cfg.live_operand {
+            let site = (bank << 16) | (site_pc16 & 0xFFFF);
+            live_operand_sites.insert(site);
+            if let Some(mirror) = mirror_pc24(mapping, site) {
+                live_operand_sites.insert(mirror);
+            }
+        }
+        for &site_pc16 in &cfg.brk_rti {
+            let site = (bank << 16) | (site_pc16 & 0xFFFF);
+            check_brk_rti_site(rom, mapping, site)?;
+            brk_rti_sites.insert(site);
+            if let Some(mirror) = mirror_pc24(mapping, site) {
+                brk_rti_sites.insert(mirror);
             }
         }
         for site in &cfg.indirect_dispatch {
@@ -507,6 +551,8 @@ fn load_inputs(cfg_dir: &Path, rom: &mut Vec<u8>, all_cfg_roots: bool) -> Result
         hle_dispatch,
         inline_skip,
         terminal_jsr_sites,
+        live_operand_sites,
+        brk_rti_sites,
         declared_exit_modes,
         declared_exit_sets,
         reloc_regions,
@@ -578,7 +624,10 @@ fn summarize(
         pcs.push(site);
         // COP tiers to the interpreter (see lowering::_h_cop) and is M/X-
         // transparent, so it is a modelled call, not poison. BRK is not.
-        if insn.mnem == "BRK" && !graph.data_region_exec_pcs.contains(&site) {
+        if insn.mnem == "BRK"
+            && !graph.data_region_exec_pcs.contains(&site)
+            && !inputs.brk_rti_sites.contains(&site)
+        {
             poison_reasons.insert(format!("{}_at_{site:06X}", insn.mnem.to_ascii_lowercase()));
         }
         if let Some(entries) = &insn.dispatch_entries {
@@ -1103,7 +1152,11 @@ fn solve_exit_equation_sccs(
                                     &solved,
                                 )
                             });
-                        modes == Some(BTreeSet::from([(m & 1, x & 1)]))
+                        modes.is_some_and(|modes| {
+                            // A proven non-returning call cannot violate a
+                            // preservation assumption about its continuation.
+                            modes.is_empty() || modes == BTreeSet::from([(m & 1, x & 1)])
+                        })
                     })
             });
             if !assumptions_hold {
@@ -1216,6 +1269,8 @@ fn analyze(
                 callee_inline_skip: Some(&inline_args),
                 inline_dispatch_loop_pcs: inline_loops,
                 terminal_jsr_sites: Some(&inputs.terminal_jsr_sites),
+                live_operand_sites: Some(&inputs.live_operand_sites),
+                brk_rti_sites: Some(&inputs.brk_rti_sites),
                 global_inline_skip: Some(&inline_args),
                 stop_on_unknown_callee_exit: true,
                 reloc_regions: Some(&inputs.reloc_regions),
@@ -1924,6 +1979,24 @@ mod tests {
     fn exit_equation_solver_preserves_closed_noreturn_fact() {
         let looping = VariantKey::new(0xB98000, 0, 0);
         let solved = solve(vec![(looping, equation(&[], &[], &[]))]);
+        assert_eq!(solved[&looping], BTreeSet::new());
+    }
+
+    #[test]
+    fn exit_equation_solver_accepts_noreturn_in_preservation_cycle() {
+        let dispatcher = VariantKey::new(0x008100, 1, 0);
+        let looping = VariantKey::new(0x008400, 1, 0);
+        let solved = solve(vec![
+            (
+                dispatcher,
+                equation(&[(1, 0)], &[], &[((looping.pc24, 1, 0), 1, 0)]),
+            ),
+            (
+                looping,
+                equation(&[], &[], &[((dispatcher.pc24, 1, 0), 1, 0)]),
+            ),
+        ]);
+        assert_eq!(solved[&dispatcher], BTreeSet::from([(1, 0)]));
         assert_eq!(solved[&looping], BTreeSet::new());
     }
 

@@ -40,9 +40,15 @@ void ppu_write(Ppu *ppu, uint8_t adr, uint8_t val) {
 void joypad_reset_state(void) {}
 void joypad_saveload(struct SaveLoadInfo *sli) { (void)sli; }
 
-/* The PPU write journal (ppu.c) is not linked into this harness. */
+/* The PPU write journal and raster journal (ppu.c) are not linked into this
+ * harness. */
 uint8_t g_ppu_wlog_src;
 void ppu_wlog_note_reg(uint16_t reg, uint8_t val) { (void)reg; (void)val; }
+void ppu_rasterRecord(uint16_t reg, uint16_t line, uint8_t val) {
+  (void)reg; (void)line; (void)val;
+}
+void ppu_rasterFieldBoundary(void) {}
+void ppu_rasterReset(void) {}
 
 void RtlApuLock(void) {}
 void RtlApuUnlock(void) {}

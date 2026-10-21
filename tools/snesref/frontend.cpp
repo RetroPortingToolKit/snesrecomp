@@ -572,16 +572,31 @@ static void maybe_dump_frame(const void* data, unsigned w, unsigned h, size_t pi
     if (!dir || !dir[0] || !data) return;
     long fr = (long)g_frame;
     if (fr < from || fr > to || ((fr - from) % step) != 0) return;
+    // A core reports 512 columns in hi-res/pseudo-hires (Mode 5/6, SETINI bit
+    // 3) and 448 rows when interlaced. The default 256x224 file keeps only the
+    // top-left quarter of such a frame, which is not a picture of anything.
+    // SNESREF_FRAME_DUMP_NATIVE=1 writes the frame at the size the core gave
+    // it, as frame_NNNNNN_<w>x<h>.raw, so hi-res titles can be compared.
+    static int native = -1;
+    if (native < 0) {
+        const char* n = getenv("SNESREF_FRAME_DUMP_NATIVE");
+        native = (n && n[0] && n[0] != '0') ? 1 : 0;
+    }
+    const unsigned out_w = native ? w : 256, out_h = native ? h : 224;
     char path[1024];
-    snprintf(path, sizeof(path), "%s/frame_%06ld.raw", dir, fr);
+    if (native)
+        snprintf(path, sizeof(path), "%s/frame_%06ld_%ux%u.raw", dir, fr, w, h);
+    else
+        snprintf(path, sizeof(path), "%s/frame_%06ld.raw", dir, fr);
     FILE* f = fopen(path, "wb");
     if (!f) return;
-    int cols = (w < 256) ? (int)w : 256;
-    int rows = (h < 224) ? (int)h : 224;
+    int cols = (w < out_w) ? (int)w : (int)out_w;
+    int rows = (h < out_h) ? (int)h : (int)out_h;
     const unsigned char* p = (const unsigned char*)data;
-    unsigned char row[256 * 4];
-    for (int y = 0; y < 224; y++) {
-        memset(row, 0, sizeof(row));
+    std::vector<unsigned char> row_buf((size_t)out_w * 4);
+    unsigned char* row = row_buf.data();
+    for (int y = 0; y < (int)out_h; y++) {
+        memset(row, 0, row_buf.size());
         if (y < rows) {
             const unsigned char* sr = p + (size_t)y * pitch;
             for (int x = 0; x < cols; x++) {
@@ -600,7 +615,7 @@ static void maybe_dump_frame(const void* data, unsigned w, unsigned h, size_t pi
                 row[x*4+0]=B; row[x*4+1]=G; row[x*4+2]=R; row[x*4+3]=0;
             }
         }
-        fwrite(row, 1, 256 * 4, f);
+        fwrite(row, 1, row_buf.size(), f);
     }
     fclose(f);
 }

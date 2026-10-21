@@ -1,0 +1,33 @@
+name: Rendering workers
+on:
+  pull_request:
+    paths:
+      - 'runner/render_workers.cmake'
+      - 'runner/src/render_workers.*'
+      - 'runner/tests/render_workers/**'
+      - '.github/workflows/render-workers.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'runner/render_workers.cmake'
+      - 'runner/src/render_workers.*'
+      - 'runner/tests/render_workers/**'
+      - '.github/workflows/render-workers.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v6
+      - name: Configure
+        run: cmake -S runner/tests/render_workers -B build-render-workers -DCMAKE_BUILD_TYPE=Release
+      - name: Build
+        run: cmake --build build-render-workers --config Release --parallel 2
+      - name: Test
+        run: ctest --test-dir build-render-workers -C Release --output-on-failure

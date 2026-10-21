@@ -61,15 +61,20 @@ class DebugClient:
             self._sock = None
             self._buf = b''
 
-    def query_raw(self, cmd):
-        """Send command, return raw response string."""
+    def query_raw(self, cmd, *, retry=True):
+        """Send a command, optionally reconnecting and retrying once.
+
+        Use retry=False for mutations such as step, reset or load_state. A
+        lost reply does not prove that the server did not execute the command.
+        """
         try:
             self._ensure_connected()
             self._sock.sendall((cmd + '\n').encode())
             return self._recv_command_reply()
         except (ConnectionError, socket.timeout, OSError):
-            # Connection lost — close and retry once
             self.close()
+            if not retry:
+                raise
             self._ensure_connected()
             self._sock.sendall((cmd + '\n').encode())
             return self._recv_command_reply()
@@ -85,9 +90,9 @@ class DebugClient:
             line = self._recv_line()
         return line
 
-    def query(self, cmd):
+    def query(self, cmd, *, retry=True):
         """Send command, return parsed JSON dict."""
-        raw = self.query_raw(cmd)
+        raw = self.query_raw(cmd, retry=retry)
         if not raw:
             raise ConnectionError(f'{self.name}: empty response to "{cmd}"')
         return json.loads(raw)

@@ -7,6 +7,10 @@
 #include "sdl_compat.h"
 #include "display_aspect.h"
 
+/* Controller seats the desktop host can drive: two console ports, or up to
+ * eight with a Super Multitap in each (docs/MULTITAP.md). */
+#define kSnesHostPadSeats 8
+
 enum {
   kKeys_Null,
   kKeys_Controls,
@@ -44,6 +48,25 @@ enum {
   /* Reopen the launcher mid-game (SnesDesktopHostGame.in_game_launcher).
    * Appended for the same reason as SaveStateMenu. */
   kKeys_OpenLauncher,
+  /* Multitap seats 3..8. Appended so every earlier command keeps its value.
+   * Their keyboard half lives in keybinds.ini like seats 1 and 2; these ids
+   * exist for [GamepadMap] ControlsP3.. and an optional [KeyMap] binding. */
+  kKeys_ControlsP3,
+  kKeys_ControlsP3_Last = kKeys_ControlsP3 + 11,
+  kKeys_ControlsP4,
+  kKeys_ControlsP4_Last = kKeys_ControlsP4 + 11,
+  kKeys_ControlsP5,
+  kKeys_ControlsP5_Last = kKeys_ControlsP5 + 11,
+  kKeys_ControlsP6,
+  kKeys_ControlsP6_Last = kKeys_ControlsP6 + 11,
+  kKeys_ControlsP7,
+  kKeys_ControlsP7_Last = kKeys_ControlsP7 + 11,
+  kKeys_ControlsP8,
+  kKeys_ControlsP8_Last = kKeys_ControlsP8 + 11,
+  /* Append commands so existing ids and positional defaults stay intact. */
+  kKeys_ToggleVSync,
+  kKeys_ToggleFrameBlend,
+  kKeys_ToggleRunAhead,
   kKeys_Total,
 };
 
@@ -156,13 +179,13 @@ typedef struct Config {
   char *memory_buffer;
   const char *shader;
 
-  bool enable_gamepad[2];
+  bool enable_gamepad[kSnesHostPadSeats];
   /* Which input device drives each player, from config.ini [Controller]
    * SourceP1/SourceP2 as the launcher writes it: 0 none, 1 keyboard,
    * 2 gamepad. Player 1 defaults to keyboard so a config without the section
    * behaves as it always did; player 2 defaults to none, because a second
    * keyboard player sharing one keyboard has to be asked for. */
-  int player_src[2];
+  int player_src[kSnesHostPadSeats];
   int gamepad_deadzone;
 
   // Which players have keyboard controls
@@ -193,6 +216,16 @@ enum {
 
 extern Config g_config;
 
+/* Set when a config parameter has been changed live this session: the
+ * volume/fullscreen hotkeys, any snesrecomp_set_* helper (host_api.h), or a
+ * game that writes a g_config field directly (e.g. the pause menu's Display
+ * rows). The shutdown path rewrites config.ini from it so the launcher opens
+ * on the settings the player left. If you write a g_config field yourself,
+ * set this or the write will not be persisted. Declared here rather than in
+ * host_api.h so a game that only includes config.h can mark its writes
+ * without pulling in the desktop host's API header. */
+extern bool g_config_dirty;
+
 void ConfigUseStateMenuDefaults(void);
 /* Opt in before parsing: binds [KeyMap] OpenLauncher to Ctrl+L by default. */
 void ConfigUseInGameLauncherDefaults(void);
@@ -220,6 +253,27 @@ bool ConfigDeadzoneMigrated(void);
  * device, and the caller falls back to the older EnableGamepadN spelling
  * rather than to the seeded default. player is 0 or 1. */
 bool ConfigHasPlayerSource(int player);
+
+/* Seats the host routes (2 without a multitap, up to kSnesHostPadSeats).
+ * WriteConfigFile persists EnableGamepadN / SourcePN only for these, so a
+ * two-player title's config.ini keeps exactly its two-seat keys. */
+void ConfigSetPadSeats(int seats);
+int ConfigPadSeats(void);
+
+/* Controller command range of seat `seat` (0-based), or 0 when none. */
+static inline int ConfigSeatControlsBase(int seat) {
+  if (seat == 0) return kKeys_Controls;
+  if (seat == 1) return kKeys_ControlsP2;
+  if (seat >= 2 && seat < kSnesHostPadSeats) return kKeys_ControlsP3 + (seat - 2) * 12;
+  return 0;
+}
+/* Seat (0-based) owning controller command `cmd`, or -1. */
+static inline int ConfigSeatForControl(int cmd) {
+  if (cmd >= kKeys_Controls && cmd <= kKeys_Controls_Last) return 0;
+  if (cmd >= kKeys_ControlsP2 && cmd <= kKeys_ControlsP2_Last) return 1;
+  if (cmd >= kKeys_ControlsP3 && cmd <= kKeys_ControlsP8_Last) return 2 + (cmd - kKeys_ControlsP3) / 12;
+  return -1;
+}
 
 /* Opt in to persisting [Rewind]. A host that does not offer the launcher's
  * rewind rows never calls this, and WriteConfigFile then leaves whatever the

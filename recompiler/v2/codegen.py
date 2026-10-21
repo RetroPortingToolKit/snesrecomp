@@ -2526,6 +2526,15 @@ def _emit_return(op: Return) -> List[str]:
         "    if (_anc_skip >= 0) {",
         "      cpu_trace_mark_nlr_exit(BD_EXIT_KIND_TRAMPOLINE);",
         f"      return (RecompReturn)_anc_skip;  /* {label_inner} return-to-ancestor */ }}",
+        # A callee may relocate its own return frame above stack arguments,
+        # discard those arguments, then return to the original paired PC.
+        # Preserve that architectural S instead of sending a normal internal
+        # continuation through dispatch-miss's entry_s + frame_size restore.
+        # Ancestor resolution keeps priority; deeper synthetic frames and
+        # rewritten PCs must still follow the computed/non-local paths.
+        f"    if (_hrv == {frame_sz} && _rpc24 == _host_return_pc24 &&",
+        "        (uint16)(_ret_s - _entry_s) < 0x8000u) {",
+        f"      return RECOMP_RETURN_NORMAL;  /* {label_inner} callee-cleaned host return */ }}",
         # The nearest skipped ancestor can be a caller still running inside
         # the active interpreter rather than another generated function. Hand
         # the popped continuation back to that owner through the existing
@@ -2547,17 +2556,19 @@ def _emit_return(op: Return) -> List[str]:
         "        interp_bridge_has_direct_paired_bounce()) {",
         f"      return interp_tier_dispatch_rewritten_return(cpu, _rpc24, 0x{src24:06x}u); }}",
         "  }",
-        # A computed RTS may push a synthetic target frame below entry and
-        # consume it completely, leaving cpu->S exactly back at _entry_s.
+        # A computed RTS/RTL may push a synthetic target below entry, with
+        # saved locals or another synthetic continuation beneath that target.
         # During a direct interpreter->AOT bounce, that means the real paired
         # caller frame is still owned by the interpreter.  Hand the computed
-        # continuation back to that owner.  Starting a popped-return bridge
-        # here creates a nested interpreter whose watermark is _entry_s; if a
+        # continuation back to that owner with the entire remaining stack.
+        # Starting a popped-return bridge creates a nested interpreter; if a
         # later helper non-locally returns through the preserved caller, the
         # nested bridge exits at the caller epilogue and the outer interpreter
-        # executes that epilogue a second time (LttP sprite dispatch: PHA;RTS
-        # selector followed by Sprite_ReturnIfInactive's PLA;PLA;RTS).
-        "  if (_ret_s != _entry_s && cpu->S == _entry_s &&",
+        # executes that epilogue a second time. A synthesized far call is also
+        # affected: the nested bridge stops at its local RTL continuation and
+        # the bounce then skips that continuation (YI's PHK/PEA/.../RTL helper).
+        "  if (_ret_s != _entry_s &&",
+        "      (uint16)(_entry_s - _ret_s) < 0x8000u &&",
         "      interp_bridge_has_direct_paired_bounce()) {",
         f"    return interp_tier_dispatch_rewritten_return(cpu, _rpc24, 0x{src24:06x}u);",
         "  }",
@@ -2626,6 +2637,31 @@ def _emit_stop(op: Stop) -> List[str]:
 
 
 def _emit_break(op: Break) -> List[str]:
+    if op.rti_round_trip and op.source_pc24 is not None:
+        # brk_rti: BRK pushes PB, the address past its signature byte and P
+        # (native mode), sets I and clears D; the vector's bare RTI pulls the
+        # same four bytes. What stays is the bytes left below S and the time:
+        # the BRK's cycles are the block's, the RTI's 7 (6 + 1 native) are
+        # charged here at the speed of bank $00, where the vector points.
+        # Only the native vector ($FFE6) was validated: in emulation mode
+        # BRK goes through $FFFE, so that case runs in the interpreter.
+        site = op.source_pc24 & 0xFFFFFF
+        ret = (site + 2) & 0xFFFF
+        return [
+            "/* BRK to a bare RTI (brk_rti): the round trip, then on */",
+            "if (cpu->emulation) {",
+            f"  return interp_tier_dispatch_tail(cpu, "
+            f"{_transfer_target_expr(site, False)}, 0x{site:06x}u, _entry_s, _hrv);",
+            "}",
+            "{ uint16 _s = cpu->S;",
+            "  cpu_mirrors_to_p(cpu);",
+            "  cpu_write8(cpu, 0x00, _s, cpu->PB);",
+            f"  cpu_write8(cpu, 0x00, (uint16)(_s - 1), 0x{ret >> 8:02x});",
+            f"  cpu_write8(cpu, 0x00, (uint16)(_s - 2), 0x{ret & 0xFF:02x});",
+            "  cpu_write8(cpu, 0x00, (uint16)(_s - 3), (uint8)cpu->P);",
+            "  cpu->cycles += 7;",
+            "  cpu->master_cycles += 7 * 8; }",
+        ]
     if not op.tier_to_lle:
         return ["/* COP: software interrupt */" if op.cop
                 else "/* BRK: software interrupt */"]

@@ -57,6 +57,7 @@ static int      g_nested_chain_direct;
 int snes_frame_counter = 0;
 const char *rtl_game_title(void) { return "bridge_test"; }
 static Snes g_test_snes;
+static uint64_t g_test_irq_master;
 Snes *g_snes = &g_test_snes;
 uint64_t g_apu_last_sync_master;
 int g_interp_apu_driving;
@@ -129,7 +130,8 @@ void RecompStackPop(void) {
 }
 void snes_catchupApu(Snes *snes) { (void)snes; ++g_relative_syncs; }
 void snes_sync_master_clock(Snes *snes, uint64_t master_clock) {
-    (void)snes; (void)master_clock;
+    if (g_test_irq_master && master_clock >= g_test_irq_master)
+        snes->inIrq = true;
 }
 void cart_sync_coprocessors(Cart *cart, uint64_t master_clock) {
     (void)cart; (void)master_clock;
@@ -430,6 +432,101 @@ static int resume_ring_has(uint64_t since, int site, int kind) {
     return 0;
 }
 static void observe_dest(CpuState *cpu,uint32_t pc) {(void)cpu;(void)pc;++hook_dest;}
+/* S18: interpreted opcodes, counted through the bridge's per-opcode hook. */
+static unsigned g_s18_steps;
+static void s18_count(uint32_t pc24, int m, int x) {(void)pc24;(void)m;(void)x;++g_s18_steps;}
+
+/* S18: one whole-program run of `code` at $00:8900 to a master deadline
+ * 50000 master clocks out. `declare`: 0 clears every idle poll, S18_KEEP
+ * leaves the table as it is, any other value is the one poll declared. What
+ * is recorded is everything a replay must reproduce: guest clocks, the exit
+ * and its PC, registers, open bus, APU flushes and memory. */
+#define S18_KEEP 0xFFFFFFFFu
+static uint64_t g_s18_span = 50000;   /* master clocks to the deadline */
+typedef struct {
+    int rc, site; uint64_t master, cycles; uint32_t resume;
+    uint16_t a, x, y, s; uint8_t p, open_bus;
+    unsigned syncs, interpreted; uint32_t ram_sum;
+} S18Run;
+static S18Run s18_run(const uint8_t *code, int len, uint32_t declare, int i_flag) {
+    S18Run r; memset(&r, 0, sizeof r);
+    memset(RAM, 0, MEMSZ); init_cpu();
+    g_c.emulation = 0; g_c._flag_I = (uint8)(i_flag ? 1 : 0);
+    cpu_mirrors_to_p(&g_c);
+    load(0x8900, code, len);
+    RAM[0x2140] = 0xAA;                       /* an APU port that reads non-zero */
+    interp_bridge_reset_dynamic_cache();
+    if (declare != S18_KEEP) {
+        interp_bridge_clear_idle_polls();
+        if (declare) interp_bridge_set_idle_poll(declare);
+    }
+    g_c.master_cycles = 1000;
+    interp_bridge_set_master_deadline(1000 + g_s18_span);
+    const unsigned syncs0 = g_relative_syncs;
+    const uint64_t ev0 = interp_bridge_resume_total();
+    g_s18_steps = 0;
+    g_interp_bridge_pc_hook = s18_count;
+    r.rc = interp_bridge_run_until_quiescent(&g_c, 0x008900);
+    g_interp_bridge_pc_hook = NULL;
+    interp_bridge_set_master_deadline(0);
+    cpu_mirrors_to_p(&g_c);
+    r.master = g_c.master_cycles; r.cycles = g_c.cycles;
+    r.resume = interp_bridge_lle_resume_pc();
+    r.site = -1;
+    { InterpResumeEvent e;
+      const uint64_t n = interp_bridge_resume_total();
+      if (n > ev0 && interp_bridge_resume_get(n - 1, &e)) r.site = e.site; }
+    r.a = g_c.A; r.x = g_c.X; r.y = g_c.Y; r.s = g_c.S; r.p = g_c.P;
+    r.open_bus = g_c.open_bus;
+    r.syncs = g_relative_syncs - syncs0; r.interpreted = g_s18_steps;
+    for (uint32_t i = 0; i < 0x2000; i++) r.ram_sum = r.ram_sum * 31u + RAM[i];
+    for (uint32_t i = 0; i < 0x20000; i++) r.ram_sum = r.ram_sum * 31u + RAM[0x7E0000 + i];
+    return r;
+}
+static int s18_same(const S18Run *a, const S18Run *b) {
+    return a->rc == b->rc && a->site == b->site && a->master == b->master &&
+           a->cycles == b->cycles && a->resume == b->resume && a->a == b->a &&
+           a->x == b->x && a->y == b->y && a->s == b->s && a->p == b->p &&
+           a->open_bus == b->open_bus && a->syncs == b->syncs &&
+           a->ram_sum == b->ram_sum;
+}
+static void s18_print(const char *what, const S18Run *r) {
+    printf("    %s: rc=%d site=%d master=%llu cycles=%llu resume=$%06X A=%04X "
+           "S=%04X P=%02X flushes=%u interpreted=%u\n", what, r->rc, r->site,
+           (unsigned long long)r->master, (unsigned long long)r->cycles,
+           (unsigned)r->resume, r->a, r->s, r->p, r->syncs, r->interpreted);
+}
+
+/* S19: one whole-program run of `code` at $00:8A00 to a master deadline, the
+ * interpreted opcodes counted through the per-opcode hook. The count is where
+ * the quiescent detector fired (or the deadline stopped the run): it pins the
+ * detector's match and repeat semantics, step for step. */
+static unsigned g_s19_steps;
+static void s19_count(uint32_t pc24, int m, int x) {(void)pc24;(void)m;(void)x;++g_s19_steps;}
+typedef struct { int rc, site; unsigned steps; uint32_t resume; uint16_t a; } S19Run;
+static S19Run s19_run(const uint8_t *code, int len, int x16) {
+    S19Run r; memset(&r, 0, sizeof r);
+    memset(RAM, 0, MEMSZ); init_cpu();
+    g_c.emulation = 0; g_c.x_flag = x16 ? 0 : 1; cpu_mirrors_to_p(&g_c);
+    load(0x8A00, code, len);
+    interp_bridge_reset_dynamic_cache();
+    g_c.master_cycles = 1000;
+    interp_bridge_set_master_deadline(1000 + 400000);
+    const uint64_t ev0 = interp_bridge_resume_total();
+    g_s19_steps = 0;
+    g_interp_bridge_pc_hook = s19_count;
+    r.rc = interp_bridge_run_until_quiescent(&g_c, 0x008A00);
+    g_interp_bridge_pc_hook = NULL;
+    interp_bridge_set_master_deadline(0);
+    r.steps = g_s19_steps;
+    r.resume = interp_bridge_lle_resume_pc();
+    r.a = g_c.A;
+    r.site = -1;
+    { InterpResumeEvent e;
+      const uint64_t n = interp_bridge_resume_total();
+      if (n > ev0 && interp_bridge_resume_get(n - 1, &e)) r.site = e.site; }
+    return r;
+}
 
 int main(void) {
     const char *journal = "tier2_bridge_test.jsonl";
@@ -1178,6 +1275,22 @@ int main(void) {
       CHECK(rc==1 && g_c.S==0x01ff,"redirected RTS is classified as return");
       interp_bridge_set_pre_opcode_hook(0,NULL);
     }
+    /* S15b: combined game mods exceed 192 observers. Execute every site,
+     * including the late registrations that MMX Boss Rush used to lose. */
+    { memset(RAM,0,MEMSZ);init_cpu();hook_dest=0;
+      interp_bridge_set_pre_opcode_hook(0,NULL);
+      for(unsigned i=0;i<208;++i) {
+        RAM[0x8000+i]=0xea;
+        CHECK(interp_bridge_add_pre_opcode_hook(0x008000+i,observe_dest),
+              "combined-mod observer %u registered",i);
+      }
+      RAM[0x8000+208]=0x60;
+      cpu_push_jsr_return_frame(&g_c);
+      int rc=interp_bridge_run(&g_c,0x008000);
+      CHECK(rc==1 && g_c.S==0x01ff,"combined-mod routine returns balanced");
+      CHECK(hook_dest==208,"every observer executes, including the late sites");
+      interp_bridge_set_pre_opcode_hook(0,NULL);
+    }
     /* S16: the always-on observability rings. One run of
      *   $8400 LDX #$05 / loop: DEX / BNE loop / STA $0420 /
      *         JSR $8200 (interpreted) / JSR $8100 (compiled) / RTS
@@ -1336,6 +1449,190 @@ int main(void) {
               interp_bridge_lle_resume_pc() == 0x008100,
               "rc=%d visits=%u resume=$%06X exp 10 visits then scheduler wait",
               rc, g_poll_visits, (unsigned)interp_bridge_lle_resume_pc());
+      }
+    }
+    /* S18: a vblank wait on a direct-page flag its NMI handler clears, run
+     * whole-program to a master deadline. Interpreted, every read below $2000
+     * is live, so it spins to the deadline. Declared idle, the bridge replays
+     * the wait's cycle instead -- and must stop at the same clock, cycle
+     * count, PC and registers, with the same APU flushes, as spinning. */
+    printf("[S18] declared idle poll: replayed to the deadline, same as spinning\n");
+    { static const uint8_t wait[] = {0xA9,0xFF, 0x85,0x01,   /* LDA #$FF / STA $01 */
+                                     0xA5,0x01, 0xD0,0xFC};  /* LDA $01 / BNE -4   */
+      const S18Run spin = s18_run(wait, sizeof wait, 0, 1);
+      const S18Run replay = s18_run(wait, sizeof wait, 0x008904, 1);
+      CHECK(spin.rc == 1 && spin.site == INTERP_RESUME_SITE_DEADLINE &&
+            spin.master >= 51000 && (spin.a & 0xFF) == 0xFF &&
+            (spin.resume == 0x008904 || spin.resume == 0x008906),
+            "spinning did not reach the deadline in the loop");
+      if (!s18_same(&spin, &replay)) { s18_print("spin", &spin); s18_print("replay", &replay); }
+      CHECK(s18_same(&spin, &replay), "replay differs from spinning");
+      CHECK(spin.interpreted > 1000 && replay.interpreted * 10 < spin.interpreted,
+            "interpreted=%u/%u exp >1000 spinning, a tenth of that declared",
+            spin.interpreted, replay.interpreted);
+
+      /* The FastROM mirror of the same PC is the same declaration. */
+      const S18Run mirror = s18_run(wait, sizeof wait, 0x808904, 1);
+      CHECK(s18_same(&spin, &mirror) && mirror.interpreted == replay.interpreted,
+            "declaration through the $80 mirror is not the same");
+
+      /* Lifetime: a declaration lasts across runs until cleared. */
+      const S18Run again = s18_run(wait, sizeof wait, S18_KEEP, 1);
+      CHECK(s18_same(&spin, &again) && again.interpreted == replay.interpreted,
+            "declaration did not outlast its first run");
+      interp_bridge_clear_idle_polls();
+      const S18Run cleared = s18_run(wait, sizeof wait, S18_KEEP, 1);
+      CHECK(s18_same(&spin, &cleared) && cleared.interpreted == spin.interpreted,
+            "a cleared declaration still replays");
+      int added = 1;
+      for (uint32_t i = 0; i < 8; i++)
+          added &= interp_bridge_set_idle_poll(0x009000 + i) ? 1 : 0;
+      CHECK(added && interp_bridge_set_idle_poll(0x009000) &&
+            !interp_bridge_set_idle_poll(0x009100),
+            "8 slots, a repeat is accepted, the ninth PC is refused");
+      interp_bridge_clear_idle_polls();
+      CHECK(interp_bridge_set_idle_poll(0x009100), "clear frees the table");
+      interp_bridge_clear_idle_polls();
+
+      /* The step cap comes before the deadline: replay stops where spinning
+       * would bail, with the same state, and leaves through the same exit. */
+      printf("[S18] step cap before the deadline: replay stops at the cap\n");
+      g_s18_span = 200000000;
+      { const S18Run s = s18_run(wait, sizeof wait, 0, 1);
+        const S18Run d = s18_run(wait, sizeof wait, 0x008904, 1);
+        if (!s18_same(&s, &d)) { s18_print("spin", &s); s18_print("replay", &d); }
+        CHECK(s18_same(&s, &d) && s.site == INTERP_RESUME_SITE_STEP_CAP &&
+              s.master < 1000 + g_s18_span && d.interpreted * 10 < s.interpreted,
+              "step cap: site=%d/%d interpreted=%u/%u", s.site, d.site,
+              s.interpreted, d.interpreted); }
+      g_s18_span = 50000;
+
+      /* Negative cases: each must run exactly as if nothing were declared,
+       * interpreted step for step. */
+      printf("[S18] negative: an IRQ that could fire mid-wait prevents replay\n");
+      g_test_snes.vIrqEnabled = true;
+      { const S18Run s = s18_run(wait, sizeof wait, 0, 0);
+        const S18Run d = s18_run(wait, sizeof wait, 0x008904, 0);
+        CHECK(s18_same(&s, &d) && d.interpreted == s.interpreted,
+              "V-IRQ armed, I clear: interpreted=%u/%u exp equal",
+              s.interpreted, d.interpreted); }
+      g_test_snes.vIrqEnabled = false;
+      g_test_snes.hIrqEnabled = true;
+      { const S18Run s = s18_run(wait, sizeof wait, 0, 0);
+        const S18Run d = s18_run(wait, sizeof wait, 0x008904, 0);
+        CHECK(s18_same(&s, &d) && d.interpreted == s.interpreted,
+              "H-IRQ armed, I clear: interpreted=%u/%u exp equal",
+              s.interpreted, d.interpreted);
+        /* With I set the armed timer cannot interrupt: replay is allowed. */
+        const S18Run si = s18_run(wait, sizeof wait, 0, 1);
+        const S18Run di = s18_run(wait, sizeof wait, 0x008904, 1);
+        CHECK(s18_same(&si, &di) && di.interpreted * 10 < si.interpreted,
+              "H-IRQ armed, I set: exp the same result, replayed"); }
+      g_test_snes.hIrqEnabled = false;
+
+      /* I may differ inside a cycle even when its endpoint state repeats.
+       * The armed timer asserts after replay would have begun. */
+      printf("[S18] IRQ mask changes inside the idle cycle\n");
+      { static const uint8_t mask_cycle[] = {
+            0xA9,0xFF, 0x85,0x01,          /* LDA #$FF / STA $01 */
+            0x78, 0xA5,0x01, 0x58, 0xEA,  /* SEI / poll / CLI / NOP */
+            0xD0,0xF9};                   /* BNE $8904 */
+        g_test_snes.hIrqEnabled = true;
+        g_test_irq_master = 10000;
+        g_test_snes.inIrq = false;
+        const S18Run s = s18_run(mask_cycle, sizeof mask_cycle, 0, 1);
+        g_test_snes.inIrq = false;
+        const S18Run d = s18_run(mask_cycle, sizeof mask_cycle, 0x008905, 1);
+        if (!s18_same(&s, &d)) { s18_print("spin", &s); s18_print("declared", &d); }
+        CHECK(s18_same(&s, &d) && s.site == INTERP_RESUME_SITE_IRQ_PENDING &&
+              s.interpreted == d.interpreted && s.master < 51000,
+              "changing I skipped IRQ: site=%d/%d master=%llu/%llu", s.site,
+              d.site, (unsigned long long)s.master, (unsigned long long)d.master);
+        g_test_irq_master = 0;
+        g_test_snes.inIrq = false;
+        g_test_snes.hIrqEnabled = false; }
+
+      printf("[S18] negative: a pending IRQ ends the run before any replay\n");
+      g_test_snes.inIrq = true;
+      { const S18Run s = s18_run(wait, sizeof wait, 0, 0);
+        const S18Run d = s18_run(wait, sizeof wait, 0x008904, 0);
+        CHECK(s18_same(&s, &d) && s.site == INTERP_RESUME_SITE_IRQ_PENDING &&
+              s.interpreted == 1 && d.interpreted == 1,
+              "pending IRQ: site=%d/%d interpreted=%u/%u", s.site, d.site,
+              s.interpreted, d.interpreted); }
+      g_test_snes.inIrq = false;
+
+      printf("[S18] negative: a declared poll that reads a device is not exempt\n");
+      { static const uint8_t port[] = {0xAD,0x40,0x21,         /* LDA $2140 */
+                                       0xD0,0xFB};             /* BNE -5    */
+        const S18Run s = s18_run(port, sizeof port, 0, 1);
+        const S18Run d = s18_run(port, sizeof port, 0x008900, 1);
+        if (!s18_same(&s, &d)) { s18_print("spin", &s); s18_print("declared", &d); }
+        CHECK(s18_same(&s, &d) && d.interpreted == s.interpreted &&
+              s.interpreted > 1000,
+              "APU-port poll: interpreted=%u/%u exp equal", s.interpreted,
+              d.interpreted); }
+
+      printf("[S18] negative: a device read elsewhere in the cycle prevents replay\n");
+      { static const uint8_t mixed[] = {0xA9,0xFF, 0x85,0x01,   /* LDA #$FF / STA $01 */
+                                        0xA5,0x01,              /* LDA $01            */
+                                        0x0D,0x11,0x42,         /* ORA $4211 (TIMEUP) */
+                                        0xD0,0xF9};             /* BNE -7             */
+        const S18Run s = s18_run(mixed, sizeof mixed, 0, 1);
+        const S18Run d = s18_run(mixed, sizeof mixed, 0x008904, 1);
+        CHECK(s18_same(&s, &d) && d.interpreted == s.interpreted,
+              "$4211 in the cycle: interpreted=%u/%u exp equal",
+              s.interpreted, d.interpreted); }
+
+      printf("[S18] negative: HDMA into the WRAM port prevents replay\n");
+      { static Dma s_dma;
+        memset(&s_dma, 0, sizeof s_dma);
+        s_dma.channel[3].hdmaActive = true;
+        s_dma.channel[3].bAdr = 0x80;           /* $2180 WMDATA */
+        g_test_snes.dma = &s_dma;
+        const S18Run s = s18_run(wait, sizeof wait, 0, 1);
+        const S18Run d = s18_run(wait, sizeof wait, 0x008904, 1);
+        CHECK(s18_same(&s, &d) && d.interpreted == s.interpreted,
+              "HDMA to $2180: interpreted=%u/%u exp equal", s.interpreted,
+              d.interpreted);
+        s_dma.channel[3].bAdr = 0x18;           /* $2118 VMDATAL: harmless */
+        const S18Run v = s18_run(wait, sizeof wait, 0x008904, 1);
+        CHECK(s18_same(&s, &v) && v.interpreted * 10 < s.interpreted,
+              "HDMA to VRAM: exp replayed");
+        g_test_snes.dma = NULL; }
+      interp_bridge_clear_idle_polls();
+    }
+    /* S19: the quiescent detector's candidates. A loop whose state at a PC
+     * alternates (EOR #$01 / BRA) recurs only every second visit, so the most
+     * recent visit to that PC never matches; the detector must still find the
+     * older entry. Each case pins the step at which it fires on the full
+     * 64-entry scan, so any faster lookup has to reproduce it exactly. */
+    printf("[S19] quiescent detector: candidates beyond the last same-PC visit\n");
+    { static const uint8_t alt[] = {0x49,0x01, 0x80,0xFC};      /* EOR #$01 / BRA -4 */
+      uint8_t alt_long[2 + 29 + 2];                             /* EOR, 29 NOPs, BRA */
+      alt_long[0] = 0x49; alt_long[1] = 0x01;
+      memset(alt_long + 2, 0xEA, 29);
+      alt_long[31] = 0x80; alt_long[32] = (uint8_t)(0x100 - 33);
+      static const uint8_t cyc4[] = {0x1A, 0x29,0x03, 0x80,0xFB};  /* INC A / AND #3 / BRA */
+      static const uint8_t wait[] = {0xAF,0x00,0x20,0x7E, 0xF0,0xFA}; /* LDA $7E2000 / BEQ */
+      static const uint8_t count[] = {0xE8, 0x80,0xFD};         /* INX / BRA (16-bit X) */
+      struct { const char *what; const uint8_t *code; int len, x16, quiescent;
+               unsigned expect; } cases[] = {
+        {"EOR #$01 / BRA alternates A", alt, (int)sizeof alt, 0, 1, 68u},
+        {"alternating over 31 PCs", alt_long, (int)sizeof alt_long, 0, 1, 125u},
+        {"A cycles through four values", cyc4, (int)sizeof cyc4, 0, 1, 73u},
+        {"stable WRAM wait", wait, (int)sizeof wait, 0, 1, 66u},
+        {"counting loop is never stable", count, (int)sizeof count, 1, 0, 22223u},
+      };
+      for (unsigned k = 0; k < sizeof cases / sizeof cases[0]; k++) {
+        const S19Run r = s19_run(cases[k].code, cases[k].len, cases[k].x16);
+        printf("    %s: rc=%d site=%d steps=%u resume=$%06X\n", cases[k].what,
+               r.rc, r.site, r.steps, (unsigned)r.resume);
+        CHECK(r.site == (cases[k].quiescent ? INTERP_RESUME_SITE_QUIESCENT
+                                            : INTERP_RESUME_SITE_DEADLINE),
+              "%s: site=%d", cases[k].what, r.site);
+        CHECK(r.steps == cases[k].expect, "%s: fired after %u steps, exp %u",
+              cases[k].what, r.steps, cases[k].expect);
       }
     }
     printf("\n==== interp_bridge Phase-1: %d/%d checks passed ====\n", g_check - g_fail, g_check);

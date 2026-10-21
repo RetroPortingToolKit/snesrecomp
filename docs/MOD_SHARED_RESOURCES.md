@@ -12,9 +12,20 @@ Resources without a key retain their existing independent behavior.
 feature can commit. A 512-byte copier header is stripped when the file length
 modulo 32768 is 512, matching the SNES runtime's ROM identity convention.
 Wrong/missing ROMs display a provider validation error; the launcher does not
-ask users to produce extracted caches. Hash checks are memoized by path, length
+ask users to produce extracted caches. A wrong ROM is named from the port's
+catalog (`snes_mod_runtime_set_rom_catalog_c`, fed from
+`SnesDesktopHostGame.rom_revisions`): "Wrong ROM: this is Mega Man X3 (Japan).
+Select Mega Man X3 (USA) (SHA-256 ...)." An uncatalogued file is described by
+its internal header and whether its checksum still matches. Hash checks are memoized by path, length
 and modification time to keep redraws inexpensive. Trusted game code performs
 its own final validation and extraction before loading imported content.
+
+In netplay, each peer's lobby offer lists, per installed package, the features
+whose required files are not verified (`snes_mod_runtime_missing_files_c`, the
+`missing_files` netplay mod hook, wire field `nf`). The host intersects that
+with its plan, shows "Needs files" on the player's seat, and refuses Play
+(`peer_needs_files`) until the player selects them; each peer is prompted for
+its own missing files in the lobby.
 
 `tests/mod_resources/shared_source_rom_test.cpp` covers synchronization in both
 directions, independent keys, persistence, clearing, copier headers and wrong-ROM

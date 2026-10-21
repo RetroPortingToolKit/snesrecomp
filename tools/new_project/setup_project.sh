@@ -97,7 +97,16 @@ fi
 FILL_TOKENS="$SCRIPT_DIR/fill_tokens.py"
 PROBE_ROM="$SCRIPT_DIR/probe_rom.py"
 
-PYTHON=${PYTHON:-$(command -v python3 || command -v python || true)}
+PYTHON=${PYTHON:-}
+if [ -z "$PYTHON" ]; then
+  # Windows App Execution Aliases can exist on PATH without running Python.
+  for _snes_python in python3 python; do
+    if "$_snes_python" -c 'import sys; sys.exit(sys.version_info[0] != 3)' >/dev/null 2>&1; then
+      PYTHON=$_snes_python
+      break
+    fi
+  done
+fi
 [ -n "$PYTHON" ] || { echo "setup_project: python3 not found on PATH" >&2; exit 1; }
 
 usage() { sed -n '2,60p' "$0" | sed 's/^# \{0,1\}//'; exit "${1:-0}"; }

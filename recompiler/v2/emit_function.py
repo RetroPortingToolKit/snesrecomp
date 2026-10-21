@@ -50,6 +50,7 @@ from v2.ir import (  # noqa: E402
     IROp, IRBlock, Value,
     CondBranch, Goto, IndirectGoto, Call, Return,
     PullReg, PushReg, Pull, Push, PushEffectiveAddress, Reg,
+    ConstI, Read, SegRef, SegKind,
 )
 
 
@@ -57,6 +58,48 @@ def _label_for(key: DecodeKey) -> str:
     """C label name for a block keyed by (pc, m, x)."""
     pc = key.pc & 0xFFFF
     return f"L_{pc:04X}_M{key.m}X{key.x}"
+
+
+# Immediate-mode instructions whose operand is data: changing it changes a
+# value, never a width or a control-flow edge, so every fact the analyzer
+# proved about the routine still holds. REP and SEP change the widths every
+# later decode depends on, MVN/MVP name banks, BRK/COP/WDM are signatures:
+# none of those may be live, and each is refused by name.
+LIVE_OPERAND_MNEMONICS = frozenset({
+    'LDA', 'LDX', 'LDY', 'ADC', 'SBC', 'AND', 'ORA', 'EOR',
+    'CMP', 'CPX', 'CPY', 'BIT',
+})
+
+
+def _live_operand(insn, ops: List[IROp]) -> List[IROp]:
+    """`live_operand`: replace the folded immediate with a ROM read of it.
+
+    The operand bytes follow the opcode in the program bank, so the read is
+    PB:(pc+1) at the instruction's own width -- exactly the bytes the CPU
+    fetches. Only the constant changes; the opcode, and with it the cycle
+    charge, stays the IMM form.
+    """
+    pc = insn.addr & 0xFFFFFF
+    if insn.mode != _MODE_IMM:
+        raise ValueError(
+            f"live_operand at ${pc:06X}: {insn.mnem} is not "
+            f"an immediate-mode instruction")
+    if insn.mnem not in LIVE_OPERAND_MNEMONICS:
+        what = ("a status operand: it changes the widths decoded after it"
+                if insn.mnem in ('REP', 'SEP') else
+                "not a data operand")
+        raise ValueError(
+            f"live_operand at ${pc:06X}: {insn.mnem} #imm is {what}; only "
+            f"{', '.join(sorted(LIVE_OPERAND_MNEMONICS))} are supported")
+    seg = SegRef(kind=SegKind.LONG, offset=(pc + 1) & 0xFFFF,
+                 bank=(pc >> 16) & 0xFF)
+    # Every supported mnemonic lowers its IMM operand as the first op.
+    first = ops[0] if ops else None
+    if not (isinstance(first, ConstI) and first.value == insn.operand):
+        raise ValueError(
+            f"live_operand at ${pc:06X}: {insn.mnem} lowers without a leading "
+            f"constant operand to replace")
+    return [Read(seg=seg, width=first.width, out=first.out)] + list(ops[1:])
 
 
 def _block_cycle_const(pairs) -> int:
@@ -468,6 +511,9 @@ def emit_function(rom: bytes, bank: int, start: int,
                   inline_arg_map=None,
                   terminal_jsr_sites=None,
                   noreturn_jsr_sites=None,
+                  live_operand_sites=None,
+                  entry_hooks=None,
+                  brk_rti_sites=None,
                   entry_s_offset: int = 0) -> str:
     """Emit a complete v2 C function source for one 65816 function.
 
@@ -594,8 +640,10 @@ def emit_function(rom: bytes, bank: int, start: int,
                             inline_arg_map=inline_arg_map,
                             terminal_jsr_sites=terminal_jsr_sites,
                             noreturn_jsr_sites=noreturn_jsr_sites,
+                            brk_rti_sites=brk_rti_sites,
                             hle_entry_pcs=(set(hle_func or ()) |
-                                           set(hle_spc_upload or ())))
+                                           set(hle_spc_upload or ())),
+                            live_operand_sites=live_operand_sites)
     # Forward any suppressed indirect calls upward so emit_bank can
     # aggregate them into the build report. List-of-records.
     if suppressed_collector is not None:
@@ -612,7 +660,15 @@ def emit_function(rom: bytes, bank: int, start: int,
     # cfg directive, no auto-recovery). v2_regen hard-fails on any.
     if unresolved_indirect_collector is not None:
         unresolved_indirect_collector.extend(graph.unresolved_indirects)
-    cfg = build_cfg(graph, instruction_blocks=get_rom_mapping() == ROM_MAP_SA1)
+    # `entry_hook` sites of this bank. Each starts a block wherever it is
+    # decoded, so the call sits at an instruction boundary after the block's
+    # deadline check, in the routine's own body and in any other body that
+    # reaches the same instruction.
+    hook_by_pc24 = {pc24 & 0xFFFFFF: name
+                    for pc24, name in (entry_hooks or {}).items()
+                    if ((pc24 >> 16) & 0xFF) == bank}
+    cfg = build_cfg(graph, instruction_blocks=get_rom_mapping() == ROM_MAP_SA1,
+                    extra_leader_pcs={pc24 & 0xFFFF for pc24 in hook_by_pc24})
 
     # A tight, side-effect-free memory poll cannot execute atomically under
     # the LLE frame scheduler: the value it observes is commonly changed by
@@ -802,6 +858,9 @@ def emit_function(rom: bytes, bank: int, start: int,
         flat: List[IROp] = []
         for di in cfg.blocks[key].insns:
             ops = lower(di.insn, value_factory=vf)
+            if (live_operand_sites
+                    and (di.insn.addr & 0xFFFFFF) in live_operand_sites):
+                ops = _live_operand(di.insn, ops)
             pairs.append((di.insn, ops))
             flat.extend(ops)
         block_per_insn_ir[key] = pairs
@@ -1954,7 +2013,8 @@ def emit_function(rom: bytes, bank: int, start: int,
                 lines.append(_goto_or_return(succs[0], source_pc24=blk_pc24)
                              + " /* implicit fall-through */")
             elif (len(succs) > 1 and pairs
-                  and pairs[-1][0].mnem in ('JSR', 'JSL')):
+                  and (pairs[-1][0].mnem in ('JSR', 'JSL')
+                       or getattr(pairs[-1][0], 'dispatch_call', False))):
                 lines.append("switch (((cpu->m_flag & 1) << 1) | (cpu->x_flag & 1)) {")
                 seen_mx = set()
                 fallback_stmt = None
@@ -2108,6 +2168,12 @@ def emit_function(rom: bytes, bank: int, start: int,
     # resolved to a SKIP_N non-local return (cpu_resolve_ancestor_skip).
     # Index by the just-pushed g_recomp_stack_top; pop is implicit (top--).
     src.append(f'  if (g_recomp_stack_top >= 1) g_cpu_entry_s[g_recomp_stack_top - 1] = _entry_s;')
+    # `entry_hook`: observational host callbacks (docs/ENTRY_HOOK.md).
+    for hook_name in sorted({hook_by_pc24[(bank << 16) | (key.pc & 0xFFFF)]
+                             for key in block_order
+                             if ((bank << 16) | (key.pc & 0xFFFF))
+                             in hook_by_pc24}):
+        src.append(f'  extern void {hook_name}(const CpuState *cpu, uint32 pc24);')
     for i, key in enumerate(block_order):
         src.append(f"  {_label_for(key)}:")
         # Trace block entry — gives us the SNES PC chain in the trace ring.
@@ -2141,6 +2207,11 @@ def emit_function(rom: bytes, bank: int, start: int,
             f'      return interp_bridge_lle_yield_unwind('
             f'cpu, {_transfer_target_expr(block_pc24, False)});')
         src.append('    }')
+        # Once per execution of the hooked instruction: after the deadline
+        # check (a yield there hands the instruction, and with it the report,
+        # to the interpreter) and before the block's cycles are charged.
+        if block_pc24 in hook_by_pc24:
+            src.append(f'    {hook_by_pc24[block_pc24]}(cpu, 0x{block_pc24:06X}u);')
         # Cartridge coprocessors observe CPU bus accesses no earlier than this
         # architectural block boundary. The aggregate static charge below
         # advances the frame clock to the end of the block before its emitted

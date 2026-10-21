@@ -34,6 +34,7 @@ typedef int socket_t;
 #include <string.h>
 #include <stdarg.h>
 #include <limits.h>
+#include <errno.h>
 #include "debug_server.h"
 
 #ifndef SNESRECOMP_FRAME_FINGERPRINTS
@@ -4307,6 +4308,48 @@ static void cmd_write_ram(const char *args) {
         while (*p == ' ' || *p == '\t') p++;
     }
     send_fmt("{\"ok\":true,\"addr\":\"0x%x\",\"count\":%d}", addr, count);
+}
+
+/* Super FX titles use cartridge RAM for live player/sprite state. This is a
+ * bounded RAM edit, never a bus/MMIO write. Validate the entire request before
+ * changing any byte, and only accept it at a stopped debug frame boundary. */
+static void cmd_write_sram(const char *args) {
+    char *end;
+    errno = 0;
+    unsigned long parsed = strtoul(args, &end, 16);
+    if (end == args || errno == ERANGE || parsed > UINT_MAX ||
+        (*end != ' ' && *end != '\t') || !g_sram || g_sram_size <= 0 ||
+        parsed >= (unsigned int)g_sram_size) {
+        send_fmt("{\"error\":\"usage: write_sram <offset_hex> <hex_bytes> within cartridge RAM\"}");
+        return;
+    }
+    if (!s_paused) {
+        send_fmt("{\"error\":\"write_sram requires a stopped frame boundary\"}");
+        return;
+    }
+    const char *bytes = end;
+    size_t count = 0, available = (size_t)g_sram_size - parsed;
+    for (const char *p = bytes; *p;) {
+        if (*p == ' ' || *p == '\t') { ++p; continue; }
+        if (!p[1] || _hex_nibble(p[0]) < 0 || _hex_nibble(p[1]) < 0 ||
+            count == available) {
+            send_fmt("{\"error\":\"invalid hex or cartridge RAM range\"}");
+            return;
+        }
+        ++count;
+        p += 2;
+    }
+    if (!count) {
+        send_fmt("{\"error\":\"empty cartridge RAM write\"}");
+        return;
+    }
+    size_t index = parsed;
+    for (const char *p = bytes; *p;) {
+        if (*p == ' ' || *p == '\t') { ++p; continue; }
+        g_sram[index++] = (uint8_t)((_hex_nibble(p[0]) << 4) | _hex_nibble(p[1]));
+        p += 2;
+    }
+    send_fmt("{\"ok\":true,\"addr\":\"0x%lx\",\"count\":%u}", parsed, (unsigned)count);
 }
 
 static void cmd_zero_ram(const char *args) {
@@ -8632,6 +8675,7 @@ static const CmdEntry s_commands[] = {
     {"dump_cart",     cmd_dump_cart},
     {"xlate_stats",   cmd_xlate_stats},
     {"read_sram",     cmd_read_sram},
+    {"write_sram",    cmd_write_sram},
     {"call_stack",    cmd_call_stack},
     {"watch",         cmd_watch},
     {"unwatch",       cmd_unwatch},
@@ -8767,6 +8811,17 @@ static void process_command(char *line) {
 // ---- Public API ----
 
 int debug_server_init(int port) {
+    /* Own this override here so title-specific hosts using a fixed default
+     * participate in the same isolated tooling sessions as host_main.c. */
+    const char *port_env = getenv("SNESRECOMP_DEBUG_PORT");
+    if (port_env && port_env[0]) {
+        char *end = NULL;
+        long selected = strtol(port_env, &end, 10);
+        if (end != port_env && *end == '\0' && selected > 0 && selected <= 65535)
+            port = (int)selected;
+        else
+            fprintf(stderr, "[debug_server] invalid SNESRECOMP_DEBUG_PORT; using %d\n", port);
+    }
 #ifdef _WIN32
     WSADATA wsa;
     if (WSAStartup(MAKEWORD(2, 2), &wsa) != 0) return -1;

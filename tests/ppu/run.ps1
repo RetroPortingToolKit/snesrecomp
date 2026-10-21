@@ -1,7 +1,7 @@
 $ErrorActionPreference = "Stop"
 $root = (Resolve-Path (Join-Path $PSScriptRoot "..\..")).Path
 $gcc = (Get-Command gcc).Source
-$tests = @("ppu_sprite_limit_test", "ppu_world_mirror_test", "ppu_elastic_band_test", "ppu_mode7_hd_test")
+$tests = @("ppu_sprite_limit_test", "ppu_world_mirror_test", "ppu_elastic_band_test", "ppu_mode7_hd_test", "ppu_raster_journal_test")
 $failed = @()
 
 foreach ($test in $tests) {

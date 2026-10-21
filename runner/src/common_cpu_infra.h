@@ -184,6 +184,14 @@ typedef struct RtlGameInfo {
   bool (*snapshot_preflight)(const void *data, size_t size);
   /* Optional session gate, checked by every file/memory save and load path. */
   bool (*snapshot_allowed)(void);
+  /* Optional frame recording/playback at the complete simulation boundary.
+   * Called for every execution, including rollback and speculative frames.
+   * A recorder returns inputs unchanged; a replay can restore its checkpoint
+   * and supply recorded inputs. Rendering/IRQ work remains owned by the host
+   * and happens after frame_end. Return false to stop before executing a
+   * frame (end of playback or invalid input). NULL preserves ordinary input. */
+  bool (*frame_begin)(uint32_t *inputs);
+  void (*frame_end)(void);
 } RtlGameInfo;
 
 extern const RtlGameInfo *g_rtl_game_info;

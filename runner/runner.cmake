@@ -1,5 +1,24 @@
+# Qualified on Windows x64; retain the reference default on other targets.
+# An explicit cache selection always wins, including an existing LLE build.
+set(_SNESRECOMP_FRAME_DEFAULT "LLE")
+string(TOLOWER "${CMAKE_SYSTEM_PROCESSOR}" _SNESRECOMP_FRAME_PROCESSOR)
+if(WIN32 AND CMAKE_SIZEOF_VOID_P EQUAL 8 AND
+   _SNESRECOMP_FRAME_PROCESSOR MATCHES "^(amd64|x86_64|x64)$")
+    set(_SNESRECOMP_FRAME_DEFAULT "HLE")
+endif()
+set(SNESRECOMP_FRAME_IMPL "${_SNESRECOMP_FRAME_DEFAULT}" CACHE STRING
+    "Desktop frame composition (LLE or HLE; Windows x64 defaults to HLE)")
+set_property(CACHE SNESRECOMP_FRAME_IMPL PROPERTY STRINGS LLE HLE)
+if(NOT SNESRECOMP_FRAME_IMPL MATCHES "^(LLE|HLE)$")
+    message(FATAL_ERROR "SNESRECOMP_FRAME_IMPL must be LLE or HLE")
+endif()
+set_property(SOURCE "${CMAKE_CURRENT_LIST_DIR}/src/desktop/host_main.c"
+    APPEND PROPERTY COMPILE_DEFINITIONS
+    SNESRECOMP_FRAME_STAGING_HLE=$<STREQUAL:${SNESRECOMP_FRAME_IMPL},HLE>)
+message(STATUS "SNES desktop frame composition: ${SNESRECOMP_FRAME_IMPL}")
 option(SNESRECOMP_EXPOSE_COVERAGE_MOD "Show the default-off Coverage Capture mod" OFF)
 add_compile_definitions(SNESRECOMP_EXPOSE_COVERAGE_MOD=$<BOOL:${SNESRECOMP_EXPOSE_COVERAGE_MOD}>)
+include(${CMAKE_CURRENT_LIST_DIR}/ppu_8bpp_backend.cmake)
 
 # runner.cmake — shared source list for snesrecomp game projects.
 #
@@ -176,11 +195,15 @@ set(SNESRECOMP_RUNNER_SOURCES
     ${SNESRECOMP_RUNNER_ROOT}/src/framedump.c
     ${SNESRECOMP_RUNNER_ROOT}/src/state_dump.c
     ${SNESRECOMP_RUNNER_ROOT}/src/host_paths.c
+    ${SNESRECOMP_RUNNER_ROOT}/src/diagnostics/trace_writer.c
+    ${SNESRECOMP_RUNNER_ROOT}/src/diagnostics/replay_writer.c
     ${SNESRECOMP_RUNNER_ROOT}/src/host_args.c
     ${SNESRECOMP_RUNNER_ROOT}/src/launcher.c
     ${SNESRECOMP_RUNNER_ROOT}/src/launcher_cache.c
     ${SNESRECOMP_RUNNER_ROOT}/src/launcher_picker.c
     ${SNESRECOMP_RUNNER_ROOT}/src/rom_image_verify.c
+    ${SNESRECOMP_RUNNER_ROOT}/src/rom_identity.c
+    ${SNESRECOMP_RUNNER_ROOT}/src/sha1.c
     ${SNESRECOMP_RUNNER_ROOT}/src/crc32.c
     ${SNESRECOMP_RUNNER_ROOT}/src/snapshot_guard.c
     ${SNESRECOMP_RUNNER_ROOT}/src/sha256.c
@@ -188,12 +211,16 @@ set(SNESRECOMP_RUNNER_SOURCES
     ${SNESRECOMP_RUNNER_ROOT}/src/snes_overlay_draw.c
     ${SNESRECOMP_RUNNER_ROOT}/src/snes_runahead.c
     ${SNESRECOMP_RUNNER_ROOT}/src/snes_savestate_menu.c
+    # The facade supplies offline stubs unless this target enables netplay.
+    # Shared menus must link even without snesrecomp_enable_recomp_net().
+    ${SNESRECOMP_RUNNER_ROOT}/src/netplay/snes_netplay.c
     ${SNESRECOMP_RUNNER_ROOT}/src/snes_osd.c
     ${SNESRECOMP_RUNNER_ROOT}/src/snes_rewind.c
     ${SNESRECOMP_RUNNER_ROOT}/src/cpu_state.c
     ${SNESRECOMP_RUNNER_ROOT}/src/program_module.c
     ${SNESRECOMP_RUNNER_ROOT}/src/rom_patch.c
     ${SNESRECOMP_RUNNER_ROOT}/src/generic_frame_driver.c
+    ${SNESRECOMP_RUNNER_ROOT}/src/beam_frame_driver.c
     ${SNESRECOMP_RUNNER_ROOT}/src/content_variant.c
     ${SNESRECOMP_RUNNER_ROOT}/src/variant_selector.c
     ${SNESRECOMP_RUNNER_ROOT}/src/cpu_trace.c
@@ -243,6 +270,29 @@ set(SNESRECOMP_RUNNER_SOURCES
 list(APPEND SNESRECOMP_RUNNER_SOURCES
     ${SNESRECOMP_RUNNER_ROOT}/src/snes/cx4.c)
 message(STATUS "Cx4: instruction-level HG51B S169 core (ares, ISC)")
+
+# ── Windows: UTF-8 process code page ──────────────────────────────────────
+# Paths cross the host as narrow strings: GetModuleFileNameA, fopen and the
+# command line on the C side; std::filesystem, SDL and the launcher's pickers
+# on the other. On Windows those disagreed (ANSI vs UTF-8), and an install
+# folder such as "Mega Man X Recompilé" aborted at startup. The manifest makes
+# the process code page UTF-8 (Windows 10 1903+), so every narrow path is
+# UTF-8 on both sides. It rides in the runner sources so every host
+# executable carries it (resources in a static library would be dropped).
+if(WIN32)
+    set(_snes_utf8_manifest "${SNESRECOMP_RUNNER_ROOT}/windows/snesrecomp_utf8.manifest")
+    if(MSVC)
+        list(APPEND SNESRECOMP_RUNNER_SOURCES "${_snes_utf8_manifest}")
+    else()
+        enable_language(RC)
+        set(_snes_utf8_rc "${CMAKE_BINARY_DIR}/snesrecomp_utf8_manifest.rc")
+        file(WRITE "${_snes_utf8_rc}.in"
+            "1 24 \"${_snes_utf8_manifest}\"\n")
+        configure_file("${_snes_utf8_rc}.in" "${_snes_utf8_rc}" COPYONLY)
+        set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${_snes_utf8_manifest}")
+        list(APPEND SNESRECOMP_RUNNER_SOURCES "${_snes_utf8_rc}")
+    endif()
+endif()
 
 # Execution policy DEFAULT for optimized (HLE) replacements over the faithful
 # LLE floor. This chooses the default only — the policy itself is resolved at

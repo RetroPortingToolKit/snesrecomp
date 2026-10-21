@@ -78,7 +78,15 @@ windows)
   # died exactly there. The PE format is small and fixed; Python is in the
   # pack and on every runner. objdump remains a fallback for a host without
   # Python.
-  PY="$(command -v python3 || command -v python || true)"
+  PY="${PYTHON:-}"
+  if [[ -z "$PY" ]]; then
+    for _snes_python in python3 python; do
+      if "$_snes_python" -c 'import sys; sys.exit(sys.version_info[0] != 3)' >/dev/null 2>&1; then
+        PY=$_snes_python
+        break
+      fi
+    done
+  fi
   imports_of() {
     if [[ -n "${PY}" ]]; then
       "${PY}" - "$1" <<'PYEOF'
@@ -147,7 +155,9 @@ PYEOF
   # recomp-ui's Win32 emoji/font path imports DirectWrite, Direct2D and WIC, and
   # none of the three was listed. When a new import shows up here, ask whether
   # Windows ships it before reaching for a copy of it.
-  SYSTEM_RE='^(KERNEL32|KERNELBASE|USER32|GDI32|GDIPLUS|ADVAPI32|SHELL32|SHCORE|OLE32|OLEAUT32|WS2_32|WINMM|IMM32|SETUPAPI|VERSION|OPENGL32|GLU32|D2D1|DWRITE|DCOMP|DXGI|D3D[0-9]*|D3DCOMPILER_[0-9]*|WINDOWSCODECS|PROPSYS|COMCTL32|COMDLG32|RPCRT4|SHLWAPI|CRYPT32|BCRYPT|NCRYPT|IPHLPAPI|NSI|DNSAPI|MSVCRT|UCRTBASE|VCRUNTIME[0-9]*|MSVCP[0-9]*|DBGHELP|DWMAPI|UXTHEME|POWRPROF|CFGMGR32|HID|WINTRUST|MSIMG32|AVRT|MF[A-Z]*|AUDIOSES|DINPUT8|XINPUT[0-9_]*|USERENV|API-MS-.*|EXT-MS-.*)\.DLL$'
+  # ProcessPrng is provided by BCryptPrimitives.dll on supported Windows:
+  # https://learn.microsoft.com/windows/win32/seccng/processprng
+  SYSTEM_RE='^(KERNEL32|KERNELBASE|NTDLL|USER32|GDI32|GDIPLUS|ADVAPI32|SHELL32|SHCORE|OLE32|OLEAUT32|WS2_32|WINMM|IMM32|SETUPAPI|VERSION|OPENGL32|GLU32|D2D1|DWRITE|DCOMP|DXGI|D3D[0-9]*|D3DCOMPILER_[0-9]*|WINDOWSCODECS|PROPSYS|COMCTL32|COMDLG32|RPCRT4|SHLWAPI|CRYPT32|BCRYPT|BCRYPTPRIMITIVES|NCRYPT|IPHLPAPI|NSI|DNSAPI|MSVCRT|UCRTBASE|VCRUNTIME[0-9]*|MSVCP[0-9]*|DBGHELP|DWMAPI|UXTHEME|POWRPROF|CFGMGR32|HID|WINTRUST|MSIMG32|AVRT|MF[A-Z]*|AUDIOSES|DINPUT8|XINPUT[0-9_]*|USERENV|API-MS-.*|EXT-MS-.*)\.DLL$'
 
   # Walk transitively: SDL3.dll itself pulls in the MinGW runtime DLLs, and a
   # zip carrying SDL3.dll without them is the same broken zip one level down.

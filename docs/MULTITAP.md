@@ -92,6 +92,26 @@ launch flag outranks a built-in default.
 Opposing d-pad directions are filtered on every seat, not just the first two,
 because guest code is entitled to assume a real d-pad.
 
+### 3.1 Local controllers on the desktop host
+
+The desktop host routes local input to every seat a title declares
+(`SnesDesktopHostGame.num_players`, up to 8) that the configured taps reach
+(`RtlPlayerCount()`); it pushes seats 2.. through `RtlSetPadState` before each
+frame, so a multitap title needs no input code of its own.
+
+| Store | Seats 1-2 | Seats 3-8 |
+|---|---|---|
+| keybinds.ini | `[player1]`, `[player2]` | `[player3]`..`[player8]` (unbound until set; written only once named or bound) |
+| config.ini `[Controller]` | `SourceP1`, `SourceP2` | `SourceP3`..`SourceP8` (0 none, 1 keyboard, 2 gamepad) |
+| config.ini `[GamepadMap]` | `EnableGamepad1/2`, `Controls`, `ControlsP2` | `EnableGamepad3`.., `ControlsP3`.. (default Xbox layout) |
+
+Seats 3.. default to no device. `WriteConfigFile` persists their keys only for
+a title that declares them (`ConfigSetPadSeats`), so a two-player title's
+config.ini is unchanged. recomp-ui's SNES profile ceiling is 8 seats; the
+launcher shows `num_players` controller cards. Gamepads are seated in order on
+enabled seats, as for seats 1 and 2. Netplay sessions leave seats 2.. to the
+netplay path.
+
 ## 4. Netplay
 
 recomp-net already carries up to `RNET_MAX_SLOTS` (8) seats, so the wire

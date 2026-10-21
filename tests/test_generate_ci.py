@@ -4,7 +4,10 @@ rather than asking for them again -- and knows when the one it finds is stale.
 """
 
 import pathlib
+import os
 import re
+import shlex
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -18,6 +21,43 @@ WORKFLOW = pathlib.Path(".github") / "workflows" / "release.yml"
 
 sys.path.insert(0, str(REPO_ROOT / "tests"))
 from test_new_project import _fixture_rom, SETUP  # noqa: E402
+
+
+@pytest.mark.parametrize('launcher', [GENERATE_SH, SETUP])
+@pytest.mark.parametrize('explicit_python', [False, True])
+def test_shell_launchers_skip_broken_python_alias(tmp_path, launcher, explicit_python):
+    shell = shutil.which('sh')
+    if shell is None:
+        pytest.skip('sh is not installed')
+    aliases = tmp_path / 'bin'
+    aliases.mkdir()
+    # Model Windows' App Execution Alias: found on PATH, exits 49 when used.
+    (aliases / 'python3').write_text('#!/bin/sh\nexit 49\n', newline='\n')
+    executable = pathlib.Path(sys.executable).as_posix()
+    if os.name == 'nt':
+        executable = '/' + executable[0].lower() + executable[2:]
+    fallback = ('exit 49' if explicit_python else
+                'exec ' + shlex.quote(executable) + ' "$@"')
+    (aliases / 'python').write_text('#!/bin/sh\n' + fallback + '\n', newline='\n')
+    for alias in aliases.iterdir():
+        alias.chmod(0o755)
+    env = dict(os.environ, PATH=str(aliases) + os.pathsep + os.environ['PATH'])
+    env.pop('PYTHON', None)
+    if explicit_python:
+        env['PYTHON'] = pathlib.Path(sys.executable).as_posix()
+    args = ['--help']
+    if launcher == SETUP:
+        rom = tmp_path / 'fixture.sfc'
+        _fixture_rom(rom)
+        args = ['--rom', str(rom), '--dir', str(tmp_path), '--name', 'Alias Fixture',
+                '--yes', '--no-submodules']
+    result = subprocess.run([shell, str(launcher), *args], cwd=REPO_ROOT,
+                            env=env, text=True, capture_output=True, timeout=60)
+    assert result.returncode == 0, result.stdout + result.stderr
+    if launcher == SETUP:
+        assert (tmp_path / 'AliasFixtureSNESRecomp/CMakeLists.txt').is_file()
+    else:
+        assert 'usage' in result.stdout.lower()
 
 
 def _scaffold(tmp: pathlib.Path, *extra: str) -> pathlib.Path:

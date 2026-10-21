@@ -6,46 +6,189 @@
 
 > ℹ️ **Note from mstan:** This repo and I are now part of [RetroPortingToolkit](https://retroportingtoolkit.com/). I remain a primary maintainer of snesrecomp alongside the team. [More info](https://1379.tech/forming-a-collective-retro-porting-toolkit/).
 
-**A general-purpose static recompiler for the Super Nintendo Entertainment
-System (Super Famicom).** SNESRecomp translates 65816 machine code into C,
-compiles it into a native executable, and links it against a shared SNES
-hardware runtime.
+**A beta static-recompilation framework for the Super Nintendo and Super
+Famicom.** SNESRecomp translates 65816 machine code into C and builds native
+applications around a shared SNES hardware runtime. Unresolved code can run
+through the interpreter tier while a port grows.
 
-The game CPU runs as native code instead of inside a full-system emulator.
-The runtime models the hardware around it—including the PPU, APU, DSP, DMA,
-cartridge mapping, and supported enhancement chips—and provides a safe
-interpreter tier for code that cannot yet be resolved statically.
+The ecosystem now includes action games, racers, fighters and RPGs, with
+game-specific features such as **adaptive widescreen, local and online
+co-op, rollback netplay, runtime translations, MSU-1 music, save states and
+rewind**. Availability varies by title; beta describes the framework, and
+each game keeps its own release and validation status.
 
-Projects built on SNESRecomp already support true widescreen views, Adaptive
-View, versioned mod packages, MSU-1 audio, cross-platform builds, launchers,
-and save states. The framework is game-agnostic: each title supplies its own
-analysis configuration and integration code while improvements to the CPU and
-hardware model benefit every project.
+**[Create your first port](docs/GETTING_STARTED.md)** — a practical setup and
+porting guide, with no AI required. **[Choose a game](#games)** to play an
+existing port with your own ROM.
 
-An opt-in [HD Mode 7 renderer](docs/HD_MODE7.md) provides higher-resolution
-background sampling for frontends and custom game renderers while retaining
-the normal PPU output.
+## Showcase
+
+### Mega Man X: X and Zero, together
+
+Play X1 with **simultaneous X/Zero co-op**, locally or online. Optional mods
+add playable Zero styles, a solo/co-op Boss Rush, and all sixteen X2/X3 boss
+weapons with charged attacks. Zero requires your own X3 USA ROM; imported
+weapons require the corresponding X2/X3 ROM. Extraction happens locally.
+
+<p align="center">
+  <a href="https://github.com/mstan/MegaManXSNESRecomp"><img src="docs/assets/games/mega-man-x-coop.png" alt="X and Zero fight Thunder Slimer together, each with a separate health bar" width="720"></a>
+  <br><sub><b>Mega Man X — simultaneous co-op.</b> Both characters fight in the same stage.</sub>
+</p>
+
+**Online play** uses the shared recomp-net lobby and rollback integration.
+Each player configures their local controller, joins the room, and uses the
+same compatible build, ROMs and mod selections. Mega Man X supports fixed
+16:9, 21:9 and 32:9 views online; its window-following Adaptive mode is for
+offline play. See the [X/Zero netplay guide](https://github.com/mstan/MegaManXSNESRecomp/blob/main/docs/netplay.md).
+
+### Adaptive widescreen: more of the game world
+
+Fit-to-window views expand the scene as the window changes shape. A complete
+integration extends background streaming, sprite visibility and HUD layout;
+it also handles scene edges and screens that need the original view. Games
+can offer fixed ultrawide presets alongside adaptive modes.
 
 <table>
   <tr>
-    <td width="29%"><img src="docs/assets/games/super-mario-world-wide.png" alt="Super Mario World running in SNESRecomp at 16:9" width="100%"><br><sub><b>Super Mario World</b></sub></td>
-    <td width="41%"><img src="docs/assets/games/alttp-adaptive.png" alt="The Legend of Zelda: A Link to the Past running in SNESRecomp with Adaptive View" width="100%"><br><sub><b>The Legend of Zelda: A Link to the Past</b></sub></td>
-    <td width="30%"><img src="docs/assets/games/mega-man-x-wide.png" alt="Mega Man X running in SNESRecomp at 16:9" width="100%"><br><sub><b>Mega Man X</b></sub></td>
+    <td width="50%"><img src="docs/assets/games/super-mario-world-wide.png" alt="Super Mario World with extra level scenery in a widened view" width="100%"><br><sub><b>Super Mario World</b> — expanded terrain and anchored HUD.</sub></td>
+    <td width="50%"><img src="docs/assets/games/super-metroid-ultrawide.png" alt="Super Metroid landing site in ultrawide, with the HUD at the edges" width="100%"><br><sub><b>Super Metroid</b> — custom ultrawide composition.</sub></td>
+  </tr>
+  <tr>
+    <td><img src="docs/assets/games/f-zero-ultrawide.png" alt="F-Zero running BS F-Zero Deluxe Forest III in 21:9" width="100%"><br><sub><b>F-Zero</b> — BS Deluxe Forest III at 21:9; optional HD Mode 7 and MSU-1.</sub></td>
+    <td><img src="docs/assets/games/star-fox-enhanced.png" alt="Star Fox Corneria gameplay in enhanced 21:9 with the original Arwing" width="100%"><br><sub><b>Star Fox</b> — optional renderer adapted from <a href="https://github.com/kandowontu/Starfox-Enhanced">Starfox-Enhanced</a>.</sub></td>
   </tr>
 </table>
 
+### Gundam Wing: Endless Duel in ten translated languages
+
+Runtime localization replaces the game's text and tile assets in memory;
+the game renders the translated menus and dialogue itself. The original
+Japanese ROM stays unchanged on disk.
+
+<p align="center">
+  <img src="docs/assets/games/gundam-spanish-korean.png" alt="The same completed Gundam Wing dialogue in Spanish and Korean" width="800">
+  <br><sub><b>Spanish and Korean.</b> Complete dialogue captured from the running game.</sub>
+</p>
+
+The localization mod offers **English, Spanish, French, Italian,
+Portuguese, Tagalog, Indonesian, Chinese, Korean and Thai**, alongside the
+original Japanese. **Thai is partial**: some surfaces still use English.
+Translation and glyph coverage have title-specific limits.
+
+<details>
+<summary><b>See the same dialogue in all ten translated languages</b></summary>
+
+<p align="center">
+  <img src="docs/assets/games/gundam-ten-translations.png" alt="Completed Endless Duel dialogue in English, Spanish, French, Italian, Portuguese, Tagalog, Indonesian, Chinese, Korean and Thai" width="800">
+</p>
+
+The Spanish panel uses a completed dialogue capture. The earlier PR contact
+sheet caught another line partway through its typewriter animation. See the
+[localization PR](https://github.com/TechnicallyComputers/GundamWingEndlessDuelSNESRecomp/pull/3),
+[Spanish repairs](https://github.com/TechnicallyComputers/GundamWingEndlessDuelSNESRecomp/pull/6)
+and [screenshot sources](docs/SHOWCASE_SOURCES.md).
+
+</details>
+
 ## Games
 
-Each public game is maintained in its own repository, pins a known framework
-revision, and ships its own ROM-free release. These projects are still alpha;
-see each repository for its supported ROM revision, controls, build
-instructions, and current validation status.
+These are separate projects, with their own maintainers, supported ROMs and
+platforms. **A listed title is not a claim of full-game validation.** The
+summaries below were checked against public project documentation and release
+notes on **21 October 2026**. Follow each project's instructions; some downloads
+are ready-to-play applications, while others generate and build locally on
+first launch. No ROM is supplied by SNESRecomp.
 
-| Game | Repository | Latest build | Current status |
-|---|---|---|---|
-| *Super Mario World* | [SuperMarioWorldRecomp](https://github.com/mstan/SuperMarioWorldRecomp) | [releases](https://github.com/mstan/SuperMarioWorldRecomp/releases/latest) | Believed playable end to end; 4:3, fixed 16:9, Adaptive View, and MSU-1 audio. |
-| *The Legend of Zelda: A Link to the Past* | [ZeldaAlttPSNESRecomp](https://github.com/mstan/ZeldaAlttPSNESRecomp) | [releases](https://github.com/mstan/ZeldaAlttPSNESRecomp/releases/latest) | Playable through the early dungeon; Adaptive View and MSU-1 audio. |
-| *Mega Man X* | [MegaManXSNESRecomp](https://github.com/mstan/MegaManXSNESRecomp) | [releases](https://github.com/mstan/MegaManXSNESRecomp/releases/latest) | Fully playable; experimental true-widescreen mod; Windows, macOS, and Linux builds. |
+| Game | Project / downloads | Features and current scope |
+|---|---|---|
+| *Mega Man X* | [MegaManXSNESRecomp](https://github.com/mstan/MegaManXSNESRecomp) · [downloads](https://github.com/mstan/MegaManXSNESRecomp/releases) | X/Zero local and online co-op, rollback, adaptive/offline and fixed/online widescreen, Boss Rush, X2/X3 weapons. |
+| *Super Mario World* | [SuperMarioWorldRecomp](https://github.com/mstan/SuperMarioWorldRecomp) · [downloads](https://github.com/mstan/SuperMarioWorldRecomp/releases) | Adaptive widescreen with Fit to screen, MSU-1, character mods; native simultaneous co-op is experimental. |
+| *The Legend of Zelda: A Link to the Past* | [ZeldaAlttPSNESRecomp](https://github.com/mstan/ZeldaAlttPSNESRecomp) · [downloads](https://github.com/mstan/ZeldaAlttPSNESRecomp/releases) | Adaptive view and MSU-1; assisted dungeon/boss-room surveys extend beyond the early-game playtest. Full campaign not certified. |
+| *Super Metroid* | [SuperMetroidRecomp](https://github.com/mstan/SuperMetroidRecomp) · [downloads](https://github.com/mstan/SuperMetroidRecomp/releases) | Custom widescreen renderer with Fit/ultrawide, save states and rewind; precompiled desktop releases. |
+| *F-Zero* | [FZeroSNESRecomp](https://github.com/mstan/FZeroSNESRecomp) · [downloads](https://github.com/mstan/FZeroSNESRecomp/releases) | Fit/16:9/21:9/32:9, HD Mode 7, high-refresh presentation, BS F-Zero Deluxe, MSU-1, save states and rewind. |
+| *Mega Man X2* | [MegaManX2Recomp](https://github.com/mstan/MegaManX2Recomp) · [downloads](https://github.com/mstan/MegaManX2Recomp/releases) | Cx4 support and optional 16:9 with widened backgrounds, objects and HUD; stage-entry survey, wider gameplay validation ongoing. |
+| *Mega Man X3* | [MegamanX3SNESRecomp](https://github.com/mstan/MegamanX3SNESRecomp) · [downloads](https://github.com/mstan/MegamanX3SNESRecomp/releases) | Cx4 support, gameplay and optional 16:9; original stage loaders surveyed, full campaign validation ongoing. |
+| *Star Fox* | [StarFoxSNESRecomp](https://github.com/mstan/StarFoxSNESRecomp) · [downloads](https://github.com/mstan/StarFoxSNESRecomp/releases) | Development preview: optional Enhanced adaptive/ultrawide renderer and Arwing 64 mod. Single-player. |
+| *Super Mario RPG* | [SuperMarioRPGRecomp](https://github.com/mstan/SuperMarioRPGRecomp) · [downloads](https://github.com/mstan/SuperMarioRPGRecomp/releases) | SA-1 preview; optional adaptive custom field renderer. Attract/scene checks do not establish a full playthrough. |
+| *Gundam Wing: Endless Duel* | [GundamWingEndlessDuelSNESRecomp](https://github.com/TechnicallyComputers/GundamWingEndlessDuelSNESRecomp) · [downloads](https://github.com/TechnicallyComputers/GundamWingEndlessDuelSNESRecomp/releases) | Optional widescreen, ten runtime translations (Thai partial) and rollback-capable netplay; assisted story-through-credits validation. |
+| *SimCity / Urban Recomp* | [UrbanRecomp](https://github.com/blackerking/UrbanRecomp) · [downloads](https://github.com/blackerking/UrbanRecomp/releases) | Adaptive widescreen/Fit, language selection, save states and city/scenario tooling; Windows and Linux releases. |
+
+### Community game projects
+
+Independent projects may use their own framework branches and host designs.
+Their maintainers' status reports apply to those builds, rather than to
+every SNESRecomp revision. Projects with limited testing are included so
+contributors can find the work as well as the downloads.
+
+| Game | Project | Features and current scope |
+|---|---|---|
+| *ActRaiser* | [ar-recomp](https://github.com/DerrickGold/ar-recomp) · [downloads](https://github.com/DerrickGold/ar-recomp/releases) | Campaign completed by the maintainer; widescreen, optional 3D presentation, replacement media and language-pack Workshop. |
+| *A.S.P.: Air Strike Patrol* | [A.S.P._SNES_Recomp](https://github.com/SirL0LL0/A.S.P._SNES_Recomp) | Italian translation and native-code work; briefing, HQ and mission-one flight validation. |
+| *Demon’s Crest* | [DemonsCrestSNESRecomp](https://github.com/magnopaz/DemonsCrestSNESRecomp) | Adaptive widescreen, Mode 7 overworld, save states and rewind; full-game certification remains open. |
+| *Donkey Kong Country* | [DKC1Recomp](https://github.com/elliotttate/DKC1Recomp) · [downloads](https://github.com/elliotttate/DKC1Recomp/releases) | Widescreen, controller/settings UI and save tools; platform-specific presentation and music options. |
+| *Donkey Kong Country 2* | [DKC2Recomp](https://github.com/elliotttate/DKC2Recomp) · [downloads](https://github.com/elliotttate/DKC2Recomp/releases) | Experimental widescreen; Windows simultaneous TEAM co-op and MSU-1. The older Mac build has a smaller feature set. |
+| *Donkey Kong Country 3* | [DKC3Recomp](https://github.com/elliotttate/DKC3Recomp) · [downloads](https://github.com/elliotttate/DKC3Recomp/releases) | Widened presentation and modern desktop hosts; optional macOS MSU-1. Full-game compatibility remains under test. |
+| *Doom* | [DoomSNESRecomp](https://github.com/Cacodemontube/DoomSNESRecomp) · [downloads](https://github.com/Cacodemontube/DoomSNESRecomp/releases) | Adaptive world rendering, higher internal resolutions, interpolated presentation and modern mouse controls. |
+| *EarthBound* | [EarthBoundRecomp](https://github.com/nickclyde/EarthBoundRecomp) | Early HiROM bring-up: intro, title and file select through the interpreter tier. |
+| *Final Fantasy V* | [FinalFantasyVSNESRecomp](https://github.com/brainWave4/FinalFantasyVSNESRecomp) · [downloads](https://github.com/brainWave4/FinalFantasyVSNESRecomp/releases) | Japanese-ROM port with launcher and a Linux AppImage; battle-character controller assignment. |
+| *Final Fight 3* | [Final-Fight-3-Recomp](https://github.com/omegakatana92/Final-Fight-3-Recomp) · [downloads](https://github.com/omegakatana92/Final-Fight-3-Recomp/releases) | Windows bring-up: launcher, graphics, audio and gameplay locally tested. |
+| *Go Go Ackman* | [gogoackman1recomp](https://github.com/catmidori/gogoackman1recomp) · [downloads](https://github.com/catmidori/gogoackman1recomp/releases) | Widescreen, English/Brazilian Portuguese translations, save states, rewind, shaders and rumble; MSU-1 is unverified. |
+| *Goof Troop* | [GoofTroopRecomp](https://github.com/willianpn01/GoofTroopRecomp) | Linux/Windows frontend, two local players, remapping and display filters; pre-publication review described by the maintainer. |
+| *Harvest Moon* | [HarvestMoonSNESRecomp](https://github.com/RodriLoy/HarvestMoonSNESRecomp) · [downloads](https://github.com/RodriLoy/HarvestMoonSNESRecomp/releases) | Beta: widescreen, expanded pause menu, calendar/map and quality-of-life mods; full three-year route unverified. |
+| *International Superstar Soccer Deluxe* | [issd-native](https://github.com/sergiomanzur/issd-native) · [downloads](https://github.com/sergiomanzur/issd-native/releases) | Beta builds, four local players, experimental widened camera, campaign recovery and stadium tools; netplay is planned. |
+| *Kirby Super Star* | [KirbySuperStarRecomp](https://github.com/josiahg2502-glitch/KirbySuperStarRecomp) · [downloads](https://github.com/josiahg2502-glitch/KirbySuperStarRecomp/releases) | Windows frontend with widescreen, bezel art, XInput profiles and isolated saves. |
+| *Lagoon* | [LagoonSNESRecomp](https://github.com/rages4calm/LagoonSNESRecomp) | Source project with custom scene rendering, experimental widescreen and escort/quality-of-life improvements. |
+| *The Lion King* | [TLKRecomp](https://github.com/kinduff/TLKRecomp) · [downloads](https://github.com/kinduff/TLKRecomp/releases) | Desktop releases, experimental adaptive widescreen, practice tools and replay/conformance evidence. |
+| *Lufia & the Fortress of Doom / Estpolis Denki* | [Estpolis-Recompendium](https://github.com/dothacktranslate/Estpolis-Recompendium) | Lufia I USA runtime, graphics, audio and input work; Japanese/regional and Lufia II integration are planned. |
+| *Lufia II: Rise of the Sinistrals* | [Lufia2SNESRecomp](https://github.com/Cellenseres/Lufia2SNESRecomp) | Gameplay, battles, audio and saves; widened presentation and SDL/OpenGL/Vulkan output. |
+| *The Magical Quest Starring Mickey Mouse* | [MagicalQuest-SNES-Recomp](https://github.com/RetroForgeBR/MagicalQuest-SNES-Recomp) · [downloads](https://github.com/RetroForgeBR/MagicalQuest-SNES-Recomp/releases) | Early desktop release; built and launched locally at original 4:3, further testing ongoing. |
+| *Mario Paint* | [mariopaint](https://github.com/sp00nznet/mariopaint) | Experimental interception-based port: native mouse, title/canvas/toolbars; drawing and secondary modes need broader checks. |
+| *Mario is Missing!* | [marioismissing](https://github.com/sp00nznet/marioismissing) | Compiled castle-loop prototype; this is not a completed geography adventure. |
+| *Mega Man 7* | [Mega-Man-7-Recomp](https://github.com/omegakatana92/Mega-Man-7-Recomp) · [downloads](https://github.com/omegakatana92/Mega-Man-7-Recomp/releases) | Windows release with ROM-verifying launcher and desktop video/audio/input; broader gameplay qualification ongoing. |
+| *Phalanx* | [phalanx](https://github.com/navjack/phalanx) | Apple Silicon source project with native gamepad integration, overlay and save-state tools. |
+| *Rock N’ Roll Racing* | [RockNRollRacingSNESRecomp](https://github.com/fulalas/RockNRollRacingSNESRecomp) · [downloads](https://github.com/fulalas/RockNRollRacingSNESRecomp/releases) | Fit/ultrawide racing, optional faster game logic and interpolation, shaders, rewind and MSU-1. |
+| *Star Ocean* | [StarOceanSNESRecomp](https://github.com/SupraBT/StarOceanSNESRecomp) | Early-game native port using title-specific S-DD1 work; generation and broader compatibility remain in development. |
+| *Strike Gunner S.T.G.* | [Strike-Gunner-STG-Recomp](https://github.com/SlippyGetBackHere/Strike-Gunner-STG-Recomp) · [downloads](https://github.com/SlippyGetBackHere/Strike-Gunner-STG-Recomp/releases) | Maintainer reports start-to-finish play; local two-player, replacement music and optional gameplay mods. No netplay. |
+| *Stunt Race FX* | [stuntrace](https://github.com/sp00nznet/stuntrace) | Early Super FX bring-up: Nintendo logo followed by a black screen; not currently playable. |
+| *Super Bomberman* | [BombermanRecomp](https://github.com/elliotttate/BombermanRecomp) · [downloads](https://github.com/elliotttate/BombermanRecomp/releases) | Windows recompilation with measured native-cadence frame pacing and gameplay checks. |
+| *Super Bomberman 5* | [SuperBomberman5SNESRecomp](https://github.com/MauricioSuporte/SuperBomberman5SNESRecomp) · [downloads](https://github.com/MauricioSuporte/SuperBomberman5SNESRecomp/releases) | Partial-recomp prototype with five-player Normal Game mods; campaign tested, physical five-controller qualification pending. No netplay/widescreen. |
+| *Super Castlevania IV* | [SuperCastlevaniaIvSNESRecomp](https://github.com/RasmusKarlsson/SuperCastlevaniaIvSNESRecomp) | Playable source project with optional 16:9, save states and rewind; wider Mode 7/boss coverage ongoing. |
+| *Super Castlevania IV (alternate project)* | [SuperCastlevaniaIVRC](https://github.com/B1gGiantB8by/SuperCastlevaniaIVRC) · [downloads](https://github.com/B1gGiantB8by/SuperCastlevaniaIVRC/releases) | Setup packs, Boss Rush, level select, local achievements and experimental MSU-1; ordinary releases keep widescreen disabled. |
+| *Super Dimension Fortress Macross: Scrambled Valkyrie* | [Super-Dimension-Fortress-Macross-Scrambled-Valkyrie-Recomp](https://github.com/omegakatana92/Super-Dimension-Fortress-Macross-Scrambled-Valkyrie-Recomp) · [downloads](https://github.com/omegakatana92/Super-Dimension-Fortress-Macross-Scrambled-Valkyrie-Recomp/releases) | Windows development project; local gameplay tests reported, fresh-clone reproduction not independently qualified. |
+| *Super Mario All-Stars* | [SuperMarioAllStarsRecomp](https://github.com/TanookiStudios/SuperMarioAllStarsRecomp) · [downloads](https://github.com/TanookiStudios/SuperMarioAllStarsRecomp/releases) | USA collection: four games, desktop releases, controller-friendly launcher and in-game menu. |
+| *Super Mario All-Stars (CollectionRecomp)* | [CollectionRecomp](https://github.com/SatellaGuyAlt/CollectionRecomp) · [downloads](https://github.com/SatellaGuyAlt/CollectionRecomp/releases) | Japanese collection prototype with launcher and experimental widescreen. |
+| *Super Mario Kart* | [SuperMarioKartRecomp](https://github.com/Zaxaerith/SuperMarioKartRecomp) | Source port with launcher and local racing/Battle mode. See also the independent projects below. |
+| *Super Tennis* | [SuperTennisRecomp](https://github.com/craigshaw/SuperTennisRecomp) | Windows/macOS source build, one/two local players, remapping and settings; complete matches tested. |
+| *Super Mario World 2: Yoshi’s Island* | [SuperMarioWorld2YoshisIslandRecomp](https://github.com/Zaxaerith/SuperMarioWorld2YoshisIslandRecomp) | Source project with desktop launcher, intro/title and stage gameplay; broad campaign validation not established. |
+| *Smash Tennis* | [Smash-Tennis-Restrung](https://github.com/dpanchekha/Smash-Tennis-Restrung) | Decompilation/network-play development project; no completed-playability claim. |
+| *Uniracers* | [uniracers-recomp](https://github.com/baldosa/uniracers-recomp) · [downloads](https://github.com/baldosa/uniracers-recomp/releases) | Native desktop/browser builds, two-player routes and browser online play; maintains a framework branch. |
+
+Other takes on existing titles include [Super Mario Kart / mk](https://github.com/sp00nznet/mk)
+(TCP lockstep multiplayer), [NeoSMK](https://github.com/crusader290/NeoSMK)
+(widescreen, full-screen solo races and optional 3D scenery), and
+[F-Zero Recomp](https://github.com/craigshaw/FZeroRecomp)
+(ultrawide and platform-native visual filters).
+
+Platform adaptations include [DKC on Apple TV](https://github.com/joeblack2k/DKCRecompTV),
+[DKC2 on Android](https://github.com/deivid22srk/DKC2-Android-Port),
+[DKC2 on Switch](https://github.com/1weell/DKC2Recomp-Switch),
+[Mega Man X on Switch](https://github.com/Thorhax/MegaManX-NX),
+[Mega Man X on Xbox](https://github.com/Team-Resurgent/MegaManX-X),
+[F-Zero on Vita](https://github.com/rameauv/FZeroRecomp-vita), and
+[Super Metroid on DS](https://github.com/linuxkafe/SuperMetroidDS).
+Consult those projects for their own setup and feature limits.
+
+### Additional development targets
+
+Work also exists on **BS F-Zero Grand Prix 2, Illusion of Gaia, Metal
+Warriors, Super Mario Kart and Yoshi’s Island** in companion development
+projects without public releases. These are separate from the public
+community projects above. A development target does not imply a downloadable
+or fully validated port.
+
+To add a project, send its public repository, supported ROM identity,
+implemented features and current testing limits. Keep planned features
+separate from available ones.
 
 ## ROM compatibility
 
@@ -76,19 +219,6 @@ unsupported. Some unsupported cartridges may get far enough through header
 detection to load as a plain LoROM or HiROM image, but their unmodeled register
 windows will still prevent correct execution.
 
-## Development showcase
-
-<table>
-  <tr>
-    <td width="50%"><img src="docs/assets/games/mega-man-x2-wide.png" alt="SNESRecomp development screenshot" width="100%"></td>
-    <td width="50%"><img src="docs/assets/games/mega-man-x3-wide.png" alt="SNESRecomp development screenshot" width="100%"></td>
-  </tr>
-  <tr>
-    <td><img src="docs/assets/games/star-fox.png" alt="SNESRecomp development screenshot" width="100%"></td>
-    <td><img src="docs/assets/games/super-metroid.png" alt="SNESRecomp development screenshot" width="100%"></td>
-  </tr>
-</table>
-
 ## What it is
 
 SNESRecomp turns a ROM into a recompilation project:
@@ -114,50 +244,28 @@ indirect-dispatch configuration, validation, and a host application.
 
 ## Widescreen and Adaptive View
 
-Display aspect and view width are separate controls. The shared desktop policy
-supports **4:3 (CRT)** with the SNES's 7:6 horizontal pixel correction,
-**8:7 (Square pixels)** for a 1:1 pixel aspect, and a literal **1:1 (Square
-frame)** presentation. Games opt into the launcher control and persist it as
-`DisplayAspect`; 4:3 remains the default.
-
-These are genuinely wider views—not stretched 4:3 output. SNES 2D engines
-normally stream backgrounds, spawn objects, and cull sprites for a 256-pixel
-viewport. A correct widescreen integration widens those systems together while
-leaving game simulation and authentic 4:3 behavior unchanged.
-
-A fixed widescreen view adds one third more horizontal logical pixels. Because
-the chosen pixel shape stays unchanged, that expansion presents as 16:9 from
-4:3, 32:21 from 8:7, or 4:3 from a square frame.
-
-<table>
-  <tr><td><img src="docs/assets/games/super-mario-world-wide.png" alt="Super Mario World true widescreen at 16:9" width="100%"></td></tr>
-  <tr><td align="center"><sub><b>Super Mario World — fixed 16:9.</b> The native 224-pixel logical height is retained while the level view expands horizontally.</sub></td></tr>
-</table>
-
-<table>
-  <tr><td><img src="docs/assets/games/mega-man-x-wide.png" alt="Mega Man X true widescreen at 16:9" width="100%"></td></tr>
-  <tr><td align="center"><sub><b>Mega Man X — true widescreen.</b> Background streaming, object windows, HUD placement, and sprite rendering are widened together.</sub></td></tr>
-</table>
-
-Adaptive View grows or clamps the logical viewport according to the available
-scene and window width. At a map boundary it can preserve an authentic edge
-instead of wrapping or inventing scenery.
+View width and pixel shape are separate settings. The shared desktop policy
+supports 4:3 CRT presentation, 8:7 square pixels and a square frame. Games
+integrate their own widened view; the default authentic view remains available.
 
 <table>
   <tr>
-    <td width="32%"><img src="docs/assets/games/alttp-standard.png" alt="A Link to the Past at its authentic 4:3 view" width="100%"></td>
-    <td width="68%"><img src="docs/assets/games/alttp-adaptive.png" alt="A Link to the Past with Adaptive View" width="100%"></td>
-  </tr>
-  <tr>
-    <td align="center"><sub><b>Authentic 4:3</b></sub></td>
-    <td align="center"><sub><b>Adaptive View</b></sub></td>
+    <td width="32%"><img src="docs/assets/games/alttp-standard.png" alt="A Link to the Past at its original view width" width="100%"><br><sub><b>Original view</b></sub></td>
+    <td width="68%"><img src="docs/assets/games/alttp-adaptive.png" alt="The same A Link to the Past scene showing additional scenery with Adaptive View" width="100%"><br><sub><b>Adaptive View</b></sub></td>
   </tr>
 </table>
 
-The transferable 2D-engine checklist lives in
-[`docs/WIDESCREEN_PATTERNS.md`](docs/WIDESCREEN_PATTERNS.md).
+The [widescreen integration checklist](docs/WIDESCREEN_PATTERNS.md) covers
+backgrounds, object windows, sprites, HUD and scene boundaries. Optional
+[HD Mode 7](docs/HD_MODE7.md) improves background sampling in supported
+renderers independently of view width.
 
 ## Mods
+
+Want to make a mod by hand? Start with
+[`snesmod.md`](snesmod.md), including a first plugin, packaging, installation,
+and testing. Existing ROM-hack features should be reimplemented as mods against
+the stock ROM; recompiling patched ROMs is deprecated.
 
 SNESRecomp supports opt-in, versioned `.snesmod` packages. A package is an
 installation, update, provenance, and trust boundary; it may expose multiple
@@ -196,209 +304,26 @@ can also point `SNESRECOMP_MSU1` at a pack directory or base prefix directly.
 See [`docs/MSU1.md`](docs/MSU1.md) for the register model, pack resolution, and
 game-integration details.
 
-## How to use SNESRecomp
+## Getting started
 
-### Scaffold a full project (source checkout)
+**Creating a new port?** Follow [Your first SNESRecomp port](docs/GETTING_STARTED.md).
+It walks through one Windows setup, ROM verification, scaffolding, generation,
+building and the first game-specific investigation. No AI is required.
 
-From a snesrecomp checkout, one command takes a ROM to a repository that
-builds, regenerates, packages, and publishes itself:
+For an existing title, use its pinned dependencies and regeneration script;
+do not scaffold over its repository. Developers can then use these references
+as needed:
 
-```sh
-# macOS / Linux / WSL / Git Bash
-sh tools/new_project/setup_project.sh ~/roms/game.sfc --dir ~/src
-```
+- [Project setup and porting](docs/GAME_PROJECT_SETUP.md).
+- [Scaffolder options and other host platforms](tools/new_project/README.md).
+- [Released CLI](https://github.com/RetroPortingToolKit/snesrecomp/releases)
+  and [headless code-generation SDK](docs/LOCAL_CODEGEN_SDK.md).
+- [SDL3 default and SDL2 compatibility builds](docs/SDL_BACKENDS.md).
+- [Writing mods](snesmod.md) and [content-variant internals](docs/CONTENT_VARIANTS.md).
 
-```powershell
-# Windows (needs Git for Windows, Python 3 and CMake on PATH)
-powershell -File tools\new_project\setup_project.ps1 -Rom C:\roms\game.sfc -Dir C:\src
-```
-
-Pass the ROM and answer the questions: title, players and multitap, netplay
-and rollback, launcher, boxart, CI, generate and build, GitHub. Every answer
-has a default probed from the cartridge, and every question has a flag for
-scripting (`--players 1-8`, `--rollback`, `--yes`, ...). It probes the
-cartridge header, lays out the repo, wires the framework submodules, seeds
-the analysis config, writes CI and packaging, and can generate, build, and
-`gh repo create` in the same run. See
-[docs/GAME_PROJECT_SETUP.md](docs/GAME_PROJECT_SETUP.md) and
-[tools/new_project/README.md](tools/new_project/README.md).
-
-The result builds a real executable, but it is not a working port: the frame
-driver in `src/game_rtl.c` is where the game-specific work starts.
-
-### Generate a project with the released CLI
-
-1. Download `snesrecomp-cli-windows-x86_64.zip` from
-   [Releases](https://github.com/mstan/snesrecomp/releases).
-2. Extract the entire archive to one folder.
-3. Open PowerShell there and run:
-
-```powershell
-.\snesrecomp.exe build `
-  --rom "C:\Games\My Game\game.sfc" `
-  --output "C:\Projects\MyGameRecomp"
-```
-
-Both `.sfc` and `.smc` images are accepted. Standard LoROM and HiROM mapping
-are detected automatically.
-
-The generated folder contains discovered C source, a starter bank
-configuration, CMake build files, and the runner sources needed for further
-integration. The released CLI is self-contained; generating a project does
-not require Python, Rust, or a source checkout.
-
-### Build the generated source
-
-Install CMake, Ninja, and a C compiler, then run:
-
-```powershell
-powershell -ExecutionPolicy Bypass -File "C:\Projects\MyGameRecomp\build.ps1"
-```
-
-The generated project also includes `build.sh` for macOS and Linux. This step
-builds a static library containing the generated code; turning an arbitrary
-game into a playable native port still requires the game-specific work
-described above.
-
-Use only a ROM image you obtained legally. SNESRecomp neither includes ROM
-data nor copies the input ROM into the generated project. Generated C is
-derived from that ROM, so do not redistribute it without permission.
-
-### Build the CLI from source
-
-You need Git, Python 3.9 or newer, Rust 1.85 or newer, and PyInstaller:
-
-```sh
-git clone https://github.com/mstan/snesrecomp.git
-cd snesrecomp
-python -m pip install pyinstaller==6.21.0
-python tools/build_cli.py release
-```
-
-The ready-to-use ZIP is written to `dist/`.
-
-### Regenerate an existing game project (headless SDK)
-
-Game repositories that already ship `bank*.cfg` seeds should use the
-`generate` command instead of scaffolding a new tree. This is the stable
-contract for local UIs and launcher automation:
-
-```sh
-python snesrecomp_cli.py generate \
-  --rom "Metal Warriors (USA).sfc" \
-  --project-root /path/to/MetalWarriorsSNESRecomp \
-  --cfg-dir recomp \
-  --out-dir src/gen \
-  --funcs-h recomp/funcs.h \
-  --cfg-roots \
-  --expected-crc32 f2ab92d4 \
-  --json-progress
-```
-
-See [`docs/LOCAL_CODEGEN_SDK.md`](docs/LOCAL_CODEGEN_SDK.md) for exit codes,
-the JSONL progress event schema, and the portable **recomp-ui host** under
-`host/` (`snesrecomp_codegen_host`) that other game repos can compile in for
-Generate → rebuild → relaunch (including the Windows deferred `.cmd` helper).
-`verify-rom` checks digests alone.
-
-## Choosing SDL3 or SDL2 for a desktop game
-
-SDL3 is the default desktop backend for CMake game hosts. SDL2 remains a
-supported compatibility fallback, but it must be selected explicitly. The
-choice applies to both the game window and the shared recomp-ui launcher, so a
-build never mixes SDL major versions.
-
-Install the development package for the backend you want:
-
-- Windows: use an SDL development package for your compiler and architecture.
-  For the official MinGW archives, point CMake at the contained
-  `x86_64-w64-mingw32` directory.
-- macOS: install `sdl3` for the default build or `sdl2` for the fallback.
-- Linux: install your distribution's SDL3 development package, or its SDL2
-  development package for the fallback.
-
-Keep separate build directories for the two backends. This avoids stale CMake
-package paths and also makes side-by-side testing straightforward.
-
-### Build with SDL3 (default)
-
-From a game repository that consumes SNESRecomp:
-
-```powershell
-$engine = 'C:\src\snesrecomp'
-$ui = 'C:\src\recomp-ui'
-$sdl3 = 'C:\deps\SDL3\x86_64-w64-mingw32'
-
-cmake -S . -B build-sdl3 -G Ninja `
-  -DCMAKE_BUILD_TYPE=Release `
-  -DSNESRECOMP_ROOT="$engine" `
-  -DRECOMP_UI_ROOT="$ui" `
-  -DCMAKE_PREFIX_PATH="$sdl3"
-cmake --build build-sdl3 --parallel
-```
-
-`-DSNESRECOMP_SDL_BACKEND=SDL3` is accepted but optional because SDL3 is the
-default.
-
-### Build with the SDL2 fallback
-
-Configure a different build directory and select SDL2 explicitly:
-
-```powershell
-$engine = 'C:\src\snesrecomp'
-$ui = 'C:\src\recomp-ui'
-$sdl2 = 'C:\deps\SDL2\x86_64-w64-mingw32'
-
-cmake -S . -B build-sdl2 -G Ninja `
-  -DCMAKE_BUILD_TYPE=Release `
-  -DSNESRECOMP_ROOT="$engine" `
-  -DRECOMP_UI_ROOT="$ui" `
-  -DSNESRECOMP_SDL_BACKEND=SDL2 `
-  -DCMAKE_PREFIX_PATH="$sdl2"
-cmake --build build-sdl2 --parallel
-```
-
-If SDL is installed in a standard system prefix, omit
-`-DCMAKE_PREFIX_PATH`. On Windows, the build helper copies the selected
-`SDL3.dll` or `SDL2.dll` beside each executable.
-
-During configuration, verify that CMake prints matching lines:
-
-```text
-<game-target>: SDL3 desktop backend
-recomp-ui: SDL3 platform backend
-```
-
-The SDL2 build reports `SDL2 compatibility backend` instead. After a clean
-game exit, `last_run_report.json` records the compiled and loaded SDL versions.
-
-### Add backend selection to a game project
-
-A game CMake file should use the shared helper instead of calling
-`find_package(SDL2)` or `find_package(SDL3)` itself:
-
-```cmake
-set(SNESRECOMP_ROOT "${CMAKE_SOURCE_DIR}/snesrecomp" CACHE PATH
-    "Path to SNESRecomp")
-include(${SNESRECOMP_ROOT}/runner/runner.cmake)
-
-set(RECOMP_UI_ROOT "${CMAKE_SOURCE_DIR}/recomp-ui" CACHE PATH
-    "Path to recomp-ui")
-include(${RECOMP_UI_ROOT}/recomp_ui.cmake)
-
-add_executable(my_game ${SNESRECOMP_RUNNER_SOURCES} ${GAME_SOURCES})
-target_include_directories(my_game PRIVATE
-    ${SNESRECOMP_RUNNER_INCLUDE_DIRS})
-snesrecomp_target_sdl(my_game)
-recomp_target_launcher_ui(my_game)
-```
-
-`snesrecomp_target_sdl()` owns package discovery, compile definitions, linking,
-and Windows runtime-DLL staging. See
-[`docs/SDL_BACKENDS.md`](docs/SDL_BACKENDS.md) for the benchmark mode and
-maintainer notes. Some legacy Visual Studio game projects deliberately remain
-on the explicitly defined SDL2 fallback; the CMake release path is the SDL3
-default.
+A content variant is a title-integrated program/content selection with
+explicit compatibility and save rules. It does not turn an arbitrary patched
+ROM into a supported port. Start with one verified stock revision.
 
 ## Architecture
 
@@ -509,10 +434,11 @@ divergence. Run the A-vs-A, B-vs-B, fault-injection, and hash-audit gates in
 
 ## Status
 
-SNESRecomp is alpha software. Multiple games run through the same shared
-framework, but APIs, generated-code conventions, and internal integration
-points can still change. Per-game maturity varies; the [Games](#games) table
-and each project's release notes are the authoritative status sources.
+SNESRecomp is **beta software**. Multiple game projects use the shared
+framework for native desktop releases and substantial enhancements. APIs,
+generated-code conventions and integration points can still change, so game
+projects pin framework revisions. Per-game maturity varies; the [Games](#games)
+table and each project's current release notes describe its own scope.
 
 The current direction is to move recurring fixes into the framework, retain
 an exact low-level fallback for uncertain code, and keep authentic output as

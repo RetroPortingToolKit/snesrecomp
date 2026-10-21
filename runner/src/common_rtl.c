@@ -4,6 +4,7 @@
 #include <unistd.h>
 #endif
 #include "common_rtl.h"
+#include "save_state_slots.h"
 #include "apu_frame_clock.h"
 #include "common_cpu_infra.h"
 #include "snes/interp_bridge.h"
@@ -340,6 +341,9 @@ typedef struct MemorySli {
   size_t position;
   bool is_save;
   bool error;
+  const void *locate;
+  size_t locate_size;
+  size_t *locate_offset;
 } MemorySli;
 
 static void file_sli_func(SaveLoadInfo *sli, void *data, size_t n) {
@@ -369,6 +373,8 @@ static void memory_sli_func(SaveLoadInfo *sli, void *data, size_t n) {
     memory->error = true;
     return;
   }
+  if (memory->locate_offset && memory->locate == data && memory->locate_size == n)
+    *memory->locate_offset = memory->position;
   memory->position += n;
 }
 
@@ -718,6 +724,7 @@ static void RtlApplyMultitapEnv(void) {
 }
 
 bool RtlRunFrame(uint32 inputs) {
+  if (g_rtl_game_info->frame_begin && !g_rtl_game_info->frame_begin(&inputs)) return false;
 #ifdef SNES_COSIM
   /* Co-sim (dev/diagnostics only): connect the coordinator once, before the
    * first frame executes. Boot ran deterministically already; the co-sim
@@ -888,6 +895,7 @@ bool RtlRunFrame(uint32 inputs) {
   snes_rb_probe_after_frame(inputs);
 #endif
 
+  if (g_rtl_game_info->frame_end) g_rtl_game_info->frame_end();
   return false;
 }
 
@@ -1003,8 +1011,12 @@ bool RtlLoadSnapshot(const char *filename) {
   return true;
 }
 
-size_t RtlSnapshotGuestSize(uint32 *version_out) {
+size_t RtlSnapshotGuestLayout(uint32 *version_out, size_t *wram_offset_out) {
+  size_t offset = SIZE_MAX;
   MemorySli count = {{&memory_sli_func}, NULL, 0, sizeof(uint32)*2, true, false};
+  count.locate = g_snes->ram;
+  count.locate_size = 0x20000;
+  count.locate_offset = &offset;
   RtlApuLock();
   uint32 previous = snes_saveload_get_version();
   /* snes_saveload normalizes the emulator-only E mirror even when counting.
@@ -1016,7 +1028,12 @@ size_t RtlSnapshotGuestSize(uint32 *version_out) {
   g_snes->cpu->e = e;
   RtlApuUnlock();
   if (version_out) *version_out = RTL_SAV_VERSION;
-  return count.error ? 0 : count.position;
+  if (wram_offset_out) *wram_offset_out = offset;
+  return count.error || offset == SIZE_MAX ? 0 : count.position;
+}
+
+size_t RtlSnapshotGuestSize(uint32 *version_out) {
+  return RtlSnapshotGuestLayout(version_out, NULL);
 }
 
 size_t RtlSaveSnapshotToMemory(void *data, size_t capacity) {
@@ -1042,6 +1059,9 @@ size_t RtlSaveSnapshotToMemory(void *data, size_t capacity) {
   return guard ? snes_snapshot_guard_finish(data,capacity,memory.position-prefix,guard)
                : memory.position;
 }
+
+static bool s_rollback_load;
+bool RtlIsRollbackLoad(void) {return s_rollback_load;}
 
 bool RtlLoadSnapshotFromMemory(const void *data, size_t size) {
   if (g_rtl_game_info && g_rtl_game_info->snapshot_allowed &&
@@ -1076,7 +1096,7 @@ bool RtlLoadSnapshotFromMemory(const void *data, size_t size) {
   RtlApuUnlock();
   if (memory.error) return false;
   g_snes->beamMasterLast = g_cpu.master_cycles;
-  snes_mod_audio_stop_all();
+  if(!s_rollback_load) snes_mod_audio_stop_all();
   PpuResetWidescreenOamHistory(g_snes->ppu);
   if (g_rtl_game_info && g_rtl_game_info->on_state_loaded)
     g_rtl_game_info->on_state_loaded(hdr[1]);
@@ -1089,7 +1109,7 @@ bool RtlLoadSnapshotFromMemory(const void *data, size_t size) {
  */
 
 #define RTL_RB_RESIDUE_MAGIC 0x53524252u /* 'RBRS' */
-#define RTL_RB_RESIDUE_VERSION 6u
+#define RTL_RB_RESIDUE_VERSION 7u
 
 typedef struct RtlRollbackResidue {
   uint32 magic;
@@ -1151,6 +1171,15 @@ typedef struct RtlRollbackResidue {
    * frame-boundary savestate (ppu_handleVblank reloads the OAM port from
    * oamaddl/oamaddh) and wrong for a mid-frame rollback. See ppu.h. */
   PpuRollbackResidue ppu_rb;
+  /* v7: the APU guest-time clock. With extended frame timing (the desktop
+   * runner) rtl_apu_guest_cycle reads it instead of snes_frame_counter, and
+   * the port scheduler's anchors in apu_port above are expressed in its
+   * units. Left out, a rewind put the anchors back but not the clock, so
+   * every replayed frame added a frame of guest time: the SPC then ran
+   * further on whichever peer had rolled back more. Measured on MMX netplay
+   * with forced mispredicts: identical port schedules, SPC clock three frames
+   * (51,264 cycles) apart at the first APU-partition fork. */
+  RtlApuFrameClock apu_frame_clock;
 } RtlRollbackResidue;
 
 size_t RtlRollbackSnapshotBound(void) {
@@ -1254,6 +1283,7 @@ static void rtl_rb_residue_capture(RtlRollbackResidue *r) {
   interp_bridge_rb_state_save(r->interp);
   r->hdma_pending_init = dma_hdma_pending_init_get(g_snes->dma);
   ppu_rb_residue_get(g_snes->ppu, &r->ppu_rb);
+  r->apu_frame_clock = g_apu_frame_clock;
 }
 
 static void rtl_rb_residue_apply(const RtlRollbackResidue *r) {
@@ -1272,10 +1302,14 @@ static void rtl_rb_residue_apply(const RtlRollbackResidue *r) {
   interp_bridge_rb_state_load(r->interp);
   dma_hdma_pending_init_set(g_snes->dma, r->hdma_pending_init);
   ppu_rb_residue_set(g_snes->ppu, &r->ppu_rb);
+  g_apu_frame_clock = r->apu_frame_clock;
 }
 
 static RtlRollbackResidue s_loaded_execution;
 static bool s_loaded_execution_valid;
+/* A v6 savestate predates apu_frame_clock; it loads with the live clock, as
+ * every savestate did before v7. */
+static bool s_loaded_execution_keeps_clock;
 
 void RtlSaveExecutionState(SaveLoadInfo *sli) {
   RtlRollbackResidue r;
@@ -1291,16 +1325,20 @@ bool RtlLoadExecutionState(SaveLoadInfo *sli) {
   uint32 size = 0;
   s_loaded_execution_valid = false;
   sli->func(sli, &size, sizeof(size));
-  if (size != sizeof(s_loaded_execution)) return false;
+  const uint32 v6_size = (uint32)offsetof(RtlRollbackResidue, apu_frame_clock);
+  if (size != sizeof(s_loaded_execution) && size != v6_size) return false;
   memset(&s_loaded_execution, 0, sizeof(s_loaded_execution));
-  sli->func(sli, &s_loaded_execution, sizeof(s_loaded_execution));
+  sli->func(sli, &s_loaded_execution, size);
   cx4_saveload_clock(g_snes->cart->cx4, sli);
+  s_loaded_execution_keeps_clock = size == v6_size;
   return s_loaded_execution_valid =
       s_loaded_execution.magic == RTL_RB_RESIDUE_MAGIC &&
-      s_loaded_execution.version == RTL_RB_RESIDUE_VERSION;
+      s_loaded_execution.version == (s_loaded_execution_keeps_clock ? 6u : RTL_RB_RESIDUE_VERSION);
 }
 
 void RtlApplyExecutionState(void) {
+  if (s_loaded_execution_valid && s_loaded_execution_keeps_clock)
+    s_loaded_execution.apu_frame_clock = g_apu_frame_clock;
   if (s_loaded_execution_valid) rtl_rb_residue_apply(&s_loaded_execution);
   s_loaded_execution_valid = false;
 }
@@ -1342,6 +1380,47 @@ size_t RtlRollbackSaveToMemory(void *data, size_t capacity) {
   return used + sizeof(residue);
 }
 
+/* The S-DSP output ring is live audio-consumer state: the SDL audio thread
+ * advances its read cursor, so two peers in the same guest state write it
+ * differently (snes_state_digest leaves it out for the same reason). These
+ * blank it while a snapshot is written, so equal states write equal bytes,
+ * and put the live ring back afterwards. */
+static DspOutputRing s_blank_ring_saved;
+static void rtl_ring_blank_begin(void) {
+  static const DspOutputRing blank;
+  RtlApuLock();
+  dsp_output_ring_save(g_snes->apu->dsp, &s_blank_ring_saved);
+  dsp_output_ring_restore(g_snes->apu->dsp, &blank);
+  RtlApuUnlock();
+}
+static void rtl_ring_blank_end(void) {
+  RtlApuLock();
+  dsp_output_ring_restore(g_snes->apu->dsp, &s_blank_ring_saved);
+  RtlApuUnlock();
+}
+
+size_t RtlNetplaySnapshotToMemory(void *data, size_t capacity) {
+  size_t n;
+  if (!g_snes) return 0;
+  rtl_ring_blank_begin();
+  n = RtlRollbackSaveToMemory(data, capacity);
+  rtl_ring_blank_end();
+  return n;
+}
+
+size_t RtlNetplaySnapshotHashedBytes(size_t size) {
+  return size > sizeof(RtlRollbackResidue) ? size - sizeof(RtlRollbackResidue) : 0;
+}
+
+bool RtlSaveSnapshotRingBlanked(const char *filename) {
+  bool ok;
+  if (!g_snes) return false;
+  rtl_ring_blank_begin();
+  ok = RtlSaveSnapshot(filename);
+  rtl_ring_blank_end();
+  return ok;
+}
+
 bool RtlRollbackLoadFromMemory(const void *data, size_t size) {
   RtlRollbackResidue residue;
   DspOutputRing ring;
@@ -1381,7 +1460,10 @@ bool RtlRollbackLoadFromMemory(const void *data, size_t size) {
    * was on, and said so once per frame in the log. Netplay rollback had the
    * same shape waiting for it. Keep the counter across the load. */
   { const uint64_t generation = s_state_generation;
+    const bool previous_rollback_load=s_rollback_load;
+    s_rollback_load=true;
     ok = RtlLoadSnapshotFromMemory(data, guest);
+    s_rollback_load=previous_rollback_load;
     s_state_generation = generation; }
 
   /* The game's execution position goes back BEFORE the residue is applied and
@@ -1544,9 +1626,7 @@ void WriteReg(uint16 reg, uint8 value) {
     cart_sync_coprocessors(g_snes->cart, g_cpu.master_cycles);
     cart_write(g_snes->cart, 0, reg, value);
   } else if (reg >= 0x2100 && reg < 0x2140) {
-    ppu_write(g_ppu, reg & 0xff, value);
-    if (g_snes)
-      ppu_rasterRecord(reg, g_snes->vPos, value);
+    ppu_write(g_ppu, reg & 0xff, value);   /* journals itself */
   } else if (reg >= 0x2140 && reg < 0x2180) {
 #if SNESRECOMP_ENABLE_MODS
     if (snes_mod_runtime_filter_apu_write_c(reg, value)) {
@@ -1559,13 +1639,8 @@ void WriteReg(uint16 reg, uint8 value) {
     snes_writeBBus(g_snes, reg & 0xff, value);
   } else if (reg >= 0x4200 && reg < 0x4220) {
     if (reg == 0x420C) {
+      /* The raster journal records it in snes_writeReg. */
       g_snesrecomp_last_hdmaen = value;
-      /* Per-line fact: this title switches the transition's HDMA
-       * channels on from the line-21 raster handler, and a frame-model
-       * host that samples the mask once at render time never sees them.
-       * See raster_reg_journaled() in ppu.c. */
-      if (g_snes)
-        ppu_rasterRecord(reg, g_snes->vPos, value);
     }
     if (reg == 0x420D)
       g_memsel = (uint8_t)(value & 1);  /* FastROM select; paces $80-FF code */
@@ -2454,6 +2529,14 @@ void RtlRenderAudio(int16 *audio_buffer, int samples, int channels) {
  * game's internal title ("smw" for every title); RtlMigrateLegacySram copies
  * that forward the first time the generic name is used under the main root. */
 static char s_save_root[96] = "saves";
+static char s_quick_save_root[96];
+
+void RtlSetQuickSaveRoot(const char *root) {
+  snprintf(s_quick_save_root, sizeof(s_quick_save_root), "%s", root ? root : "");
+  size_t n = strlen(s_quick_save_root);
+  while (n > 1 && (s_quick_save_root[n - 1] == '/' || s_quick_save_root[n - 1] == '\\'))
+    s_quick_save_root[--n] = '\0';
+}
 
 void RtlSetSaveRoot(const char *root) {
   if (!root || !root[0])
@@ -2471,21 +2554,37 @@ void RtlSetSaveRoot(const char *root) {
 
 const char *RtlSaveRoot(void) { return s_save_root; }
 
-void RtlEnsureSaveDir(void) {
+static void ensure_save_root(const char *root) {
 #ifdef _WIN32
   /* Also ensure parent "saves" when root is saves/netplay */
-  if (strncmp(s_save_root, "saves/", 6) == 0 || strncmp(s_save_root, "saves\\", 6) == 0)
+  if (strncmp(root, "saves/", 6) == 0 || strncmp(root, "saves\\", 6) == 0)
     _mkdir("saves");
-  _mkdir(s_save_root);
+  _mkdir(root);
 #else
-  if (strncmp(s_save_root, "saves/", 6) == 0)
+  if (strncmp(root, "saves/", 6) == 0)
     mkdir("saves", 0755);
-  mkdir(s_save_root, 0755);
+  mkdir(root, 0755);
 #endif
+}
+
+void RtlEnsureSaveDir(void) {
+  ensure_save_root(s_save_root);
+  if (s_quick_save_root[0] && strcmp(s_quick_save_root, s_save_root))
+    ensure_save_root(s_quick_save_root);
 }
 
 void RtlSaveSlotPath(int slot, char *buf, size_t buflen) {
   const char *prefix = g_rtl_game_info ? g_rtl_game_info->save_name_prefix : NULL;
+  if (slot == SNES_SAVESTATE_QUICK_SLOT) {
+    const char *root = s_quick_save_root[0] ? s_quick_save_root : s_save_root;
+    if (prefix)
+      snprintf(buf, buflen, "%s/%squick.sav", root, prefix);
+    else if (g_rtl_game_info && g_rtl_game_info->title)
+      snprintf(buf, buflen, "%s/%s_quick.sav", root, g_rtl_game_info->title);
+    else
+      snprintf(buf, buflen, "%s/quick.sav", root);
+    return;
+  }
   if (prefix)
     snprintf(buf, buflen, "%s/%s%d.sav", s_save_root, prefix, slot);
   else if (g_rtl_game_info && g_rtl_game_info->title)
@@ -2537,20 +2636,25 @@ void RtlReadSram(void) {
   }
 }
 
-int RtlTryWriteSram(void) {
-  if (!g_sram || g_sram_size <= 0)
-    return 1;
-  char path[128], bak[140], tmp[140];
-  RtlEnsureSaveDir();
-  RtlSramFilePath(path, sizeof(path));
-  snprintf(bak, sizeof(bak), "%s.bak", path);
-  snprintf(tmp, sizeof(tmp), "%s.tmp", path);
+int RtlWriteSramImage(const char *path, const uint8 *bytes, size_t size) {
+  if (!path || !*path || (!bytes && size))
+    return 0;
+  size_t length = strlen(path);
+  if (length > SIZE_MAX / 2 - 5)
+    return 0;
+  char *bak = malloc((length + 5) * 2);
+  if (!bak)
+    return 0;
+  char *tmp = bak + length + 5;
+  memcpy(bak, path, length); memcpy(bak + length, ".bak", 5);
+  memcpy(tmp, path, length); memcpy(tmp + length, ".tmp", 5);
   FILE *f = fopen(tmp, "wb");
   if (!f) {
     fprintf(stderr, "Unable to write %s\n", tmp);
+    free(bak);
     return 0;
   }
-  int ok = fwrite(g_sram, 1, g_sram_size, f) == (size_t)g_sram_size;
+  int ok = !size || fwrite(bytes, 1, size, f) == size;
   ok = ok && fflush(f) == 0;
 #ifdef _WIN32
   ok = ok && _commit(_fileno(f)) == 0;
@@ -2561,6 +2665,7 @@ int RtlTryWriteSram(void) {
   if (!ok) {
     fprintf(stderr, "Unable to write %s\n", tmp);
     remove(tmp);
+    free(bak);
     return 0;
   }
   /* Keep exactly one previous revision. A missing current file (first save
@@ -2572,6 +2677,7 @@ int RtlTryWriteSram(void) {
     if (rename(path, bak) != 0) {
       fprintf(stderr, "Unable to rotate %s to %s\n", path, bak);
       remove(tmp);
+      free(bak);
       return 0;
     }
   }
@@ -2580,9 +2686,20 @@ int RtlTryWriteSram(void) {
     /* Put the previous revision back so the namespace still has a file. */
     rename(bak, path);
     remove(tmp);
+    free(bak);
     return 0;
   }
+  free(bak);
   return 1;
+}
+
+int RtlTryWriteSram(void) {
+  if (!g_sram || g_sram_size <= 0)
+    return 1;
+  char path[128];
+  RtlEnsureSaveDir();
+  RtlSramFilePath(path, sizeof(path));
+  return RtlWriteSramImage(path, g_sram, (size_t)g_sram_size);
 }
 
 int RtlWriteSram(void) { return RtlTryWriteSram(); }

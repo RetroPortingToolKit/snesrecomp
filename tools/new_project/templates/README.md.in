@@ -87,10 +87,11 @@ than mis-executing ten frames in.
 
 The scaffold stops where the game-specific work starts. In rough order:
 
-1. **Make it boot.** `src/game_rtl.c` holds the frame driver. The generic
-   LLE-first shape is there; a real title usually needs a frame boundary and
-   NMI delivery that understand its own main loop. This is the bulk of the
-   work.
+1. **Make it boot.** `src/game_rtl.c` holds the frame driver. It starts on
+   the framework's beam-aligned driver (`snesrecomp/runner/src/beam_frame_driver.h`):
+   one frame per PPU field, interrupts taken where the beam latches them,
+   the field rasterized from the raster journal. A title whose main loop it
+   does not fit replaces those calls with its own driver.
 2. **Name things.** Add entries to `recomp/symbols.toml` as you identify
    routines, then re-run `tools/regen.sh`. Set `emit = true` to promote one
    into ahead-of-time analysis; leave it false to keep it interpreted.

@@ -52,6 +52,9 @@ void snes_host_app_apply_launch(const RecompLauncherCNetplayLaunch *net,
 #if defined(RECOMP_LAUNCHER_HAS_HOST_RELAY)
   out->net_cfg.transport_host = net->transport_host ? 1 : 0;
 #endif
+#if defined(RECOMP_LAUNCHER_HAS_HOST_RELAY_ICE)
+  out->net_cfg.transport_ice_hub = net->transport_ice_hub ? 1 : 0;
+#endif
   {
     const SnesLobbyMatchCaps *caps = snes_lobby_match_caps();
     if (caps && caps->valid) {
@@ -315,6 +318,7 @@ int snes_host_barrier_admit(int from_lobby, int *running,
   }
 
   if (snes_netplay_peer_disconnected(peer_ms)) {
+    snes_netplay_log_peer_disconnect(peer_ms);
     barrier_soft_exit(from_lobby, running, "peer_disconnect", &desync_logged,
                       &wait_logged);
     ice_fail_logged = 0;

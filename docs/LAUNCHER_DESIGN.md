@@ -78,6 +78,12 @@ restart path. The guest must come back bit-identical.
 - `runner/src/launcher_picker.c` — native platform file selection
 - `runner/src/rom_image_verify.c` — copier-header stripping and CRC/SHA checks
   (console-agnostic helpers used when the GUI is skipped with `--no-launcher`)
+- `runner/src/rom_identity.c` — names a refused ROM from the port's catalog of
+  known dumps (`SnesDesktopHostGame.rom_revisions`), describes an unknown one
+  by its internal header and checksum, and recognizes archives. The launcher
+  (through `GameInfo.rom_revisions` / `rom_describe`), the command-line and
+  file-picker path, and mod source-ROM pickers all report from it: "This is
+  Mega Man X (USA). Mega Man X needs Mega Man X (USA) (Rev 1) (SHA-256 ...)".
 - Lobby / netplay backends — `snes_netplay.*`, `snes_host_session.*`,
   `snes_host_app.*`, and the SNES adapters `snes_lobby_client.*` (over
   recomp-net's lobby client) and `snes_host_lobby.*` (over recomp-ui's

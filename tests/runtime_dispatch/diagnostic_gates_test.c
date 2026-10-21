@@ -61,6 +61,9 @@ void snes_reset(Snes *snes, bool hard) { (void)snes; (void)hard; }
 void cart_set_master_clock_source(Cart *cart, const uint64_t *master_clock) {
   (void)cart; (void)master_clock;
 }
+void audio_trace_set_beam_probe(void (*probe)(uint16_t *, uint16_t *)) {
+  (void)probe;
+}
 void ppu_reset(Ppu *ppu) { (void)ppu; }
 void dma_reset(Dma *dma) { (void)dma; }
 void cpu_state_init(CpuState *cpu, uint8_t *ram) {

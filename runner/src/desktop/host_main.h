@@ -38,6 +38,7 @@
 #include <stddef.h>
 #include <stdint.h>
 #include "display_aspect.h"
+#include "rom_identity.h"
 
 /* Compositor surfaces may be wider than the guest PPU's own line buffer. */
 enum { kSnesDesktopMaxFrameWidth = 1024 };
@@ -194,6 +195,24 @@ typedef struct SnesDesktopHostGame {
   int (*prepare_netplay)(int from_lobby, char *reason, size_t reason_cap);
   /* Validate that required title plugins actually activated before linking. */
   int (*netplay_ready)(char *reason, size_t reason_cap);
+  /* After the gameplay loop ends, before SDL resources are destroyed or a
+   * relaunch begins. Stop title-owned workers here. No further frames run. */
+  void (*on_shutdown)(void);
+
+  /* Known dumps of this title and the ones players confuse with it: other
+   * revisions and regions, collection re-releases, sibling games whose ROMs
+   * a mod also asks for. The launcher, the command-line/file-picker path and
+   * mod source-ROM pickers name a refused ROM from this list ("This is Mega
+   * Man X (USA). Mega Man X needs Mega Man X (USA) (Rev 1) (SHA-256 ...)")
+   * instead of only reporting a digest mismatch. The entry whose SHA-256 is
+   * expected_sha256_hex (or whose SHA-1 is in known_sha1_hex) is the
+   * supported one; with none, the host supplies "<display_name> (<region>)".
+   * NULL/0: refusals still give the file's digests and internal header. */
+  const SnesRomRevision *rom_revisions;
+  int num_rom_revisions;
+  /* One line added to every refusal. NULL: a note that headered (.smc) and
+   * headerless (.sfc) copies of the right dump both work. */
+  const char *rom_help;
 } SnesDesktopHostGame;
 
 /* The whole program. Returns the process exit code. */

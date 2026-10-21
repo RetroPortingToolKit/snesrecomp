@@ -71,7 +71,7 @@ def test_direct_bounce_computed_rts_returns_to_owning_interpreter():
                         entry_m=0, entry_x=0,
                         func_name='ComputedRtsDirectBounce')
 
-    guard = src.index('cpu->S == _entry_s &&')
+    guard = src.index('(uint16)(_entry_s - _ret_s) < 0x8000u &&')
     rewritten = src.index('interp_tier_dispatch_rewritten_return(cpu, _rpc24',
                           guard)
     popped = src.index('interp_tier_dispatch_popped_return(cpu, _rpc24')

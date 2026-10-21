@@ -226,6 +226,7 @@ void snes_reset(Snes* snes, bool hard) {
   apu_reset(snes->apu);
   dma_reset(snes->dma);
   ppu_reset(snes->ppu);
+  ppu_rasterReset();   /* the previous machine's fields are not this one's */
   if (hard)
     memset(snes->ram, 0, 0x20000);
   snes->ramAdr = 0;
@@ -460,7 +461,7 @@ static uint32_t snes_advance_beam(Snes *snes, uint32_t clocks, bool check_irq) {
         consumed += upto;
         if (h >= 1364u) {
           h = 0; v++; if (v >= 262u) v = 0;
-          if (v == 225u) snes->rdnmiPending = true;
+          if (v == 225u) { snes->rdnmiPending = true; ppu_rasterFieldBoundary(); }
           if (v == 0u) snes->rdnmiPending = false;
         }
         snes->hPos = (uint16_t)h;
@@ -492,7 +493,7 @@ static uint32_t snes_advance_beam(Snes *snes, uint32_t clocks, bool check_irq) {
     if (h >= 1364u) {
       h = 0;
       v++;
-      if (v == 225u) snes->rdnmiPending = true;
+      if (v == 225u) { snes->rdnmiPending = true; ppu_rasterFieldBoundary(); }
       if (v >= 262u) {
         v = 0;
         snes->rdnmiPending = false;
@@ -885,6 +886,10 @@ void snes_writeReg(Snes* snes, uint16_t adr, uint8_t val) {
        * last_hdmaen at 0 and wipe channel hdmaActive before every present. */
       g_snesrecomp_last_hdmaen = val;
       ppu_wlog_note_reg(0x420C, val);
+      /* A per-line fact as much as any PPU register: a raster handler can
+       * switch channels on mid-field, and a frame-model host that samples the
+       * mask once at render time never sees them. */
+      ppu_rasterRecord(0x420C, snes->vPos, val);
       dma_startDma(snes->dma, val, true);
       break;
     }
