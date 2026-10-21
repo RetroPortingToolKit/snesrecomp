@@ -17,7 +17,7 @@ import tempfile
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path[:0] = [str(ROOT / "recompiler"), str(ROOT / "tools")]
-from snes65816 import detect_rom_mapping, load_rom, lorom_offset, set_rom_mapping
+from snes65816 import detect_rom_mapping, load_rom, rom_offset, set_rom_mapping, is_rom_address
 from ingest_disassembly_authority import ingest
 
 
@@ -50,21 +50,19 @@ def materialize(rom, layout):
         raise ValueError("disassembly layout ROM identity mismatch")
     if type(layout.get("probe_entry_modes")) is not bool:
         raise ValueError("disassembly layout requires boolean probe_entry_modes")
-    # Current source adapters were qualified for LoROM only. Do not infer
-    # authority aliases for other cartridge mappings.
-    if detect_rom_mapping(rom) != "lorom":
-        raise ValueError("disassembly layout requires a LoROM image")
-    set_rom_mapping("lorom")
+    mapping = detect_rom_mapping(rom)
+    if mapping not in ("lorom", "hirom"):
+        raise ValueError("disassembly layout requires a standard LoROM or HiROM image")
+    set_rom_mapping(mapping)
     instructions = []
     for address, length in layout["instructions"]:
         address = int(address, 0) if isinstance(address, str) else address
         if (type(address) is not int or not 0 <= address <= 0xFFFFFF
                 or type(length) is not int or not 1 <= length <= 4
                 or (address & 0xFFFF) + length > 0x10000
-                or address >> 16 in (0x7E, 0x7F)
-                or address & 0xFFFF < 0x8000):
+                or not is_rom_address(address >> 16, address & 0xFFFF)):
             raise ValueError("invalid disassembly layout instruction span")
-        offset = lorom_offset(address >> 16, address & 0xFFFF)
+        offset = rom_offset(address >> 16, address & 0xFFFF)
         if offset < 0 or offset + length > len(rom):
             raise ValueError("disassembly layout instruction is outside the ROM")
         instructions.append({"pc24": address,
