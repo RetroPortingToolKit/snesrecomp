@@ -93,7 +93,7 @@ int main(void) {
   Dsp1 *restored = dsp1_create();
   fails += check(source && restored, "create DSP-1 instances");
   if (!source || !restored) return 1;
-  fails += check(activate_hle(source), "missing firmware activates HLE");
+  fails += check(activate_hle(source), "HLE build ignores firmware inputs");
   fails += check(activate_hle(restored), "restored instance activates HLE");
 
   fails += check(write_command(source, 0x00), "submit multiply command");

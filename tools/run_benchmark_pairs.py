@@ -38,7 +38,7 @@ BENCH_RENDERER_RE = re.compile(
 )
 
 
-def parse_args() -> argparse.Namespace:
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("--frames", type=int, required=True)
     p.add_argument("--pairs", type=int, default=5)
@@ -53,10 +53,16 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--b-name", default="B")
     p.add_argument("--b-exe", type=Path, required=True)
     p.add_argument("--b-rom", type=Path, required=True)
+    p.add_argument("--a-arg", action="append", default=[], metavar="ARG",
+                   help="Append one argv element to every A run; repeat and use "
+                        "--a-arg=--option for arguments beginning with '-'.")
+    p.add_argument("--b-arg", action="append", default=[], metavar="ARG",
+                   help="Append one argv element to every B run; repeat and use "
+                        "--b-arg=--option for arguments beginning with '-'.")
     p.add_argument("--cwd", type=Path,
                    help="Working directory for both runs; defaults to exe dir.")
     p.add_argument("--json-out", type=Path)
-    return p.parse_args()
+    return p.parse_args(argv)
 
 
 def file_meta(path: Path) -> dict:
@@ -231,10 +237,11 @@ def annotate_report_freshness(before: dict, after: dict) -> dict:
 
 
 def run_one(name: str, exe: Path, rom: Path, frames: int, audio: bool,
-            cwd: Path | None, timeout: float, side: str) -> dict:
+            cwd: Path | None, timeout: float, side: str,
+            extra_args: list[str] | None = None) -> dict:
     mode = "--benchmark-audio" if audio else "--benchmark"
     run_cwd = cwd or exe.parent
-    cmd = [str(exe), mode, str(frames), str(rom)]
+    cmd = [str(exe), mode, str(frames), str(rom), *(extra_args or [])]
     inputs_before = directory_inputs(run_cwd, exe)
     reports_before = report_snapshots(run_cwd, exe)
     start = time.time()
@@ -299,6 +306,8 @@ def build_summary(args: argparse.Namespace, records: list[dict],
         "a_rom": file_meta(args.a_rom),
         "b_exe": file_meta(args.b_exe),
         "b_rom": file_meta(args.b_rom),
+        "a_args": args.a_arg,
+        "b_args": args.b_arg,
         "a_median_fps": median([
             float(r["fps"]) for r in records if r["side"] == "A"
         ]),
@@ -342,9 +351,9 @@ def main() -> int:
     records: list[dict] = []
     for _ in range(args.warmups):
         run_one(args.a_name, args.a_exe, args.a_rom, args.frames,
-                args.audio, args.cwd, args.timeout, "A")
+                args.audio, args.cwd, args.timeout, "A", args.a_arg)
         run_one(args.b_name, args.b_exe, args.b_rom, args.frames,
-                args.audio, args.cwd, args.timeout, "B")
+                args.audio, args.cwd, args.timeout, "B", args.b_arg)
 
     deltas: list[float] = []
     for i in range(args.pairs):
@@ -357,7 +366,8 @@ def main() -> int:
         pair: dict[str, dict] = {}
         for side, name, exe, rom in order:
             rec = run_one(name, exe, rom, args.frames, args.audio, args.cwd,
-                          args.timeout, side)
+                          args.timeout, side,
+                          args.a_arg if side == "A" else args.b_arg)
             rec["pair"] = i + 1
             records.append(rec)
             pair[side] = rec

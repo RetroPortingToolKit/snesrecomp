@@ -3,10 +3,21 @@
 For the shared Windows startup stall and optional in-memory presentation
 timing capture, see [Windows startup and frame delivery](WINDOWS_STARTUP_TIMING.md).
 
-This worktree exists to create enough uncapped headroom for lower-power hosts,
-including the original Xbox, without weakening the faithful SNES hardware
-model. Performance is measured as uncapped frames per second, not as the
-ability to sit at a paced 60 FPS.
+This work creates uncapped headroom for lower-power hosts, including the
+original Xbox, while maintaining a functioning faithful SNES reference.
+Performance is measured as host cost per useful frame and uncapped throughput,
+not only as the ability to sit at a paced 60 FPS.
+
+For HLE replacements, follow the shared
+[HLE policy](https://github.com/mstan/recomp-ai-rules/blob/main/HLE.md).
+The build selects the implementation. HLE preserves the caller-facing
+contract and may use different algorithms, internal timing and documented,
+practically unnoticeable output differences. Exact state/frame/audio equality
+requirements below apply to changes promising exact equivalence. For HLE,
+compare exact contract fields exactly and qualify allowed differences at the
+observable boundary, including affected gameplay progression. A runtime
+selector, continuously executing LLE shadow, or cross-build savestate
+conversion is not required.
 
 The original Xbox is a budget target for CPU, memory, and cache pressure. The
 measurements below were taken on a modern Windows desktop and are not hardware
