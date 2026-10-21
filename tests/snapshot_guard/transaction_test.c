@@ -49,10 +49,51 @@ int main(void) {
     assert(RtlLoadSnapshotFromMemory(snapshot,size));
     assert(cpu.a==0x1234 && ram[70]==8 && host_extra==17);
     assert(reconciled==1 && presentation_resets==1 && audio_resets==1 && !locks);
+    /* An unchanged consumer may load an older chunk smaller than its current
+     * save output. Its save callback must never run as input validation. */
+    RtlGameInfo legacy=game; legacy.state_load_extra=load_variable;
+    legacy.snapshot_preflight=NULL;
+    g_rtl_game_info=&legacy;
+    size_t legacy_core=size-sizeof(host_extra);
+    unsigned captures_before=save_captures;
+    unsigned loads_before=extra_loads;
+    snapshot[legacy_core]=17; host_extra=42;
+    assert(RtlLoadSnapshotFromMemory(snapshot,legacy_core+1));
+    assert(host_extra==17 && save_captures==captures_before);
+    assert(extra_loads==loads_before+1);
+    FILE *legacy_file=fopen("legacy.sav","wb"); assert(legacy_file);
+    assert(fwrite(snapshot,1,legacy_core+1,legacy_file)==legacy_core+1);
+    assert(!fclose(legacy_file)); host_extra=42;
+    assert(RtlLoadSnapshot("legacy.sav") && host_extra==17);
+    assert(save_captures==captures_before);
+    assert(extra_loads==loads_before+2);
+    /* The current four-byte extension remains accepted without validators. */
+    host_extra=42;
+    assert(RtlLoadSnapshotFromMemory(snapshot,size) && host_extra==17);
+    assert(extra_loads==loads_before+3 && save_captures==captures_before);
+    const Cpu legacy_cpu=cpu;
+    assert(!RtlLoadSnapshotFromMemory(snapshot,legacy_core-1));
+    assert(save_captures==captures_before && extra_loads==loads_before+3);
+    assert(!memcmp(&cpu,&legacy_cpu,sizeof(cpu)));
+    /* A consumer without an extension loader historically ignores trailing
+     * chunks; do not turn those saves into new compatibility errors. */
+    RtlGameInfo no_loader=legacy; no_loader.state_load_extra=NULL;
+    g_rtl_game_info=&no_loader; host_extra=42;
+    assert(RtlLoadSnapshotFromMemory(snapshot,legacy_core+1) && host_extra==42);
+    assert(save_captures==captures_before && extra_loads==loads_before+3);
+    /* No generic transaction is promised for an opaque legacy callback. It
+     * runs once on the live state; a late short-read retains original effects.
+     * A title must opt into pure preflight to reject such a chunk earlier. */
+    g_rtl_game_info=&legacy; cpu.a=0x5678;
+    unsigned resets_before=audio_resets;
+    assert(!RtlLoadSnapshotFromMemory(snapshot,legacy_core+2));
+    assert(cpu.a==0x1234 && host_extra==42);
+    assert(extra_loads==loads_before+4 && save_captures==captures_before);
+    assert(audio_resets==resets_before);
     /* A validator accepts an older one-byte chunk and rejects corrupt chunks
      * without running a mutating title loader or resetting host delivery. */
     RtlGameInfo variable=game; variable.state_load_extra=load_variable;
-    variable.state_validate_extra=validate_extra; g_rtl_game_info=&variable;
+    variable.snapshot_preflight=validate_title_extra; g_rtl_game_info=&variable;
     size_t core=size-sizeof(host_extra); host_extra=42;
     unsigned old_resets=audio_resets, old_generation=s_state_generation;
     snapshot[core]=99;
@@ -61,6 +102,7 @@ int main(void) {
     snapshot[core]=17;
     assert(RtlLoadSnapshotFromMemory(snapshot,core+1)); assert(host_extra==17);
     /* Supported versions and guest-only states keep loading. */
+    g_rtl_game_info=&legacy;
     for(uint32_t version=RTL_SAV_VERSION_MIN;version<=RTL_SAV_VERSION;version++) {
         uint32_t header[2]={RTL_SAV_MAGIC,version};
         MemorySli out={{&memory_sli_func},snapshot,1024*1024,0,true,false};

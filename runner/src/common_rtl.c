@@ -462,19 +462,13 @@ static bool snapshot_check_guest(const void *data, size_t size, uint32 version) 
   probe.position = sizeof(uint32)*2;
   snes_saveload_set_version(version);
   snes_saveload(&staged, &probe.base);
-  if (probe.error) return false;
-  if (probe.position == size) return true; /* Supported guest-only states. */
-  if (!g_rtl_game_info || !g_rtl_game_info->state_load_extra) return false;
-  if (g_rtl_game_info->state_validate_extra)
-    return g_rtl_game_info->state_validate_extra(
-        (const uint8 *)data + probe.position, size - probe.position, version);
-  /* Legacy fixed-size extension contract: the save walker is pure and its
-   * byte count must match the load walker. Variable layouts need a validator. */
-  if (g_rtl_game_info->snapshot_preflight) return true;
-  if (!g_rtl_game_info->state_save_extra) return false;
-  MemorySli count = {{&memory_sli_func}, NULL, 0, 0, true, false};
-  g_rtl_game_info->state_save_extra(&count.base);
-  return !count.error && count.position == size - probe.position;
+  /* This walk validates only the guest prefix. Title chunks are opaque: a
+   * legacy loader may accept older/foreign layouts unlike its current save
+   * output, and the save callback may capture mutable title state. Never
+   * invoke either title serializer here or infer its accepted input lengths.
+   * Titles needing pre-write extension rejection use snapshot_preflight;
+   * otherwise their existing state_load_extra contract remains unchanged. */
+  return !probe.error;
 }
 
 /* Host-side state that paces the guest but is not part of it.
