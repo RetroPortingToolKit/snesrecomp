@@ -15,12 +15,17 @@ int main(void) {
     size_t jp_size; const void *jp=joypad_state_blob(&jp_size);
     unsigned char before_jp[256]; assert(jp_size<=sizeof(before_jp)); memcpy(before_jp,jp,jp_size);
     const size_t cuts[]={9,300,size/2,size-sizeof(host_extra)-1,size-1};
+    RtlGameInfo guest_check=game; guest_check.snapshot_preflight=NULL;
+    unsigned before_captures=save_captures, before_loads=extra_loads;
     snes_saveload_set_version(7);
     uint32_t queried_version;
     assert(RtlSnapshotGuestSize(&queried_version)==size-sizeof(host_extra));
     assert(queried_version==RTL_SAV_VERSION && snes_saveload_get_version()==7);
     assert(!memcmp(&cpu,&before_cpu,sizeof(cpu)));
     for(size_t i=0;i<sizeof(cuts)/sizeof(cuts[0]);i++) {
+        /* Guest truncations must exercise the guest walk, not be intercepted
+         * by the optional title preflight. Only the last cut is in the chunk. */
+        g_rtl_game_info=cuts[i]<size-sizeof(host_extra) ? &guest_check : &game;
         assert(!RtlLoadSnapshotFromMemory(snapshot,cuts[i]));
         assert(!memcmp(&cpu,&before_cpu,sizeof(cpu)));
         assert(!memcmp(&machine,&before_snes,sizeof(machine)));
@@ -30,11 +35,13 @@ int main(void) {
         assert(!memcmp(sram,before_sram,sizeof(sram)) && !memcmp(jp,before_jp,jp_size));
         assert(ram[70]==9 && host_extra==42 && !audio_resets && !reconciled && !presentation_resets && !locks);
         assert(snes_saveload_get_version()==7);
+        assert(save_captures==before_captures && extra_loads==before_loads);
         FILE *f=fopen("truncated.sav","wb"); assert(f);
         assert(fwrite(snapshot,1,cuts[i],f)==cuts[i]); assert(!fclose(f));
         assert(!RtlLoadSnapshot("truncated.sav"));
         assert(!memcmp(&cpu,&before_cpu,sizeof(cpu)) && host_extra==42 && !audio_resets);
     }
+    g_rtl_game_info=&game;
     /* Reject malformed PPU metadata before the live serializer sees it. */
     MemorySli prefix={{&memory_sli_func},NULL,0,8,true,false};
     cpu_saveload(&cpu,&prefix.base); apu_saveload(&apu,&prefix.base); dma_saveload(&dma,&prefix.base);
