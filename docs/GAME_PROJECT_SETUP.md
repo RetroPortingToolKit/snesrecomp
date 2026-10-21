@@ -1,5 +1,9 @@
 # Setting up a game project
 
+For a first port, follow [Your first SNESRecomp port](GETTING_STARTED.md).
+It uses one Windows setup and a small sequence of steps. This document is the
+reference for the scaffold's layout and later integration work.
+
 How a new SNES title goes from a ROM on your drive to a repository that
 builds, regenerates, packages, and publishes itself.
 
@@ -44,7 +48,7 @@ surfaces much later and reads like a framework bug.
 | Release zip / CI artifact prefix | slug of the name |
 | Description, publisher, year | blank |
 | Region | from the cartridge header |
-| recomp-ui launcher submodule | no |
+| recomp-ui launcher submodule | yes |
 | Netplay | no — skipped for a 1-player title |
 | Rollback | yes, when netplay is on |
 | GitHub Actions workflow | yes |
@@ -87,19 +91,16 @@ Release build, then prints the binary it produced and how to run it.
 You do **not** get a working port. The scaffold stops exactly where
 game-specific work starts, and that boundary is `src/game_rtl.c`.
 
-Two responsibilities always land on the game host, and neither can be guessed:
+The template now delegates frame timing, rasterization and interrupt delivery
+to the shared beam-aligned driver (`runner/src/beam_frame_driver.h`). It cuts
+frames at the PPU field boundary and services interrupts where the beam
+latches them. Keep that baseline while investigating a new title; add
+game-specific scheduling only where evidence shows it is needed.
 
-- **What "one frame" means for this title.** A real ROM's reset vector never
-  returns — it enters a main loop that waits on vblank — so the host chooses
-  the yield point. The template uses the general LLE-first shape
-  (`interp_bridge_run_until_quiescent` plus a master-clock deadline), which is
-  the right starting point but is not tuned to any particular game.
-- **Delivering NMI/IRQ at the hardware edge.** Nothing in the framework pushes
-  an interrupt frame for you.
-
-For a sense of scale, `MetalWarriorsSNESRecomp` carries roughly 11k lines of
-per-game RTL. That is the work; everything the scaffold does is the part that
-should not have to be done by hand each time.
+The generated host is a starting point, not a promise of a playable game.
+Validate boot, input, graphics, audio and progression for the selected ROM;
+consult [FRAME_MODEL_HOSTS.md](FRAME_MODEL_HOSTS.md) when the title needs its
+own driver.
 
 ### The host contract
 
