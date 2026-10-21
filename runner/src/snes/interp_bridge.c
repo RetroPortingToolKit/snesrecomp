@@ -3646,8 +3646,6 @@ RecompReturn interp_tier_dispatch_tail(CpuState *cpu, uint32_t target_pc24,
 
 RecompReturn interp_tier_dispatch_tail_ex(CpuState *cpu, uint32_t target_pc24,
     uint32_t site_pc24, uint16_t entry_s, uint8_t hrv, bool from_indirect) {
-    if (cpu_interrupt_context_active())
-        return interp_tier_dispatch_interrupt(cpu, target_pc24);
     /* This tail transfer abandons every compiled guest frame beneath the AOT
      * root that the active interpreter bounced into.  Starting a new nested
      * interpreter here leaves those host frames live; if the guest continuation
@@ -3659,6 +3657,12 @@ RecompReturn interp_tier_dispatch_tail_ex(CpuState *cpu, uint32_t target_pc24,
      * AOT tail fallbacks retain the balanced nested-interpreter path below. */
     if (s_interp_bounce_owner_depth > 0)
         return interp_bridge_lle_yield_unwind(cpu, target_pc24);
+    /* A subroutine called inside NMI/IRQ still returns with RTS/RTL. Let an
+     * owning interpreter resume first; a nested interrupt interpreter would
+     * consume its continuation and RTI before returning to a live AOT caller.
+     * Only a tail with no paired subroutine return frame is an interrupt root. */
+    if (cpu_interrupt_context_active() && hrv == 0)
+        return interp_tier_dispatch_interrupt(cpu, target_pc24);
     return interp_tier_dispatch_balanced(cpu, target_pc24, site_pc24,
                                             entry_s, hrv, from_indirect);
 }
