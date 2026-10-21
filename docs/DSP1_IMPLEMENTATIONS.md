@@ -67,3 +67,24 @@ They are reference evidence, not proof that this wiring has improved performance
 or that every gameplay transition is safe. Measure paired same-ROM, same-input
 title builds and validate affected race/menu/progression and audio behavior
 before promoting HLE. LLE remains the default pending that evidence.
+
+## October 21 follow-up
+
+[Paired Windows evidence](qualification/dsp1-smk-windows-20261021.json) records
+both current-main-merged builds, real-firmware contract checks and two identical
+5,001-frame replays per backend. Both pass the driving/pause/give-up route with
+zero underruns. Repeated RAM, final video and complete audio captures are exact
+within each backend. Public disk/memory snapshot round trips and real opposite-
+backend rejection pass in both directions. These are not lap/finish assertions.
+
+The SMK consumer must explicitly select its firmware-free HLE default before
+adopting this engine pin; otherwise the engine's LLE default introduces a new
+firmware requirement. Its companion PR makes that configure-time choice while
+retaining explicit LLE reference builds. A firmware file no longer selects an
+implementation. No DSP arithmetic or command timing was changed by this PR.
+
+The native captures differ by 0/369/1495/1487 pixels at frames
+3500/4000/4500/5000, all below row 111. The race view/menu agrees; map racers
+differ slightly. Full race progression, listening qualification and clean-host
+performance remain unverified. Keep this evidence separate from promotion of
+an HLE default in the shared engine, which remains LLE.

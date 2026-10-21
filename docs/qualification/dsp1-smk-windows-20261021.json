@@ -1,0 +1,123 @@
+{
+  "framework_commit": "38dab07b1db3b78533907e948c75e792254e5509",
+  "game_base": "40074911aa59b38d4b93e8e040816e3eb38c90e5",
+  "frames": 5001,
+  "route": "tools/smk-one-player-drive-pause.txt",
+  "scope": "driving, pause/give-up; no lap completion or race-results qualification",
+  "repeatability": {
+    "LLE": {
+      "final.wram": true,
+      "final.ppm": true,
+      "audio.wav": true
+    },
+    "HLE": {
+      "final.wram": true,
+      "final.ppm": true,
+      "audio.wav": true
+    }
+  },
+  "frame_differences": [
+    {
+      "frame": 3500,
+      "pixels": 0,
+      "top_half": 0,
+      "bottom_half": 0
+    },
+    {
+      "frame": 4000,
+      "pixels": 369,
+      "top_half": 0,
+      "bottom_half": 369
+    },
+    {
+      "frame": 4500,
+      "pixels": 1495,
+      "top_half": 0,
+      "bottom_half": 1495
+    },
+    {
+      "frame": 5000,
+      "pixels": 1487,
+      "top_half": 0,
+      "bottom_half": 1487
+    }
+  ],
+  "binary_sha256": {
+    "LLE": "7472130cfc60b8f7c7c12474748902a87a376a99c1ffaa85d76d347fdd105cd1",
+    "HLE": "2a27b6e35662b7c47533468bea305b9cfb10886b375a93f474b071e9efc39ee9"
+  },
+  "rom_sha256": "2ada8919688087be60a6a48cace8f877add60c45d2e5d09e2442faa55be62a49",
+  "LLE_without_firmware_exit": 3,
+  "HLE_without_firmware_exit": 0,
+  "opposite_backend_disk_and_memory_rejection": "passed both directions",
+  "date": "2026-10-21",
+  "compiler": "GCC 15.2.0, Windows x86-64, Release -O3",
+  "engine_base": "e92e19ee89a0b18c0e77b09555c42c73b7b727e2",
+  "firmware_sha256": "91e87d11e1c30d172556bed2211cce2efa94ba595f58c5d264809ef4d363a97b",
+  "contract_tests": {
+    "LLE": 6,
+    "HLE": 5,
+    "firmware_differential": "passed with real firmware"
+  },
+  "audio": {
+    "native": "G:\\Temp\\Codex\\snesrecomp\\issue-fixes-20261021\\smk-runs\\HLE-1\\audio.wav",
+    "reference": "G:\\Temp\\Codex\\snesrecomp\\issue-fixes-20261021\\smk-runs\\LLE-1\\audio.wav",
+    "sample_rate": 32040,
+    "native_frames": 2666143,
+    "reference_frames": 2666143,
+    "aligned_frames": 961200,
+    "lag_samples": 0,
+    "lag_ms": 0.0,
+    "lag_meaning": "positive means reference audio occurs later",
+    "envelope_correlation": 0.9803429635025889,
+    "refinement_correlation": 0.9422058159378661,
+    "channel_correlation": [
+      0.8561604941963817,
+      0.851816093363933
+    ],
+    "native_rms": [
+      2313.4644617963318,
+      2315.092819948728
+    ],
+    "reference_rms": [
+      2313.997302742702,
+      2315.1515922230556
+    ],
+    "rmse": [
+      1240.9844701137329,
+      1260.3435506837427
+    ],
+    "normalized_rmse": [
+      0.536294691719319,
+      0.5443892118846245
+    ],
+    "peak_absolute_error": 13272,
+    "exact_sample_fraction": 0.006334789846025801,
+    "native_to_reference_gain": [
+      0.8563580990909275,
+      0.8518380562370252
+    ],
+    "spectral_correlation": [
+      0.943044039885213,
+      0.9421458814304262
+    ],
+    "timing_drift": {
+      "windows": 16,
+      "minimum_samples": 0,
+      "maximum_samples": 0,
+      "span_samples": 0,
+      "span_ms": 0.0
+    }
+  },
+  "performance": "Not qualified: unrelated compiler activity was present; no new speedup is claimed.",
+  "unverified": [
+    "lap completion",
+    "race results and next-race progression",
+    "representative clean-host performance",
+    "listening comparison"
+  ],
+  "consumer_changes": [
+    "Headless target excludes desktop-only SDL diagnostic writers.",
+    "SMK explicitly selects HLE by default to preserve its existing firmware-free build; explicit LLE remains available."
+  ]
+}
