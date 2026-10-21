@@ -30,6 +30,13 @@ is not a C identifier, or a PC whose routine is replaced by `hle_func` or
 `hle_spc_upload` (no compiled instruction runs there: observe the call in the
 helper instead).
 
+The PC is a hexadecimal **16-bit local address** in this cfg's bank. For
+example, observe `$03:8B27` with `entry_hook 8B27 HostSaw` in `bank03.cfg`.
+Negative or larger addresses are rejected; writing `838B27` does not select
+bank `$83`. The emitter applies the owning bank's configuration to its ROM
+mirror using the cartridge mapping, and the callback receives the actual
+24-bit PC of the emitted body.
+
 ## The callback is observational
 
 The callback may read anything: registers, flags, widths, the stack and guest
@@ -106,6 +113,30 @@ The directive is emission-only. It changes no decode width, control-flow edge
 or analysis fact, so the native analyzer ignores it and the manifest is the
 same with or without hooks.
 
+## Observers alongside live ROM patches
+
+Use `live_operand` for a mutable immediate and `entry_hook` to observe its
+execution. For example, a port that patches a compare limit in the loaded
+ROM can declare:
+
+```
+# bank03.cfg; the instruction at $03:8B27 is CMP #limit
+live_operand 8B27
+entry_hook 8B27 HostSawLimitCompare
+```
+
+The observer sees the state before the compare, and the compiled compare
+fetches the current operand bytes from the program bank at the decoded M
+width. `LDX`/`LDY`/`CPX`/`CPY` use the decoded X width. DB does not select the
+operand bank. Patch operand bytes between executions; changing the opcode,
+instruction size, or decoded M/X state requires regeneration or LLE.
+
+Ports using custom `runtime_immediate` or `opcode_hook` directives should
+use these existing upstream directives when migrating. A mutable CPU callback
+must instead use an HLE replacement or an interpreter hook on an LLE routine;
+the observer contract above still applies. No interpreter callback is installed
+by a cfg directive: register it separately when observing both tiers.
+
 ## Tests
 
 `tests/v2/test_entry_hook.py` compiles hooked routines and runs them with a
@@ -114,3 +145,8 @@ hooked entry, a deadline in the prologue, at the hooked block and on the
 back-edge, two calls, recursion, and a fall-through from another body. A
 program-level emission checks the routine's own body, a covering body and the
 `$80` mirror body.
+
+`tests/v2/test_live_operand.py` also executes observers together with patched
+immediates in banks `$03` and `$83`, at both M/X widths with DB pointing to
+WRAM. Program-emission tests add and remove both directives in one output
+directory to check configuration changes invalidate cached bank sources.

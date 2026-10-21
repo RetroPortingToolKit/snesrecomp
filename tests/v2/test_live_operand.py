@@ -212,3 +212,95 @@ def test_compiled_routine_follows_the_edited_operand_both_ways(tmp_path):
     run = subprocess.run([str(exe)], capture_output=True, text=True)
     assert run.returncode == 0, run.stdout + run.stderr
     assert run.stdout.strip() == 'ok'
+
+
+@pytest.mark.parametrize("site", ["-1", "10000", "038B27", "838B27"])
+def test_live_operand_rejects_addresses_outside_the_cfg_bank(site):
+    # A typo must not silently select the low 16 bits of another bank's PC.
+    with pytest.raises(ValueError, match="16-bit"):
+        _load(f"bank = 03\nlive_operand {site}\n")
+
+
+@pytest.mark.parametrize('bank', [0x03, 0x83])
+@pytest.mark.parametrize('reg, opcode', [('A', 0xA9), ('X', 0xA2), ('Y', 0xA0)])
+@pytest.mark.parametrize('narrow', [0, 1])
+def test_compiled_live_operand_and_observer_use_program_bank_and_register_width(
+        tmp_path, bank, reg, opcode, narrow):
+    """Catch DB-relative fetches, X-width using M, and observers firing late."""
+    import pathlib
+    import subprocess
+    import test_hle_func_seam as seam
+    from snes65816 import get_rom_mapping, set_rom_mapping
+    compiler = seam._compiler()
+    if not compiler:
+        pytest.skip('C compiler required')
+    m, x = (narrow, 1 - narrow) if reg == 'A' else (1 - narrow, narrow)
+    code = bytes([0xE6, 0x40, opcode, 0x00] + ([] if narrow else [0x00]) + [0x60])
+    rom = bytearray(0x20000)
+    rom[0x18000:0x18000 + len(code)] = code
+    old_mapping = get_rom_mapping()
+    try:
+        set_rom_mapping('lorom')
+        generated = emit_function(
+            bytes(rom), bank=bank, start=0x8000, entry_m=m, entry_x=x,
+            end=0x8000 + len(code), func_name='Patched',
+            live_operand_sites={(bank << 16) | 0x8002},
+            entry_hooks={(bank << 16) | 0x8002: 'BeforeOperand'})
+    finally:
+        set_rom_mapping(old_mapping)
+    harness = seam._HARNESS.split('/* The C helpers.')[0]
+    read8 = ('uint8 cpu_read8(CpuState *cpu, uint8 bank, uint16 addr) {\n'
+             '  (void)cpu; (void)bank; return g_ram[addr];\n}')
+    assert read8 in harness
+    harness = harness.replace(read8, f'''
+static unsigned reads, hooks, bad_bank;
+static uint16 patched;
+uint8 cpu_read8(CpuState *cpu, uint8 bank, uint16 addr) {{
+  (void)cpu;
+  if (addr >= 0x8000) {{
+    reads++;
+    if (bank != 0x{bank:02X}) bad_bank++;
+    return addr == 0x8003 ? (uint8)patched : (uint8)(patched >> 8);
+  }}
+  return g_ram[addr];
+}}
+void BeforeOperand(const CpuState *cpu, uint32 pc24) {{
+  if (pc24 != 0x{bank:02X}8002 || cpu->{reg} != 0x35 ||
+      g_ram[0x40] != 1 || reads != 0) abort();
+  hooks++;
+}}
+''')
+    main = f'''
+int main(void) {{
+  /* Both runs execute the same compiled function against different ROM data. */
+  for (unsigned pass = 0; pass < 2; pass++) {{
+    CpuState cpu;
+    memset(&cpu, 0, sizeof cpu);
+    memset(g_ram, 0, sizeof g_ram);
+    cpu.ram = g_ram;
+    cpu.S = 0x01FF; cpu.m_flag = {m}; cpu.x_flag = {x};
+    cpu.P = {(m << 5) | (x << 4)}; cpu.DB = 0x7E;
+    cpu.{reg} = 0x35;
+    reads = hooks = bad_bank = 0;
+    patched = pass == 0 ? 0x1242 : 0x2363;
+    cpu_push_jsr_return_frame(&cpu);
+    Patched_M{m}X{x}(&cpu);
+    unsigned want = {'(patched & 0xFF)' if narrow else 'patched'};
+    if (cpu.{reg} != want || reads != {1 if narrow else 2} || bad_bank ||
+        hooks != 1 || cpu.S != 0x01FF || g_other_exits) return 1;
+  }}
+  puts("ok");
+  return 0;
+}}
+'''
+    c_file = tmp_path / 'live_operand_bank.c'
+    c_file.write_text(harness + generated + main, encoding='utf-8')
+    exe = tmp_path / ('live_operand_bank.exe' if os.name == 'nt' else 'live_operand_bank')
+    repo = pathlib.Path(__file__).resolve().parents[2]
+    build = subprocess.run(
+        [compiler, '-std=c11', '-O1', '-I', str(repo / 'runner' / 'src'),
+         str(c_file), '-o', str(exe)], capture_output=True, text=True)
+    assert build.returncode == 0, build.stdout + build.stderr
+    run = subprocess.run([str(exe)], capture_output=True, text=True)
+    assert run.returncode == 0, run.stdout + run.stderr
+    assert run.stdout.strip() == 'ok'

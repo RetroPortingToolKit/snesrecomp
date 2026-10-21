@@ -652,7 +652,13 @@ pub fn parse_bank_cfg(text: &str, path: &str) -> Result<BankCfg, String> {
                 ));
             }
             let site_pc16 =
-                parse_hex(tokens[1]).map_err(|e| format!("{path}: live_operand {e}"))? & 0xFFFF;
+                parse_hex(tokens[1]).map_err(|e| format!("{path}: live_operand {e}"))?;
+            if site_pc16 > 0xFFFF {
+                return Err(format!(
+                    "{path}: live_operand needs a 16-bit PC in this cfg's bank, got {:?}",
+                    tokens[1]
+                ));
+            }
             if !cfg.live_operand.insert(site_pc16) {
                 return Err(format!(
                     "{path}: live_operand duplicate site ${site_pc16:04X}"
@@ -1297,6 +1303,16 @@ exit_mx_set 028000 M0X0 M0X1
         )
         .is_err());
         assert!(parse_bank_cfg("bank = 00\nlive_operand\n", "test.cfg").is_err());
+    }
+
+    #[test]
+    fn live_operand_rejects_out_of_bank_addresses() {
+        for site in ["10000", "038B27", "838B27"] {
+            let text = format!("bank = 03\nlive_operand {site}\n");
+            let result = parse_bank_cfg(&text, "test.cfg");
+            assert!(result.is_err(), "accepted out-of-bank site {site}");
+            assert!(result.unwrap_err().contains("16-bit"));
+        }
     }
 
     #[test]

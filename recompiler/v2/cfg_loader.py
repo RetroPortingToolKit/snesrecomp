@@ -537,10 +537,14 @@ def load_bank_cfg(path: str) -> BankCfg:
                         f"{path}: live_operand needs exactly one <site_pc16>, "
                         f"got: {stripped!r}")
                 try:
-                    site_pc16 = _parse_hex(tokens[1]) & 0xFFFF
+                    site_pc16 = _parse_hex(tokens[1])
                 except ValueError as e:
                     raise ValueError(
                         f"{path}: live_operand bad site {tokens[1]!r}: {e}")
+                if not 0 <= site_pc16 <= 0xFFFF:
+                    raise ValueError(
+                        f"{path}: live_operand needs a 16-bit PC in this cfg's bank, "
+                        f"got {tokens[1]!r}")
                 if site_pc16 in cfg.live_operand:
                     raise ValueError(
                         f"{path}: live_operand duplicate site "
@@ -556,10 +560,14 @@ def load_bank_cfg(path: str) -> BankCfg:
                         f"{path}: entry_hook needs <pc16> <c_function>, "
                         f"got: {stripped!r}")
                 try:
-                    pc16 = _parse_hex(tokens[1]) & 0xFFFF
+                    pc16 = _parse_hex(tokens[1])
                 except ValueError as e:
                     raise ValueError(
                         f"{path}: entry_hook bad pc {tokens[1]!r}: {e}")
+                if not 0 <= pc16 <= 0xFFFF:
+                    raise ValueError(
+                        f"{path}: entry_hook needs a 16-bit PC in this cfg's bank, "
+                        f"got {tokens[1]!r}")
                 c_name = tokens[2]
                 if not c_name.replace('_', '').isalnum() or c_name[0].isdigit():
                     raise ValueError(
