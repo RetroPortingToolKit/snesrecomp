@@ -38,4 +38,3 @@ def test_rejected_snapshot_preserves_machine_and_host(tmp_path):
     assert result.returncode == 0, result.stdout + result.stderr
     result = subprocess.run([str(exe)], cwd=tmp_path, capture_output=True, text=True)
     assert result.returncode == 0, result.stdout + result.stderr
-
