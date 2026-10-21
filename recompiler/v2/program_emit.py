@@ -454,7 +454,7 @@ def discover_profile_roots(manifest_paths: Iterable[pathlib.Path],
                            *, expected_rom=None, expected_module=None,
                            legacy_rom=None, historical_paths=()) -> tuple[VariantKey, ...]:
     """Observe -> analyze -> validate. A profile never supplies decoding facts."""
-    from .coverage_profile import load_profiles, promotion_reason, canonical_pc, pc
+    from .coverage_profile import load_profiles, promotion_reason, execution_pc as canonical_pc, pc
     # Historical builds retain their own capture identities and eligibility
     # checks. Only their analysis seeds and conservative exclusions survive;
     # costs/outcomes are never combined across different executable builds.

@@ -17,7 +17,7 @@ import shutil
 import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "recompiler"))
-from snes65816 import lorom_offset, detect_rom_mapping, set_rom_mapping, rom_bank_mirror
+from snes65816 import rom_offset, detect_rom_mapping, set_rom_mapping, rom_bank_aliases, is_rom_address
 from v2.coverage_profile import pc
 from v2.cfg_loader import load_bank_cfg
 
@@ -29,7 +29,8 @@ def ingest(rom_path, authority_path, cfg_dir, out_dir):
         raise ValueError("unsupported disassembly authority schema")
     if authority.get("rom_sha256") != hashlib.sha256(rom).hexdigest():
         raise ValueError("disassembly ROM identity mismatch")
-    set_rom_mapping(detect_rom_mapping(rom))
+    mapping = detect_rom_mapping(rom)
+    set_rom_mapping(mapping)
     cfg_dir, out_dir = Path(cfg_dir).resolve(), Path(out_dir).resolve()
     if out_dir == cfg_dir or cfg_dir in out_dir.parents or out_dir.exists():
         raise ValueError("output must be a new directory outside the source cfg directory")
@@ -40,53 +41,68 @@ def ingest(rom_path, authority_path, cfg_dir, out_dir):
 
     def owner_bank(address):
         bank = address >> 16
-        mirror = rom_bank_mirror(bank)
         # Keep evidence beside the existing execution contracts. Creating an
         # otherwise empty mirror cfg would shadow its HLE hooks/boundaries.
-        if bank not in known and (address & 0xFFFF) >= 0x8000 and mirror in known:
-            return mirror
+        if bank not in known:
+            for alias in rom_bank_aliases(bank, address & 0xFFFF):
+                if alias in known:
+                    return alias
         return bank
 
-    lines, occupied, starts = {}, {}, set()
+    lines, occupied, starts = {}, {}, {}
     def add(address, line):
         lines.setdefault(owner_bank(address), []).append(line)
     for insn in authority.get("instructions", []):
         address, raw = pc(insn["pc24"]), bytes.fromhex(insn["bytes"])
         if not 1 <= len(raw) <= 4 or (address & 0xFFFF) + len(raw) > 0x10000:
             raise ValueError(f"invalid instruction span at {address:06X}")
-        offset = lorom_offset(address >> 16, address & 0xFFFF)
+        offset = rom_offset(address >> 16, address & 0xFFFF)
         if rom[offset:offset + len(raw)] != raw:
             raise ValueError(f"disassembly bytes differ at {address:06X}")
+        if offset in starts and starts[offset] == raw:
+            continue  # identical physical evidence, including another CPU alias
         for n in range(len(raw)):
-            if address + n in occupied:
-                raise ValueError(f"overlapping instruction spans at {address+n:06X}")
-            occupied[address+n] = address
-        starts.add(address)
+            if offset + n in occupied:
+                raise ValueError(f"overlapping instruction spans at {address+n:06X} (ROM {offset+n:06X})")
+            occupied[offset+n] = offset
+        starts[offset] = raw
         add(address, f"authority_insn {address & 0xFFFF:04X} {raw.hex()}")
     variants = set()
     for entry in authority.get("entries", []):
         address, m, x = pc(entry["pc24"]), entry["m"], entry["x"]
-        if address not in starts or m not in (0, 1) or x not in (0, 1):
+        if rom_offset(address >> 16, address & 0xFFFF) not in starts or m not in (0, 1) or x not in (0, 1):
             raise ValueError("entry requires an authoritative instruction and exact M/X")
         if address in variants:
             raise ValueError("multiple entry modes require separate authority inputs")
         variants.add(address)
-        if address & 0xFFFF not in known.get(owner_bank(address), set()):
-            add(address, f"func authority_{address:06X} {address & 0xFFFF:04X} entry_mx:{m},{x}")
-        add(address, f"entry_mx_at {address & 0xFFFF:04X} {m} {x}")
+        # HiROM entry widths describe an execution context, even when its
+        # instruction bytes are shared. Preserve a local override instead of
+        # overwriting another alias's mode through the physical evidence owner.
+        entry_bank = address >> 16 if mapping == "hirom" else owner_bank(address)
+        entries = lines.setdefault(entry_bank, [])
+        if address & 0xFFFF not in known.get(entry_bank, set()):
+            entries.append(f"func authority_{address:06X} {address & 0xFFFF:04X} entry_mx:{m},{x}")
+        entries.append(f"entry_mx_at {address & 0xFFFF:04X} {m} {x}")
     occupied_addresses = sorted(occupied)
     for region in authority.get("data_regions", []):
         start, end = pc(region["start_pc24"]), pc(region["end_pc24"])
-        index = bisect_left(occupied_addresses, start)
-        overlaps = index < len(occupied_addresses) and occupied_addresses[index] < end
-        if end <= start or start >> 16 != (end - 1) >> 16 or overlaps:
+        if (end <= start or start >> 16 != (end - 1) >> 16
+                or not is_rom_address(start >> 16, start & 0xFFFF)):
+            raise ValueError("data region overlaps code or crosses a bank")
+        offset = rom_offset(start >> 16, start & 0xFFFF)
+        limit = offset + end - start
+        index = bisect_left(occupied_addresses, offset)
+        overlaps = index < len(occupied_addresses) and occupied_addresses[index] < limit
+        if limit > len(rom) or overlaps:
             raise ValueError("data region overlaps code or crosses a bank")
         add(start, f"data_region {owner_bank(start):02X} {start & 0xFFFF:04X} {end-start+(start & 0xFFFF):04X}")
         add(start, f"authority_data {start & 0xFFFF:04X} {end-start+(start & 0xFFFF):04X}")
     for dispatch in authority.get("dispatches", []):
         site, kind = pc(dispatch["site_pc24"]), dispatch["kind"]
         targets = sorted({pc(v) for v in dispatch["targets"]})
-        if site not in starts or kind not in ("ptrtail", "ptrcall") or not targets or any(t not in starts for t in targets):
+        if (rom_offset(site >> 16, site & 0xFFFF) not in starts
+                or kind not in ("ptrtail", "ptrcall") or not targets
+                or any(rom_offset(t >> 16, t & 0xFFFF) not in starts for t in targets)):
             raise ValueError("dispatch requires authoritative site and target instructions")
         add(site, f"indirect_dispatch {site & 0xFFFF:04X} {len(targets)} {kind} targets:" + ",".join(f"{t:06X}" for t in targets))
     # Validation is complete before making the reviewable overlay.

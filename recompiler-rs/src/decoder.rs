@@ -17,7 +17,8 @@ use std::sync::{Arc, Mutex};
 
 use crate::insn::{decode_insn, Insn, Mode};
 use crate::rom::{
-    addr_in_reloc_region, addr_to_rom_offset, is_rom_address, RelocRegion, RomMapping,
+    addr_in_reloc_region, addr_to_rom_offset, execution_mirror_bank, is_rom_address, RelocRegion,
+    RomMapping,
 };
 
 pub const PHP_STACK_MAX_DEPTH: usize = 8;
@@ -871,7 +872,7 @@ fn labeled_successors(
             let mut skip = map.get(&tp).copied();
             if skip.is_none() {
                 let tbank = (tp >> 16) & 0xFF;
-                if mapping != RomMapping::Sa1 && (tbank < 0x40 || (0x80..0xC0).contains(&tbank)) {
+                if execution_mirror_bank(mapping, tbank).is_some() {
                     skip = map.get(&(tp ^ 0x800000)).copied();
                 }
             }
@@ -887,8 +888,7 @@ fn labeled_successors(
                 let mut hit = cem.get(&(tp, post_m, post_x)).copied();
                 if hit.is_none() {
                     let tbank = (tp >> 16) & 0xFF;
-                    if mapping != RomMapping::Sa1 && (tbank < 0x40 || (0x80..0xC0).contains(&tbank))
-                    {
+                    if execution_mirror_bank(mapping, tbank).is_some() {
                         hit = cem.get(&(tp ^ 0x800000, post_m, post_x)).copied();
                     }
                 }
@@ -904,8 +904,7 @@ fn labeled_successors(
                 let mut mode_set: Option<Vec<(u8, u8)>> = cmm.get(&(tp, post_m, post_x)).cloned();
                 if mode_set.is_none() {
                     let tbank = (tp >> 16) & 0xFF;
-                    if mapping != RomMapping::Sa1 && (tbank < 0x40 || (0x80..0xC0).contains(&tbank))
-                    {
+                    if execution_mirror_bank(mapping, tbank).is_some() {
                         mode_set = cmm.get(&(tp ^ 0x800000, post_m, post_x)).cloned();
                     }
                 }
@@ -2515,7 +2514,7 @@ fn lookup_exit_mx(
     let key = (pc24 & 0xFFFFFF, m & 1, x & 1);
     map.get(&key).copied().or_else(|| {
         let bank = (pc24 >> 16) & 0xFF;
-        if mapping != RomMapping::Sa1 && (bank < 0x40 || (0x80..0xC0).contains(&bank)) {
+        if execution_mirror_bank(mapping, bank).is_some() {
             map.get(&((pc24 ^ 0x800000) & 0xFFFFFF, m & 1, x & 1))
                 .copied()
         } else {
@@ -2539,7 +2538,7 @@ fn lookup_exit_mx_modes(
     let key = (pc24 & 0xFFFFFF, m & 1, x & 1);
     let mut result = map.get(&key).cloned().or_else(|| {
         let bank = (pc24 >> 16) & 0xFF;
-        if mapping != RomMapping::Sa1 && (bank < 0x40 || (0x80..0xC0).contains(&bank)) {
+        if execution_mirror_bank(mapping, bank).is_some() {
             map.get(&((pc24 ^ 0x800000) & 0xFFFFFF, m & 1, x & 1))
                 .cloned()
         } else {
@@ -3481,18 +3480,14 @@ pub(crate) fn compute_deps(
         if let Some(tp) = tp {
             cem_keys.push((tp, ins.m_flag, ins.x_flag));
             let tbank = (tp >> 16) & 0xFF;
-            if graph.rom_mapping != RomMapping::Sa1
-                && (tbank < 0x40 || (0x80..0xC0).contains(&tbank))
-            {
+            if execution_mirror_bank(graph.rom_mapping, tbank).is_some() {
                 cem_keys.push((tp ^ 0x800000, ins.m_flag, ins.x_flag));
             }
         }
         for tp in dispatch_targets {
             cem_keys.push((tp, ins.m_flag, ins.x_flag));
             let tbank = (tp >> 16) & 0xFF;
-            if graph.rom_mapping != RomMapping::Sa1
-                && (tbank < 0x40 || (0x80..0xC0).contains(&tbank))
-            {
+            if execution_mirror_bank(graph.rom_mapping, tbank).is_some() {
                 cem_keys.push((tp ^ 0x800000, ins.m_flag, ins.x_flag));
             }
         }
