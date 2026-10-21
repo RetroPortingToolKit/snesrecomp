@@ -302,6 +302,13 @@ void RtlSetAudioOutputRate(int freq);
  * synchronization is automatic inside RtlRunFrame; clients only supply the
  * presentation policy needed to discard stale PCM after fast-forward. */
 void RtlAudioSetFastForward(bool active);
+/* Optional host backpressure. Register during host initialization (NULL disables).
+ * From the producer thread, call RtlAudioWaitForConsumer after releasing the
+ * outermost APU mutex. The callback must bound its wait, bypass inactive devices,
+ * and leave guest clocks and queued PCM untouched. Recursive calls, turbo, and
+ * speculative frames bypass it. Registration must not race producer calls. */
+void RtlAudioSetProducerWait(void (*wait_for_consumer)(void));
+void RtlAudioWaitForConsumer(void);
 /* Reset the netplay frame-locked SPC sample accumulator (call on session start). */
 void RtlNetplayAudioReset(void);
 bool RtlUploadSpcImageFromDp(CpuState *cpu);
