@@ -132,10 +132,11 @@ Open these files in your editor:
 - `src/main.c` names the application and connects it to the shared desktop
   host. The framework supplies the launcher, display, input and save UI.
 
-When you change analysis configuration, regenerate and rebuild:
+When you change analysis configuration, regenerate with Git for Windows'
+Bash and rebuild. This uses its default installation path:
 
 ```powershell
-bash tools/regen.sh --rom 'D:/ROMs/My Game.sfc'
+& 'C:\Program Files\Git\bin\bash.exe' tools/regen.sh --rom 'D:/ROMs/My Game.sfc'
 cmake --build build --config Release --parallel
 ```
 
