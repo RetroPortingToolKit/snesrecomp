@@ -195,6 +195,14 @@ interpreter default arm, so an edited value outside the candidates runs on the
 interpreter, never on a wrong target. A duplicate site is a configuration
 error in both parsers.
 
+The site must be a hexadecimal 16-bit local PC in the cfg's bank: to patch
+`$03:8B27`, write `live_operand 8B27` in `bank03.cfg`. Negative and larger
+addresses are errors rather than silently truncated addresses. Emission
+propagates the declaration to the cartridge mapping's ROM mirror and reads
+the operand from the emitted body's program bank, independently of DB.
+For an observational callback at the same instruction, see
+[`entry_hook`](ENTRY_HOOK.md#observers-alongside-live-rom-patches).
+
 ## Acceptance
 
 - Deterministic full and partial generated manifests.

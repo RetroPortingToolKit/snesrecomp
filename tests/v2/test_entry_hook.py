@@ -318,3 +318,9 @@ def test_program_emission_hooks_every_body_and_mirror(tmp_path):
                     hooked.setdefault(bank, set()).add(name.split('_M')[0])
     assert {'Sub', 'Lead'} <= hooked[0x00]
     assert 0x80 in hooked                  # the JML $80:8100 mirror body
+
+
+@pytest.mark.parametrize("site", ["-1", "10000", "038B27", "838B27"])
+def test_entry_hook_rejects_addresses_outside_the_cfg_bank(site):
+    with pytest.raises(ValueError, match="16-bit"):
+        _load(f"bank = 03\nentry_hook {site} HostSaw\n")
