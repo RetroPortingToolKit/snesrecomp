@@ -2,7 +2,7 @@
   <img src="docs/assets/snesrecomp-logo.png" alt="SNESRecomp" width="640">
 </p>
 
-# SNESRecomp — Beta
+# SNESRecomp
 
 > ℹ️ **Note from mstan:** This repo and I are now part of [RetroPortingToolkit](https://retroportingtoolkit.com/). I remain a primary maintainer of snesrecomp alongside the team. [More info](https://1379.tech/forming-a-collective-retro-porting-toolkit/).
 

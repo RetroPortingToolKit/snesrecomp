@@ -193,20 +193,7 @@ retcomm-rbengine; delay-sync remains the runtime default and
 Every peer must agree on the seat count and the tap configuration. Opening a
 session wider than the ports can route is refused rather than degraded.
 
-## 8. CI
-
-The generated workflow builds the framework, runs its test suite, and
-syntax-checks the host sources. It deliberately does **not** build the game
-target, because that needs `src/gen/` and therefore a ROM, and no ROM belongs
-in CI.
-
-To make CI build the real target, publish the generated C to a private assets
-repository and fetch it with a token — the pattern
-`MetalWarriorsSNESRecomp` uses. That is a decision for the project owner, so
-the template ships the honest version: a pipeline that is green because of
-what it actually verified.
-
-## 9. Releasing
+## 8. Releasing
 
 ```sh
 scripts/package_release.sh
