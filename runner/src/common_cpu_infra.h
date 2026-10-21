@@ -180,7 +180,9 @@ typedef struct RtlGameInfo {
    * Unmodified games retain their original RTLS output. */
   const char *(*snapshot_guard_identity)(void);
   /* Validate/stage title-owned payloads from the unwrapped RTLS stream before
-   * guest restoration. Must not mutate live gameplay state. False aborts load. */
+   * guest restoration. Must not mutate live gameplay state. False aborts load.
+   * When used instead of state_validate_extra, it must fully validate every
+   * trailing chunk so state_load_extra will accept it without failing. */
   bool (*snapshot_preflight)(const void *data, size_t size);
   /* Optional session gate, checked by every file/memory save and load path. */
   bool (*snapshot_allowed)(void);
@@ -192,6 +194,16 @@ typedef struct RtlGameInfo {
    * frame (end of playback or invalid input). NULL preserves ordinary input. */
   bool (*frame_begin)(uint32_t *inputs);
   void (*frame_end)(void);
+  /* Pure validation of the trailing title chunk, before any live guest or
+   * host writes. Runs under the APU lock: must not acquire that lock or call
+   * RtlSnapshotGuestLayout/RtlSnapshotGuestSize. Unlike this hook, the existing
+   * snapshot_preflight runs outside the lock and may use those queries.
+   * Required for variable-size/legacy chunk layouts. The loader
+   * must accept every validated chunk without failing or overrunning it.
+   * Without this hook, state_save_extra must be pure and its byte count must
+   * exactly describe the fixed load layout. Arbitrary callback side effects
+   * cannot be rolled back by the framework. snapshot_preflight is still run. */
+  bool (*state_validate_extra)(const void *data, size_t size, uint32_t version);
 } RtlGameInfo;
 
 extern const RtlGameInfo *g_rtl_game_info;

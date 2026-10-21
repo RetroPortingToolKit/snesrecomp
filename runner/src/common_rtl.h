@@ -366,6 +366,11 @@ void RtlApplyExecutionState(void);
 /* Host timeline invalidation after a successful load or reset. */
 uint64_t RtlStateGeneration(void);
 size_t RtlSaveSnapshotToMemory(void *data, size_t capacity);
+/* File and memory loads reject malformed/truncated guest layouts before live
+ * writes; input is capped at 16 MiB. Title validators/save walkers must obey
+ * RtlGameInfo's pure validation contract. An arbitrary failing legacy load
+ * callback's side effects cannot be undone. Input must remain stable until
+ * this synchronous call returns. */
 bool RtlLoadSnapshotFromMemory(const void *data, size_t size);
 /* True only while a rollback restore invokes the game's load callbacks.
  * Preserve presentation cue acknowledgements in this context; an ordinary
