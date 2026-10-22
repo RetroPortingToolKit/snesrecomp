@@ -223,6 +223,10 @@ int snesrecomp_desktop_main(const SnesDesktopHostGame *game, int argc, char **ar
 int snesrecomp_desktop_frame_width(void);
 int snesrecomp_desktop_frame_height(void);
 void snesrecomp_desktop_set_widescreen(int enabled);
+/* Selected PPU renderer, shared by hotkeys and diagnostic playback. Setting
+ * this also updates the live config; it does not write the user's file. */
+int snesrecomp_desktop_new_renderer(void);
+void snesrecomp_desktop_set_new_renderer(int enabled);
 
 /* Ask the host to reset its pacing clock at the next opportunity (a title
  * that just changed its presentation settings). */
