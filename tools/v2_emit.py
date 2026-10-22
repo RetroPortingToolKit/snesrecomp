@@ -44,6 +44,22 @@ from disassembly_layout import configured_authority  # noqa: E402
 from sync_symbols import sync_symbols  # noqa: E402
 
 
+# Environment switches that change emitted AOT bodies, with the label each
+# contributes to the published-output cache key. Every switch the emitter
+# reads must be listed here (tests/v2/test_emit_switch_digest.py scans for
+# them), so flipping one never reuses code built under the other setting.
+# Any non-empty value counts as enabled, matching the codegen guards.
+EMIT_SWITCHES = {
+    "SNESRECOMP_EMIT_AOT_DENY_GATE": "aot_deny_gate",
+}
+
+
+def _emit_switch_digest() -> str:
+    return "\0".join(
+        f"{label}={int(bool(os.environ.get(name)))}"
+        for name, label in EMIT_SWITCHES.items())
+
+
 def _tree_digest(paths) -> str:
     digest = hashlib.sha256()
     for path in sorted({pathlib.Path(p).resolve() for p in paths}):
@@ -326,11 +342,7 @@ def _generate(args, parser, cfg_dir, *, symbol_roots=()):
             REPO / "recompiler-rs" / "Cargo.toml",
             REPO / "recompiler-rs" / "Cargo.lock",
             native_path))
-        # This environment switch changes every emitted AOT body, so it must
-        # participate in the published-output cache key.  Treat any non-empty
-        # value as enabled to match emit_function.py's codegen guard.
-        deny_gate = bool(os.environ.get("SNESRECOMP_EMIT_AOT_DENY_GATE"))
-        inputs = f"{tree_digest}\0aot_deny_gate={int(deny_gate)}"
+        inputs = f"{tree_digest}\0{_emit_switch_digest()}"
         if args.generation_recipe_digest:
             if not re.fullmatch(r"[0-9a-fA-F]{64}", args.generation_recipe_digest):
                 raise ValueError("generation recipe digest must be a SHA-256")
