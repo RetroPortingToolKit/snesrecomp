@@ -1,7 +1,7 @@
 # SNESRecomp mod packages and trusted plugins
 
 For a hands-on guide to making mods with ordinary tools, start with
-[`../snesmod.md`](../snesmod.md).
+[`MOD_AUTHORING.md`](MOD_AUTHORING.md).
 
 SNES mod support is an explicit per-game build feature:
 
@@ -203,7 +203,7 @@ the synchronized game's own pause controls remain available.
 Do not recompile ROM hacks or use the legacy `[[patch]]` plus recompiled
 content-variant path for new mods. Reimplement the hack's intended behavior
 and data through a `.snesmod` against the supported stock ROM. See
-[the authoring guide](../snesmod.md#reimplement-an-existing-rom-hack).
+[the authoring guide](MOD_AUTHORING.md#reimplement-an-existing-rom-hack).
 
 The engine retains legacy manifest parsing for compatibility and reports a
 deprecation warning when a package declares `[[patch]]`. This is not an

@@ -1823,7 +1823,7 @@ void rtl_accumulate_apu_catchup(void) {
   }
 #endif
 #ifdef SNES_COSIM
-  /* Co-sim A-vs-B variable-under-test (SNES_COSIM.md task 9): with
+  /* Co-sim A-vs-B variable-under-test (docs/COSIM.md task 9): with
    * SNES_COSIM_ACCURATE_APU=1, pace the SPC from the region-weighted master
    * clock at the true SPC:master ratio (exactly like the interp816 ref),
    * instead of the +256/APU-touch synthetic estimate. Two recomp instances
@@ -1853,7 +1853,7 @@ void rtl_accumulate_apu_catchup(void) {
   // over-advances (music runs fast). The accumulator stays emitted as inert
   // Axis-5 infra (companion to cpu->cycles); a correct off-cue cure must pace by
   // WALL time / consumer rate, not accumulated execution cycles -- see
-  // SNES_ACCURACY_BURNDOWN.md. Reverted to the known-good touch estimate:
+  // docs/validation/accuracy-history.md. Reverted to the known-good touch estimate:
   uint64_t delta = g_apu_pace_cycles_estimate - g_apu_last_sync_cycles;
   g_apu_last_sync_cycles = g_apu_pace_cycles_estimate;
   // 2/7 is about 1/3.5 (main MHz / APU MHz). Floor of zero is fine -- short deltas

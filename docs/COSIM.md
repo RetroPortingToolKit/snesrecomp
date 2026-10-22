@@ -6,7 +6,7 @@ SNES instantiation = `.../SNES/DIFFERENTIAL-COSIM-PROPOSAL.md`; proven PSX refer
 = `F:\Projects\psxrecomp\_wt-tomba2\psxrecomp\{COSIM_ORACLE.md,cosim.c,cosim_state.c,tools/cosim.py}`.
 
 **Goal = fix audio, but start from the EARLIEST divergence in ANY subsystem.** The tool
-finds whatever splits first, wherever. The `SNES_ACCURACY_BURNDOWN.md` "off-cue not
+finds whatever splits first, wherever. The `docs/validation/accuracy-history.md` "off-cue not
 off-tone / synthetic clock" story is a HYPOTHESIS this tool GRADES — not a fact we build
 around. Hash the FULL state (incl. every S-DSP internal) so the per-subsystem sub-hash
 tells us which subsystem stayed faithful and which split. No hypothesis-driven trimming.

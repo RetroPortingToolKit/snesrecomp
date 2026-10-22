@@ -1,7 +1,7 @@
 # Program-module and content-selector internals
 
 This is a maintainer reference for the existing module registry, selector,
-and save namespaces. For mod authoring, use [`../snesmod.md`](../snesmod.md).
+and save namespaces. For mod authoring, use [`MOD_AUTHORING.md`](MOD_AUTHORING.md).
 
 **Recompiling ROM hacks is deprecated.** Do not build new mods by recompiling
 a patched ROM and selecting it through the legacy package patch/variant

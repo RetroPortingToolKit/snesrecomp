@@ -163,7 +163,7 @@ variant** selects another explicitly integrated program or content set,
 often with its own save namespace. Arbitrary ROM hacks and regional revisions
 do not become supported simply by selecting another file. For this first
 port, keep the one stock revision; implement new mod behavior against it
-using the [mod-authoring guide](../snesmod.md). The
+using the [mod-authoring guide](MOD_AUTHORING.md). The
 [variant reference](CONTENT_VARIANTS.md) is for titles that need that later
 integration.
 

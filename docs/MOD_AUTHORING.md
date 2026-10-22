@@ -28,7 +28,7 @@ newer game build than the one you have installed.
 | --- | --- |
 | A package using an existing game plugin | Write a manifest and any data that plugin expects. No game rebuild if the released executable already contains the implementation. |
 | New gameplay, a new renderer, or a new audio feature | Write C/C++ in the game repository, register a trusted plugin, rebuild the game, and supply a manifest selecting it. |
-| A translation | Use the game's existing localization integration and table format, or add one. See [Runtime Localization](docs/RUNTIME_LOCALIZATION.md). |
+| A translation | Use the game's existing localization integration and table format, or add one. See [Runtime Localization](RUNTIME_LOCALIZATION.md). |
 | A mod inspired by an existing ROM hack | Study its changes and reimplement the behavior and supported data as a mod against the stock ROM. Do not recompile the patched ROM. |
 
 An invented plugin ID does not create an implementation. Likewise, putting
@@ -158,7 +158,7 @@ your rebuilt executable, or an upstream release that includes the plugin.
 For a game that has not integrated mods yet, the maintainer must enable
 `SNESRECOMP_ENABLE_MODS`, initialize and commit the runtime, supply its launcher
 provider, and activate the committed plugins. The framework's
-[integration guide](docs/MOD_PACKAGES.md) and scaffolded game host cover that
+[integration guide](MOD_PACKAGES.md) and scaffolded game host cover that
 wiring. Merely adding a package does not enable the Mods page.
 
 ### 4. Develop the actual change
@@ -362,6 +362,6 @@ and personal `state.toml` selections do not belong in the archive.
 | An IPS/BPS file has no effect | Reimplement the hack's features through the game's mod integration; the archive is not an automatic ROM-hack converter. |
 
 For exact APIs and implementation details, see
-[`runner/src/mod_runtime.h`](runner/src/mod_runtime.h),
-[`runner/src/mod_runtime.cpp`](runner/src/mod_runtime.cpp), and
-[`docs/MOD_PACKAGES.md`](docs/MOD_PACKAGES.md).
+[`runner/src/mod_runtime.h`](../runner/src/mod_runtime.h),
+[`runner/src/mod_runtime.cpp`](../runner/src/mod_runtime.cpp), and
+[`docs/MOD_PACKAGES.md`](MOD_PACKAGES.md).

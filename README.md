@@ -263,8 +263,8 @@ renderers independently of view width.
 ## Mods
 
 Want to make a mod by hand? Start with
-[`snesmod.md`](snesmod.md), including a first plugin, packaging, installation,
-and testing. Existing ROM-hack features should be reimplemented as mods against
+[the mod-authoring guide](docs/MOD_AUTHORING.md), including a first plugin,
+packaging, installation, and testing. Existing ROM-hack features should be reimplemented as mods against
 the stock ROM; recompiling patched ROMs is deprecated.
 
 SNESRecomp supports opt-in, versioned `.snesmod` packages. A package is an
@@ -319,7 +319,7 @@ as needed:
 - [Released CLI](https://github.com/RetroPortingToolKit/snesrecomp/releases)
   and [headless code-generation SDK](docs/LOCAL_CODEGEN_SDK.md).
 - [SDL3 default and SDL2 compatibility builds](docs/SDL_BACKENDS.md).
-- [Writing mods](snesmod.md) and [content-variant internals](docs/CONTENT_VARIANTS.md).
+- [Writing mods](docs/MOD_AUTHORING.md) and [content-variant internals](docs/CONTENT_VARIANTS.md).
 
 A content variant is a title-integrated program/content selection with
 explicit compatibility and save rules. It does not turn an arbitrary patched
@@ -430,7 +430,7 @@ python tools\snes_cosim.py `
 The coordinator injects separate `SNES_COSIM_PORT` values, advances both
 servers at deterministic checkpoints, and stops at the first full-state
 divergence. Run the A-vs-A, B-vs-B, fault-injection, and hash-audit gates in
-[`SNES_COSIM.md`](SNES_COSIM.md) before trusting an A-vs-B result.
+[`docs/COSIM.md`](docs/COSIM.md) before trusting an A-vs-B result.
 
 ## Status
 
@@ -443,6 +443,11 @@ table and each project's current release notes describe its own scope.
 The current direction is to move recurring fixes into the framework, retain
 an exact low-level fallback for uncertain code, and keep authentic output as
 the regression baseline for every optional enhancement.
+
+Current integration and development guides live under `docs/`. Historical
+accuracy and game bring-up measurements are grouped under `docs/validation/`;
+their dated status labels do not replace the current support table above.
+Version history is available in [Releases](https://github.com/RetroPortingToolKit/snesrecomp/releases).
 
 ## Contributing
 
