@@ -2012,29 +2012,6 @@ void rtl_sync_apu_to_cpu_locked(void) {
 #endif
 }
 
-/* AOT APU pacing hook. Generated AOT code advances g_cpu.master_cycles but
- * (unlike the interpreter bridge) never flushes the SPC periodically, so a
- * long AOT block that doesn't touch APU ports ($2140-$2143) leaves the
- * SPC700 frozen and the DSP output ring starves -> silent/choppy music.
- * The interpreter bridge flushes every ~1024 master cycles; WatchdogCheck()
- * runs per-block in generated code, so hooking the same periodic catch-up
- * here restores that cadence for AOT execution. Caller: game thread only.
- * The delta is measured against g_apu_last_sync_master, which the interp
- * bridge also advances, so AOT/interp alternation never double-counts. */
-void rtl_apu_pace_check(void) {
-  /* Boot (frame 0) is paced by the interp bridge's progress checkpoints and
-   * the SPC IPL upload handshake; forcing an extra catch-up here from AOT
-   * blocks disturbs that pacing and can stall the vblank poll loop. Only
-   * pace once real frames are running. */
-  if (snes_frame_counter == 0) return;
-  uint64_t delta = g_cpu.master_cycles - g_apu_last_sync_master;
-  if (delta < 1024) return;
-  RtlApuLock();
-  g_apu_last_sync_master = g_cpu.master_cycles;
-  rtl_sync_apu_to_cpu_locked();
-  RtlApuUnlock();
-}
-
 static bool RtlUploadSpcImageFromDpInternal(CpuState *cpu,
                                             bool update_cpu_result,
                                             bool live_transfer) {
