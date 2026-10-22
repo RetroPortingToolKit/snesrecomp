@@ -234,4 +234,71 @@ mod tests {
         assert!(decode_function(&rom, 0, 0x8000, 1, 1, None, &env).authority_conflict);
         assert!(decode_function(&rom, 0, 0x8001, 1, 1, None, &env).authority_conflict);
     }
+
+    /// `PHP; SEP #$30; BRA common` where the declared sibling `common` is
+    /// `PLP; RTL`: the PLP restores this entry's width, so the jump is
+    /// decoded through rather than split into a tail call that pops a P the
+    /// sibling never pushed. Without a pending PHP the jump stays a tail.
+    #[test]
+    fn sibling_entry_holding_a_pushed_p_is_not_a_tail_boundary() {
+        let mut rom = vec![0; 0x8000];
+        rom[..5].copy_from_slice(&[0x08, 0xe2, 0x30, 0x80, 0x01]);
+        rom[5] = 0xea; // unreachable padding
+        rom[6..8].copy_from_slice(&[0x28, 0x6b]); // common: PLP; RTL
+        let siblings = std::collections::BTreeSet::from([0x8006u32]);
+        let env = DecodeEnv {
+            sibling_entry_pcs: Some(&siblings),
+            ..Default::default()
+        };
+        let graph = decode_function(&rom, 0, 0x8000, 0, 0, None, &env);
+        assert!(graph.boundary_exits.is_empty());
+        let rtl = graph.insns().iter().find(|d| d.insn.mnem == "RTL").unwrap();
+        assert_eq!((rtl.key.m, rtl.key.x), (0, 0));
+
+        rom[0] = 0xea; // NOP instead of PHP: nothing pending
+        let graph = decode_function(&rom, 0, 0x8000, 0, 0, None, &env);
+        assert_eq!(graph.boundary_exits.len(), 1);
+        assert!(!graph.insns().iter().any(|d| d.insn.mnem == "RTL"));
+    }
+
+    /// `TAX; BPL +; db $00; +: STZ $05E7; RTL` with $8003 declared data: the
+    /// fall-through arm executes the data byte as a BRK trap. That arm ends
+    /// in an exact interpreter trap; it must not poison the function.
+    #[test]
+    fn authority_data_brk_trap_is_terminal_not_a_conflict() {
+        let build = |trap_byte: u8| {
+            let mut rom = vec![0; 0x8000];
+            rom[..8].copy_from_slice(&[0xaa, 0x10, 0x01, trap_byte, 0x9c, 0xe7, 0x05, 0x6b]);
+            rom
+        };
+        let authority = HashMap::from([
+            (0x8000, vec![0xaa]),
+            (0x8001, vec![0x10, 0x01]),
+            (0x8002, vec![]),
+            (0x8004, vec![0x9c, 0xe7, 0x05]),
+            (0x8005, vec![]),
+            (0x8006, vec![]),
+            (0x8007, vec![0x6b]),
+        ]);
+        let mut mask = vec![false; 0x10000];
+        mask[0x8003] = true;
+        let data = HashMap::from([(0u32, mask)]);
+        let env = DecodeEnv {
+            authority_bytes: Some(&authority),
+            authority_data: Some(&data),
+            ..Default::default()
+        };
+        let rom = build(0x00);
+        let graph = decode_function(&rom, 0, 0x8000, 0, 0, None, &env);
+        assert!(!graph.authority_conflict);
+        assert!(graph.data_region_exec_pcs.contains(&0x008003));
+        let brk = graph.insns().iter().find(|d| d.insn.addr & 0xFFFF == 0x8003).unwrap();
+        assert_eq!(brk.insn.mnem, "BRK");
+        assert!(brk.successors.is_empty());
+        assert!(graph.insns().iter().any(|d| d.insn.mnem == "RTL"));
+        // Entering the data itself, or data that is not a BRK trap, is
+        // still a conflict.
+        assert!(decode_function(&rom, 0, 0x8003, 0, 0, None, &env).authority_conflict);
+        assert!(decode_function(&build(0xea), 0, 0x8000, 0, 0, None, &env).authority_conflict);
+    }
 }

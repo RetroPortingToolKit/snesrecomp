@@ -179,3 +179,48 @@ def test_audit_distinguishes_mirrored_code_data_width_and_unknown(tmp_path):
     assert a.classify(0x808001, 2)[0] == "mid_instruction"
     assert a.classify(0x808003, 1)[0] == "data"
     assert a.classify(0x7F8000, 1)[0] == "unknown"
+
+
+def test_branch_into_authority_data_brk_is_an_exact_trap_not_poison(tmp_path):
+    """`TAX; BPL +; db $00; +: STZ $05E7; RTL` (Super Metroid PrepareBitAccess).
+
+    The fall-through arm executes the declared data byte as BRK. Both
+    decoders end that arm in an exact interpreter trap; the function stays
+    AOT-eligible with its RTL exit width, so callers keep their
+    continuations."""
+    from v2.program_analysis import VariantKey, NodeDisposition
+    rom = bytes.fromhex("AA 10 01 00 9C E7 05 6B") + bytes(0x8000 - 8)
+    text = ("bank = 00\nfunc Prep 8000\n"
+            "authority_insn 8000 aa\nauthority_insn 8001 1001\n"
+            "authority_insn 8004 9ce705\nauthority_insn 8007 6b\n"
+            "authority_data 8003 8004\ndata_region 00 8003 8004\n")
+    manifest = native_manifest(tmp_path, rom, {"bank00.cfg": text},
+                               [VariantKey(0x008000, 0, 0)])
+    node = manifest.nodes[VariantKey(0x008000, 0, 0)]
+    assert node.disposition == NodeDisposition.AOT_ELIGIBLE, node.reasons
+    assert manifest.exit_modes[VariantKey(0x008000, 0, 0)] == (0, 0)
+    path = tmp_path / "bank00.cfg"
+    set_instruction_authority([(0, path, load_bank_cfg(str(path)))])
+    graph = decode_function(rom, 0, 0x8000, 0, 0)
+    assert not graph.authority_conflict
+    assert 0x008003 in graph.data_region_exec_pcs
+    # Entering the data itself is still a conflict.
+    assert decode_function(rom, 0, 0x8003, 0, 0).authority_conflict
+
+
+def test_sibling_entry_reached_with_pending_php_is_decoded_through(tmp_path):
+    """`PHP; SEP #$30; BRA Common` / `Common: PLP; RTL` (Super Metroid's
+    QueueSfxN_MaxK -> QueueSfxN_Internal). The PLP belongs to this entry's
+    PHP, so the exit width is the entry width, not the sibling's guess."""
+    from v2.program_analysis import VariantKey, NodeDisposition
+    rom = bytes.fromhex("08 E2 30 80 01 EA 28 6B") + bytes(0x8000 - 8)
+    text = "bank = 00\nfunc Entry 8000\nfunc Common 8006\n"
+    manifest = native_manifest(tmp_path, rom, {"bank00.cfg": text},
+                               [VariantKey(0x008000, 0, 0)])
+    key = VariantKey(0x008000, 0, 0)
+    assert manifest.nodes[key].disposition == NodeDisposition.AOT_ELIGIBLE
+    assert manifest.exit_modes[key] == (0, 0)
+    graph = decode_function(rom, 0, 0x8000, 0, 0, sibling_entry_pcs={0x8006})
+    assert not graph.boundary_exits
+    rtl = [k for k, d in graph.insns.items() if d.insn.mnem == 'RTL']
+    assert [(k.m, k.x) for k in rtl] == [(0, 0)]
