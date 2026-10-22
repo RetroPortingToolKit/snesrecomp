@@ -60,6 +60,7 @@ static Snes g_test_snes;
 static uint64_t g_test_irq_master;
 Snes *g_snes = &g_test_snes;
 uint64_t g_apu_last_sync_master;
+double g_rtl_apu_cycles_per_master = 17088.0 / 357368.0;  /* NTSC field rate */
 int g_interp_apu_driving;
 static bool g_frame_timeline, g_extended_frames;
 static unsigned g_absolute_syncs, g_relative_syncs;

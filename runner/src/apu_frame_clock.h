@@ -2,7 +2,11 @@
 #include <stdint.h>
 
 #define RTL_MASTER_CYCLES_PER_FRAME 357368ull
-#define RTL_APU_CYCLES_PER_FRAME 17088ull
+/* SPC cycles per guest frame: 17088 at the NTSC field rate, raised for a
+ * slower one so the SPC keeps its real-time rate (RtlSetFieldRateHz). */
+#define RTL_APU_CYCLES_PER_FRAME_NTSC 17088ull
+extern uint64_t g_rtl_apu_cycles_per_frame;
+#define RTL_APU_CYCLES_PER_FRAME g_rtl_apu_cycles_per_frame
 
 /* A host iteration can include an NMI-disabled loader spanning many hardware
  * frames. Keep its elapsed time when beginning the following iteration. */

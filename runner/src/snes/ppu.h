@@ -384,6 +384,9 @@ struct Ppu {
   uint16_t vram[0x8000];
   // -- END OF SNAPSHOT
 
+  // Console region reported in $213F bit 4, set from the cart header at
+  // load time. Not part of the snapshot and kept across ppu_reset.
+  bool palRegion;
 
 };
 

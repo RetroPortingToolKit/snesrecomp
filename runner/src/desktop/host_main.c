@@ -3275,6 +3275,7 @@ int snesrecomp_desktop_main(const SnesDesktopHostGame *game, int argc, char **ar
   else
     snprintf(g_launcher_title, sizeof(g_launcher_title), "%s \xE2\x80\x94 Launcher", game->display_name);
   g_simulation_hz = game->simulation_hz > 0 ? game->simulation_hz : SNES_HOST_NTSC_HZ;
+  RtlSetFieldRateHz(g_simulation_hz, SNES_HOST_NTSC_HZ);
   g_snes_width = game->frame_width > 0 ? game->frame_width : 256;
   g_snes_height = game->frame_height > 0 ? game->frame_height : 224;
 #ifndef __ANDROID__

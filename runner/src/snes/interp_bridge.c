@@ -41,7 +41,8 @@ extern int cosim_apu_shared_clock(void);  /* common_rtl.c — SNES_COSIM_APU_SHA
 #endif
 void RtlApuLock(void);                    /* real mutex in the windowed runner (audio thread also cycles the SPC); no-op in headless/cosim */
 void RtlApuUnlock(void);
-static const double kInterpApuPerMaster = (32040.0 * 32.0) / (1364.0 * 262.0 * 60.0);
+/* SPC cycles per master cycle; follows RtlSetFieldRateHz. */
+#define kInterpApuPerMaster g_rtl_apu_cycles_per_master
 
 /* Batched guest-time APU advance. v1 advanced the SPC per interpreted opcode:
  * RtlApuLock + snes_catchupApu once per opcode. In the windowed build that

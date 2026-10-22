@@ -225,6 +225,20 @@ uint64_t g_apu_last_sync_master = 0;
  * 357368 SNES master cycles and 17088 SPC cycles in this runtime's 60 Hz
  * model. g_cpu.master_cycles supplies only the within-frame position because
  * its total per frame varies with recompilation coverage. */
+uint64_t g_rtl_apu_cycles_per_frame = RTL_APU_CYCLES_PER_FRAME_NTSC;
+double g_rtl_apu_cycles_per_master =
+    (double)RTL_APU_CYCLES_PER_FRAME_NTSC / RTL_MASTER_CYCLES_PER_FRAME;
+
+void RtlSetFieldRateHz(double field_hz, double ntsc_hz) {
+  /* The guest frame stays 262 lines; only its wall duration changes. The SPC
+   * runs off its own crystal, so a longer field owes it more cycles. */
+  uint64_t cycles = RTL_APU_CYCLES_PER_FRAME_NTSC;
+  if (field_hz > 0 && ntsc_hz > 0 && field_hz != ntsc_hz)
+    cycles = (uint64_t)((double)RTL_APU_CYCLES_PER_FRAME_NTSC * ntsc_hz / field_hz + 0.5);
+  g_rtl_apu_cycles_per_frame = cycles;
+  g_rtl_apu_cycles_per_master = (double)cycles / RTL_MASTER_CYCLES_PER_FRAME;
+}
+
 static uint64_t g_apu_frame_start_master;
 static RtlApuFrameClock g_apu_frame_clock;
 static bool g_extended_frame_timing;

@@ -59,6 +59,11 @@ bool rtl_apu_frame_timeline_active(void);
  * Audio stays on one carried guest clock across multi-frame work. Existing
  * hosts retain their timing until they adopt this contract. */
 void RtlEnableExtendedFrameTiming(void);
+/* Guest field rate when it is not NTSC (a PAL title at 50 Hz): scales the SPC
+ * cycles owed per frame so audio keeps its real-time rate. Equal rates, or a
+ * rate <= 0, restore the NTSC constant. */
+void RtlSetFieldRateHz(double field_hz, double ntsc_hz);
+extern double g_rtl_apu_cycles_per_master;
 double RtlLastFramePeriods(void);
 bool rtl_apu_extended_frame_timing(void);
 void rtl_apu_snapshot_pacing(uint64_t *frame_start_master, uint8_t *frame_time_valid);

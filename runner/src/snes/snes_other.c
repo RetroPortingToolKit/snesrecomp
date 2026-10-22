@@ -212,6 +212,7 @@ else if (headers[used].cartType == CART_SA1)
     cart_ram_size
   );
   snes->cart->romImageSize = imageLength;
+  snes->ppu->palRegion = headers[used].pal;
   
   free(newData);
   return true;

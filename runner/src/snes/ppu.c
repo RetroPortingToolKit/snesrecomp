@@ -94,6 +94,7 @@ void ppu_reset(Ppu* ppu) {
     size_t pitch = ppu->renderPitch;
     uint8_t *renderBuffer = ppu->renderBuffer;
     uint32_t renderFlags = ppu->renderFlags;
+    bool palRegion = ppu->palRegion;
     PpuMode7HdSurface mode7Hd = ppu->mode7Hd;
     uint32_t overlayPitch[kPpuOverlaySource_Count];
     uint8_t *overlayBuffer[kPpuOverlaySource_Count];
@@ -103,6 +104,7 @@ void ppu_reset(Ppu* ppu) {
     ppu->renderBuffer = renderBuffer;
     ppu->renderPitch = (uint32_t)pitch;
     ppu->renderFlags = renderFlags;
+    ppu->palRegion = palRegion;
     ppu->mode7Hd = mode7Hd;
     memcpy(ppu->overlayRenderPitch, overlayPitch, sizeof(overlayPitch));
     memcpy(ppu->overlayRenderBuffer, overlayBuffer, sizeof(overlayBuffer));
@@ -3118,6 +3120,7 @@ uint8_t ppu_read(Ppu* ppu, uint8_t adr) {
     }
     case 0x3f: {
       uint8_t val = 0x3; // ppu2 version (4 bit), bit 4: ntsc/pal
+      if (ppu->palRegion) val |= 0x10;
       val |= ppu->countersLatched << 6;
       val |= ppu->evenFrame << 7;
       ppu->countersLatched = false; // TODO: only when ppulatch is set
