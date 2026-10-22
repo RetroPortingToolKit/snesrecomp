@@ -6162,8 +6162,6 @@ extern void cpu_dispatch_found_totals(uint64_t *found1, uint64_t *found0);
 extern long interp_tier_hit_count(void);
 extern void interp_tier2_stats(int *sites, unsigned long long *clean,
                                unsigned long long *bail);
-extern uint64_t interp816_insns_total(void);
-extern uint64_t interp816_cycles_total(void);
 static void cmd_interp_stats(const char *args) {
     (void)args;
     uint64_t f1 = 0, f0 = 0;
@@ -6200,16 +6198,18 @@ static void cmd_interp_stats(const char *args) {
      * are the same unit and the ratio is meaningful. master_cycles is still
      * reported, because pacing and APU work want it -- it is just not what
      * the share is computed from.
+     *
+     * The computation is InterpExecutionShareGet(), shared with the
+     * post-mortem report's "execution_share" section, so an exit report and
+     * a live query cannot disagree.
      */
-    uint64_t icyc = interp816_cycles_total();
-    uint64_t iins = interp816_insns_total();
-    uint64_t mcyc = g_cpu.master_cycles;
-    uint64_t ccyc = g_cpu.cycles;
-    double icyc_pct = ccyc ? (100.0 * (double)icyc / (double)ccyc) : 0.0;
-    /* Clamped for report only: the interpreter's own bus-cycle rounding can
-     * put it a hair over the total, and a headline reading 100.4% invites a
-     * bug hunt into what is a sub-percent accounting artifact. */
-    if (icyc_pct > 100.0) icyc_pct = 100.0;
+    InterpExecutionShare share;
+    InterpExecutionShareGet(&share);
+    uint64_t icyc = share.interp_cycles;
+    uint64_t iins = share.interp_insns;
+    uint64_t mcyc = share.master_cycles;
+    uint64_t ccyc = share.cpu_cycles;
+    double icyc_pct = share.interp_cycle_pct;
     uint64_t nirq_runs = 0, nirq_miss = 0;
     send_fmt("{\"ok\":true,\"dispatch_total\":%u,"
              "\"found1\":%llu,\"found0\":%llu,\"found0_pct\":%.3f,"
@@ -6224,7 +6224,7 @@ static void cmd_interp_stats(const char *args) {
              (unsigned long long)nirq_runs, (unsigned long long)nirq_miss,
              (unsigned long long)iins, (unsigned long long)icyc,
              (unsigned long long)ccyc, (unsigned long long)mcyc,
-             icyc_pct, 100.0 - icyc_pct);
+             icyc_pct, share.aot_cycle_pct);
 }
 
 /* interp_profile [top=N] [min_cycles=N]
