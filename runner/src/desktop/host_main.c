@@ -534,6 +534,17 @@ int snesrecomp_get_window_scale(void)
     return (int)g_config.window_scale;
 }
 
+int snesrecomp_desktop_new_renderer(void) {
+  return (g_ppu_render_flags & kPpuRenderFlags_NewRenderer) != 0;
+}
+
+void snesrecomp_desktop_set_new_renderer(int enabled) {
+  g_config.new_renderer = enabled != 0;
+  if (enabled) g_ppu_render_flags |= kPpuRenderFlags_NewRenderer;
+  else g_ppu_render_flags &= ~kPpuRenderFlags_NewRenderer;
+  g_new_ppu = g_ws_active || enabled != 0;
+}
+
 /* Presentation frame blending (config.ini [Graphics] FrameBlend, the
  * launcher's Display checkbox): each presented frame averaged with the
  * previous one, so alternate-frame flicker "transparency" reads as steady
@@ -717,6 +728,7 @@ typedef struct {
   int cond_timeout;   // frames
   int cond_waited;
   char *dump_tag;     // dump <tag>
+  uint32 host_command; // optional zero-frame presentation command
 } ScriptEntry;
 
 /* Entry kinds carried in the high bits of ScriptEntry.mask. The zero-frame
@@ -731,8 +743,8 @@ enum {
   kScriptUntil     = 0x08000000u,
   kScriptDump      = 0x04000000u,
   kScriptQuit      = 0x02000000u,
-  kScriptTurbo     = 0x01000000u,
-  kScriptZeroFrame = kScriptUntil | kScriptDump | kScriptQuit | kScriptTurbo,
+  kScriptHostControl = 0x01000000u,
+  kScriptZeroFrame = kScriptUntil | kScriptDump | kScriptQuit | kScriptHostControl,
 };
 static int g_script_quit;        // quit reached: the main loop exits
 static int g_script_failed;      // an until timed out: exit code 3
@@ -861,6 +873,7 @@ static ScriptEntry *NewScriptEntry(int *cap) {
  *   loadstate N             load save-state slot N
  *   reset                   the Reset hotkey's console reset
  *   turbo on|off            change the held-Turbo state at this frame boundary
+ *   renderer toggle         invoke the renderer hotkey at this boundary
  *   poke <addr> <hex>       write WRAM bytes for one frame
  *   pokefor <addr> <hex> N  write WRAM bytes for N frames
  *   forcepoke <addr> <hex>  write WRAM bytes every frame from now on
@@ -902,7 +915,18 @@ static void LoadScript(const char *path) {
         continue;
       }
       ScriptEntry *e = NewScriptEntry(&cap);
-      e->mask = kScriptTurbo | (strcmp(arg1, "on") == 0 ? 1u : 0u);
+      e->mask = kScriptHostControl | (strcmp(arg1, "on") == 0 ? 1u : 0u);
+      e->wait_frames = pending_wait;
+      pending_wait = 0;
+    } else if (strcmp(cmd, "renderer") == 0) {
+      if (sscanf(line, "%*s %63s", arg1) != 1 || strcmp(arg1, "toggle")) {
+        fprintf(stderr, "script: expected 'renderer toggle': %s", line);
+        g_script_failed = g_script_quit = 1;
+        continue;
+      }
+      ScriptEntry *e = NewScriptEntry(&cap);
+      e->mask = kScriptHostControl;
+      e->host_command = kKeys_ToggleRenderer;
       e->wait_frames = pending_wait;
       pending_wait = 0;
     } else if (strcmp(cmd, "loadstate") == 0) {
@@ -1061,9 +1085,15 @@ static uint32 TickScript(void) {
               e->poke_addr, e->cond_waited);
     } else if (e->mask & kScriptDump) {
       ScriptDump(e->dump_tag, frame);
-    } else if (e->mask & kScriptTurbo) {
-      g_turbo = (e->mask & 1u) != 0;
-      fprintf(stderr, "script f=%u turbo %s\n", frame, g_turbo ? "on" : "off");
+    } else if (e->mask & kScriptHostControl) {
+      if (e->host_command) {
+        HandleCommand(e->host_command, true);
+        fprintf(stderr, "script f=%u renderer=%s\n", frame,
+                snesrecomp_desktop_new_renderer() ? "new" : "reference");
+      } else {
+        g_turbo = (e->mask & 1u) != 0;
+        fprintf(stderr, "script f=%u turbo %s\n", frame, g_turbo ? "on" : "off");
+      }
     } else {
       fprintf(stderr, "script f=%u quit\n", frame);
       g_script_quit = 1;
@@ -4723,10 +4753,8 @@ static void HandleCommand(uint32 j, bool pressed) {
       if (g_game->in_game_launcher) g_open_launcher_hotkey = 1;
       break;
     case kKeys_ToggleRenderer:
-      g_ppu_render_flags ^= kPpuRenderFlags_NewRenderer;
+      snesrecomp_desktop_set_new_renderer(!snesrecomp_desktop_new_renderer());
       printf("New renderer = %x\n", g_ppu_render_flags & kPpuRenderFlags_NewRenderer);
-      g_new_ppu = g_ws_active ||
-                  (g_ppu_render_flags & kPpuRenderFlags_NewRenderer) != 0;
       break;
     case kKeys_ToggleWidescreen:
       printf("Widescreen is a per-title presentation setting; see the launcher's Mods page.\n");
