@@ -15,6 +15,8 @@ import subprocess
 import sys
 
 ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(ROOT / "tools"))
+from native_analyzer_identity import stamp_path  # noqa: E402
 
 
 def main() -> int:
@@ -49,6 +51,9 @@ def main() -> int:
     source = ROOT / "recompiler-rs/target/release" / binary_name
     destination.parent.mkdir(parents=True, exist_ok=True)
     shutil.copy2(source, destination)
+    # The source stamp travels with the binary: the staged SDK has no Cargo,
+    # so without it the analyzer would be refused as unverifiable.
+    shutil.copy2(stamp_path(source), stamp_path(destination))
     print(f"staged native analyzer: {destination}", flush=True)
     return 0
 
