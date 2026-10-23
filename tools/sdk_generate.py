@@ -71,8 +71,17 @@ def _generate(
     expected_sha256: Optional[str] = None,
     progress: Optional[ProgressReporter] = None,
     _report_result: bool = True,
+    _funcs_h_destination: Optional[pathlib.Path] = None,
 ) -> dict:
-    """Verify a ROM, emit C into ``out_dir``, optionally sync ``funcs.h``."""
+    """Verify a ROM, emit C into ``out_dir``, optionally sync ``funcs.h``.
+
+    ``funcs.h`` is written from the cfg BEFORE the emit, into a pending file.
+    When it is the funcs.h beside the cfg files -- the one the emitter reads
+    host aliases from -- the emitter reads the pending file instead, so a
+    fresh checkout's first regeneration equals every later one rather than
+    differing by whatever an earlier run left on disk.
+    ``_funcs_h_destination`` names where a staged ``funcs_h`` is published.
+    """
     from tools import v2_emit, v2_sync_funcs_h
 
     reporter = progress or ProgressReporter()
@@ -143,36 +152,53 @@ def _generate(
                 reporter.log(line)
         return code
 
-    reporter.phase(
-        "emit",
-        pct=0.15,
-        message=f"Analyzing ROM and generating C into {out_dir}",
-    )
-    code = run_captured(v2_emit, emit_args)
-    if code != 0:
-        raise RuntimeError(f"source generation failed (exit {code})")
-
     funcs_count = None
-    if funcs_h is not None:
+    with tempfile.TemporaryDirectory(prefix="snesrecomp-funcs-h-") as header_temp:
+        pending_header = None
+        if funcs_h is not None:
+            # symbols.toml adds cfg functions; the emitter applies it first
+            # thing, so do the same before deriving funcs.h from the cfg.
+            # The emitter reports the synchronization; keep stdout clean here.
+            from sync_symbols import sync_symbols
+            with contextlib.redirect_stdout(io.StringIO()):
+                sync_symbols(cfg_dir)
+            pending_header = pathlib.Path(header_temp) / "funcs.h"
+            sync_code = run_captured(
+                v2_sync_funcs_h,
+                ["--cfg-dir", str(cfg_dir), "--out", str(pending_header)],
+            )
+            if sync_code != 0:
+                raise RuntimeError(f"funcs.h sync failed (exit {sync_code})")
+            destination = pathlib.Path(_funcs_h_destination or funcs_h).resolve()
+            if destination == (cfg_dir / "funcs.h").resolve():
+                emit_args.extend(["--host-alias-header", str(pending_header)])
+
         reporter.phase(
-            "sync_funcs_h",
-            pct=0.9,
-            message=f"Syncing function declarations to {funcs_h}",
+            "emit",
+            pct=0.15,
+            message=f"Analyzing ROM and generating C into {out_dir}",
         )
-        sync_code = run_captured(
-            v2_sync_funcs_h,
-            ["--cfg-dir", str(cfg_dir), "--out", str(funcs_h)],
-        )
-        if sync_code != 0:
-            raise RuntimeError(f"funcs.h sync failed (exit {sync_code})")
-        try:
-            text = funcs_h.read_text(encoding="utf-8")
-            for line in text.splitlines():
-                if line.startswith("/* ") and " functions across all banks" in line:
-                    funcs_count = int(line.split()[1])
-                    break
-        except (OSError, ValueError):
-            funcs_count = None
+        code = run_captured(v2_emit, emit_args)
+        if code != 0:
+            raise RuntimeError(f"source generation failed (exit {code})")
+
+        if funcs_h is not None:
+            reporter.phase(
+                "sync_funcs_h",
+                pct=0.9,
+                message=f"Syncing function declarations to {funcs_h}",
+            )
+            text = pending_header.read_text(encoding="utf-8")
+            funcs_h.parent.mkdir(parents=True, exist_ok=True)
+            funcs_h.write_text(text, encoding="utf-8", newline="\n")
+            reporter.log(f"funcs.h: wrote {funcs_h}")
+            try:
+                for line in text.splitlines():
+                    if line.startswith("/* ") and " functions across all banks" in line:
+                        funcs_count = int(line.split()[1])
+                        break
+            except ValueError:
+                funcs_count = None
 
     result = {
         "ok": True,
@@ -238,7 +264,7 @@ def generate(**kwargs) -> dict:
         with tempfile.TemporaryDirectory(prefix="snesrecomp-sdk-header-") as temp:
             staged_header = pathlib.Path(temp) / "funcs.h" if header else None
             options.update(out_dir=transaction.staging, funcs_h=staged_header,
-                           _report_result=False)
+                           _funcs_h_destination=header, _report_result=False)
             result = _generate(**options)
             recipe.run("postprocess", rom=rom, cfg_dir=cfg_dir,
                        out_dir=transaction.staging, reporter=reporter)

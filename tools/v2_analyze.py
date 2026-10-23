@@ -15,6 +15,7 @@ import json
 import os
 import pathlib
 import re
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -24,10 +25,12 @@ REPO = pathlib.Path(
     os.environ.get("SNESRECOMP_ROOT", pathlib.Path(__file__).resolve().parent.parent)
 ).resolve()
 sys.path.insert(0, str(REPO / "recompiler"))
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 
 from snes65816 import vector_table_offset  # noqa: E402
 from v2.cfg_loader import load_bank_cfg  # noqa: E402
 from v2.program_analysis import NodeDisposition, ProgramManifest  # noqa: E402
+from native_analyzer_identity import read_stamp, source_digest  # noqa: E402
 
 
 _BANK_CFG_RE = re.compile(r"bank([0-9a-fA-F]+)\.cfg$")
@@ -44,22 +47,43 @@ def native_analyzer_path() -> pathlib.Path:
 
 
 def ensure_native_analyzer(executable=None) -> pathlib.Path:
-    """Return the analyzer binary, building the release binary if absent.
+    """Return the analyzer binary, building the release binary if absent or stale.
 
     An explicit path (argument or SNESRECOMP_NATIVE_ANALYZER) must exist: a
     caller that named a binary gets that binary or an error. The default
     in-repo binary is built on demand with the pinned toolchain, exactly as
     the title regen scripts do, so a fresh checkout generates the same code
     as any other.
+
+    Cargo's target directory survives a framework update, so the default
+    binary is also checked against the recompiler-rs sources it was built
+    from (native_analyzer_identity). A binary whose source stamp does not
+    match is rebuilt; without Cargo it is refused rather than used, because
+    analyzing with another revision's binary silently changes the program.
     """
     explicit = executable or os.environ.get("SNESRECOMP_NATIVE_ANALYZER")
     path = (pathlib.Path(executable).expanduser().resolve() if executable
             else native_analyzer_path())
-    if path.is_file():
-        return path
     if explicit:
+        if path.is_file():
+            return path
         raise FileNotFoundError(f"native analyzer not found at {path}")
-    print(f"analysis: building the native analyzer ({path.name})", flush=True)
+    crate = REPO / "recompiler-rs"
+    digest = source_digest(crate)
+    if path.is_file():
+        stamp = read_stamp(path)
+        if digest is None or stamp == digest:
+            return path
+        reason = ("its recompiler-rs sources changed since it was built"
+                  if stamp else "it carries no record of the sources it was built from")
+        if shutil.which("cargo") is None:
+            raise RuntimeError(
+                f"native analyzer {path} is stale ({reason}) and Cargo is not "
+                "installed to rebuild it; install Rust (https://rustup.rs/) or "
+                "replace the binary with one built from these sources")
+        print(f"analysis: rebuilding the native analyzer ({reason})", flush=True)
+    else:
+        print(f"analysis: building the native analyzer ({path.name})", flush=True)
     completed = subprocess.run(
         [sys.executable, str(REPO / "tools" / "build_native_analyzer.py")],
         text=True, capture_output=True, check=False)
@@ -68,6 +92,10 @@ def ensure_native_analyzer(executable=None) -> pathlib.Path:
         raise RuntimeError(
             "could not build the native analyzer (needs the Rust toolchain; "
             f"run `python tools/build_native_analyzer.py`): {detail}")
+    if digest is not None and read_stamp(path) != digest:
+        raise RuntimeError(
+            f"native analyzer {path} was rebuilt but its source stamp does not "
+            "match recompiler-rs; were the sources edited during the build?")
     return path
 
 

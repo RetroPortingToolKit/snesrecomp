@@ -238,11 +238,23 @@ class EmissionResult:
     lle_variants: int
 
 
-def _host_aliases(parsed):
-    aliases = {}
+def _alias_headers(parsed, host_alias_header=None):
+    """The funcs.h files whose `alias` declarations name host entry points.
+
+    By default the funcs.h beside each cfg directory. A regeneration that is
+    about to replace that file passes the replacement instead, so the aliases
+    come from the cfg it is generating from rather than from whatever an
+    earlier run (or no run, on a fresh checkout) left on disk.
+    """
+    if host_alias_header is not None:
+        return [pathlib.Path(host_alias_header)]
     cfg_dirs = {pathlib.Path(path).resolve().parent for _bank, path, _cfg in parsed}
-    for cfg_dir in sorted(cfg_dirs):
-        header = cfg_dir / "funcs.h"
+    return [cfg_dir / "funcs.h" for cfg_dir in sorted(cfg_dirs)]
+
+
+def _host_aliases(parsed, host_alias_header=None):
+    aliases = {}
+    for header in _alias_headers(parsed, host_alias_header):
         try:
             source = header.read_text(encoding="utf-8", errors="replace")
         except OSError:
@@ -252,13 +264,13 @@ def _host_aliases(parsed):
     return aliases
 
 
-def _cfg_name_maps(parsed):
+def _cfg_name_maps(parsed, host_alias_header=None):
     name_for_pc = {}
     canonical_for_pc = {}
     templates_exact = {}
     templates_any = {}
     cfg_by_bank = {}
-    host_aliases = _host_aliases(parsed)
+    host_aliases = _host_aliases(parsed, host_alias_header)
     claimed_names = set(host_aliases)
     for name, pc24 in sorted(host_aliases.items()):
         name_for_pc[pc24] = name
@@ -346,7 +358,8 @@ def discover_authority_roots(parsed) -> tuple[VariantKey, ...]:
 
 
 def discover_host_roots(parsed, source_roots: Iterable[pathlib.Path],
-                        *, excluded_roots=()) -> tuple[VariantKey, ...]:
+                        *, excluded_roots=(),
+                        host_alias_header=None) -> tuple[VariantKey, ...]:
     """Infer the ROM entry variants called by handwritten host C.
 
     Host calls are outside the ROM architecture and therefore cannot be found
@@ -354,7 +367,7 @@ def discover_host_roots(parsed, source_roots: Iterable[pathlib.Path],
     per-game semantic hints. Generated output and build trees are excluded.
     """
     name_to_entries = defaultdict(list)
-    aliases = _host_aliases(parsed)
+    aliases = _host_aliases(parsed, host_alias_header)
     canonical_by_name = {}
     for bank, _path, cfg in parsed:
         for entry in cfg.entries:
@@ -511,9 +524,10 @@ def _copy_entry(template, *, name, pc24, m, x) -> BankEntry:
 
 
 def build_emission_entries(manifest: ProgramManifest, parsed,
-                           *, enable_hle: bool = True):
+                           *, enable_hle: bool = True,
+                           host_alias_header=None):
     (name_for_pc, canonical_for_pc, templates_exact,
-     templates_any, cfg_by_bank) = _cfg_name_maps(parsed)
+     templates_any, cfg_by_bank) = _cfg_name_maps(parsed, host_alias_header)
     entries_by_bank = defaultdict(list)
     emitted = defaultdict(set)
     all_modes = ((0, 0), (0, 1), (1, 0), (1, 1))
@@ -767,7 +781,8 @@ def emit_program(*, rom: bytes, parsed, manifest: ProgramManifest,
                  module_id: str = "main",
                  module_prefix: str | None = None,
                  rom_sha256_hex: str | None = None,
-                 rom_size: int | None = None) -> EmissionResult:
+                 rom_size: int | None = None,
+                 host_alias_header=None) -> EmissionResult:
     validate_module_identity(module_id, module_prefix)
     # Identity of the IMAGE the module was generated from. The caller passes
     # both when its `rom` already carries materialized ram_routine blobs (the
@@ -777,7 +792,8 @@ def emit_program(*, rom: bytes, parsed, manifest: ProgramManifest,
     if rom_size is None:
         rom_size = len(rom)
     entries_by_bank, emitted, name_for_pc, cfg_by_bank = build_emission_entries(
-        manifest, parsed, enable_hle=enable_hle)
+        manifest, parsed, enable_hle=enable_hle,
+        host_alias_header=host_alias_header)
     cfg_dirs = sorted({pathlib.Path(path).resolve().parent
                        for _bank, path, _cfg in parsed})
     all_banks = sorted(set(cfg_by_bank) | set(entries_by_bank))
@@ -785,7 +801,7 @@ def emit_program(*, rom: bytes, parsed, manifest: ProgramManifest,
     interrupt_pcs = _architectural_interrupt_pcs(rom)
     host_alias_entries = {
         name: (pc24, emitted.get(pc24, ()), pc24 in interrupt_pcs)
-        for name, pc24 in _host_aliases(parsed).items()
+        for name, pc24 in _host_aliases(parsed, host_alias_header).items()
         if pc24 in root_pcs
     }
 

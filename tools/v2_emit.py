@@ -65,7 +65,7 @@ def _tree_digest(paths) -> str:
     return digest.hexdigest()
 
 
-def _config_digest(parsed) -> str:
+def _config_digest(parsed, host_alias_header=None) -> str:
     digest = hashlib.sha256()
     cfg_dirs = set()
     for _bank, path, _cfg in parsed:
@@ -74,8 +74,9 @@ def _config_digest(parsed) -> str:
         digest.update(b"\0")
         digest.update(path.read_bytes())
         digest.update(b"\0")
-    for cfg_dir in sorted(cfg_dirs):
-        header = cfg_dir / "funcs.h"
+    headers = ([pathlib.Path(host_alias_header)] if host_alias_header
+               else [cfg_dir / "funcs.h" for cfg_dir in sorted(cfg_dirs)])
+    for header in headers:
         if header.exists():
             digest.update(b"funcs.h\0")
             digest.update(header.read_bytes())
@@ -206,6 +207,11 @@ def main() -> int:
              "beside another generated module (content variants). Requires "
              "a funcs.h beside the cfg files; default: no prefix")
     parser.add_argument("--no-host-root-scan", action="store_true")
+    parser.add_argument("--host-alias-header", default=None,
+                        help="funcs.h whose alias declarations name host entry "
+                             "points (default: funcs.h beside the cfg files). "
+                             "Regeneration passes the funcs.h it is about to "
+                             "publish, so a first run equals every later one.")
     parser.add_argument("--disassembly-entry-modes", action="store_true",
                         help="probe all M/X modes at byte-authoritative declared entries; "
                              "contradictory paths remain LLE (requires gameplay qualification)")
@@ -290,8 +296,13 @@ def _generate(args, parser, cfg_dir, *, symbol_roots=()):
         conventional = pathlib.Path(args.cfg_dir).resolve().parent / "src"
         if conventional.exists():
             source_roots.append(conventional)
+    host_alias_header = (pathlib.Path(args.host_alias_header).resolve()
+                         if args.host_alias_header else None)
+    if host_alias_header is not None and not host_alias_header.is_file():
+        parser.error(f"--host-alias-header not found: {host_alias_header}")
     host_roots = () if args.no_host_root_scan else discover_host_roots(
-        parsed, source_roots, excluded_roots=(out_dir,))
+        parsed, source_roots, excluded_roots=(out_dir,),
+        host_alias_header=host_alias_header)
     declared_entry_pcs = {
         ((bank & 0xFF) << 16) | (entry.start & 0xFFFF)
         for bank, _path, cfg in parsed for entry in cfg.entries
@@ -338,7 +349,7 @@ def _generate(args, parser, cfg_dir, *, symbol_roots=()):
         return hashlib.sha256(inputs.encode()).hexdigest()
 
     generator_digest = generator_digest_for()
-    config_digest = _config_digest(parsed)
+    config_digest = _config_digest(parsed, host_alias_header)
     analysis_input_digest = _analysis_input_digest(
         rom=rom,
         generator_digest=generator_digest,
@@ -415,6 +426,7 @@ def _generate(args, parser, cfg_dir, *, symbol_roots=()):
         module_prefix=args.module_prefix,
         rom_sha256_hex=rom_sha256_hex,
         rom_size=rom_image_size,
+        host_alias_header=host_alias_header,
     )
     elapsed = time.perf_counter() - started
     print(
