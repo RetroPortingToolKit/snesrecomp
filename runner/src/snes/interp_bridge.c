@@ -1696,6 +1696,13 @@ static int _interp_run_core(CpuState *cpu, uint32_t entry_pc24,
     }
     for (; steps < step_cap; steps++) {
         const uint32_t pc_before = ((uint32_t)in.k << 16) | in.pc;
+        /* Settle the DRAM refresh tax owed by clocks generated code charged
+         * after its last per-block settlement: the interpreter settles after
+         * each of its own opcodes, so without this the first interpreted step
+         * after a compiled body samples the deadline and IRQs 40 master
+         * clocks early per owed line. A no-op when the previous step was
+         * interpreted. */
+        snes_refresh_charge();
 #ifdef SNESRECOMP_INTERP_PROFILE
         g_interp_total_steps++;
         interp_hist_init();

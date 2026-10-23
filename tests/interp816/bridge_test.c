@@ -76,7 +76,6 @@ void debug_on_block_enter(uint32_t pc, uint32_t a, uint32_t x, uint32_t y) {
 void RtlApuLock(void) {}
 void RtlApuUnlock(void) {}
 
-void snes_refresh_charge(void) {}
 /* Per-frame NMI/IRQ tally (ppu_dma_trace.c in the real runner). */
 void ppudma_note_interrupt(int is_nmi) { (void)is_nmi; }
 uint32_t cpu_region_speed(uint32_t addr24) {
@@ -106,6 +105,14 @@ static int g_pop_underflow = 0;
  * stub that never advanced the top, that whole branch was untestable and
  * S8d below could not fail. */
 static CpuState g_c;
+/* DRAM refresh tax (common_cpu_infra.c in the real runner). The model is
+ * the clocks a compiled block charged without settling before it handed
+ * over: the first charge call pays them, later calls are no-ops. */
+static uint64_t g_refresh_owed;
+void snes_refresh_charge(void) {
+    g_c.master_cycles += g_refresh_owed;
+    g_refresh_owed = 0;
+}
 static void redirect_to_return(CpuState *cpu, uint32_t pc) {
     (void)cpu; (void)pc;
     interp_bridge_pre_opcode_redirect(0x008500);
@@ -1633,6 +1640,46 @@ int main(void) {
               "%s: site=%d", cases[k].what, r.site);
         CHECK(r.steps == cases[k].expect, "%s: fired after %u steps, exp %u",
               cases[k].what, r.steps, cases[k].expect);
+      }
+    }
+    /* S20: refresh tax owed at the compiled -> interpreted handover. Generated
+     * code settles the tax per block (WatchdogCheck) and the interpreter after
+     * each opcode, so clocks a compiled body charged after its last block
+     * entry are still owed when it bounces into the interpreter. The first
+     * interpreted step must settle them before it samples the deadline and
+     * IRQs; otherwise that step runs 40 master clocks per owed line early.
+     * With nothing owed the handover must stay as it was. */
+    printf("[S20] refresh tax owed at the compiled -> interpreted handover\n");
+    { static const uint8_t code[] = {0x1A, 0x1A, 0x80,0xFC};   /* INC A / INC A / BRA -4 */
+      struct { const char *what; uint64_t owed; uint16_t a; uint32_t resume; } cases[] = {
+        {"nothing owed: the first opcode runs, then the deadline", 0, 1, 0x008B01u},
+        {"one line owed: settled before the first opcode runs",   40, 0, 0x008B00u},
+      };
+      for (unsigned k = 0; k < sizeof cases / sizeof cases[0]; k++) {
+        memset(RAM, 0, MEMSZ); init_cpu();
+        g_c.emulation = 0; cpu_mirrors_to_p(&g_c);
+        load(0x8B00, code, sizeof code);
+        interp_bridge_reset_dynamic_cache();
+        g_c.master_cycles = 1000;
+        interp_bridge_set_master_deadline(1001);
+        g_refresh_owed = cases[k].owed;
+        const uint64_t ev0 = interp_bridge_resume_total();
+        const int rc = interp_bridge_run_until_quiescent(&g_c, 0x008B00);
+        interp_bridge_set_master_deadline(0);
+        g_refresh_owed = 0;
+        int site = -1;
+        { InterpResumeEvent e;
+          const uint64_t n = interp_bridge_resume_total();
+          if (n > ev0 && interp_bridge_resume_get(n - 1, &e)) site = e.site; }
+        const uint32_t resume = interp_bridge_lle_resume_pc();
+        printf("    %s: rc=%d site=%d master=%llu A=%04X resume=$%06X\n",
+               cases[k].what, rc, site, (unsigned long long)g_c.master_cycles,
+               g_c.A, (unsigned)resume);
+        CHECK(site == INTERP_RESUME_SITE_DEADLINE, "%s: site=%d", cases[k].what, site);
+        CHECK(g_c.A == cases[k].a, "%s: A=%04X exp %04X", cases[k].what, g_c.A, cases[k].a);
+        CHECK(resume == cases[k].resume, "%s: resume=$%06X exp $%06X",
+              cases[k].what, (unsigned)resume, (unsigned)cases[k].resume);
+        CHECK(g_c.master_cycles >= 1000 + cases[k].owed, "%s: tax not settled", cases[k].what);
       }
     }
     printf("\n==== interp_bridge Phase-1: %d/%d checks passed ====\n", g_check - g_fail, g_check);
