@@ -3968,6 +3968,37 @@ static void tier2_emit_discoveries(FILE *f, const char *indent) {
     }
 }
 
+void InterpExecutionShareGet(InterpExecutionShare *out) {
+    extern CpuState g_cpu;
+    extern int snes_frame_counter;
+    out->interp_insns = interp816_insns_total();
+    out->interp_cycles = interp816_cycles_total();
+    out->cpu_cycles = g_cpu.cycles;
+    out->master_cycles = g_cpu.master_cycles;
+    out->frame = snes_frame_counter;
+    double pct = out->cpu_cycles
+        ? 100.0 * (double)out->interp_cycles / (double)out->cpu_cycles : 0.0;
+    /* The interpreter's bus-cycle rounding can put it a hair over the total;
+     * a headline above 100% is a sub-percent accounting artifact. */
+    if (pct > 100.0) pct = 100.0;
+    out->interp_cycle_pct = pct;
+    out->aot_cycle_pct = out->cpu_cycles ? 100.0 - pct : 0.0;
+}
+
+void InterpExecutionShareDumpJson(FILE *f) {
+    InterpExecutionShare s;
+    InterpExecutionShareGet(&s);
+    fprintf(f, "  \"execution_share\": {\"frame\": %d, \"interp_insns\": %llu, "
+               "\"interp_cycles\": %llu, \"cpu_cycles\": %llu, "
+               "\"master_cycles\": %llu, \"interp_cycle_pct\": %.4f, "
+               "\"aot_cycle_pct\": %.4f},\n",
+            s.frame, (unsigned long long)s.interp_insns,
+            (unsigned long long)s.interp_cycles,
+            (unsigned long long)s.cpu_cycles,
+            (unsigned long long)s.master_cycles,
+            s.interp_cycle_pct, s.aot_cycle_pct);
+}
+
 void Tier2CoverageDumpJson(FILE *f) {
     fprintf(f, "  \"tier2_coverage\": {\n"
                "    \"total_tier_hits\": %ld,\n"

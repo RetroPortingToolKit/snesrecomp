@@ -131,6 +131,10 @@ pub struct ConstZFold {
 pub struct FunctionDecodeGraph {
     pub entry: Option<DecodeKey>,
     pub authority_conflict: bool,
+    /// Where each authority conflict was found: (instruction pc24, decode m,
+    /// decode x, predecessor pc or -1 for the entry). Diagnostic only; reported in the node reasons
+    /// so a poisoned variant names its first contradicting decode.
+    pub authority_conflict_sites: Vec<(u32, u8, u8, i64)>,
     pub rom_mapping: RomMapping,
     insns_vec: Vec<DecodedInsn>,
     index: HashMap<DecodeKey, usize>,
@@ -1029,9 +1033,18 @@ pub fn decode_function(
                 continue;
             }
         }
-        // Jump edge onto a named sibling function entry.
+        // Jump edge onto a named sibling function entry. Not while this path
+        // holds a PHP the sibling will PLP: `PHP; SEP #$30; ...; BRA Common`
+        // where Common ends `PLP; RTL` (Super Metroid's QueueSfxN_MaxK ->
+        // QueueSfxN_Internal). Split there, the sibling pops a P it never
+        // pushed and its exit width is unknowable; decoded through, the PLP
+        // restores the tracked entry width exactly.
         if let Some(sib) = env.sibling_entry_pcs {
-            if edge_kind == "jump" && sib.contains(&pc) && !pred_in_territory {
+            if edge_kind == "jump"
+                && sib.contains(&pc)
+                && !pred_in_territory
+                && key.p_stack.is_empty()
+            {
                 let boundary = (addr24(bank, pred_pc as u32), key.clone());
                 if !graph.boundary_exits.contains(&boundary) {
                     graph.boundary_exits.push(boundary);
@@ -1059,7 +1072,34 @@ pub fn decode_function(
 
         let mut insn = decode_insn(rom, offset, pc, bank, key.m, key.x)
             .unwrap_or_else(|| panic!("v2 decoder: unknown opcode at ${bank:02X}:{pc:04X}"));
-        if env
+        // A conditional branch arm that enters authority-declared data at a
+        // BRK byte executes that byte as a software interrupt: the
+        // assertion-trap idiom `BPL +; db $00; +:` (Super Metroid
+        // PrepareBitAccess). BRK is a terminator, so the trap ends this arm,
+        // and like a cfg data region reached by control flow
+        // (data_region_exec_pcs) it is executed exactly in the interpreter
+        // rather than poisoning the function. Its signature byte is never an
+        // instruction start of this path, so it may overlap the authority's
+        // next instruction. Only a Bcc arm qualifies: the continuation of a
+        // JSR/JSL that lands on data is the callee's inline arguments
+        // (DecompressToMem's `JSL $80B0FF; dl src`), not a reachable BRK.
+        // Entry at data, any other predecessor or opcode, and a decode that
+        // runs from a code start into data remain authority conflicts.
+        let pred_is_cond_branch = pred_pc >= 0
+            && try_rom_offset(mapping, bank, (pred_pc as u32) & 0xFFFF, reloc)
+                .and_then(|o| rom.get(o).copied())
+                .is_some_and(|op| {
+                    matches!(op, 0x10 | 0x30 | 0x50 | 0x70 | 0x90 | 0xB0 | 0xD0 | 0xF0)
+                });
+        let authority_data_trap = pred_is_cond_branch
+            && insn.mnem == "BRK"
+            && env
+                .authority_data
+                .and_then(|data| data.get(&bank))
+                .is_some_and(|mask| mask[pc as usize]);
+        if authority_data_trap {
+            graph.data_region_exec_pcs.insert(addr24(bank, pc));
+        } else if env
             .authority_data
             .and_then(|data| data.get(&bank))
             .is_some_and(|mask| {
@@ -1067,9 +1107,12 @@ pub fn decode_function(
             })
         {
             graph.authority_conflict = true;
+            graph
+                .authority_conflict_sites
+                .push((addr24(bank, pc), key.m, key.x, pred_pc));
             continue;
         }
-        if let Some(authority) = env.authority_bytes {
+        if let Some(authority) = env.authority_bytes.filter(|_| !authority_data_trap) {
             let size = insn.length as usize;
             if authority.get(&key.pc).is_some_and(|raw| {
                 raw.len() != size || rom.get(offset..offset + size) != Some(raw.as_slice())
@@ -1079,6 +1122,9 @@ pub fn decode_function(
                     .is_some_and(|r| !r.is_empty())
             }) {
                 graph.authority_conflict = true;
+                graph
+                    .authority_conflict_sites
+                    .push((addr24(bank, pc), key.m, key.x, pred_pc));
                 continue;
             }
         }

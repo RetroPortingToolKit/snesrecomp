@@ -53,6 +53,7 @@
 #include "cpu_trace.h"
 #include "common_cpu_infra.h"   /* stack-balance / abandon / dispatch dumps */
 #include "ppu_dma_trace.h"      /* ppudma_dump_json */
+#include "snes/interp_bridge.h"   /* InterpExecutionShareDumpJson (core runner) */
 
 #ifndef SNESRECOMP_POST_MORTEM_TIER2
 #define SNESRECOMP_POST_MORTEM_TIER2 0
@@ -770,6 +771,11 @@ void recomp_post_mortem_dump(const char *reason, void *fault_info) {
     CpuUnresolvedAbandonDumpJson(f);
     CpuDispatchLogDumpJson(f);
     ppudma_dump_json(f);
+    /* How much guest execution the interpreter carried since boot. Always-on
+     * counters, so every exit report (release builds included) states the
+     * native share of the run it describes; a coverage burndown measures from
+     * the report instead of arming a probe. */
+    InterpExecutionShareDumpJson(f);
 #if SNESRECOMP_POST_MORTEM_TIER2
     Tier2CoverageDumpJson(f);
 #endif

@@ -771,6 +771,19 @@ fn summarize(
             "authority_conflict".to_string(),
             "structural_poison".to_string(),
         ]);
+        let mut sites = graph.authority_conflict_sites.clone();
+        sites.sort_unstable();
+        sites.dedup();
+        for (site, m, x, pred) in sites.into_iter().take(4) {
+            reasons.insert(if pred < 0 {
+                format!("authority_conflict_at_{site:06X}_m{m}x{x}_entry")
+            } else {
+                format!(
+                    "authority_conflict_at_{site:06X}_m{m}x{x}_from_{:04X}",
+                    pred & 0xFFFF
+                )
+            });
+        }
     }
     if graph.is_empty() {
         reasons.extend(["empty_decode".to_string(), "structural_poison".to_string()]);
