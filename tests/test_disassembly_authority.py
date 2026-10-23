@@ -224,3 +224,29 @@ def test_sibling_entry_reached_with_pending_php_is_decoded_through(tmp_path):
     assert not graph.boundary_exits
     rtl = [k for k, d in graph.insns.items() if d.insn.mnem == 'RTL']
     assert [(k.m, k.x) for k in rtl] == [(0, 0)]
+
+
+def test_call_continuation_into_authority_data_stays_a_conflict(tmp_path):
+    """`JSL Callee; dl $7F0000; RTL` (Super Metroid DecompressToMem's inline
+    arguments). The bytes after the call are data the callee consumes; a
+    continuation decoded into them is not a conditional-branch BRK trap and
+    must keep the caller interpreter-only in both decoders."""
+    from v2.program_analysis import VariantKey, NodeDisposition
+    rom = bytearray(0x8000)
+    rom[:8] = bytes.fromhex("22 10 80 00 00 00 7F 6B")
+    rom[0x10] = 0x6B
+    rom = bytes(rom)
+    text = ("bank = 00\nfunc Caller 8000\nfunc Callee 8010\n"
+            "authority_insn 8000 22108000\nauthority_insn 8007 6b\n"
+            "authority_insn 8010 6b\n"
+            "authority_data 8004 8007\ndata_region 00 8004 8007\n")
+    manifest = native_manifest(tmp_path, rom, {"bank00.cfg": text},
+                               [VariantKey(0x008000, 0, 0)])
+    node = manifest.nodes[VariantKey(0x008000, 0, 0)]
+    assert node.disposition == NodeDisposition.LLE_ONLY
+    assert "authority_conflict" in node.reasons
+    path = tmp_path / "bank00.cfg"
+    set_instruction_authority([(0, path, load_bank_cfg(str(path)))])
+    graph = decode_function(rom, 0, 0x8000, 0, 0)
+    assert graph.authority_conflict
+    assert 0x008004 not in graph.data_region_exec_pcs

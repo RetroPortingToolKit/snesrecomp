@@ -301,4 +301,34 @@ mod tests {
         assert!(decode_function(&rom, 0, 0x8003, 0, 0, None, &env).authority_conflict);
         assert!(decode_function(&build(0xea), 0, 0x8000, 0, 0, None, &env).authority_conflict);
     }
+
+    /// `JSL Callee; dl $7F0000; RTL`: the bytes after the call are the
+    /// callee's inline arguments (DecompressToMem). A continuation decoded
+    /// into them is not a conditional-branch trap, so a $00 there must stay
+    /// an authority conflict rather than becoming an executable BRK.
+    #[test]
+    fn call_continuation_into_authority_data_is_not_a_brk_trap() {
+        let mut rom = vec![0; 0x8000];
+        rom[..8].copy_from_slice(&[0x22, 0x10, 0x80, 0x00, 0x00, 0x00, 0x7f, 0x6b]);
+        rom[0x10] = 0x6b;
+        let authority = HashMap::from([
+            (0x8000, vec![0x22, 0x10, 0x80, 0x00]),
+            (0x8001, vec![]),
+            (0x8002, vec![]),
+            (0x8003, vec![]),
+            (0x8007, vec![0x6b]),
+            (0x8010, vec![0x6b]),
+        ]);
+        let mut mask = vec![false; 0x10000];
+        mask[0x8004..0x8007].fill(true);
+        let data = HashMap::from([(0u32, mask)]);
+        let env = DecodeEnv {
+            authority_bytes: Some(&authority),
+            authority_data: Some(&data),
+            ..Default::default()
+        };
+        let graph = decode_function(&rom, 0, 0x8000, 0, 0, None, &env);
+        assert!(graph.authority_conflict);
+        assert!(!graph.data_region_exec_pcs.contains(&0x008004));
+    }
 }

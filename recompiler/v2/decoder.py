@@ -2163,12 +2163,23 @@ def _decode_function_uncached(rom: bytes, bank: int, start: int,
                 f"${bank:02X}:{pc:04X} entry_mx=({key.m},{key.x})"
             )
 
-        # Control flow entering authority data at a BRK byte executes it as a
-        # software interrupt (the `BPL +; db $00; +:` assertion trap). BRK is
-        # a terminator; like a cfg data region reached by control flow it is
-        # executed exactly in the interpreter. Mirrors the native decoder.
+        # A conditional branch arm entering authority data at a BRK byte
+        # executes it as a software interrupt (the `BPL +; db $00; +:`
+        # assertion trap). BRK is a terminator; like a cfg data region reached
+        # by control flow it is executed exactly in the interpreter. A call
+        # continuation landing on data is the callee's inline arguments, not
+        # a reachable BRK, and stays a conflict. Mirrors the native decoder.
         authority_data = _AUTHORITY_DATA.get(bank, b'')
-        authority_data_trap = (edge_kind != 'entry' and insn.mnem == 'BRK'
+        pred_is_cond_branch = False
+        if pred_pc >= 0:
+            try:
+                pred_offset = lorom_offset(bank, pred_pc & 0xFFFF)
+            except AssertionError:
+                pred_offset = None
+            pred_is_cond_branch = (pred_offset is not None and pred_offset < len(rom)
+                                   and rom[pred_offset] in (0x10, 0x30, 0x50, 0x70,
+                                                            0x90, 0xB0, 0xD0, 0xF0))
+        authority_data_trap = (pred_is_cond_branch and insn.mnem == 'BRK'
                                and pc < len(authority_data)
                                and bool(authority_data[pc]))
         expected = _INSTRUCTION_AUTHORITY.get(key.pc)

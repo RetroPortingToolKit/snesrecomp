@@ -1055,17 +1055,26 @@ pub fn decode_function(
 
         let mut insn = decode_insn(rom, offset, pc, bank, key.m, key.x)
             .unwrap_or_else(|| panic!("v2 decoder: unknown opcode at ${bank:02X}:{pc:04X}"));
-        // Control flow that enters authority-declared data at a BRK byte
-        // executes that byte as a software interrupt: the assertion-trap
-        // idiom `BPL +; db $00; +:` (Super Metroid PrepareBitAccess). BRK is
-        // a terminator, so the trap ends this path, and like a cfg data
-        // region reached by control flow (data_region_exec_pcs) it is
-        // executed exactly in the interpreter rather than poisoning the
-        // function. Its signature byte is never an instruction start of this
-        // path, so it may overlap the authority's next instruction. Entry at
-        // data, any other opcode in data, and a decode that runs from a code
-        // start into data remain authority conflicts.
-        let authority_data_trap = edge_kind != "entry"
+        // A conditional branch arm that enters authority-declared data at a
+        // BRK byte executes that byte as a software interrupt: the
+        // assertion-trap idiom `BPL +; db $00; +:` (Super Metroid
+        // PrepareBitAccess). BRK is a terminator, so the trap ends this arm,
+        // and like a cfg data region reached by control flow
+        // (data_region_exec_pcs) it is executed exactly in the interpreter
+        // rather than poisoning the function. Its signature byte is never an
+        // instruction start of this path, so it may overlap the authority's
+        // next instruction. Only a Bcc arm qualifies: the continuation of a
+        // JSR/JSL that lands on data is the callee's inline arguments
+        // (DecompressToMem's `JSL $80B0FF; dl src`), not a reachable BRK.
+        // Entry at data, any other predecessor or opcode, and a decode that
+        // runs from a code start into data remain authority conflicts.
+        let pred_is_cond_branch = pred_pc >= 0
+            && try_rom_offset(mapping, bank, (pred_pc as u32) & 0xFFFF, reloc)
+                .and_then(|o| rom.get(o).copied())
+                .is_some_and(|op| {
+                    matches!(op, 0x10 | 0x30 | 0x50 | 0x70 | 0x90 | 0xB0 | 0xD0 | 0xF0)
+                });
+        let authority_data_trap = pred_is_cond_branch
             && insn.mnem == "BRK"
             && env
                 .authority_data
