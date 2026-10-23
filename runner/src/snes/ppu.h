@@ -1,6 +1,10 @@
 #ifndef PPU_H
 #define PPU_H
 
+#ifndef SNESRECOMP_PPU_CAPTURE_REVISION
+#define SNESRECOMP_PPU_CAPTURE_REVISION 0
+#endif
+
 #include "../types.h"
 
 #include <stdio.h>
@@ -180,6 +184,13 @@ struct Ppu {
   uint8 cgwsel;
   // -- END OF SNAPSHOT
 
+#if SNESRECOMP_PPU_CAPTURE_REVISION
+  /* Derived host bookkeeping, outside guest snapshots. Only trusted raster
+   * intervals may use it: restore/reset, IRQ/native hooks and arbitrary
+   * callbacks still require explicit invalidation or exact comparisons. */
+  uint32_t vramCaptureRevision;
+#endif
+
   // vram access
   uint16_t vramPointer;
   bool vramIncrementOnHigh;
@@ -341,6 +352,14 @@ struct Ppu {
 
 
 };
+
+static inline void PpuNoteVramWrite(Ppu *ppu) {
+#if SNESRECOMP_PPU_CAPTURE_REVISION
+  ++ppu->vramCaptureRevision;
+#else
+  (void)ppu;
+#endif
+}
 
 #define SPRITE_PRIO_TO_PRIO(prio, level6) (((prio) * 4 + 2) * 16 + 4 + (level6 ? 2 : 0))
 #define SPRITE_PRIO_TO_PRIO_HI(prio) ((prio) * 4 + 2)
