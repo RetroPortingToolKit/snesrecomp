@@ -1090,7 +1090,9 @@ pub fn decode_function(
             })
         {
             graph.authority_conflict = true;
-            graph.authority_conflict_sites.push((addr24(bank, pc), key.m, key.x, pred_pc));
+            graph
+                .authority_conflict_sites
+                .push((addr24(bank, pc), key.m, key.x, pred_pc));
             continue;
         }
         if let Some(authority) = env.authority_bytes.filter(|_| !authority_data_trap) {
@@ -1103,7 +1105,9 @@ pub fn decode_function(
                     .is_some_and(|r| !r.is_empty())
             }) {
                 graph.authority_conflict = true;
-                graph.authority_conflict_sites.push((addr24(bank, pc), key.m, key.x, pred_pc));
+                graph
+                    .authority_conflict_sites
+                    .push((addr24(bank, pc), key.m, key.x, pred_pc));
                 continue;
             }
         }

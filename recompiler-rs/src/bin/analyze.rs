@@ -729,7 +729,10 @@ fn summarize(
             reasons.insert(if pred < 0 {
                 format!("authority_conflict_at_{site:06X}_m{m}x{x}_entry")
             } else {
-                format!("authority_conflict_at_{site:06X}_m{m}x{x}_from_{:04X}", pred & 0xFFFF)
+                format!(
+                    "authority_conflict_at_{site:06X}_m{m}x{x}_from_{:04X}",
+                    pred & 0xFFFF
+                )
             });
         }
     }

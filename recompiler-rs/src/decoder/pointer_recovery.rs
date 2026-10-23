@@ -292,7 +292,11 @@ mod tests {
         let graph = decode_function(&rom, 0, 0x8000, 0, 0, None, &env);
         assert!(!graph.authority_conflict);
         assert!(graph.data_region_exec_pcs.contains(&0x008003));
-        let brk = graph.insns().iter().find(|d| d.insn.addr & 0xFFFF == 0x8003).unwrap();
+        let brk = graph
+            .insns()
+            .iter()
+            .find(|d| d.insn.addr & 0xFFFF == 0x8003)
+            .unwrap();
         assert_eq!(brk.insn.mnem, "BRK");
         assert!(brk.successors.is_empty());
         assert!(graph.insns().iter().any(|d| d.insn.mnem == "RTL"));
