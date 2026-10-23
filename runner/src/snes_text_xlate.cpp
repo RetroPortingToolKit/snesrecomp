@@ -316,6 +316,7 @@ void vram_write_byte(uint32_t byte_addr, uint8_t value) {
                                      (static_cast<uint16_t>(value) << 8));
     else
         word = static_cast<uint16_t>((word & 0xff00u) | value);
+    PpuNoteVramWrite(g_ppu);
 }
 
 void apply_ram_patch(const Patch& patch) {
