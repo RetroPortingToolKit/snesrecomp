@@ -53,6 +53,24 @@ from v2.ir import (  # noqa: E402
 )
 
 
+def _own_inline_skip(fn_entry_pc: int, inline_arg_map=None) -> int:
+    """Inline argument bytes the function at fn_entry_pc consumes (0 if none).
+
+    Same lookup as the dispatch table: the exact PC, then its ROM mirror.
+    Falls back to the decoder's process-wide map, as decode_function does."""
+    import v2.decoder as _decoder
+    from snes65816 import rom_bank_mirror
+    active = inline_arg_map if inline_arg_map is not None else _decoder._ACTIVE_INLINE_ARG_MAP
+    if not active:
+        return 0
+    skip = active.get(fn_entry_pc)
+    if skip is None:
+        bank = (fn_entry_pc >> 16) & 0xFF
+        if rom_bank_mirror(bank) is not None:
+            skip = active.get(((bank ^ 0x80) << 16) | (fn_entry_pc & 0xFFFF))
+    return int(skip or 0)
+
+
 def _label_for(key: DecodeKey) -> str:
     """C label name for a block keyed by (pc, m, x)."""
     pc = key.pc & 0xFFFF
@@ -2098,8 +2116,23 @@ def emit_function(rom: bytes, bank: int, start: int,
     src.append(f'    uint16 _host_rpcl = cpu_read8(cpu, 0x00, (uint16)(_entry_s + 1u));')
     src.append(f'    uint16 _host_rpch = cpu_read8(cpu, 0x00, (uint16)(_entry_s + 2u));')
     src.append(f'    uint8 _host_rpb = (_hrv == 3) ? cpu_read8(cpu, 0x00, (uint16)(_entry_s + 3u)) : cpu->PB;')
+    # A callee that consumes N inline argument bytes rewrites its own return
+    # frame (`LDA 3,S; ADC #N; STA 3,S`) and returns N bytes past the call.
+    # Its callers already continue there (the analyzer's inline-argument
+    # skip), so that rewritten address IS the host return. Sampling only the
+    # pushed address made the RTL treat it as foreign and dispatch the
+    # caller's continuation as a new frame, which the caller then ran again
+    # (Super Metroid: SpawnHdmaObject decoded through its PHP/PLP tail ran
+    # Phantoon2_Init twice and crashed Phantoon's room load). Before the
+    # tail was decoded through, its separate RTL re-sampled the frame after
+    # the rewrite, which hid the defect.
+    own_inline_skip = _own_inline_skip(fn_entry_pc, inline_arg_map)
     src.append(f'    _host_return_pc24 = ((uint32)_host_rpb << 16) |')
-    src.append(f'        (uint16)((((_host_rpch << 8) | _host_rpcl) + 1u) & 0xFFFFu);')
+    if own_inline_skip:
+        src.append(f'        (uint16)((((_host_rpch << 8) | _host_rpcl) + 1u + {own_inline_skip}u) & 0xFFFFu);'
+                   f'  /* + inline argument bytes this function consumes */')
+    else:
+        src.append(f'        (uint16)((((_host_rpch << 8) | _host_rpcl) + 1u) & 0xFFFFu);')
     src.append(f'  }}')
     src.append(f'  (void)_entry_s;  /* used by trampoline balance check */')
     src.append(f'  (void)_hrv;')

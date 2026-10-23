@@ -114,3 +114,30 @@ def test_jsr_bounce_that_returns_through_outer_rtl_yields_to_bridge():
     assert ('interp_bridge_has_direct_paired_bounce()' in src), src
     assert ('_hrv == 3 && interp_bridge_has_direct_paired_bounce()'
             not in src), src
+
+
+def test_inline_argument_callee_expects_its_skipped_host_return():
+    """A callee that consumes N inline bytes returns N bytes past its call.
+
+    `LDA 3,S; CLC; ADC #4; STA 3,S; RTL` (Super Metroid SpawnHdmaObject's
+    shape). Callers continue after the inline bytes, so that rewritten
+    address is the host return; treating it as foreign dispatched the
+    caller's continuation as a second, nested frame that then ran again.
+    """
+    rom = make_lorom_bank0({
+        0x8000: bytes([0xA3, 0x03,        # LDA 3,S
+                       0x18,              # CLC
+                       0x69, 0x04, 0x00,  # ADC #$0004
+                       0x83, 0x03,        # STA 3,S
+                       0x6B]),            # RTL
+    })
+    plain = emit_function(rom, bank=0, start=0x8000, entry_m=0, entry_x=0,
+                          func_name='Plain', inline_arg_map={})
+    inline = emit_function(rom, bank=0, start=0x8000, entry_m=0, entry_x=0,
+                           func_name='InlineArgs', inline_arg_map={0x008000: 4})
+    assert '+ 1u + 4u) & 0xFFFFu);' not in plain, plain
+    assert '+ 1u + 4u) & 0xFFFFu);' in inline, inline
+    # Mirror lookup matches the dispatch table's.
+    mirrored = emit_function(rom, bank=0, start=0x8000, entry_m=0, entry_x=0,
+                             func_name='Mirrored', inline_arg_map={0x808000: 4})
+    assert '+ 1u + 4u) & 0xFFFFu);' in mirrored, mirrored
