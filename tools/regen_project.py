@@ -55,6 +55,9 @@ def main(argv=None):
     if not args.no_tests:
         subprocess.run([sys.executable, str(ROOT / "tests/run_tests.py")],
                        cwd=ROOT, check=True,
+                       # CREATE_NO_WINDOW has no console handles to inherit.
+                       # Forward the caller's redirected streams explicitly.
+                       stdout=sys.stdout, stderr=sys.stderr,
                        creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
     return 0
 
