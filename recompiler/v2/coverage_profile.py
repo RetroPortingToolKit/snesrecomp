@@ -23,7 +23,7 @@ def pc(value):
     return result
 
 
-def canonical_pc(value, mapper):
+def execution_pc(value, mapper):
     """Only collapse the documented upper-half LoROM execution mirror.
 
     Preserve raw PCs everywhere else, including mapper-dependent SA-1/SDD1
@@ -34,6 +34,16 @@ def canonical_pc(value, mapper):
         if 0x80 <= value >> 16 <= 0xBF and value & 0xFFFF >= 0x8000:
             return value - 0x800000
     return value
+
+
+def canonical_pc(value, mapper):
+    """Physical ROM grouping key; retain raw PCs for execution qualification."""
+    value = pc(value)
+    if mapper == "hirom":
+        bank, addr = value >> 16, value & 0xFFFF
+        if bank not in (0x7E, 0x7F) and ((bank & 0x7F) >= 0x40 or addr >= 0x8000):
+            return ((bank & 0x3F) | 0xC0) << 16 | addr
+    return execution_pc(value, mapper)
 
 
 def row_key(row):
