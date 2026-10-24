@@ -1075,16 +1075,30 @@ int cpu_aot_rom_mapping_matches(uint32 pc24, uint32 offset, unsigned length) {
     return 1;
 }
 
-static int dispatch_has_rom_mirror(uint32 pc24) {
+/* Keep full-bank fallback checks out of the established low-bank fast path.
+ * This helper runs only after the old bank/address predicate rejects a PC.
+ * Prevent compilers from merging its cart tests into that common path. */
+static NOINLINE int dispatch_has_full_hirom_mirror(uint32 pc24)
+#if defined(__GNUC__) || defined(__clang__)
+    __attribute__((noinline))
+#endif
+    ;
+static int dispatch_has_full_hirom_mirror(uint32 pc24) {
     unsigned bank = pc24 >> 16;
-    int low_pair = (bank < 0x40 || (bank >= 0x80 && bank < 0xC0)) &&
-                   (pc24 & 0xFFFF) >= 0x8000;
     /* Full HiROM banks pair with full banks only. Sharing the upper ROM
      * bytes with a low bank does not make its short calls/fetches equivalent.
      * The generator emits separately analyzed low/full-bank entries. */
-    int full_pair = g_snes && g_snes->cart && g_snes->cart->type == CART_HIROM &&
-                    ((bank >= 0x40 && bank < 0x7E) || (bank >= 0xC0 && bank < 0xFE));
-    if (!low_pair && !full_pair) return 0;
+    if (!g_snes || !g_snes->cart || g_snes->cart->type != CART_HIROM ||
+        !((bank >= 0x40 && bank < 0x7E) || (bank >= 0xC0 && bank < 0xFE))) return 0;
+    uint8 *a = cart_getRomPtr(g_snes->cart, bank, (uint16)pc24);
+    uint8 *b = cart_getRomPtr(g_snes->cart, bank ^ 0x80, (uint16)pc24);
+    return a && a == b;
+}
+
+static int dispatch_has_rom_mirror(uint32 pc24) {
+    unsigned bank = pc24 >> 16;
+    if (!((bank < 0x40 || (bank >= 0x80 && bank < 0xC0)) && (pc24 & 0xFFFF) >= 0x8000))
+        return dispatch_has_full_hirom_mirror(pc24);
     if (!g_snes || !g_snes->cart) return 1; /* isolated dispatch fixtures */
     uint8 *a = cart_getRomPtr(g_snes->cart, bank, (uint16)pc24);
     uint8 *b = cart_getRomPtr(g_snes->cart, bank ^ 0x80, (uint16)pc24);
