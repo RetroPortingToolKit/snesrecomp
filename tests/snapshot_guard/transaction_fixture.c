@@ -1,3 +1,4 @@
+#include <limits.h>
 #include <assert.h>
 #include <stddef.h>
 #include "common_rtl.h"
@@ -7,6 +8,7 @@
 #include "snes/dsp.h"
 #include "snes/spc.h"
 #include "snes/joypad.h"
+#include "snapshot_identity.h"
 
 static Snes machine;
 static Cpu cpu;
