@@ -18,6 +18,8 @@ from v2.coverage_profile import canonical_pc, execution_pc
 from disassembly_layout import materialize, export_layout
 from ingest_disassembly_authority import ingest
 from export_disassembly_authority import export
+from snes65816 import decode_insn
+from v2.decoder import _resolve_indirect_dispatch_targets
 
 
 @pytest.fixture
@@ -173,3 +175,45 @@ def test_emitter_and_native_agree_on_hirom_alias_contracts(hirom, tmp_path):
     assert result.returncode == 0, result.stdout + result.stderr
     manifest = json.loads((output / 'program_manifest.json').read_text())
     assert manifest['nodes'] == {}  # reset alias is explicitly interpreter-only
+
+
+@pytest.mark.parametrize('opcode,mode,long_target', [
+    (0x7C, 'ptrtail', False),  # JMP (abs,X)
+    (0x6C, 'ptrtail', False),  # JMP (abs)
+    (0xFC, 'ptrcall', False),  # JSR (abs,X)
+    (0xDC, 'ptrtail', True),   # JML [abs]: target bank is part of the pointer
+])
+def test_inherited_dispatch_keeps_near_bank_and_absolute_long_target(
+        hirom, tmp_path, opcode, mode, long_target):
+    rom, image, cfg = hirom
+    rom[0x9000:0x9004] = bytes([opcode, 0x20, 0x90, 0x60])
+    rom[0x9010:0x9013] = bytes.fromhex('4c0010')  # RAM in bank 00, ROM in C0
+    image.write_bytes(rom)
+    (cfg / 'bankc0.cfg').write_text(
+        'bank = C0\nfunc Dispatch 9000\nfunc Target 9010\nfunc Lower 1000\n'
+        f'indirect_dispatch 9000 2 {mode} targets:000000,C09010\n')
+    for bank, _, row in _load_cfgs(cfg):
+        insn = decode_insn(rom, 0x9000, 0x9000, bank, 1, 1)
+        expected = 0xC09010 if long_target else (bank << 16) | 0x9010
+        assert _resolve_indirect_dispatch_targets(
+            rom, bank, insn, row.indirect_dispatch[0]) == [0, expected]
+    roots = tuple(VariantKey(b << 16 | 0x9000, 1, 1) for b in (0, 0x40, 0x80, 0xC0))
+    manifest, _, _, _ = build_manifest_native(
+        rom_path=image, cfg_dir=cfg, additional_roots=roots, max_insns=64)
+    for bank in (0, 0x40, 0x80, 0xC0):
+        node = manifest.nodes[VariantKey(bank << 16 | 0x9000, 1, 1)]
+        expected = 0xC09010 if long_target else bank << 16 | 0x9010
+        assert {edge.target.pc24 for edge in node.demands} == {expected}
+    if not long_target:
+        low = manifest.nodes[VariantKey(0x009010, 1, 1)]
+        full = manifest.nodes[VariantKey(0xC09010, 1, 1)]
+        assert {(edge.target.pc24, edge.resolution.value) for edge in low.demands} == {
+            (0x001000, 'lle_exact')}
+        assert {edge.target.pc24 for edge in full.demands} == {0xC01000}
+    output = tmp_path / 'dispatch-output'
+    result = subprocess.run([sys.executable, str(ROOT / 'tools/v2_emit.py'),
+        '--rom', str(image), '--cfg-dir', str(cfg), '--out-dir', str(output),
+        '--no-host-root-scan'], text=True, capture_output=True)
+    assert result.returncode == 0, result.stdout + result.stderr
+    source = (output / 'bank00_v2.c').read_text()
+    assert ('_r = Target_M1X1(cpu)' in source) == long_target

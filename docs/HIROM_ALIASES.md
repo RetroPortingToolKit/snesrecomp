@@ -19,6 +19,13 @@ The runtime may reuse an XOR-80 body within a low-bank pair or a full-bank
 pair only after verifying the live cartridge ROM pointers. It never uses
 that check to substitute a full-bank body for a low-bank body.
 
+Inherited explicit indirect-dispatch targets follow the opcode's target width:
+near JMP/JSR targets resolve in the executing bank, even when the cfg spells
+the address in an authored physical alias. Long transfers retain their absolute
+target banks. Null dispatch slots remain null. This distinction is enforced in
+both decoders before native analysis or emission, so an alias cannot call a
+full-bank body in place of its separately analyzed low-bank continuation.
+
 Coverage reports include `rom_pc24` for physical grouping while retaining
 the raw target, execution variant, outcomes and qualification provenance.
 A successful C0 run cannot qualify bank 00. Coverage remains an analysis
@@ -34,5 +41,7 @@ boundaries need separate authority inputs, not a silently selected layout.
 
 These changes do not generalize aliasing for SA-1, S-DD1 or other banked
 mapping. Synthetic tests cover mapper boundaries, cfg precedence, short-jump
-semantics, native/emitter agreement, source export and authority overlays;
-the reported Secret of Mana/SD3 scene still needs its author's title replay.
+semantics, inherited near/long dispatches, native/emitter agreement, source
+export and authority overlays. The reporter supplied Secret of Mana replay
+evidence for the earlier head. Replay and uncapped host timings on the updated
+head remain title-level qualification; this does not claim to fix SD3 issue #80.
