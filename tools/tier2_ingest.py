@@ -9,7 +9,7 @@ import sys
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1] / "recompiler"))
 from v2.ram_coverage import describe_snapshot
-from v2.coverage_profile import load_profiles, promotion_reason, canonical_pc, pc
+from v2.coverage_profile import load_profiles, promotion_reason, canonical_pc, execution_pc, pc
 
 
 def audit(profile, declared=(), program=None):
@@ -17,7 +17,8 @@ def audit(profile, declared=(), program=None):
     rows = []
     for observed in profile.discoveries:
         row = dict(observed)
-        target = canonical_pc(row["target_pc24"], profile.identity.get("mapper"))
+        target = execution_pc(row["target_pc24"], profile.identity.get("mapper"))
+        row["rom_pc24"] = canonical_pc(row["target_pc24"], profile.identity.get("mapper"))
         key = f"{target:06X}:{row.get('entry_mx', 'unknown')}"
         node = nodes.get(key) or nodes.get(
             f"{pc(row['target_pc24']):06X}:{row.get('entry_mx', 'unknown')}")

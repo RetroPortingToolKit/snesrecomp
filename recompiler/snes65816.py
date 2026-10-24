@@ -178,10 +178,36 @@ def is_rom_address(bank: int, addr: int) -> bool:
 
 
 def rom_bank_mirror(bank: int):
-    """Only the active mapper's proven reset-map bank aliases."""
+    """Execution-compatible XOR-80 bank pair, not every physical ROM alias.
+
+    HiROM's low and full banks share upper-half bytes, but a short transfer
+    below $8000 observes different memory. They must be analyzed separately.
+    """
+    if _active_rom_mapping == ROM_MAP_HIROM:
+        return bank ^ 0x80 if bank not in (0x7E, 0x7F, 0xFE, 0xFF) else None
     if _active_rom_mapping != ROM_MAP_SA1 and (bank < 0x40 or 0x80 <= bank < 0xC0):
         return bank ^ 0x80
     return None
+
+
+def rom_bank_aliases(bank: int, addr: int) -> tuple[int, ...]:
+    """Physical reset-map ROM aliases, ordered with the requested bank first.
+
+    This is evidence/configuration identity, not permission to substitute an
+    analyzed body or its inferred exit modes in another execution bank.
+    """
+    bank, addr = bank & 0xFF, addr & 0xFFFF
+    if not is_rom_address(bank, addr) or _reloc_lookup(bank, addr) is not None:
+        return ()
+    if _active_rom_mapping == ROM_MAP_HIROM:
+        candidates = [(bank & 0x3F) | high for high in (0, 0x40, 0x80, 0xC0)]
+    else:
+        mirror = rom_bank_mirror(bank)
+        candidates = [bank] if mirror is None else [bank, mirror]
+    offset = rom_offset(bank, addr)
+    return (bank, *sorted(b for b in set(candidates) if b != bank
+                         and is_rom_address(b, addr)
+                         and rom_offset(b, addr) == offset))
 
 
 def vector_table_offset(data: bytes) -> int:

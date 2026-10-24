@@ -42,6 +42,7 @@ if str(_RECOMPILER_DIR) not in sys.path:
 
 from snes65816 import (  # noqa: E402
     decode_insn, lorom_offset, rom_bank_mirror, is_materialized_rom_address, Insn,
+    get_rom_mapping,
     ABS, INDIR, INDIR_X, LONG, IMM,
 )
 
@@ -714,9 +715,15 @@ def _resolve_indirect_dispatch_targets(rom: bytes, bank: int, insn,
                 return None
             # Zero is a real null dispatch slot, not bank:$0000. Preserve it
             # so every downstream consumer can skip the slot consistently.
-            entries.append(
-                0 if tv == 0 else (
-                    tv if tv > 0xFFFF else ((bank << 16) | (tv & 0xFFFF))))
+            if tv == 0:
+                entries.append(0)
+            elif get_rom_mapping() == 'hirom' and _dispatch_kind(insn, bases) == 'short':
+                # An inherited contract may spell the physical target in its
+                # authored bank. Near transfers keep the executing PB, which
+                # can give the same bytes different successors (ROM vs RAM).
+                entries.append((bank << 16) | (tv & 0xFFFF))
+            else:
+                entries.append(tv if tv > 0xFFFF else ((bank << 16) | tv))
         if len(entries) != count:
             return None
         return entries

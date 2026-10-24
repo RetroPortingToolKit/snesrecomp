@@ -1,4 +1,4 @@
-"""Export byte-verified LoROM instruction authority from matching disassembly.
+"""Export byte-verified standard LoROM/HiROM authority from matching disassembly.
 
 Reassemble first with the pinned assembler and locally owned ROM assets. The
 complete assembled image must match --rom. --classifier points to SMW's
@@ -40,7 +40,7 @@ def assemble_rows(args, d):
             kind[pc]=d.statement_kind(d.strip_comment(lines[fid][n-1]),'65816',{}, {})
     result={}
     for pc,(fid,n) in rows.items():
-        if pc&0xffff<0x8000 or pc==0xffffff:continue
+        if not snes65816.is_rom_address(pc >> 16, pc & 0xffff) or pc==0xffffff:continue
         text=d.strip_label(d.strip_comment(lines[fid][n-1])) if fid in lines and 1<=n<=len(lines[fid]) else ''
         repeat = bool(d.REP_PREFIX_RE.match(text) or re.match(r'^(?:DEX|DEY|INX|INY|NOP|ASL|LSR|ROL|ROR)\s*#',text,re.I))
         result[pc] = dict(kind=kind.get(pc,'unknown') if arch.get(pc)=='65816' else 'data',source=f'{paths[fid].name}:{n}',text=text,repeat=repeat)
@@ -58,17 +58,19 @@ def annotated_rows(args, d):
 
 def export(args, d):
     rom=args.rom.read_bytes()
-    if snes65816.detect_rom_mapping(rom) != 'lorom':
-        raise ValueError('these source adapters require a LoROM image')
-    snes65816.set_rom_mapping('lorom')
+    mapping = snes65816.detect_rom_mapping(rom)
+    if mapping not in ('lorom', 'hirom'):
+        raise ValueError('these source adapters require standard LoROM or HiROM')
+    snes65816.set_rom_mapping(mapping)
     assembled=args.assembled_rom.read_bytes()
     if len(assembled)==len(rom)+512:assembled=assembled[512:]
     if assembled!=rom:raise ValueError('assembled reference does not reproduce the complete ROM')
     rows=annotated_rows(args,d) if args.format=='usdasm' else assemble_rows(args,d)
     pcs=sorted(rows);instructions=[];data=[];unknown=[]
     for i,pc in enumerate(pcs):
+        if not snes65816.is_rom_address(pc >> 16, pc & 0xffff):continue
         row=rows[pc];end=pcs[i+1] if i+1<len(pcs) and pcs[i+1]>>16==pc>>16 else ((pc>>16)+1)<<16
-        off=snes65816.lorom_offset(pc>>16,pc&0xffff)
+        off=snes65816.rom_offset(pc>>16,pc&0xffff)
         if off>=len(rom):continue
         if row['kind']=='code':
             # Instruction length comes from assembler/source-address boundaries,
