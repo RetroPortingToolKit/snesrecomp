@@ -67,9 +67,6 @@ void rtl_accumulate_apu_catchup(void);
 /* Caller holds RtlApuLock. Before the first frame, retain bootstrap synthetic
  * pacing; afterward synchronize reads to the authoritative guest timestamp. */
 void rtl_sync_apu_to_cpu_locked(void);
-/* AOT APU pacing: called per-block from WatchdogCheck (generated code) so long
- * AOT runs flush the SPC every ~1024 master cycles like the interp bridge. */
-void rtl_apu_pace_check(void);
 
 #ifdef SNES_COSIM
 // Co-sim shared APU clock (SNES_COSIM_APU_SHARED=1, dev-only): pace the SPC
