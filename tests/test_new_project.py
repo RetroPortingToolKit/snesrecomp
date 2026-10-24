@@ -32,6 +32,10 @@ def _use_test_interpreter(monkeypatch):
     # Shell subprocesses must use the same installed Python as pytest, not
     # Windows' python3 Store alias or an unrelated MSYS installation.
     monkeypatch.setenv("PYTHON", pathlib.Path(sys.executable).as_posix())
+    # Most fixtures deliberately have no framework submodule. A caller's
+    # checkout override would let them generate anyway and mask that case.
+    # Tests that need a framework pass their own explicit override.
+    monkeypatch.delenv("SNESRECOMP_ROOT", raising=False)
 
 
 def _fixture_rom(path: pathlib.Path) -> None:
