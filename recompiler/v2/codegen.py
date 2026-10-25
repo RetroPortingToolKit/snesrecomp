@@ -1017,7 +1017,8 @@ def _emit_xce(op: XCE) -> List[str]:
         "  uint8 _t = cpu->emulation;",
         "  cpu->emulation = cpu->_flag_C;",
         "  cpu->_flag_C = _t;",
-        "  if (cpu->emulation) { cpu->m_flag = 1; cpu->x_flag = 1; cpu_mirrors_to_p(cpu); }",
+        "  if (cpu->emulation) { cpu->m_flag = 1; cpu->x_flag = 1; cpu->X &= 0xFFu; cpu->Y &= 0xFFu;",
+        "                        cpu_mirrors_to_p(cpu); }",
         "  cpu_trace_px_record(cpu, 0, 7 /*XCE*/, _old_p, cpu->P);",
         "}",
     ]

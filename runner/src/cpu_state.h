@@ -373,6 +373,11 @@ static inline void cpu_p_to_mirrors(CpuState *cpu) {
     cpu->_flag_D = (cpu->P & CPU_P_D) ? 1 : 0;
     cpu->_flag_V = (cpu->P & CPU_P_V) ? 1 : 0;
     cpu->_flag_N = (cpu->P & CPU_P_N) ? 1 : 0;
+    /* 65816: with X set the index registers are 8-bit and their high bytes
+     * read as zero (SEP #$10, PLP, RTI). 8-bit X/Y writes zero-extend, but a
+     * register kept across the switch would otherwise carry its old high byte
+     * into the next 16-bit use (e.g. an IRQ handler's REP #$30; PHX). */
+    if (cpu->x_flag) { cpu->X &= 0xFFu; cpu->Y &= 0xFFu; }
 }
 
 static inline void cpu_mirrors_to_p(CpuState *cpu) {
