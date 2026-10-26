@@ -37,7 +37,7 @@ STUBS = r'''
 #include <stdint.h>
 typedef struct { uint32_t sampleRead, sampleWrite; } Dsp;
 static Dsp dsp;
-static struct Apu { Dsp *dsp; } apu = { &dsp };
+static struct Apu { Dsp *dsp; uint64_t portClock; } apu = { &dsp, 0 };
 static struct Machine { struct Apu *apu; } machine = {&apu};
 static struct Machine *g_snes = &machine;
 static void *g_audio_mutex;
@@ -137,6 +137,93 @@ int main(void) {
   RtlApuUnlock(); assert(calls == 1 && !locked);
   g_audio_producer_active = false;
   RtlApuLock(); RtlApuUnlock(); assert(calls == 1 && !locked);
+  return 0;
+}
+'''
+    run_c(tmp_path, source)
+
+
+def test_long_frame_streams_without_fifo_loss_and_keeps_guest_time(tmp_path):
+    host = (ROOT / "runner/src/desktop/host_main.c").read_text(encoding="utf-8")
+    rtl = (ROOT / "runner/src/common_rtl.c").read_text(encoding="utf-8")
+    source = STUBS + r'''
+#include <stdio.h>
+#include <stdlib.h>
+''' + (ROOT / "runner/src/apu_frame_clock.h").read_text(encoding="utf-8") + r'''
+static struct { uint64_t master_cycles; } g_cpu;
+static bool g_extended_frame_timing = true;
+static RtlApuFrameClock g_apu_frame_clock;
+static unsigned snes_frame_counter;
+static uint64_t s_apu_boundary_ns, s_apu_boundary_calls;
+static uint64_t sync_cycles, dropped, peak;
+static unsigned slices;
+static bool g_apu_frame_time_valid = true;
+static void rtl_accumulate_apu_catchup(void) { assert(0); }
+static void snes_catchupApu(void *s) { (void)s; assert(0); }
+static uint64_t rtl_apu_guest_cycle(void) {
+  return rtl_apu_clock_now(&g_apu_frame_clock, g_cpu.master_cycles);
+}
+enum { AUDIO_TRACE_PRODUCER_CPU, AUDIO_TRACE_PRODUCER_UNKNOWN };
+static void audio_trace_set_producer(int p) { (void)p; }
+static void audio_trace_on_guest_sync(int kind, uint64_t cycles) {
+  assert(kind == 0 || kind == 1); sync_cycles = cycles;
+}
+uint64_t snesrecomp_host_now_ns(void) { return 0; }
+static bool apu_runToGuestCycle(struct Apu *a, uint64_t target, uint32_t budget) {
+  assert(locked == 1 && target >= a->portClock);
+  ++slices;
+  uint64_t cycles = target - a->portClock;
+  if (cycles > budget) cycles = budget;
+  uint32_t samples = (uint32_t)((a->portClock+cycles)/32 - a->portClock/32);
+  a->portClock += cycles;
+  uint32_t fill = dsp_available(a->dsp);
+  if (samples > 8192-fill) { dropped += samples-(8192-fill); samples=8192-fill; }
+  a->dsp->sampleWrite += samples;
+  fill = dsp_available(a->dsp);
+  if (fill > peak) peak = fill;
+  return a->portClock == target;
+}
+'''
+    source += function(rtl, "RtlAudioSetProducerWait")
+    source += function(rtl, "RtlAudioWaitForConsumer")
+    source += "\nstatic void HostWaitForAudioProducer(void);\n"
+    source += function(host, "RtlApuLock") + function(host, "RtlApuUnlock")
+    source += function(host, "HostWaitForAudioProducer")
+    source += function(rtl, "rtl_run_apu_to_guest_cycle_locked")
+    source += function(rtl, "rtl_sync_apu_to_cpu_locked")
+    source += function(rtl, "rtl_sync_apu_frame_boundary")
+    source += r'''
+int main(void) {
+  RtlAudioSetProducerWait(HostWaitForAudioProducer);
+  consume = g_audio_producer_active = true;
+  /* Exactly 44 hardware fields: no shortening of the loader or loss of PCM. */
+  g_cpu.master_cycles = 44*RTL_MASTER_CYCLES_PER_FRAME;
+  rtl_sync_apu_frame_boundary();
+  assert(!locked && !g_apu_lock_depth && !dropped && slices == 44);
+  assert(apu.portClock == 44*RTL_APU_CYCLES_PER_FRAME);
+  assert(sync_cycles == apu.portClock && g_apu_frame_clock.last_duration == sync_cycles);
+  assert(dsp.sampleWrite == 44*534 && peak <= HOST_AUDIO_HIGH_WATER+534);
+  assert(dsp.sampleRead && delays && dsp_available(&dsp) <= HOST_AUDIO_HIGH_WATER);
+  /* A port read can require the same long interval before the boundary. */
+  apu.portClock = dsp.sampleRead = dsp.sampleWrite = 0;
+  g_apu_frame_clock = (RtlApuFrameClock){0};
+  slices = delays = ticks = 0; peak = dropped = 0;
+  RtlApuLock(); rtl_sync_apu_to_cpu_locked(); RtlApuUnlock();
+  assert(!locked && !dropped && slices == 44);
+  assert(sync_cycles == 44*RTL_APU_CYCLES_PER_FRAME && dsp.sampleWrite == 44*534);
+  /* The same guest interval with a stopped consumer remains bounded. */
+  apu.portClock = dsp.sampleRead = dsp.sampleWrite = 0;
+  g_apu_frame_clock = (RtlApuFrameClock){0};
+  consume = false; delays = ticks = 0; g_audio_consumer_stalled = false;
+  rtl_sync_apu_frame_boundary();
+  assert(!locked && apu.portClock == 44*RTL_APU_CYCLES_PER_FRAME && delays == 250);
+  /* A pathological target still cannot evade the original 1<<20 cycle cap. */
+  apu.portClock = 0; dsp.sampleRead = dsp.sampleWrite = 0;
+  g_apu_frame_clock = (RtlApuFrameClock){0};
+  g_cpu.master_cycles = 100*RTL_MASTER_CYCLES_PER_FRAME;
+  g_audio_producer_active = false;
+  rtl_sync_apu_frame_boundary();
+  assert(!locked && apu.portClock == (1u<<20) && sync_cycles == (1u<<20));
   return 0;
 }
 '''
