@@ -30,12 +30,26 @@ static unsigned locks;
 static unsigned audio_resets;
 static unsigned save_captures;
 static unsigned extra_loads;
+static bool watch_audio;
+static DspOutputRing expected_audio;
+static unsigned audio_observations;
 static void rtl_reset_audio_delivery(void) { ++audio_resets; }
 void snes_mod_audio_stop_all(void) {}
 const RtlGameInfo *g_rtl_game_info;
 
 void RtlApuLock(void) { ++locks; }
-void RtlApuUnlock(void) { assert(locks); --locks; }
+void RtlApuUnlock(void) {
+    assert(locks); --locks;
+    if (!locks && watch_audio) {
+        /* A device can run at every unlock, including title preflight and
+         * immediately after guest deserialization. It must see only the live
+         * queue, and its consumed samples must never be restored later. */
+        assert(dsp.sampleWrite==expected_audio.write && dsp.sampleRead==expected_audio.read);
+        assert(!memcmp(dsp.sampleBuffer,expected_audio.samples,sizeof(dsp.sampleBuffer)));
+        assert(dsp.sampleRead<dsp.sampleWrite);
+        ++dsp.sampleRead; ++expected_audio.read; ++audio_observations;
+    }
+}
 void PpuResetWidescreenOamHistory(Ppu *p) { (void)p; ++presentation_resets; }
 void cart_saveload(Cart *c, SaveLoadInfo *s) { s->func(s, c->ram, c->ramSize); }
 static void save_extra(SaveLoadInfo *s) {

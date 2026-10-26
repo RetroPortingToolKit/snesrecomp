@@ -25,6 +25,9 @@ def test_rejected_snapshot_preserves_machine_and_host(tmp_path):
     parts = [Path(__file__).with_name('transaction_fixture.c').read_text(encoding='utf-8')]
     for file, name in [('cpu','cpu'),('apu','apu'),('dsp','dsp'),('spc','spc'),('dma','dma'),('ppu','ppu')]:
         parts.append(function((RUNTIME / f'snes/{file}.c').read_text(encoding='utf-8'), f'{name}_saveload('))
+    dsp = (RUNTIME / 'snes/dsp.c').read_text(encoding='utf-8')
+    for name in ('dsp_output_ring_save(', 'dsp_output_ring_restore('):
+        parts.append(function(dsp, name))
     parts.append(snes[snes.index('static uint32_t s_saveload_version'):snes.index('void snes_reset(')])
     parts.append(rtl[rtl.index('#define RTL_SAV_MAGIC'):rtl.index('/* Host-side state that paces')])
     parts.append(rtl[rtl.index('bool RtlSaveSnapshot('):rtl.rfind('/*', 0, rtl.index('See common_rtl.h for why the guest'))])

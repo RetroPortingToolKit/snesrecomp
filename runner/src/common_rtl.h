@@ -420,10 +420,10 @@ size_t RtlRollbackSnapshotBound(void);
  * because the caller is about to rewind them (run-ahead; netplay resim could
  * use this too).
  *
- * While set, RtlRunFrame does not fire the per-frame mod hook. A mod counting
- * frames -- the performance log above all -- must count what reached the
- * screen, not what was speculated and thrown away. Everything else about the
- * frame is unchanged, so determinism is untouched.
+ * While set, per-frame mod publication and DSP output-ring publication are
+ * suppressed. DSP synthesis still advances on guest accesses; its future
+ * samples never become visible to the live audio consumer. Keep this window
+ * active through rollback, until the real guest timeline is restored.
  *
  * The frame COUNTER is deliberately not gated here: leaving it to advance
  * keeps RtlRunFrame byte-identical between real and speculative frames, and

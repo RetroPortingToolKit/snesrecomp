@@ -180,11 +180,10 @@ int snes_runahead_run_frame(uint32_t inputs)
      * fire for it and the frame counter is restored below either way. */
     g_snes->disableRender = saved_render;
     s_capture(s_capture_ctx, 1);
-    RtlSetSpeculativeFrame(false);
 
-    /* Audio produced by speculation is thrown away; frame 0 already produced
-     * this tick's real samples. The DSP output ring itself belongs to the live
-     * audio thread and is deliberately NOT rewound by the rollback load. */
+    /* DSP publication is suppressed throughout speculation. Retain the
+     * producer rewind defensively; frame 0 already supplied the real PCM.
+     * The rollback loader preserves the live queue and resampler atomically. */
     RtlAudioRewindProducer(audio_cursor);
 
     if (!RtlRollbackLoadFromMemory(s_blob, len)) {
@@ -202,5 +201,6 @@ int snes_runahead_run_frame(uint32_t inputs)
      * frame-keyed traps -- would read N+1x fast. */
     snes_frame_counter = saved_counter;
     g_snes->disableRender = saved_render;
+    RtlSetSpeculativeFrame(false);
     return 1;
 }

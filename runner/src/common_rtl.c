@@ -1086,6 +1086,12 @@ bool RtlLoadSnapshotFromMemory(const void *data, size_t size) {
   bool valid = snapshot_check_guest(data, size, hdr[1]);
   snes_saveload_set_version(previous_version);
   if (!valid) { RtlApuUnlock(); return false; }
+  /* A rollback replaces guest DSP state while the output queue remains on
+   * the live host timeline. Preserve it under this same lock: lifting it
+   * out around the whole loader lets the consumer advance between copies,
+   * or observe the snapshot's temporary/blanked queue. */
+  DspOutputRing live_audio;
+  if (s_rollback_load) dsp_output_ring_save(g_snes->apu->dsp, &live_audio);
   MemorySli memory = {
     { &memory_sli_func, &memory_sli_peek }, (uint8 *)data, size, sizeof hdr, false, false
   };
@@ -1098,7 +1104,10 @@ bool RtlLoadSnapshotFromMemory(const void *data, size_t size) {
   if (hdr[1] >= 5 && g_rtl_game_info && g_rtl_game_info->state_load_extra &&
       memory.position < size && !memory.error)
     g_rtl_game_info->state_load_extra(&memory.base, hdr[1]);
-  if (!memory.error) rtl_reset_audio_delivery();
+  if (s_rollback_load)
+    dsp_output_ring_restore(g_snes->apu->dsp, &live_audio);
+  else if (!memory.error)
+    rtl_reset_audio_delivery();
   RtlApuUnlock();
   if (memory.error) return false;
   g_snes->beamMasterLast = g_cpu.master_cycles;
@@ -1429,7 +1438,6 @@ bool RtlSaveSnapshotRingBlanked(const char *filename) {
 
 bool RtlRollbackLoadFromMemory(const void *data, size_t size) {
   RtlRollbackResidue residue;
-  DspOutputRing ring;
   size_t guest;
   uint32 exec_len = 0;
   bool ok;
@@ -1446,12 +1454,6 @@ bool RtlRollbackLoadFromMemory(const void *data, size_t size) {
   if (exec_len > guest)
     return false;
   guest -= exec_len;
-
-  /* The audio output ring belongs to the live consumer, not to the tick we
-   * are rewinding to. Lift it out around the guest blob. */
-  RtlApuLock();
-  dsp_output_ring_save(g_snes->apu->dsp, &ring);
-  RtlApuUnlock();
 
   /* A rollback is not a timeline jump, and must not read as one.
    *
@@ -1485,7 +1487,6 @@ bool RtlRollbackLoadFromMemory(const void *data, size_t size) {
   }
 
   RtlApuLock();
-  dsp_output_ring_restore(g_snes->apu->dsp, &ring);
   if (ok)
     rtl_rb_residue_apply(&residue);
   RtlApuUnlock();
@@ -1986,6 +1987,25 @@ void RtlApuWrite(uint16 adr, uint8 val) {
 uint64_t apus_prof_calls = 0;
 double apus_prof_ms = 0.0;
 #endif
+/* Caller holds the APU mutex. Only the consumer may run between slices;
+ * it drains PCM without advancing the SPC or changing CPU/APU port state.
+ * Cover both the final frame sync and the first port touch after a long
+ * compiled body, which can precede that boundary by an entire loader. */
+static bool rtl_run_apu_to_guest_cycle_locked(uint64_t target) {
+  uint32_t remaining = 1u << 20;
+  bool synced;
+  do {
+    uint32_t slice = remaining < RTL_APU_CYCLES_PER_FRAME
+        ? remaining : (uint32_t)RTL_APU_CYCLES_PER_FRAME;
+    synced = apu_runToGuestCycle(g_snes->apu, target, slice);
+    remaining -= slice;
+    if (synced || !remaining) break;
+    RtlApuUnlock();
+    RtlApuLock();
+  } while (true);
+  return synced;
+}
+
 void rtl_sync_apu_to_cpu_locked(void) {
 #ifdef SNESRECOMP_INTERP_PROFILE
   { extern uint64_t apus_prof_calls; extern double apus_prof_ms;
@@ -2004,8 +2024,7 @@ void rtl_sync_apu_to_cpu_locked(void) {
   }
   audio_trace_set_producer(AUDIO_TRACE_PRODUCER_CPU);
   uint64_t before = g_snes->apu->portClock;
-  bool synced = apu_runToGuestCycle(g_snes->apu, rtl_apu_guest_cycle(),
-                                    1u << 20);
+  bool synced = rtl_run_apu_to_guest_cycle_locked(rtl_apu_guest_cycle());
   audio_trace_on_guest_sync(0, g_snes->apu->portClock - before);
   audio_trace_set_producer(AUDIO_TRACE_PRODUCER_UNKNOWN);
   if (!synced)
@@ -2190,8 +2209,14 @@ static void rtl_sync_apu_frame_boundary(void) {
   uint64_t boundary = g_extended_frame_timing
       ? rtl_apu_clock_finish(&g_apu_frame_clock, g_cpu.master_cycles)
       : (uint64_t)snes_frame_counter * RTL_APU_CYCLES_PER_FRAME;
-  bool synced = apu_runToGuestCycle(g_snes->apu, boundary,
-                                    1u << 20);
+  /* An NMI-disabled loader can consume many video periods in one host
+   * iteration (SM's unpause restoration takes 42-44 on the original ROM).
+   * Publishing all of that PCM under one lock overflows the bounded FIFO,
+   * then starves it while the presentation clock waits out those periods.
+   * Reuse the ordinary producer backpressure between bounded SPC slices.
+   * Guest time, event ordering and the total runaway budget are unchanged;
+   * the consumer only gets a chance to play each slice before the next. */
+  bool synced = rtl_run_apu_to_guest_cycle_locked(boundary);
   audio_trace_on_guest_sync(1, g_snes->apu->portClock - before);
   audio_trace_set_producer(AUDIO_TRACE_PRODUCER_UNKNOWN);
   if (!synced)
@@ -2208,7 +2233,16 @@ static void rtl_sync_apu_frame_boundary(void) {
 #endif
 }
 
-void RtlSetSpeculativeFrame(bool on) { g_rtl_speculative_frame = on; }
+void RtlSetSpeculativeFrame(bool on) {
+  if (!g_snes || !g_snes->apu) {
+    g_rtl_speculative_frame = on;
+    return;
+  }
+  RtlApuLock();
+  g_rtl_speculative_frame = on;
+  dsp_set_output_suppressed(g_snes->apu->dsp, on);
+  RtlApuUnlock();
+}
 bool RtlSpeculativeFrame(void) { return g_rtl_speculative_frame; }
 
 void RtlAudioSetProducerWait(void (*wait_for_consumer)(void)) {
