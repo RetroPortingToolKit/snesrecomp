@@ -42,6 +42,10 @@ boundaries need separate authority inputs, not a silently selected layout.
 These changes do not generalize aliasing for SA-1, S-DD1 or other banked
 mapping. Synthetic tests cover mapper boundaries, cfg precedence, short-jump
 semantics, inherited near/long dispatches, native/emitter agreement, source
-export and authority overlays. The reporter supplied Secret of Mana replay
-evidence for the earlier head. Replay and uncapped host timings on the updated
-head remain title-level qualification; this does not claim to fix SD3 issue #80.
+export and authority overlays. The reporter qualified corrected head `0dae9c8`
+with Secret of Mana boot, field/flight, cutscene and shop replays: state, video
+and master-clock checkpoints matched the hand-alias baseline in compiled and
+interpreter-only runs. Matched warmed Release timings were within noise, with
+no reported startup or working-set increase. See the
+[replay and runtime report](https://github.com/RetroPortingToolKit/snesrecomp/pull/199#issuecomment-6400790503).
+This evidence is title-specific and does not claim to fix SD3 issue #80.
