@@ -30,6 +30,7 @@ typedef struct WsShadowLayer {
   uint32_t scrollY;
   WsShadowWorldProvider provider;
   void *providerContext;
+  bool providerNativeOverrides;
   uint16_t mapBaseWord;
   uint16_t *entries;
   uint8_t *valid;
@@ -181,6 +182,7 @@ void WsShadowReset(void) {
     layer->dir = 0;
     layer->provider = NULL;
     layer->providerContext = NULL;
+    layer->providerNativeOverrides = false;
     layer->haveLastOrigin = false;
     layer->haveRetainMapBase = false;
     layer->havePrevLive = false;
@@ -225,6 +227,7 @@ void WsShadowSetWorld(int layerIndex, uint32_t worldX, uint32_t worldY) {
   layer->worldSet = true;
   layer->provider = NULL;
   layer->providerContext = NULL;
+  layer->providerNativeOverrides = false;
   if (layer->haveWorldAnchor && worldX != layer->worldX)
     layer->dir = ((int32_t)(worldX - layer->worldX) > 0) ? 1 : -1;
   layer->haveWorldAnchor = true;
@@ -235,10 +238,11 @@ void WsShadowSetWorld(int layerIndex, uint32_t worldX, uint32_t worldY) {
 }
 
 void WsShadowSetWorldProvider(int layerIndex, WsShadowWorldProvider provider,
-                              void *context) {
+                              void *context, bool nativeOverrides) {
   if (layerIndex < 0 || layerIndex >= kLayers) return;
   s_layers[layerIndex].provider = provider;
   s_layers[layerIndex].providerContext = context;
+  s_layers[layerIndex].providerNativeOverrides = provider && nativeOverrides;
 }
 
 void WsShadowSetScroll(int layerIndex, uint32_t scrollX, uint32_t scrollY) {
@@ -1302,8 +1306,10 @@ uint16_t WsShadowTile(int layerIndex, int screenX, uint32_t wrappedY,
    * an exact one-tile seam before margin rendering begins.
    */
   const int tile_pixels = 1 << (layer->tileShift ? layer->tileShift : 3);
+  const bool native = screenX < 256 && screenX + tile_pixels > 0;
   if (!layer->active ||
-      (screenX >= 0 && screenX + tile_pixels <= 256))
+      (screenX >= 0 && screenX + tile_pixels <= 256 &&
+       !layer->providerNativeOverrides))
     return realTile;
 
   /* Layered margin sources, exact-first: (1) the world-keyed history —
@@ -1329,7 +1335,7 @@ uint16_t WsShadowTile(int layerIndex, int screenX, uint32_t wrappedY,
   if (layer->provider && !layer->retainHistory) {
     /* One tile can straddle the native edge under fine scroll. Its native
      * pixels remain authoritative even during an in-flight column upload. */
-    if (screenX < 256 && screenX + tile_pixels > 0) return realTile;
+    if (native && !layer->providerNativeOverrides) return realTile;
     int32_t dx = (hScroll - layer->scrollX) & 0x3ff;
     int32_t dy = (wrappedY - layer->scrollY) & 0x3ff;
     if (dx >= 512) dx -= 1024;
@@ -1337,12 +1343,16 @@ uint16_t WsShadowTile(int layerIndex, int screenX, uint32_t wrappedY,
     worldX += dx;
     worldY = (int32_t)layer->worldY + dy;
     if (worldX >= 0 && worldY >= 0) {
-      exact = layer->provider(layer->providerContext,
+      WsShadowSource source = layer->provider(layer->providerContext,
                              (uint32_t)worldX >> shift,
                              (uint32_t)worldY >> shift, &exactEntry);
+      if (source == kWsShadowOverride) return exactEntry;
+      if (native) return realTile;
+      exact = source == kWsShadowExact;
       if (exact) WsShadowForceTile(layerIndex, (uint32_t)worldX >> shift,
                                   (uint32_t)worldY >> shift, exactEntry);
     }
+    if (native) return realTile;
   }
   if (layer->entries && worldX >= 0 && worldY >= 0) {
     uint16_t entry;

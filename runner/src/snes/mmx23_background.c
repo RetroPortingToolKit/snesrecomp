@@ -1,5 +1,5 @@
-/* X2/X3 share the retail two-layer map format. Native view is always VRAM;
- * only self-validated margin lookups use these retained WRAM/ROM sources. */
+/* X2/X3 share the retail two-layer map format. Native view uses VRAM except
+ * for X1's hidden door-face policy; self-validated gutters use WRAM/ROM. */
 #include "mmx23_background.h"
 #include <stdint.h>
 #include <stdio.h>
@@ -9,6 +9,7 @@
 #include "ppu.h"
 #include "snes.h"
 #include "ws_shadow.h"
+#include "mmx_door.h"
 static Snes *s_snes;
 static Ppu *s_ppu;
 static uint8_t *s_ram;
@@ -16,6 +17,8 @@ static uint8_t *s_ram;
  * lines. Its size is independent of world height; collisions re-resolve. */
 static uint32_t s_tile_keys[4096];
 static uint16_t s_tile_values[4096];
+static uint32_t s_door_keys[4096];
+static uint8_t s_door_values[4096];
 typedef struct MmxBgStream {
   uint16_t layoutBase;  /* screen-id layout window, bank $7E        */
   uint16_t screenDefs;  /* 16x16 block-id maps, 512B/screen, bank $7E */
@@ -140,19 +143,63 @@ static bool stream_valid(const MmxBgStream *s, int32_t wx, int32_t wy) {
 }
 
 
-static bool world_provider(void *context, uint32_t tx, uint32_t ty, uint16_t *entry) {
-  const MmxBgStream *stream = context;
-  if (tx >= 1024 || ty >= 1024) return false;
+static uint16_t source_tile(const MmxBgStream *stream, uint32_t tx, uint32_t ty) {
   uint32_t key = tx | (ty << 10) | ((stream == &kBgStreams[1]) << 20);
   unsigned cache = (key * 2654435761u) >> 20;
   if (s_tile_keys[cache] == key + 1) {
-    *entry = s_tile_values[cache]; return true;
+    return s_tile_values[cache];
   }
   uint32_t x = tx * 8, y = ty * 8;
-  *entry = world_tile(stream, x, y);
+  uint16_t entry = world_tile(stream, x, y);
   s_tile_keys[cache] = key + 1;
-  s_tile_values[cache] = *entry;
-  return true;
+  s_tile_values[cache] = entry;
+  return entry;
+}
+
+static bool door_body(int x, int y) {
+  if (x < 0 || x >= 8192 || y < 0 || y >= 8192) return false;
+  unsigned tx = (unsigned)x / 16, ty = (unsigned)y / 16;
+  uint32_t key = tx | (ty << 9);
+  unsigned cache = (key * 2654435761u) >> 20;
+  if (s_door_keys[cache] == key + 1) return s_door_values[cache];
+  bool found = false;
+  for (int row = 0; row < 3 && !found; ++row) {
+    int top = (int)ty - row;
+    if (top < 0 || top + 2 >= 512) continue;
+    uint16_t words[3][4];
+    for (int r = 0; r < 3; ++r)
+      for (int q = 0; q < 4; ++q)
+        words[r][q] = source_tile(&kBgStreams[0], tx * 2 + (q & 1),
+                                  (top + r) * 2 + (q >> 1));
+    found = MmxDoorBody(words);
+  }
+  s_door_keys[cache] = key + 1;
+  s_door_values[cache] = found;
+  return found;
+}
+
+static WsShadowSource world_provider(void *context, uint32_t tx, uint32_t ty,
+                                     uint16_t *entry) {
+  const MmxBgStream *stream = context;
+  if (tx >= 1024 || ty >= 1024) return kWsShadowMiss;
+  int x = (int)tx * 8, y = (int)ty * 8;
+  if (stream == &kBgStreams[0] && door_body(x, y)) {
+    bool left = door_body(x - 16, y), right = door_body(x + 16, y);
+    if (left || right) {
+      int boundary = (x & ~15) + (right ? 16 : 0);
+      bool view_left = wram16(stream->worldXAddr) + 128 < boundary;
+      /* Retain the face looking into the current room. The outward-facing
+       * face samples the wall beyond it, exactly as in X1's renderer. */
+      if (view_left && left) tx += 2;
+      else if (!view_left && right) tx -= 2;
+      else { *entry = source_tile(stream, tx, ty); return kWsShadowExact; }
+      if (tx >= 1024) return kWsShadowMiss;
+      *entry = source_tile(stream, tx, ty);
+      return kWsShadowOverride;
+    }
+  }
+  *entry = source_tile(stream, tx, ty);
+  return kWsShadowExact;
 }
 
 void Mmx23ConfigureWsBgMargins(Snes *snes, Ppu *ppu, uint8_t *ram, bool enabled) {
@@ -167,6 +214,7 @@ void Mmx23ConfigureWsBgMargins(Snes *snes, Ppu *ppu, uint8_t *ram, bool enabled)
       (ppu->bgmode & 0x37)==1 && ppu->bgXsc[0]==0x51 && ppu->bgXsc[1]==0x59;
   bool any=false;
   memset(s_tile_keys,0,sizeof(s_tile_keys));
+  memset(s_door_keys,0,sizeof(s_door_keys));
   if (scene) for (unsigned layer=0; layer<2; ++layer) {
     const MmxBgStream *stream=&kBgStreams[layer];
     int32_t wx=wram16(stream->worldXAddr), wy=wram16(stream->worldYAddr);
@@ -176,7 +224,7 @@ void Mmx23ConfigureWsBgMargins(Snes *snes, Ppu *ppu, uint8_t *ram, bool enabled)
     wx+=dx; wy+=dy;
     if (!stream_valid(stream,wx,wy)) continue;
     WsShadowSetWorld(layer,(uint32_t)wx,(uint32_t)wy);
-    WsShadowSetWorldProvider(layer,world_provider,(void *)stream);
+    WsShadowSetWorldProvider(layer,world_provider,(void *)stream,layer==0);
     WsShadowSetBlankTile(layer,-1);
     WsShadowSetRespectGameWrites(layer,60);
     any=true;
