@@ -21,6 +21,15 @@ void WsShadowReset(void);
  * call WsShadowSetScroll with the PPU buffer scroll. */
 void WsShadowSetWorld(int layer, uint32_t worldX, uint32_t worldY);
 
+/* Exact, uncached map source for a streaming title. Register after SetWorld
+ * each frame. Queries use the rendered scanline's scroll phase and signed
+ * 10-bit deltas, and cover world positions beyond the history cache bounds.
+ * Native pixels retain VRAM; recent explicit game writes keep precedence. */
+typedef bool (*WsShadowWorldProvider)(void *context, uint32_t worldTileX,
+                                      uint32_t worldTileY, uint16_t *entry);
+void WsShadowSetWorldProvider(int layer, WsShadowWorldProvider provider,
+                              void *context);
+
 /* PPU scroll used to address the streaming VRAM tilemap window and to convert
  * scanline-wrapped Y back to world Y. Defaults to the SetWorld values. */
 void WsShadowSetScroll(int layer, uint32_t scrollX, uint32_t scrollY);
