@@ -418,6 +418,20 @@ static int g_savestate_menu_hotkey;
 static int g_rewind_hotkey;
 static int g_open_launcher_hotkey;   /* in_game_launcher only */
 static uint64_t g_state_generation;
+static bool g_host_replaying_frame;
+
+bool snesrecomp_host_frame_is_live(void) {
+  return !RtlSpeculativeFrame() && !g_host_replaying_frame;
+}
+
+void snesrecomp_request_exit(void) {
+  if (!snesrecomp_host_frame_is_live()) return;
+  SDL_Event event;
+  memset(&event, 0, sizeof(event));
+  event.type = SDL_QUIT;
+  if (SDL_PushEvent(&event) <= 0)
+    host_report_breadcrumb("host exit request could not be queued: %s", SDL_GetError());
+}
 
 /* The last field actually presented, kept so an overlay can freeze the guest
  * and still have something to draw behind itself. Sized like g_my_pixels. */
@@ -1270,9 +1284,12 @@ static void CaptureSimulationFrame(unsigned number) {
 
 #if defined(SNESRECOMP_NET_ROLLBACK)
 static void NetplayReplayFrame(uint32_t inputs, uint32_t tick) {
+  bool was_replaying = g_host_replaying_frame;
+  g_host_replaying_frame = true;
   if (g_game->before_run_frame) g_game->before_run_frame();
   RtlRunFrame(inputs);
   CaptureSimulationFrame(tick + 1);
+  g_host_replaying_frame = was_replaying;
 }
 #endif
 

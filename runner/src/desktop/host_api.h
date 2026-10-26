@@ -29,6 +29,17 @@ extern SDL_Window *g_window;
  * pulling in this one. */
 extern bool g_config_dirty;
 
+/* Game-owned host UI may change persistent presentation settings only while
+ * this is true. Speculative frames and netplay rollback replay must not
+ * change a window, write settings or perform application actions. */
+bool snesrecomp_host_frame_is_live(void);
+
+/* Request a normal application shutdown at the host's next event poll.
+ * Returns to the caller; configuration, SRAM and host resources follow the
+ * same shutdown path as closing the window. Call after SDL initialization.
+ * Speculative frames and netplay rollback replays cannot request an exit. */
+void snesrecomp_request_exit(void);
+
 /* Enables or disables fullscreen/borderless mode from dependent project code.
  * Clamps mode to {0,1}: 0 = windowed, 1 = borderless
  * (SNESRECOMP_SDL_WINDOW_FULLSCREEN_DESKTOP).
