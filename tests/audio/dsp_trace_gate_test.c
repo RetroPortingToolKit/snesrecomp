@@ -142,6 +142,38 @@ static void test_disabled_shadow_preserves_pcm_and_state(void) {
   dsp_free(ref);
 }
 
+static void test_speculative_output_isolation(void) {
+  uint8_t aram_a[0x10000] = {0}, aram_b[0x10000] = {0};
+  set_shadow_env(NULL);
+  Dsp *live = dsp_init(aram_a), *ref = dsp_init(aram_b);
+  check(live && ref, "allocated publication-policy DSPs");
+  if (!live || !ref) return;
+  seed_dsp(live); seed_dsp(ref);
+  dsp_cycle(live); dsp_cycle(ref);
+  int16_t heard[32] = {0};
+  check(dsp_getSamples(live, heard, 1) == 1, "consumer hears the real frame");
+  check(heard[0] || heard[1], "publication test uses non-silent PCM");
+  dsp_set_output_suppressed(live, true);
+  for (unsigned i = 0; i < 8; ++i) { dsp_cycle(live); dsp_cycle(ref); }
+  check(live->sampleWrite == 1 && live->sampleRead == 1,
+        "speculative cycles never publish into the live ring");
+  check(dsp_getSamples(live, heard, 16) == 0,
+        "a callback before rollback cannot consume future PCM");
+  size_t guest = offsetof(Dsp, ram);
+  check(offsetof(Dsp, suppressOutput) < guest,
+        "guest snapshots cannot change the host publication policy");
+  check(!memcmp((uint8_t *)live + guest, (uint8_t *)ref + guest,
+                offsetof(Dsp, sampleBuffer) - guest),
+        "suppressed cycles retain exact DSP synthesis state");
+  dsp_set_output_suppressed(live, false);
+  dsp_cycle(live); dsp_cycle(ref);
+  check(dsp_getSamples(live, heard, 1) == 1 && live->sampleWrite == 2,
+        "real PCM resumes without speculative samples");
+  check(heard[0] == ref->sampleBuffer[18] && heard[1] == ref->sampleBuffer[19],
+        "resumed PCM matches the ungated synthesis reference");
+  dsp_free(live); dsp_free(ref);
+}
+
 static void test_armed_shadow_still_verifies(void) {
   uint8_t aram[0x10000] = {0};
   AudioTraceStats before, after;
@@ -183,6 +215,7 @@ int main(void) {
   test_disabled_shadow_allocation();
   test_direct_forensic_counters();
   test_disabled_shadow_preserves_pcm_and_state();
+  test_speculative_output_isolation();
   test_armed_shadow_still_verifies();
   if (failures) return 1;
   printf("dsp_trace_gate_test: PASS forensics=%d\n", SNESRECOMP_DSP_FORENSICS);

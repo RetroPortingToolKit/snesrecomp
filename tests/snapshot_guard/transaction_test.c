@@ -56,6 +56,19 @@ int main(void) {
     assert(RtlLoadSnapshotFromMemory(snapshot,size));
     assert(cpu.a==0x1234 && ram[70]==8 && host_extra==17);
     assert(reconciled==1 && presentation_resets==1 && audio_resets==1 && !locks);
+    /* The same guest load used by rollback preserves an actively consuming
+     * host queue and resampler. The snapshot's queue is empty, so exposing it
+     * at even one unlock fails the deterministic device observer. */
+    dsp.sampleRead=100; dsp.sampleWrite=108;
+    for (unsigned i=0;i<sizeof(dsp.sampleBuffer)/sizeof(dsp.sampleBuffer[0]);++i)
+        dsp.sampleBuffer[i]=(int16_t)(i*17);
+    dsp_output_ring_save(&dsp,&expected_audio);
+    watch_audio=true; s_rollback_load=true;
+    unsigned prior_audio_resets=audio_resets;
+    assert(RtlLoadSnapshotFromMemory(snapshot,size));
+    watch_audio=false; s_rollback_load=false;
+    assert(audio_observations>=2 && audio_resets==prior_audio_resets && !locks);
+    assert(dsp.sampleRead==expected_audio.read && dsp.sampleWrite==expected_audio.write);
     /* An unchanged consumer may load an older chunk smaller than its current
      * save output. Its save callback must never run as input validation. */
     RtlGameInfo legacy=game; legacy.state_load_extra=load_variable;
