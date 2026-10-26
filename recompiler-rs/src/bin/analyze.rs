@@ -25,8 +25,8 @@ use snesrecomp_analyzer::decoder::{
 };
 use snesrecomp_analyzer::insn::Mode;
 use snesrecomp_analyzer::rom::{
-    addr_to_rom_offset, detect_rom_mapping, is_rom_address, load_rom, vector_table_offset,
-    RelocRegion, RomMapping,
+    addr_to_rom_offset, detect_rom_mapping, execution_mirror_bank as mirror_bank, is_rom_address,
+    load_rom, vector_table_offset, RelocRegion, RomMapping,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -167,18 +167,6 @@ fn filename_bank(path: &Path) -> Option<u32> {
     u32::from_str_radix(body, 16).ok()
 }
 
-fn mirror_bank(mapping: RomMapping, bank: u32) -> Option<u32> {
-    if mapping == RomMapping::Sa1 {
-        return None;
-    }
-    let bank = bank & 0xFF;
-    if bank < 0x40 || (0x80..0xC0).contains(&bank) {
-        Some(bank ^ 0x80)
-    } else {
-        None
-    }
-}
-
 fn mirror_pc24(mapping: RomMapping, pc24: u32) -> Option<u32> {
     mirror_bank(mapping, (pc24 >> 16) & 0xFF).map(|bank| (bank << 16) | (pc24 & 0xFFFF))
 }
@@ -280,6 +268,9 @@ fn load_inputs(cfg_dir: &Path, rom: &mut Vec<u8>, all_cfg_roots: bool) -> Result
         let mut cfg = load_bank_cfg(&path)?;
         cfg.bank = bank as i32;
         cfgs.push(cfg);
+    }
+    if mapping == RomMapping::HiRom {
+        cfgs = snesrecomp_analyzer::hirom_cfg::expand(cfgs);
     }
     expand_auto_vectors(&mut cfgs, rom.as_slice());
 
