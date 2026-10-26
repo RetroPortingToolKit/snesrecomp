@@ -770,6 +770,18 @@ int ppu_wlog_collect(uint32_t frame, PpuWlogEntry *out, int cap, int *lost) {
   return count;
 }
 
+/* BG modes the optimized line renderer implements. PpuDrawWholeLine knows
+ * modes 0-3 and treats everything else as mode 7, so a mode 4/5/6 screen
+ * (8bpp with offset-per-tile, and the two 512-pixel hi-res modes) came out
+ * as mode-7 garbage (a mode 5 menu with hi-res text over a 4bpp background
+ * showed up as vertical colour stripes). Those modes take the
+ * compatibility renderer's scanline until the optimized one grows them;
+ * it samples the main screen from the odd hi-res column, as it always did
+ * with NewRenderer=0. Regression: tests/ppu/ppu_hires_mode_test.c. */
+static bool PpuOptimizedRendererHandlesMode(uint mode) {
+  return mode <= 3 || mode == 7;
+}
+
 void ppu_runLine(Ppu* ppu, int line) {
   PPU_T0_DECL
   /* Writes from here to the next ppu_runLine land on line + 1; no register
@@ -844,7 +856,8 @@ void ppu_runLine(Ppu* ppu, int line) {
              sizeof(ppu->overlayBuffers[kPpuOverlaySource_Obj]));
     ppu->lineHasSprites = !PPU_forcedBlank(ppu) && ppu_evaluateSprites(ppu, line - 1);
 
-    if (ppu->renderFlags & kPpuRenderFlags_NewRenderer) {
+    if ((ppu->renderFlags & kPpuRenderFlags_NewRenderer) &&
+        PpuOptimizedRendererHandlesMode(PPU_mode(ppu))) {
       debug_server_on_ppu_line_drawn(line, 1, ppu->bgmode);
       PPU_T0; PpuDrawWholeLine(ppu, line); PPU_ACC(g_ppu_sec_line_ms);
 #ifdef SNESRECOMP_INTERP_PROFILE
