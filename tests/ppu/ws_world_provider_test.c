@@ -40,6 +40,11 @@ int main(void) {
   assert(WsShadowTile(0,256,0x200,0,0x5400,0)==0xabcd);
   snes_frame_counter=71;
   assert(WsShadowTile(0,256,0x200,0,0x5400,0)!=0xabcd);
+  setup(0,0x1300); snes_frame_counter=80;
+  WsShadowOnVramWrite(0x5400,0xbcde);
+  assert(WsShadowTile(0,256,0x300,0,0x5400,0)==0xbcde);
+  snes_frame_counter=141;
+  assert(WsShadowTile(0,256,0x300,0,0x5400,0)!=0xbcde);
   WsShadowReset();
   assert(WsShadowTile(0,256,0x200,0,0x5400,0x4567)==0x4567);
   /* Provider registration is frame scoped; other callers keep old behavior. */

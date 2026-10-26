@@ -10,7 +10,9 @@
 // layers, and both 64-wide and streamed 32-wide tilemaps.
 enum {
   kWsShadowXTiles = 4096,
-  kWsShadowYTiles = 512,
+  /* X2/X3 layouts span 32 screens vertically. Keep dynamic game writes
+   * addressable through that full height, including the rocket hangar. */
+  kWsShadowYTiles = 1024,
 };
 
 void WsShadowReset(void);
