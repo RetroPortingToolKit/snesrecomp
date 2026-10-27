@@ -138,6 +138,13 @@ pub struct BankCfg {
     /// `brk_rti <site_pc16>`: a BRK whose native vector is a bare RTI -- a
     /// two-byte no-op on hardware. Decoded as a fall-through, not poison.
     pub brk_rti: BTreeSet<u32>,
+    /// `mod_hook <pc16> <c_function>`: a mutating, runtime-armed host callback
+    /// before the instruction at <pc16>. The analyzer derives no value fact
+    /// across the site (docs/MOD_HOOK.md). pc16 -> c_function.
+    pub mod_hook: BTreeMap<u32, String>,
+    /// `mod_hook_target <hook_pc16> <target_pc16>`: a PC the hook may redirect
+    /// to; control can arrive there from the hook, so it is a value barrier too.
+    pub mod_hook_target: BTreeMap<u32, BTreeSet<u32>>,
     pub hle_spc_upload: Vec<u32>,
     pub hle_func: BTreeMap<u32, String>, // pc16 -> c_function_name
     pub hle_dispatch: BTreeMap<u32, String>, // site_pc16 -> c_function_name
@@ -666,6 +673,64 @@ pub fn parse_bank_cfg(text: &str, path: &str) -> Result<BankCfg, String> {
             }
             continue;
         }
+        // mod_hook <pc16> <c_function>
+        if head == "mod_hook" {
+            if tokens.len() != 3 {
+                return Err(format!(
+                    "{path}: mod_hook needs <pc16> <c_function>, got: {stripped:?}"
+                ));
+            }
+            let pc16 = parse_hex(tokens[1]).map_err(|e| format!("{path}: mod_hook {e}"))?;
+            if pc16 > 0xFFFF {
+                return Err(format!(
+                    "{path}: mod_hook needs a 16-bit PC in this cfg's bank, got {:?}",
+                    tokens[1]
+                ));
+            }
+            let c_name = tokens[2];
+            if !is_valid_c_ident(c_name) {
+                return Err(format!(
+                    "{path}: mod_hook c_function must be a valid C identifier, got: {c_name:?}"
+                ));
+            }
+            if let Some(previous) = cfg.mod_hook.get(&pc16) {
+                return Err(format!(
+                    "{path}: mod_hook duplicate pc ${pc16:04X} ({previous} and {c_name})"
+                ));
+            }
+            cfg.mod_hook.insert(pc16, c_name.to_string());
+            continue;
+        }
+        // mod_hook_target <hook_pc16> <target_pc16>
+        if head == "mod_hook_target" {
+            if tokens.len() != 3 {
+                return Err(format!(
+                    "{path}: mod_hook_target needs <hook_pc16> <target_pc16>, got: {stripped:?}"
+                ));
+            }
+            let mut pcs = [0u32; 2];
+            for (slot, token) in pcs.iter_mut().zip(&tokens[1..3]) {
+                let value = parse_hex(token).map_err(|e| format!("{path}: mod_hook_target {e}"))?;
+                if value > 0xFFFF {
+                    return Err(format!(
+                        "{path}: mod_hook_target needs 16-bit PCs in this cfg's bank, got {token:?}"
+                    ));
+                }
+                *slot = value;
+            }
+            let [hook_pc16, target_pc16] = pcs;
+            if !cfg
+                .mod_hook_target
+                .entry(hook_pc16)
+                .or_default()
+                .insert(target_pc16)
+            {
+                return Err(format!(
+                    "{path}: mod_hook_target duplicate target ${target_pc16:04X} for hook ${hook_pc16:04X}"
+                ));
+            }
+            continue;
+        }
         // brk_rti <site_pc16>
         if head == "brk_rti" {
             if tokens.len() != 2 {
@@ -1046,7 +1111,55 @@ pub fn parse_bank_cfg(text: &str, path: &str) -> Result<BankCfg, String> {
         existing_starts.insert(local_pc);
     }
 
+    validate_mod_hooks(&cfg, path)?;
     Ok(cfg)
+}
+
+/// Cross-directive `mod_hook` checks. Port of cfg_loader._validate_mod_hooks.
+fn validate_mod_hooks(cfg: &BankCfg, path: &str) -> Result<(), String> {
+    for hook_pc16 in cfg.mod_hook_target.keys() {
+        if !cfg.mod_hook.contains_key(hook_pc16) {
+            return Err(format!(
+                "{path}: mod_hook_target names ${hook_pc16:04X}, which is not a mod_hook in this cfg"
+            ));
+        }
+    }
+    let mut hle_spans: Vec<(&str, u32, u32)> = Vec::new();
+    let mut add_span = |directive: &'static str, start: u32| {
+        let start = start & 0xFFFF;
+        let mut end = None;
+        for entry in &cfg.entries {
+            if entry.start & 0xFFFF == start {
+                if let Some(e) = entry.end.filter(|e| *e != 0) {
+                    end = Some(e & 0xFFFF);
+                }
+            }
+        }
+        let end = end.filter(|e| *e > start).unwrap_or(start + 1);
+        hle_spans.push((directive, start, end));
+    };
+    for &start in cfg.hle_func.keys() {
+        add_span("hle_func", start);
+    }
+    for &start in &cfg.hle_spc_upload {
+        add_span("hle_spc_upload", start);
+    }
+    for &hook_pc16 in cfg.mod_hook.keys() {
+        let mut sites = vec![("mod_hook", hook_pc16)];
+        if let Some(targets) = cfg.mod_hook_target.get(&hook_pc16) {
+            sites.extend(targets.iter().map(|&t| ("mod_hook_target", t)));
+        }
+        for (what, pc16) in sites {
+            for &(directive, start, end) in &hle_spans {
+                if start <= pc16 && pc16 < end {
+                    return Err(format!(
+                        "{path}: {what} ${pc16:04X} lies in the routine at ${start:04X} replaced by {directive}; no compiled instruction runs there (change the helper instead)"
+                    ));
+                }
+            }
+        }
+    }
+    Ok(())
 }
 
 /// Parse "M,X" → (m&1, x&1), or None if malformed (matches the Python
@@ -1303,6 +1416,104 @@ exit_mx_set 028000 M0X0 M0X1
         )
         .is_err());
         assert!(parse_bank_cfg("bank = 00\nlive_operand\n", "test.cfg").is_err());
+    }
+
+    #[test]
+    fn mod_hook_parse() {
+        let cfg = parse_bank_cfg(
+            "bank = 00
+mod_hook 9102 HRedir
+mod_hook_target 9102 9106
+mod_hook_target 9102 9104
+",
+            "test.cfg",
+        )
+        .unwrap();
+        assert_eq!(
+            cfg.mod_hook.get(&0x9102).map(String::as_str),
+            Some("HRedir")
+        );
+        assert_eq!(
+            cfg.mod_hook_target[&0x9102],
+            BTreeSet::from([0x9104, 0x9106])
+        );
+    }
+
+    #[test]
+    fn mod_hook_rejects_malformed_and_hle_sites() {
+        for (text, why) in [
+            (
+                "mod_hook 9102
+",
+                "needs <pc16> <c_function>",
+            ),
+            (
+                "mod_hook 9102 9Bad
+",
+                "valid C identifier",
+            ),
+            (
+                "mod_hook 9102 A
+mod_hook 9102 B
+",
+                "duplicate pc",
+            ),
+            (
+                "mod_hook 10000 A
+",
+                "16-bit",
+            ),
+            (
+                "mod_hook 9102 A
+mod_hook_target 9102 9106
+mod_hook_target 9102 9106
+",
+                "duplicate target",
+            ),
+            (
+                "mod_hook_target 9102 9106
+",
+                "not a mod_hook",
+            ),
+            (
+                "hle_func 9100 Hle
+mod_hook 9100 A
+",
+                "replaced by hle_func",
+            ),
+            (
+                "func Sub 9100 end:9110
+hle_func 9100 Hle
+mod_hook 9104 A
+",
+                "replaced by hle_func",
+            ),
+            (
+                "hle_spc_upload 9100
+mod_hook 9100 A
+",
+                "replaced by hle_spc_upload",
+            ),
+        ] {
+            let err = parse_bank_cfg(
+                &format!(
+                    "bank = 00
+{text}"
+                ),
+                "test.cfg",
+            )
+            .unwrap_err();
+            assert!(err.contains(why), "{text:?}: {err}");
+        }
+        assert!(parse_bank_cfg(
+            "bank = 00
+func Sub 9100 end:9110
+hle_func 9100 Hle
+mod_hook 9110 A
+",
+            "test.cfg"
+        )
+        .is_ok());
     }
 
     #[test]

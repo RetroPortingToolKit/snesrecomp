@@ -189,6 +189,17 @@ class BankCfg:
     # interpreted. Observational only. Map: pc16 -> c_function. Contract:
     # docs/ENTRY_HOOK.md.
     entry_hook: dict = field(default_factory=dict)
+    # `mod_hook <pc16> <c_function>` -- a MUTATING host callback, armed at run
+    # time: `uint32 c_function(CpuState *cpu, uint32 pc24)` runs before the
+    # instruction at <pc16> in compiled and interpreted code alike, may edit
+    # A/X/Y/D/DB/flags (not M/X/E/S) and guest memory, and returns 0 to
+    # continue or a declared `mod_hook_target` to redirect. The analyzers
+    # derive no value fact across the site. Map: pc16 -> c_function.
+    # Contract: docs/MOD_HOOK.md.
+    mod_hook: dict = field(default_factory=dict)
+    # `mod_hook_target <hook_pc16> <target_pc16>` -- a PC the hook at
+    # <hook_pc16> may redirect to. Map: hook pc16 -> set of target pc16s.
+    mod_hook_target: dict = field(default_factory=dict)
     # `brk_rti <site_pc16>` -- the BRK at this site is a two-byte no-op on
     # hardware: the native BRK vector points at a bare RTI, so the interrupt
     # pushes PB, PC+2 and P and the RTI pulls them straight back. Decode falls
@@ -275,6 +286,47 @@ def _strip_comment(line: str) -> str:
     if idx >= 0:
         line = line[:idx]
     return line.rstrip()
+
+
+def _is_c_identifier(name: str) -> bool:
+    return (bool(name) and name.isascii()
+            and name.replace('_', '').isalnum() and not name[0].isdigit())
+
+
+def _validate_mod_hooks(cfg: 'BankCfg', path) -> None:
+    """Cross-directive checks for `mod_hook` / `mod_hook_target`.
+
+    Mirrored by recompiler-rs/src/cfg.rs::validate_mod_hooks. A hook or target
+    inside a routine replaced by `hle_func` / `hle_spc_upload` would never run
+    compiled code (its entry PC, or any PC inside the routine's `end:` range).
+    """
+    for hook_pc16 in sorted(cfg.mod_hook_target):
+        if hook_pc16 not in cfg.mod_hook:
+            raise ValueError(
+                f"{path}: mod_hook_target names ${hook_pc16:04X}, which is "
+                "not a mod_hook in this cfg")
+    hle_spans = []
+    for directive, table in (('hle_func', cfg.hle_func),
+                             ('hle_spc_upload', cfg.hle_spc_upload)):
+        for start in table:
+            end = None
+            for entry in cfg.entries:
+                if (entry.start & 0xFFFF) == (start & 0xFFFF) and entry.end:
+                    end = entry.end & 0xFFFF
+            hle_spans.append((directive, start & 0xFFFF,
+                              end if end and end > (start & 0xFFFF)
+                              else (start & 0xFFFF) + 1))
+    for hook_pc16 in sorted(cfg.mod_hook):
+        sites = [('mod_hook', hook_pc16)] + [
+            ('mod_hook_target', t)
+            for t in sorted(cfg.mod_hook_target.get(hook_pc16, ()))]
+        for what, pc16 in sites:
+            for directive, start, end in hle_spans:
+                if start <= pc16 < end:
+                    raise ValueError(
+                        f"{path}: {what} ${pc16:04X} lies in the routine at "
+                        f"${start:04X} replaced by {directive}; no compiled "
+                        "instruction runs there (change the helper instead)")
 
 
 def load_bank_cfg(path: str) -> BankCfg:
@@ -578,6 +630,61 @@ def load_bank_cfg(path: str) -> BankCfg:
                         f"{path}: entry_hook duplicate pc ${pc16:04X} "
                         f"({cfg.entry_hook[pc16]} and {c_name})")
                 cfg.entry_hook[pc16] = c_name
+                continue
+
+            # mod_hook <pc16> <c_function> — mutating, runtime-armed hook.
+            # See BankCfg.mod_hook and docs/MOD_HOOK.md.
+            if head == 'mod_hook':
+                if len(tokens) != 3:
+                    raise ValueError(
+                        f"{path}: mod_hook needs <pc16> <c_function>, "
+                        f"got: {stripped!r}")
+                try:
+                    pc16 = _parse_hex(tokens[1])
+                except ValueError as e:
+                    raise ValueError(
+                        f"{path}: mod_hook bad pc {tokens[1]!r}: {e}")
+                if not 0 <= pc16 <= 0xFFFF:
+                    raise ValueError(
+                        f"{path}: mod_hook needs a 16-bit PC in this cfg's bank, "
+                        f"got {tokens[1]!r}")
+                c_name = tokens[2]
+                if not _is_c_identifier(c_name):
+                    raise ValueError(
+                        f"{path}: mod_hook c_function must be a valid C "
+                        f"identifier, got: {c_name!r}")
+                if pc16 in cfg.mod_hook:
+                    raise ValueError(
+                        f"{path}: mod_hook duplicate pc ${pc16:04X} "
+                        f"({cfg.mod_hook[pc16]} and {c_name})")
+                cfg.mod_hook[pc16] = c_name
+                continue
+
+            # mod_hook_target <hook_pc16> <target_pc16> — a redirect target.
+            if head == 'mod_hook_target':
+                if len(tokens) != 3:
+                    raise ValueError(
+                        f"{path}: mod_hook_target needs <hook_pc16> "
+                        f"<target_pc16>, got: {stripped!r}")
+                pcs = []
+                for token in tokens[1:]:
+                    try:
+                        value = _parse_hex(token)
+                    except ValueError as e:
+                        raise ValueError(
+                            f"{path}: mod_hook_target bad pc {token!r}: {e}")
+                    if not 0 <= value <= 0xFFFF:
+                        raise ValueError(
+                            f"{path}: mod_hook_target needs 16-bit PCs in this "
+                            f"cfg's bank, got {token!r}")
+                    pcs.append(value)
+                hook_pc16, target_pc16 = pcs
+                targets = cfg.mod_hook_target.setdefault(hook_pc16, set())
+                if target_pc16 in targets:
+                    raise ValueError(
+                        f"{path}: mod_hook_target duplicate target "
+                        f"${target_pc16:04X} for hook ${hook_pc16:04X}")
+                targets.add(target_pc16)
                 continue
 
             # brk_rti <site_pc16> — a BRK whose vector is a bare RTI.
@@ -1052,5 +1159,7 @@ def load_bank_cfg(path: str) -> BankCfg:
                 raise ValueError(
                     f"{path}: entry_hook ${pc16:04X} names a routine replaced "
                     f"by {directive}; no compiled instruction runs there")
+
+    _validate_mod_hooks(cfg, path)
 
     return cfg
