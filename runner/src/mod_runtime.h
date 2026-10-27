@@ -305,6 +305,33 @@ void snes_mod_runtime_frame_tick_c(void);
 int snes_mod_runtime_filter_apu_write_c(uint16_t reg, uint8_t value);
 
 /*
+ * Input transforms: controller remaps and macros (a shoulder button that
+ * aims diagonally, a held button that arms missiles, a right-stick menu that
+ * presses Select for you).
+ *
+ * The desktop host applies them to each LOCAL seat's 12-bit button word
+ * (SNES_PAD_* bit order, snes_overlay_draw.h) before the word reaches
+ * anything else: netplay exchange, replay recording, run-ahead and the
+ * guest all see the transformed word, so a transform is deterministic
+ * everywhere without being part of the simulation. It may keep its own
+ * state across calls (one call per seat per real frame). It may read guest
+ * WRAM, which is the state the frame is about to start from, and must not
+ * write it. Register during activation, like frame callbacks; activating a
+ * new plan clears them. Transforms run in registration order.
+ */
+typedef struct SnesModInputContext {
+    int player;                   /* seat, 0-based */
+    const uint8_t* wram;          /* guest WRAM ($7E:0000-$7F:FFFF), read-only */
+    int16_t right_x, right_y;     /* host right stick, SDL range; 0 without one */
+    int16_t left_trigger, right_trigger; /* 0..32767; 0 without analog triggers */
+} SnesModInputContext;
+typedef uint16_t (*SNESModInputTransform)(uint16_t buttons,
+                                          const SnesModInputContext* ctx);
+int snes_mod_register_input_transform(SNESModInputTransform transform);
+uint16_t snes_mod_runtime_transform_input_c(uint16_t buttons,
+                                            const SnesModInputContext* ctx);
+
+/*
  * Request battery-backed SRAM for a stock cart that declares none. This is
  * for enhancement mods that add guest-visible saves to password-only games.
  * Existing cartridge SRAM is never resized by a mod.

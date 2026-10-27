@@ -174,6 +174,15 @@ activation** with `snes_mod_register_frame_callback()`. The runtime clears
 frame callbacks when activating a new plan. Registering one unconditionally
 in the constructor would bypass the feature switch.
 
+For controller remaps and button macros, register an input transform during
+activation with `snes_mod_register_input_transform()` (`mod_runtime.h`). The
+desktop host applies it to each local seat's 12-bit button word before netplay
+exchange, replay recording, run-ahead and the guest see it, so it stays
+deterministic without being part of the simulation. It may read guest WRAM and
+the host's right stick and analog triggers (`SnesModInputContext`); it must not
+write WRAM. Behaviour that has to change the simulation itself belongs in a
+[`mod_hook`](MOD_HOOK.md).
+
 If a plugin sets a persistent host flag, register a reset callback with
 `snes_mod_register_reset_callback()` to restore the stock value before enabled
 plugins activate. Check enabled-to-disabled behavior in the same executable.
