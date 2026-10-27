@@ -14,6 +14,7 @@ static Snes *s_snes;
 static Ppu *s_ppu;
 static uint8_t *s_ram;
 static uint16_t s_bg1_repeat_right;
+static bool s_bg2_source_canvas;
 /* A frame-local memo avoids decoding the same metatile on all eight raster
  * lines. Its size is independent of world height; collisions re-resolve. */
 static uint32_t s_tile_keys[4096];
@@ -93,9 +94,10 @@ static bool stream_valid(const MmxBgStream *s, int32_t wx, int32_t wy) {
     return false;
   /* BG1 is the terrain stream, including deliberately empty sky during the
    * rocket ascent. Rejecting its uniform native window exposes old circular
-   * VRAM columns in the gutters. Only BG2 is repurposed as a moving object
-   * layer and needs the diversity safeguard below. */
-  if (s == &kBgStreams[0])
+   * VRAM columns in the gutters. BG2 normally needs the object-layer
+   * safeguard below; a title-selected loaded canvas uses its own source
+   * even before its leading edge reaches the native view. */
+  if (s == &kBgStreams[0] || s_bg2_source_canvas)
     return true;
   /* Diversity: a near-uniform native sample proves nothing — some scenes
    * repurpose BG2 as a mostly-transparent OBJECT layer (X-Hunter tower
@@ -198,6 +200,13 @@ static WsShadowSource world_provider(void *context, uint32_t tx, uint32_t ty,
                                      uint16_t *entry) {
   const MmxBgStream *stream = context;
   if (tx >= 1024 || ty >= 1024) return kWsShadowMiss;
+  if (stream == &kBgStreams[1] && s_bg2_source_canvas) {
+    /* The original map streamer uploads only the approaching native edge.
+     * Its fresh blank entries must not hide the already-loaded object art
+     * in a gutter. Map edits (including destroyed parts) remain live. */
+    *entry = source_tile(stream, tx, ty);
+    return kWsShadowMarginOverride;
+  }
   if (stream == &kBgStreams[0] && s_bg1_repeat_right &&
       tx >= (uint32_t)s_bg1_repeat_right / 8) {
     uint32_t boundary = (uint32_t)s_bg1_repeat_right / 8;
@@ -226,7 +235,8 @@ static WsShadowSource world_provider(void *context, uint32_t tx, uint32_t ty,
 }
 
 void Mmx23ConfigureWsBgMarginsForRoom(Snes *snes, Ppu *ppu, uint8_t *ram,
-                                    bool enabled, uint16_t bg1RepeatRight) {
+                                    bool enabled, uint16_t bg1RepeatRight,
+                                    bool bg2SourceCanvas) {
   if (!ppu) return;
   static int on = -1, debug = -1;
   if (on < 0) {
@@ -234,6 +244,7 @@ void Mmx23ConfigureWsBgMarginsForRoom(Snes *snes, Ppu *ppu, uint8_t *ram,
     e=getenv("SNESRECOMP_WS_BG_MARGINS_DEBUG"); debug=e && e[0]!='0';
   }
   s_snes=snes; s_ppu=ppu; s_ram=ram;
+  s_bg2_source_canvas = bg2SourceCanvas;
   s_bg1_repeat_right = bg1RepeatRight >= 256 && !(bg1RepeatRight & 7)
                           ? bg1RepeatRight : 0;
   unsigned mode=ppu->bgmode & 0x37;
@@ -278,5 +289,5 @@ void Mmx23ConfigureWsBgMarginsForRoom(Snes *snes, Ppu *ppu, uint8_t *ram,
 }
 
 void Mmx23ConfigureWsBgMargins(Snes *snes, Ppu *ppu, uint8_t *ram, bool enabled) {
-  Mmx23ConfigureWsBgMarginsForRoom(snes,ppu,ram,enabled,0);
+  Mmx23ConfigureWsBgMarginsForRoom(snes,ppu,ram,enabled,0,false);
 }

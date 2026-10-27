@@ -40,6 +40,29 @@ int main(void) {
   assert(WsShadowLayerActive(0)); assert(!WsShadowLayerActive(1));
   assert(WsShadowTile(0,-40,10,512,0x501b,0xdead)==0x0c00);
   assert(WsShadowTile(0,100,10,512,0x5000,0x1234)==0x1234);
+  /* A known loaded moving canvas can be empty in the native view while
+   * its leading edge is already visible in a gutter. Keep its source art,
+   * including fresh map edits, without changing native pixels. */
+  ram[0xec01]=1;
+  put(ram,0xa800,1);
+  for (unsigned q=0;q<4;q++) put(rom,0x8008+q*2,0x1234);
+  Mmx23ConfigureWsBgMarginsForRoom(&snes,&p,ram,true,0,true);
+  assert(WsShadowLayerActive(1));
+  snes_frame_counter=10; WsShadowOnVramWrite(0x5c00,0);
+  assert(WsShadowTile(1,256,0,0,0x5c00,0)==0x1234);
+  assert(WsShadowTile(1,100,0,0,0x5800,0x9876)==0x9876);
+  for (unsigned q=0;q<4;q++) put(rom,0x8010+q*2,0x4321);
+  put(ram,0xa800,2); /* a live map edit replaces the destroyed part */
+  Mmx23ConfigureWsBgMarginsForRoom(&snes,&p,ram,true,0,true);
+  assert(WsShadowTile(1,256,0,0,0x5c00,0)==0x4321);
+  p.vram[vram_word(&kBgStreams[1],10,12)]=0xdead;
+  p.vram[vram_word(&kBgStreams[1],30,48)]=0xdead;
+  Mmx23ConfigureWsBgMarginsForRoom(&snes,&p,ram,true,0,true);
+  assert(!WsShadowLayerActive(1));
+  p.vram[vram_word(&kBgStreams[1],10,12)]=0x0c00;
+  p.vram[vram_word(&kBgStreams[1],30,48)]=0x0c00;
+  Mmx23ConfigureWsBgMargins(&snes,&p,ram,true);
+  assert(!s_bg2_source_canvas && !WsShadowLayerActive(1));
   /* A genuinely different foreground still fails native self-validation. */
   p.vram[vram_word(&kBgStreams[0],7690,4118)]=0x1234;
   p.vram[vram_word(&kBgStreams[0],7710,4154)]=0x1234;
@@ -94,7 +117,7 @@ int main(void) {
   p.hScroll[0]=0x280; p.vScroll[0]=0x100;
   for (unsigned y=0;y<224;y+=8) for (unsigned x=0;x<256;x+=8)
     p.vram[vram_word(&kBgStreams[0],0xa80+x,0x100+y)]=world_tile(&kBgStreams[0],0xa80+x,0x100+y);
-  Mmx23ConfigureWsBgMarginsForRoom(&snes,&p,ram,true,0xb80);
+  Mmx23ConfigureWsBgMarginsForRoom(&snes,&p,ram,true,0xb80,false);
   assert(WsShadowLayerActive(0));
   assert(world_tile(&kBgStreams[0],0xb80,0x100)==0x0c00);
   snes_frame_counter=100;
