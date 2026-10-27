@@ -78,6 +78,10 @@ int main(void) {
   assert(WsShadowTile(0,100,0x200,0,0x5000,0x1234)!=0x1234);
   WsShadowOnVramWrite(0x5400,0xabcd);
   assert(WsShadowTile(0,256,0x200,0,0x5400,0)!=0xabcd);
+  result=kWsShadowMarginOverride;
+  assert(WsShadowTile(0,100,0x200,0,0x5000,0x1234)==0x1234);
+  WsShadowOnVramWrite(0x5400,0xabcd);
+  assert(WsShadowTile(0,256,0x200,0,0x5400,0)!=0xabcd);
   result=kWsShadowExact;
   puts("exact world provider: high-Y, signed raster phase, native pixels, dynamic writes and lifecycle passed");
   return 0;

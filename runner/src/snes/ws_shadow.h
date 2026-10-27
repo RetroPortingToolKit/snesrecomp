@@ -24,13 +24,14 @@ void WsShadowReset(void);
 void WsShadowSetWorld(int layer, uint32_t worldX, uint32_t worldY);
 
 /* Exact, uncached map source for a streaming title. Register after SetWorld
- * each frame. Queries use the rendered scanline's scroll phase and signed
- * 10-bit deltas, and cover world positions beyond the history cache bounds.
+ * each frame. Queries use the rendered scanline's scroll phase and map-width
+ * horizontal aliases, and cover positions beyond the history cache bounds.
  * Native pixels retain VRAM; recent explicit game writes keep precedence,
  * except for an explicit Override result. nativeOverrides additionally allows
- * that result inside the native region; Exact never replaces native VRAM. */
+ * that result inside the native region. MarginOverride wins over uploads only
+ * outside the native region; Exact never replaces native VRAM. */
 typedef enum WsShadowSource {
-  kWsShadowMiss, kWsShadowExact, kWsShadowOverride
+  kWsShadowMiss, kWsShadowExact, kWsShadowOverride, kWsShadowMarginOverride
 } WsShadowSource;
 /* Override is a presentation substitution (for example the hidden face of a
  * two-sided boss door), which also wins over recent dynamic game uploads. */
