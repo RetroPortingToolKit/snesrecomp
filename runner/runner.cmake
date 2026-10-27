@@ -321,6 +321,7 @@ set(SNESRECOMP_RUNNER_SOURCES
     ${SNESRECOMP_RUNNER_ROOT}/src/host_report.c
     ${SNESRECOMP_RUNNER_ROOT}/src/execution_mode.c
     ${SNESRECOMP_RUNNER_ROOT}/src/mod_audio.c
+    ${SNESRECOMP_RUNNER_ROOT}/src/mod_hook.c
     ${SNESRECOMP_RUNNER_ROOT}/src/host_mesh.c
     ${SNESRECOMP_RUNNER_ROOT}/src/host_mesh_builder.c
     ${SNESRECOMP_RUNNER_ROOT}/src/guarded_patch.c
