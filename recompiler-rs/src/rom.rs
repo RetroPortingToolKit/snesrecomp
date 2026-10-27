@@ -19,6 +19,40 @@ pub enum RomMapping {
 
 const SDD1_MMC_DEFAULT_PAGES: [usize; 4] = [0, 1, 2, 3];
 
+/// Whole-bank execution-compatible XOR-80 pairs. Never cross low/full HiROM banks.
+pub fn execution_mirror_bank(mapping: RomMapping, bank: u32) -> Option<u32> {
+    if mapping == RomMapping::HiRom {
+        return (!matches!(bank & 0xff, 0x7e | 0x7f | 0xfe | 0xff)).then_some((bank & 0xff) ^ 0x80);
+    }
+    if mapping == RomMapping::Sa1 {
+        return None;
+    }
+    let bank = bank & 0xFF;
+    if bank < 0x40 || (0x80..0xC0).contains(&bank) {
+        Some(bank ^ 0x80)
+    } else {
+        None
+    }
+}
+
+/// Physical HiROM byte aliases. These do not imply identical execution-bank
+/// semantics or permit sharing inferred callee exits across low/full banks.
+pub fn hirom_bank_aliases(bank: u32, addr: u32) -> Vec<u32> {
+    let bank = bank & 0xff;
+    let addr = addr & 0xffff;
+    if !is_rom_address(RomMapping::HiRom, bank, addr) {
+        return Vec::new();
+    }
+    let mut result = vec![bank];
+    for high in [0, 0x40, 0x80, 0xc0] {
+        let candidate = (bank & 0x3f) | high;
+        if candidate != bank && is_rom_address(RomMapping::HiRom, candidate, addr) {
+            result.push(candidate);
+        }
+    }
+    result
+}
+
 fn header_score(data: &[u8], base: usize, expected_low_nibble: u8) -> i32 {
     if base + 0x40 > data.len() {
         return -1;
