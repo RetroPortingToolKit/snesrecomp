@@ -79,6 +79,7 @@
 
 #if SNESRECOMP_ENABLE_MODS
 #include "mod_runtime.h"
+#include "mod_provider_compose.h"
 #endif
 
 #if defined(RECOMP_LAUNCHER)
@@ -2986,8 +2987,10 @@ static void LauncherSeed(RecompLauncherCSettings *ls, RecompLauncherCGameInfo *g
   if (game->mods_provider)
     gi->mods = (const RecompLauncherCModProvider *)game->mods_provider();
 #if SNESRECOMP_ENABLE_MODS
-  if (!gi->mods && g_mods_ready)
-    gi->mods = snes_mod_runtime_launcher_provider_c();
+  /* A title's built-in features and the package catalog share one Mods page;
+   * choosing the title's provider alone hid every package. */
+  if (g_mods_ready)
+    gi->mods = snes_mod_provider_compose(gi->mods, snes_mod_runtime_launcher_provider_c());
 #endif
   gi->in_session = in_session;
   gi->has_open_launcher_hotkey = game->in_game_launcher ? 1 : 0;

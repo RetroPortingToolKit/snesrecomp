@@ -412,6 +412,7 @@ option(SNESRECOMP_ENABLE_MODS
 if(SNESRECOMP_ENABLE_MODS)
     list(APPEND SNESRECOMP_RUNNER_SOURCES
         ${SNESRECOMP_RUNNER_ROOT}/src/mod_runtime.cpp
+        ${SNESRECOMP_RUNNER_ROOT}/src/mod_provider_compose.c
         ${SNESRECOMP_RUNNER_ROOT}/src/snes_text_xlate.cpp
     )
     set(CMAKE_CXX_STANDARD 17)

@@ -478,6 +478,20 @@ echo "=== mod runtime: exceptions stay inside the C boundary ==="
     -o "$OUT/mod_c_boundary_test"
 (cd "$OUT" && ./mod_c_boundary_test)
 
+echo "=== mod providers: a title's built-in Mods compose with the package catalog ==="
+# The provider type is recomp-ui's. Point RECOMP_UI_ROOT at a checkout (a
+# game's recomp-ui submodule); skipped without one, like the SDL-gated tests.
+if [ -n "${RECOMP_UI_ROOT:-}" ] && [ -f "$RECOMP_UI_ROOT/src/recomp_launcher.h" ]; then
+    "${CC:-gcc}" -std=c11 -Wall -Wextra -Werror -DRECOMP_LAUNCHER \
+        -I "$ROOT/runner/src" -I "$RECOMP_UI_ROOT/src" \
+        "$ROOT/tests/mod_resources/provider_compose_test.c" \
+        "$ROOT/runner/src/mod_provider_compose.c" \
+        -o "$OUT/mod_provider_compose_test"
+    (cd "$OUT" && ./mod_provider_compose_test)
+else
+    echo "SKIP: RECOMP_UI_ROOT does not name a recomp-ui checkout"
+fi
+
 echo "=== host OSD (FPS readout / turbo / toasts) ==="
 # Needs SDL for its clock only (no window; SDL_INIT_TIMER). Skipped rather than
 # failed where SDL headers are absent, so this stays a ROM-free harness that

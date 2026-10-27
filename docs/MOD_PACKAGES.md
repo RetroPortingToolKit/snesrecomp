@@ -180,6 +180,16 @@ plugins only. Future guarded ROM writes, asset overlays, or interpreter hooks
 must retain the same pre-boot validation and no-arbitrary-code model rather than
 turning package order into an implicit patch priority.
 
+## Titles with built-in Mods
+
+A title may also own features the package runtime does not, through its own
+`SnesDesktopHostGame.mods_provider` (for example settings it stores itself and
+edits live from a pause menu). The desktop host shows both on one Mods page:
+`snes_mod_provider_compose()` (`runner/src/mod_provider_compose.h`) lists the
+title's features first, then the catalog's, and routes each call to the
+provider that lists the package. Play commits both. Keep the two sets
+disjoint: a setting has one owner, never a built-in feature and a package.
+
 ## Temporary session selections
 
 `snes_mod_runtime_begin_temporary_c()` snapshots the current feature choices
