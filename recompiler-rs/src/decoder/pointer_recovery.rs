@@ -11,11 +11,23 @@ pub(super) fn recover(
     long_pointer: bool,
     data: Option<&[(u32, u32, u32)]>,
     reloc: &[RelocRegion],
+    hook_sites: Option<&std::collections::BTreeSet<u32>>,
+    join_sites: Option<&std::collections::BTreeSet<u32>>,
 ) -> Option<Vec<u32>> {
     let mut chain: Vec<&Insn> = Vec::new();
     let mut current = site;
     let mut visited = HashSet::new();
     while chain.len() < 256 {
+        // cfg `mod_hook_target`: a redirect is a predecessor the graph does
+        // not show -- the same as a join.
+        if join_sites.is_some_and(|s| s.contains(&(current.pc & 0xFFFFFF))) {
+            return None;
+        }
+        // cfg `mod_hook`: the callback may change registers, D and memory just
+        // before `current` runs; nothing earlier donates a fact.
+        if hook_sites.is_some_and(|s| s.contains(&(current.pc & 0xFFFFFF))) {
+            break;
+        }
         let preds: Vec<_> = graph
             .insns()
             .iter()
@@ -216,6 +228,50 @@ mod tests {
             }
         }
     }
+    /// The packed-pointer chain above, with a cfg `mod_hook` at the JMP, before
+    /// the high-byte store, or a redirect target inside the chain: no value
+    /// before that point donates a fact, so nothing is recovered.
+    #[test]
+    fn mod_hook_is_a_value_barrier() {
+        let code: &[u8] = &[
+            0xa2, 2, 0xbd, 0, 0x90, 0xaa, 0xbd, 0, 0x91, 0x85, 0xfe, 0xbd, 1, 0x91, 0x85, 0xff,
+            0x6c, 0xfe, 0,
+        ];
+        let mut rom = vec![0xff; 0x8000];
+        rom[..code.len()].copy_from_slice(code);
+        rom[0x1000..0x1003].copy_from_slice(&[0, 3, 7]);
+        rom[0x1100..0x1109].copy_from_slice(&[0, 0xa0, 0xff, 0x10, 0xa0, 0xff, 0xff, 0x20, 0xa0]);
+        for offset in [0x2000, 0x2010, 0x2020] {
+            rom[offset..offset + 3].copy_from_slice(&[0xea, 0x60, 0xea]);
+        }
+        let jump = |env: &DecodeEnv| {
+            let graph = decode_function(&rom, 0, 0x8000, 1, 1, None, env);
+            let insn = graph
+                .insns()
+                .iter()
+                .find(|i| i.insn.opcode == 0x6c)
+                .unwrap()
+                .insn
+                .clone();
+            insn.dispatch_entries.unwrap_or_default()
+        };
+        assert_eq!(jump(&DecodeEnv::default()), vec![0xa000, 0xa010, 0xa020]);
+        for pc in [0x008010u32, 0x00800e] {
+            let hooks = std::collections::BTreeSet::from([pc]);
+            let env = DecodeEnv {
+                mod_hook_sites: Some(&hooks),
+                ..Default::default()
+            };
+            assert!(jump(&env).is_empty(), "hook at {pc:06X}");
+        }
+        let joins = std::collections::BTreeSet::from([0x00800bu32]);
+        let env = DecodeEnv {
+            mod_hook_target_sites: Some(&joins),
+            ..Default::default()
+        };
+        assert!(jump(&env).is_empty());
+    }
+
     #[test]
     fn authority_rejects_wrong_width_and_interior_entry() {
         let mut rom = vec![0; 0x8000];

@@ -291,7 +291,8 @@ def _autorecover_local_stride_runway(rom: bytes, bank: int, func_start: int,
                                      *,
                                      end: Optional[int] = None,
                                      data_regions=None,
-                                     max_entries: int = 4096
+                                     max_entries: int = 4096,
+                                     barrier_sites=frozenset(),
                                      ) -> Optional[List[int]]:
     """Recover same-function Duff-runway computed jumps.
 
@@ -359,6 +360,12 @@ def _autorecover_local_stride_runway(rom: bytes, bank: int, func_start: int,
         got = read8(p + rel)
         if got != byte:
             return None
+    # The pointer is computed by the pattern's own instructions. A `mod_hook`
+    # (or a redirect into the pattern) after its first instruction may change
+    # A, D or the slot before the JMP reads it: no target universe is proven.
+    if any(((bank & 0xFF) << 16 | (pc16 & 0xFFFF)) in barrier_sites
+           for pc16 in range(p + 1, (site_pc & 0xFFFF) + 1)):
+        return None
 
     base_lo = read8(p + 8)
     base_hi = read8(p + 9)
@@ -628,6 +635,11 @@ class FunctionDecodeGraph:
     # embedded BRK/COP trap; analysis can tier down exactly there without
     # treating the surrounding routine as a wrong-width phantom.
     data_region_exec_pcs: Set[int] = field(default_factory=set)
+    # True when a cfg `mod_hook` or `mod_hook_target` PC is decoded in this
+    # function. A mutating host callback may change registers, D and memory
+    # there, so whole-function value idioms (the TSC/TCS entry-stack restore)
+    # are not proven. Mirrors the native graph's `mod_hook_barrier`.
+    mod_hook_barrier: bool = False
 
     def keys_at_pc(self, pc24: int) -> List[DecodeKey]:
         """Return all DecodeKeys with this 24-bit PC (across entry mode states)."""
@@ -1083,7 +1095,8 @@ def _pea_ptrcall_return_pc(rom: Optional[bytes], bank: int, pc: int,
 
 
 def _detect_inline_arg_bytes_stack_slot(rom: bytes, bank: int, addr: int,
-                                        entry_m: int = 1, entry_x: int = 1):
+                                        entry_m: int = 1, entry_x: int = 1,
+                                        barrier_sites=frozenset()):
     """Detect whether the subroutine at (bank, addr) is a JSR/JSL
     INLINE-ARGUMENT routine, returning the inline byte count N (or None).
 
@@ -1196,6 +1209,10 @@ def _detect_inline_arg_bytes_stack_slot(rom: bytes, bank: int, addr: int,
     budget = 0
     while budget < 96:
         budget += 1
+        # cfg `mod_hook` / `mod_hook_target` past the entry: a host callback
+        # (or a redirect) may change A, X, Y, D or memory mid-idiom.
+        if pc != (addr & 0xFFFF) and ((bank & 0xFF) << 16 | pc) in barrier_sites:
+            return None
         from snes65816 import is_rom_address
         if not is_rom_address(bank, pc):
             return None
@@ -1531,7 +1548,8 @@ def _indirect_through_pulled_return(insns, last) -> bool:
     return ptr in bases
 
 
-def detect_dp_return_inline_arg_bytes(rom: bytes, bank: int, addr: int):
+def detect_dp_return_inline_arg_bytes(rom: bytes, bank: int, addr: int,
+                                      barrier_sites=frozenset()):
     """Inline-argument count for the PLA-into-direct-page return idiom.
 
     `detect_inline_arg_bytes` above recognises the form that writes the
@@ -1564,6 +1582,10 @@ def detect_dp_return_inline_arg_bytes(rom: bytes, bank: int, addr: int):
     budget = 0
     while budget < 160:
         budget += 1
+        # cfg `mod_hook` / `mod_hook_target` past the entry: a host callback
+        # (or a redirect) may change A, X, Y, D or memory mid-idiom.
+        if pc != (addr & 0xFFFF) and ((bank & 0xFF) << 16 | pc) in barrier_sites:
+            return None
         from snes65816 import is_rom_address
         if not is_rom_address(bank, pc):
             return None
@@ -1618,7 +1640,8 @@ def detect_dp_return_inline_arg_bytes(rom: bytes, bank: int, addr: int):
 
 
 def detect_inline_arg_bytes(rom: bytes, bank: int, addr: int,
-                            entry_m: int = 1, entry_x: int = 1):
+                            entry_m: int = 1, entry_x: int = 1,
+                            barrier_sites=frozenset()):
     """Inline-argument byte count for the routine at (bank, addr), or None.
 
     Two spellings of the same idiom, tried in order:
@@ -1630,13 +1653,15 @@ def detect_inline_arg_bytes(rom: bytes, bank: int, addr: int,
     The second cannot be folded into the first: that scanner returns None the
     moment it meets a terminator, and `JML [dp]` IS this form's terminator.
     """
-    n = _detect_inline_arg_bytes_stack_slot(rom, bank, addr, entry_m, entry_x)
+    n = _detect_inline_arg_bytes_stack_slot(rom, bank, addr, entry_m, entry_x,
+                                            barrier_sites)
     if n is not None:
         return n
-    return detect_dp_return_inline_arg_bytes(rom, bank, addr)
+    return detect_dp_return_inline_arg_bytes(rom, bank, addr, barrier_sites)
 
 
-def classify_dispatch_helper(rom: bytes, bank: int, addr: int):
+def classify_dispatch_helper(rom: bytes, bank: int, addr: int,
+                             barrier_sites=frozenset()):
     """Identify whether the subroutine at (bank, addr) is a JSL-jump-table
     dispatch helper. Returns 'short' (16-bit table entries), 'long'
     (24-bit table entries), or None.
@@ -1660,6 +1685,10 @@ def classify_dispatch_helper(rom: bytes, bank: int, addr: int):
     safety = 0
     while safety < 256:
         safety += 1
+        # cfg `mod_hook` / `mod_hook_target` past the entry: a host callback
+        # (or a redirect) may change A, X, Y, D or memory mid-idiom.
+        if pc != (addr & 0xFFFF) and ((bank & 0xFF) << 16 | pc) in barrier_sites:
+            return None
         from snes65816 import is_rom_address
         if not is_rom_address(bank, pc):
             return None
@@ -1915,6 +1944,8 @@ def decode_function(rom: bytes, bank: int, start: int,
                      stop_on_unknown_callee_exit: bool = False,
                      hle_entry_pcs: Optional[set] = None,
                      live_operand_sites: Optional[set] = None,
+                     mod_hook_sites: Optional[set] = None,
+                     mod_hook_target_sites: Optional[set] = None,
                     ) -> "FunctionDecodeGraph":
     """Public cached wrapper around `_decode_function_uncached`.
 
@@ -1943,6 +1974,8 @@ def decode_function(rom: bytes, bank: int, start: int,
             stop_on_unknown_callee_exit=stop_on_unknown_callee_exit,
             hle_entry_pcs=hle_entry_pcs,
             live_operand_sites=live_operand_sites,
+            mod_hook_sites=mod_hook_sites,
+            mod_hook_target_sites=mod_hook_target_sites,
         )
 
     cache_key = (
@@ -1962,6 +1995,8 @@ def decode_function(rom: bytes, bank: int, start: int,
         bool(stop_on_unknown_callee_exit),
         frozenset(pc & 0xFFFF for pc in (hle_entry_pcs or ())),
         frozenset(pc & 0xFFFFFF for pc in (live_operand_sites or ())),
+        frozenset(pc & 0xFFFFFF for pc in (mod_hook_sites or ())),
+        frozenset(pc & 0xFFFFFF for pc in (mod_hook_target_sites or ())),
     )
     cached = _DECODE_CACHE.get(cache_key)
     if cached is not None:
@@ -1989,6 +2024,8 @@ def decode_function(rom: bytes, bank: int, start: int,
         stop_on_unknown_callee_exit=stop_on_unknown_callee_exit,
         hle_entry_pcs=hle_entry_pcs,
         live_operand_sites=live_operand_sites,
+        mod_hook_sites=mod_hook_sites,
+        mod_hook_target_sites=mod_hook_target_sites,
     )
     _DECODE_CACHE[cache_key] = graph
     return graph
@@ -2013,6 +2050,8 @@ def _decode_function_uncached(rom: bytes, bank: int, start: int,
                      stop_on_unknown_callee_exit: bool = False,
                      hle_entry_pcs: Optional[set] = None,
                      live_operand_sites: Optional[set] = None,
+                     mod_hook_sites: Optional[set] = None,
+                     mod_hook_target_sites: Optional[set] = None,
                     ) -> FunctionDecodeGraph:
     """Decode a function starting at (bank, start) with entry (m, x) state.
 
@@ -2064,6 +2103,11 @@ def _decode_function_uncached(rom: bytes, bank: int, start: int,
     entry_x &= 1
     entry_key = DecodeKey(addr24(bank, start), entry_m, entry_x)
     graph = FunctionDecodeGraph(entry=entry_key)
+    # cfg `mod_hook` sites and their redirect targets (24-bit, mirrors
+    # included): value barriers. See docs/MOD_HOOK.md "Analysis".
+    mod_hook_sites = frozenset(pc & 0xFFFFFF for pc in (mod_hook_sites or ()))
+    mod_hook_target_sites = frozenset(
+        pc & 0xFFFFFF for pc in (mod_hook_target_sites or ()))
     hle_entry_pcs = frozenset(
         pc & 0xFFFF for pc in (hle_entry_pcs or ())) - {start & 0xFFFF}
 
@@ -2435,6 +2479,8 @@ def _decode_function_uncached(rom: bytes, bank: int, start: int,
                     from .pointer_recovery import recover_pointer_targets
                     entries = recover_pointer_targets(
                         rom, graph, key, dp_op, insn.opcode == 0xDC,
+                        hook_sites=mod_hook_sites,
+                        join_sites=mod_hook_target_sites,
                         target_is_code=lambda target: (
                             (target & 0xFFFF) >= 0x8000
                             and not _addr_in_data_regions(data_regions, target >> 16, target & 0xFFFF)
@@ -2448,7 +2494,8 @@ def _decode_function_uncached(rom: bytes, bank: int, start: int,
                 if auth is None:
                     entries = _autorecover_local_stride_runway(
                         rom, bank, start, pc, insn,
-                        end=end, data_regions=data_regions)
+                        end=end, data_regions=data_regions,
+                        barrier_sites=mod_hook_sites | mod_hook_target_sites)
                     if entries:
                         auth = {
                             'count': len(entries),
@@ -3020,7 +3067,10 @@ def _decode_function_uncached(rom: bytes, bank: int, start: int,
     # Constant-Z branch fold + reachability prune. Runs once after the
     # worklist drains so predecessor counts are stable. See
     # `_apply_constant_z_fold` for the narrow scope.
-    _apply_constant_z_fold(graph, live_operand_sites)
+    barrier_sites = mod_hook_sites | mod_hook_target_sites
+    _apply_constant_z_fold(graph, live_operand_sites, barrier_sites)
+    graph.mod_hook_barrier = any(
+        (k.pc & 0xFFFFFF) in barrier_sites for k in graph.insns)
 
     return graph
 
@@ -3250,6 +3300,10 @@ def _entry_stack_restore_tcs_keys(
     call or D-register mutation may occur, and no other instruction may write
     that scratch location. Anything less remains unknown.
     """
+    # A mutating `mod_hook` may rewrite the scratch slot or D between the save
+    # and the restore: the saved S is not proven.
+    if getattr(graph, 'mod_hook_barrier', False):
+        return set()
     entry_di = graph.insns.get(graph.entry)
     if entry_di is None or entry_di.insn.mnem != 'TSC':
         return set()
@@ -3627,7 +3681,8 @@ def analyze_function_exit_mx(graph: 'FunctionDecodeGraph',
 
 
 def _apply_constant_z_fold(graph: FunctionDecodeGraph,
-                           live_operand_sites: Optional[set] = None) -> None:
+                           live_operand_sites: Optional[set] = None,
+                           barrier_sites: Optional[set] = None) -> None:
     """Decoder post-pass: rewrite BEQ/BNE successors to a single live
     edge when the same-block predecessor is an immediate LDA/LDX/LDY
     that makes Z statically known.
@@ -3674,6 +3729,11 @@ def _apply_constant_z_fold(graph: FunctionDecodeGraph,
             continue
         insn = di.insn
         if insn.mnem not in ('BEQ', 'BNE'):
+            continue
+        # A `mod_hook` at the branch runs between the load and the branch and
+        # may change Z; a `mod_hook_target` branch is also entered from the
+        # hook. Either way the load's Z is not the branch's Z.
+        if barrier_sites and (insn.addr & 0xFFFFFF) in barrier_sites:
             continue
         my_preds = preds.get(k, set())
         if len(my_preds) != 1:

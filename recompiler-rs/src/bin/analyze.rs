@@ -18,10 +18,10 @@ use serde_json::{json, Map, Value};
 
 use snesrecomp_analyzer::cfg::{load_bank_cfg, BankCfg, BankEntry};
 use snesrecomp_analyzer::decoder::{
-    analyze_function_exit_mx, analyze_function_exit_mx_modes_with_sets, classify_dispatch_helper,
-    decode_function, detect_inline_arg_bytes, function_exit_mx_equation,
-    function_return_stack_delta_states, DecodeCache, DecodeEnv, FunctionDecodeGraph,
-    IndirectDispatchSite,
+    analyze_function_exit_mx, analyze_function_exit_mx_modes_with_sets,
+    classify_dispatch_helper_with_barrier, decode_function, detect_inline_arg_bytes_with_barrier,
+    function_exit_mx_equation, function_return_stack_delta_states, DecodeCache, DecodeEnv,
+    FunctionDecodeGraph, IndirectDispatchSite,
 };
 use snesrecomp_analyzer::insn::Mode;
 use snesrecomp_analyzer::rom::{
@@ -123,6 +123,12 @@ struct Inputs {
     inline_skip: HashMap<u32, i32>,
     terminal_jsr_sites: BTreeSet<u32>,
     live_operand_sites: BTreeSet<u32>,
+    /// cfg `mod_hook` sites / `mod_hook_target` PCs (24-bit, mirrors
+    /// included): value barriers (docs/MOD_HOOK.md "Analysis").
+    mod_hook_sites: BTreeSet<u32>,
+    mod_hook_target_sites: BTreeSet<u32>,
+    /// Union of the two, for the callee idiom scanners.
+    mod_hook_barrier: BTreeSet<u32>,
     brk_rti_sites: BTreeSet<u32>,
     declared_exit_modes: HashMap<(u32, u8, u8), (u8, u8)>,
     declared_exit_sets: HashMap<(u32, u8, u8), Vec<(u8, u8)>>,
@@ -289,6 +295,8 @@ fn load_inputs(cfg_dir: &Path, rom: &mut Vec<u8>, all_cfg_roots: bool) -> Result
     let mut inline_skip = HashMap::new();
     let mut terminal_jsr_sites = BTreeSet::new();
     let mut live_operand_sites = BTreeSet::new();
+    let mut mod_hook_sites = BTreeSet::new();
+    let mut mod_hook_target_sites = BTreeSet::new();
     let mut brk_rti_sites = BTreeSet::new();
     let mut declared_exit_modes = HashMap::new();
     let mut declared_exit_sets: HashMap<(u32, u8, u8), Vec<(u8, u8)>> = HashMap::new();
@@ -390,6 +398,22 @@ fn load_inputs(cfg_dir: &Path, rom: &mut Vec<u8>, all_cfg_roots: bool) -> Result
             live_operand_sites.insert(site);
             if let Some(mirror) = mirror_pc24(mapping, site) {
                 live_operand_sites.insert(mirror);
+            }
+        }
+        for &site_pc16 in cfg.mod_hook.keys() {
+            let site = (bank << 16) | (site_pc16 & 0xFFFF);
+            mod_hook_sites.insert(site);
+            if let Some(mirror) = mirror_pc24(mapping, site) {
+                mod_hook_sites.insert(mirror);
+            }
+        }
+        for targets in cfg.mod_hook_target.values() {
+            for &target_pc16 in targets {
+                let site = (bank << 16) | (target_pc16 & 0xFFFF);
+                mod_hook_target_sites.insert(site);
+                if let Some(mirror) = mirror_pc24(mapping, site) {
+                    mod_hook_target_sites.insert(mirror);
+                }
             }
         }
         for &site_pc16 in &cfg.brk_rti {
@@ -543,6 +567,12 @@ fn load_inputs(cfg_dir: &Path, rom: &mut Vec<u8>, all_cfg_roots: bool) -> Result
         inline_skip,
         terminal_jsr_sites,
         live_operand_sites,
+        mod_hook_barrier: mod_hook_sites
+            .union(&mod_hook_target_sites)
+            .copied()
+            .collect(),
+        mod_hook_sites,
+        mod_hook_target_sites,
         brk_rti_sites,
         declared_exit_modes,
         declared_exit_sets,
@@ -845,6 +875,7 @@ fn discover_helpers(
     rom: &[u8],
     mapping: RomMapping,
     known: &HashMap<u32, String>,
+    barrier: &BTreeSet<u32>,
 ) -> HashMap<u32, String> {
     let mut result = HashMap::new();
     for decoded in graph.insns() {
@@ -856,9 +887,13 @@ fn discover_helpers(
         if known.contains_key(&target) || result.contains_key(&target) {
             continue;
         }
-        if let Some(kind) =
-            classify_dispatch_helper(rom, mapping, (target >> 16) & 0xFF, target & 0xFFFF)
-        {
+        if let Some(kind) = classify_dispatch_helper_with_barrier(
+            rom,
+            mapping,
+            (target >> 16) & 0xFF,
+            target & 0xFFFF,
+            Some(barrier),
+        ) {
             result.insert(target, kind.to_string());
         }
     }
@@ -871,6 +906,7 @@ fn discover_inline_args(
     mapping: RomMapping,
     known: &HashMap<u32, i32>,
     probed: &mut HashSet<u32>,
+    barrier: &BTreeSet<u32>,
 ) -> HashMap<u32, i32> {
     let mut result = HashMap::new();
     for decoded in graph.insns() {
@@ -889,9 +925,15 @@ fn discover_inline_args(
         let mut counts = BTreeSet::new();
         let mut probe_count = 0;
         for (m, x) in [(0, 0), (0, 1), (1, 0), (1, 1)] {
-            if let Some(count) =
-                detect_inline_arg_bytes(rom, mapping, (target >> 16) & 0xFF, target & 0xFFFF, m, x)
-            {
+            if let Some(count) = detect_inline_arg_bytes_with_barrier(
+                rom,
+                mapping,
+                (target >> 16) & 0xFF,
+                target & 0xFFFF,
+                m,
+                x,
+                Some(barrier),
+            ) {
                 if count != 0 {
                     counts.insert(count);
                     probe_count += 1;
@@ -1274,6 +1316,8 @@ fn analyze(
                 inline_dispatch_loop_pcs: inline_loops,
                 terminal_jsr_sites: Some(&inputs.terminal_jsr_sites),
                 live_operand_sites: Some(&inputs.live_operand_sites),
+                mod_hook_sites: Some(&inputs.mod_hook_sites),
+                mod_hook_target_sites: Some(&inputs.mod_hook_target_sites),
                 brk_rti_sites: Some(&inputs.brk_rti_sites),
                 global_inline_skip: Some(&inline_args),
                 stop_on_unknown_callee_exit: true,
@@ -1362,7 +1406,8 @@ fn analyze(
                     graph = Arc::new(candidate);
                 }
             }
-            let additions = discover_helpers(&graph, rom, mapping, &helpers);
+            let additions =
+                discover_helpers(&graph, rom, mapping, &helpers, &inputs.mod_hook_barrier);
             if !additions.is_empty() {
                 helpers.extend(additions);
                 cache = DecodeCache::new();
@@ -1370,8 +1415,14 @@ fn analyze(
                 pending.insert(key);
                 continue;
             }
-            let inline_additions =
-                discover_inline_args(&graph, rom, mapping, &inline_args, &mut inline_arg_probes);
+            let inline_additions = discover_inline_args(
+                &graph,
+                rom,
+                mapping,
+                &inline_args,
+                &mut inline_arg_probes,
+                &inputs.mod_hook_barrier,
+            );
             if !inline_additions.is_empty() {
                 inline_args.extend(inline_additions);
                 cache = DecodeCache::new();
