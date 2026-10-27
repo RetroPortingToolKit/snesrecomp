@@ -26,6 +26,15 @@ void WsShadowSetWorld(int layer, uint32_t worldX, uint32_t worldY);
  * parallax texture). Render the actual circular VRAM map in the gutters.
  * The next SetWorld/Frame registration restores world-source lookup. */
 void WsShadowUseVram(int layer);
+/* Frame-local object-canvas filter. Apply only to tile chunks wholly outside
+ * the native256 columns, using the exact tile/map address the renderer read.
+ * No history or world-source substitution; native/straddling chunks retain
+ * VRAM. Register after WsShadowFrame; the next frame or UseVram clears it. */
+struct Ppu;
+typedef uint16_t (*WsShadowVramMarginFilter)(void *context,
+                                  uint16_t mapWordAdr, uint16_t realTile);
+void WsShadowUseFilteredVram(int layer, const struct Ppu *ppu,
+                             WsShadowVramMarginFilter filter, void *context);
 
 /* Exact, uncached map source for a streaming title. Register after SetWorld
  * each frame. Queries use the rendered scanline's scroll phase and map-width

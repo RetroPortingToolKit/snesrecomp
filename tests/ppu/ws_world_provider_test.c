@@ -10,6 +10,11 @@
 int snes_frame_counter;
 static Ppu p;
 static unsigned calls, last_x, last_y;
+static uint16_t vram_filter(void *context, uint16_t address, uint16_t tile) {
+  assert(context == &p && address == 0x5800);
+  ++calls;
+  return (tile & 1023) >= 0x300 ? tile : 0;
+}
 static WsShadowSource result = kWsShadowExact;
 static WsShadowSource provider(void *context, uint32_t x, uint32_t y, uint16_t *entry) {
   assert(context == &p);
@@ -94,6 +99,35 @@ int main(void) {
   calls=0;
   got=WsShadowTile(0,256,0x200,0,0x5400,0x9876);
   assert(calls==1 && got==(uint16_t)(0x2000|((last_x+last_y*3)&1023)));
+  /* An object-canvas filter reads current VRAM even if stale history or
+   * a world provider exists. Native and fine-scroll straddles stay exact. */
+  for (int big=0;big<2;++big) {
+    p.bgmode=big ? 0x20 : 0;
+    WsShadowUseFilteredVram(1,&p,vram_filter,&p);calls=0;
+    assert(WsShadowLayerActive(1));
+    assert(WsShadowTile(1,100,0,0,0x5800,0x1234)==0x1234);
+    assert(WsShadowTile(1,255,0,0,0x5800,0x1234)==0x1234);
+    assert(WsShadowTile(1,-1,0,0,0x5800,0x1234)==0x1234);
+    assert(WsShadowTile(1,big?-15:-7,0,0,0x5800,0x1234)==0x1234);
+    assert(calls==0);
+    assert(WsShadowTile(1,256,0,0,0x5800,0x7333)==0x7333);
+    assert(WsShadowTile(1,-16,0,0,0x5800,0x1234)==0);
+    assert(calls==2);
+    WsShadowFrame(&p);calls=0;
+    assert(!WsShadowLayerActive(1));
+    assert(WsShadowTile(1,256,0,0,0x5800,0x1234)==0x1234 && calls==0);
+  }
+  WsShadowUseFilteredVram(1,&p,vram_filter,&p);WsShadowUseVram(1);
+  assert(!WsShadowLayerActive(1));
+  WsShadowUseFilteredVram(1,&p,vram_filter,&p);WsShadowUseFilteredVram(1,NULL,vram_filter,&p);
+  assert(!WsShadowLayerActive(1));
+  WsShadowUseFilteredVram(1,&p,NULL,&p);assert(!WsShadowLayerActive(1));
+  setup(0,0x200);WsShadowForceTile(0,32,64,0xdead);
+  WsShadowUseFilteredVram(0,&p,vram_filter,&p);calls=0;
+  assert(WsShadowTile(0,256,0x200,0,0x5800,0x1234)==0 && calls==1);
+  WsShadowSetWorld(0,0,0x200);WsShadowSetWorldProvider(0,provider,&p,false);
+  WsShadowFrame(&p);calls=0;
+  assert(WsShadowTile(0,256,0x200,0,0x5400,0x1234)!=0 && calls==1);
   puts("exact world provider: high-Y, signed raster phase, native pixels, dynamic writes and lifecycle passed");
   return 0;
 }

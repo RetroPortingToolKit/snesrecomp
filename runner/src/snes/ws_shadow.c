@@ -31,6 +31,8 @@ typedef struct WsShadowLayer {
   WsShadowWorldProvider provider;
   void *providerContext;
   bool providerNativeOverrides;
+  WsShadowVramMarginFilter vramMarginFilter;
+  void *vramMarginContext;
   uint16_t mapBaseWord;
   uint16_t *entries;
   uint8_t *valid;
@@ -252,6 +254,20 @@ void WsShadowUseVram(int layerIndex) {
   layer->provider = NULL;
   layer->providerContext = NULL;
   layer->providerNativeOverrides = false;
+  layer->vramMarginFilter = NULL;
+  layer->vramMarginContext = NULL;
+}
+
+void WsShadowUseFilteredVram(int layerIndex, const Ppu *ppu,
+                             WsShadowVramMarginFilter filter, void *context) {
+  if (layerIndex < 0 || layerIndex >= kLayers) return;
+  WsShadowUseVram(layerIndex);
+  if (!ppu || !filter) return;
+  WsShadowLayer *layer = &s_layers[layerIndex];
+  layer->tileShift = PPU_bigTiles(ppu, layerIndex) ? 4 : 3;
+  layer->vramMarginFilter = filter;
+  layer->vramMarginContext = context;
+  layer->active = true;
 }
 
 void WsShadowSetScroll(int layerIndex, uint32_t scrollX, uint32_t scrollY) {
@@ -991,6 +1007,8 @@ static int EstimateOccMassDy(const uint8_t *prev_occ, int prev_cols,
 void WsShadowFrame(const struct Ppu *ppu) {
   for (int i = 0; i < kLayers; i++) {
     WsShadowLayer *layer = &s_layers[i];
+    layer->vramMarginFilter = NULL;
+    layer->vramMarginContext = NULL;
     layer->active = layer->registered;
     layer->registered = false;
     if (!layer->active)
@@ -1316,6 +1334,9 @@ uint16_t WsShadowTile(int layerIndex, int screenX, uint32_t wrappedY,
    */
   const int tile_pixels = 1 << (layer->tileShift ? layer->tileShift : 3);
   const bool native = screenX < 256 && screenX + tile_pixels > 0;
+  if (layer->vramMarginFilter)
+    return native ? realTile : layer->vramMarginFilter(
+        layer->vramMarginContext, mapWordAdr, realTile);
   if (!layer->active ||
       (screenX >= 0 && screenX + tile_pixels <= 256 &&
        !layer->providerNativeOverrides))
@@ -1426,7 +1447,8 @@ uint16_t WsShadowTile(int layerIndex, int screenX, uint32_t wrappedY,
 bool WsShadowLayerActive(int layerIndex) {
   return layerIndex >= 0 && layerIndex < kLayers &&
          s_layers[layerIndex].active &&
-         (s_layers[layerIndex].fold || s_layers[layerIndex].entries);
+         (s_layers[layerIndex].vramMarginFilter ||
+          s_layers[layerIndex].fold || s_layers[layerIndex].entries);
 }
 
 uint32_t WsShadowWorldX(int layerIndex) {

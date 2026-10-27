@@ -106,6 +106,18 @@ and must equal the reflected source column; mid-scroll the margin must equal
 what the tilemap authors there (i.e. must be byte-identical to the natural
 render), which is the assertion that catches a viewport-space fold.
 
+Finite object canvases need a different source rule from scenery. X3's Maoh
+paints its BG2 body over a reused circular map: neighboring map entries still
+contain old level tiles. A complete map is not necessarily a complete authored
+canvas. `WsShadowUseFilteredVram(layer, ppu, filter, context)`, registered after
+`WsShadowFrame`, lets a title retain the renderer's current object entries and
+omit known unrelated entries in the margins. It reads the exact live tile and
+map address, bypasses terrain history, and leaves native and edge-straddling
+chunks untouched. Registration expires next frame. Combine it with a world
+clip if wrapping the map could repeat the object; supply skyline and terrain
+from their own layers. Qualify the character range from the actual game data,
+including moving/destroyed pieces, rather than guessing from a screenshot.
+
 ### P2c. A continuous status bar anchors its rigid groups and stretches only elastic material
 
 **Defect:** `PpuSetWidescreenLayerAnchorBand` moves a raster status bar's left
