@@ -291,6 +291,7 @@ struct Ppu {
   uint16_t wsWorldLeft[kPpuWsWorldBands][4];
   uint16_t wsWorldRight[kPpuWsWorldBands][4];
   uint8_t wsWorldClip[kPpuWsWorldBands]; /* layer bits: clip instead of reflect */
+  uint16_t wsWorldRepeat[kPpuWsWorldBands][4]; /* 0=reflect, otherwise edge strip */
   /* 0 keeps the layer's own phase; 1..4 selects BG1..BG4 as the reference. */
   uint8_t wsWorldReference[kPpuWsWorldBands][4];
   // Piecewise horizontal remaps for the elastic anchor bands (see
@@ -944,6 +945,18 @@ void PpuSetWidescreenLayerWorldClipBand(
 void PpuSetWidescreenLayerWorldClipBandSlot(
     Ppu *ppu, uint8_t slot, uint8_t layer, uint8_t y0, uint8_t y1,
     uint8_t reference_layer, uint16_t world_left_px, uint16_t world_right_px);
+
+// Preserve the authored world/native view and repeat only a short strip at
+// either world edge into overflow margins. Useful when reflecting the room
+// would duplicate dynamic damage or an entrance. Width is clamped to the
+// world span; zero/invalid input disables the slot. Own per-line PPU phase.
+// Frame-local, outside save-state spans, same precedence as a world mirror.
+void PpuSetWidescreenLayerWorldRepeatBand(
+    Ppu *ppu, uint8_t layer, uint8_t y0, uint8_t y1,
+    uint16_t world_left_px, uint16_t world_right_px, uint16_t strip_width);
+void PpuSetWidescreenLayerWorldRepeatBandSlot(
+    Ppu *ppu, uint8_t slot, uint8_t layer, uint8_t y0, uint8_t y1,
+    uint16_t world_left_px, uint16_t world_right_px, uint16_t strip_width);
 
 // ELASTIC ANCHOR BANDS -- anchor a raster status bar's chrome to the widened
 // viewport edges and bridge the gap that opens by stretching only the

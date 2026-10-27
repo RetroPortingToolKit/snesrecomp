@@ -299,6 +299,7 @@ static inline void PpuResetLayerPolicies(Ppu *ppu) {
   memset(ppu->wsWorldLeft, 0, sizeof(ppu->wsWorldLeft));
   memset(ppu->wsWorldRight, 0, sizeof(ppu->wsWorldRight));
   memset(ppu->wsWorldClip, 0, sizeof(ppu->wsWorldClip));
+  memset(ppu->wsWorldRepeat, 0, sizeof(ppu->wsWorldRepeat));
   memset(ppu->wsWorldReference, 0, sizeof(ppu->wsWorldReference));
   memset(ppu->wsElasticY0, 0, sizeof(ppu->wsElasticY0));
   memset(ppu->wsElasticY1, 0, sizeof(ppu->wsElasticY1));
@@ -551,6 +552,7 @@ void PpuSetWidescreenLayerWorldMirrorBandSlot(
   ppu->wsWorldLeft[slot][layer] = world_left_px;
   ppu->wsWorldRight[slot][layer] = world_right_px;
   ppu->wsWorldClip[slot] &= (uint8_t)~(1u << layer);
+  ppu->wsWorldRepeat[slot][layer] = 0;
   ppu->wsWorldReference[slot][layer] = 0;
 }
 
@@ -573,6 +575,25 @@ void PpuSetWidescreenLayerWorldClipBandSlot(
     ppu->wsWorldClip[slot] |= (uint8_t)(1u << layer);
     ppu->wsWorldReference[slot][layer] = (uint8_t)(reference_layer + 1);
   }
+}
+
+void PpuSetWidescreenLayerWorldRepeatBand(
+    Ppu *ppu, uint8_t layer, uint8_t y0, uint8_t y1,
+    uint16_t world_left_px, uint16_t world_right_px, uint16_t strip_width) {
+  PpuSetWidescreenLayerWorldRepeatBandSlot(ppu,0,layer,y0,y1,
+                                         world_left_px,world_right_px,strip_width);
+}
+
+void PpuSetWidescreenLayerWorldRepeatBandSlot(
+    Ppu *ppu, uint8_t slot, uint8_t layer, uint8_t y0, uint8_t y1,
+    uint16_t world_left_px, uint16_t world_right_px, uint16_t strip_width) {
+  if (!strip_width) y0 = y1 = 0;
+  PpuSetWidescreenLayerWorldMirrorBandSlot(ppu,slot,layer,y0,y1,
+                                         world_left_px,world_right_px);
+  if (slot < kPpuWsWorldBands && layer < 4 &&
+      ppu->wsWorldY1[slot][layer] > ppu->wsWorldY0[slot][layer])
+    ppu->wsWorldRepeat[slot][layer] = (uint16_t)IntMin(
+        strip_width,world_right_px-world_left_px);
 }
 
 static void PpuClearElasticBandSlot(Ppu *ppu, uint8_t slot, uint8_t layer) {
@@ -1942,7 +1963,7 @@ static void PpuMergeWorldBoundedBackground(Ppu *ppu,
                                             PpuPixelPrioBufs *dstbuf,
                                             const PpuPixelPrioBufs *layerbuf,
                                             int world_left, int world_right,
-                                            int hscroll, bool clip) {
+                                            int hscroll, bool clip, int strip) {
   PpuZbufType *dst = dstbuf->data;
   const PpuZbufType *src = layerbuf->data;
   const int left_extra = ppu->extraLeftCur;
@@ -1958,6 +1979,12 @@ static void PpuMergeWorldBoundedBackground(Ppu *ppu,
       // Keep its authentic picture even then; contain only synthetic margins.
       if ((x < 0 || x >= kPpuXPixels) && (x < a || x >= b))
         continue;
+    } else if (strip) {
+      // Never change authentic columns, even during an out-of-bounds shake.
+      if (x < 0 || x >= kPpuXPixels) {
+        if (x < a) sx = a + strip - 1 - ((a - x - 1) % strip);
+        else if (x >= b) sx = b - strip + ((x - b) % strip);
+      }
     } else {
       if (x < a)
         sx = 2 * a - 1 - x;
@@ -2079,7 +2106,8 @@ static void PpuDrawBackground_4bpp_policy(Ppu *ppu, PpuPixelPrioBufs *dstbuf,
                                     ppu->wsWorldLeft[world_band][layer],
                                     ppu->wsWorldRight[world_band][layer],
                                     ppu->hScroll[PpuWorldReferenceLayer(ppu,world_band,layer)],
-                                    (ppu->wsWorldClip[world_band] & (1u << layer)) != 0);
+                                    (ppu->wsWorldClip[world_band] & (1u << layer)) != 0,
+                                    ppu->wsWorldRepeat[world_band][layer]);
   } else if (stretch_band) {
     PpuMergeStretchedBackground(ppu, dstbuf, &layerbuf);
   } else {
@@ -2138,7 +2166,8 @@ static void PpuDrawBackground_2bpp_policy(Ppu *ppu, PpuPixelPrioBufs *dstbuf,
                                     ppu->wsWorldLeft[world_band][layer],
                                     ppu->wsWorldRight[world_band][layer],
                                     ppu->hScroll[PpuWorldReferenceLayer(ppu,world_band,layer)],
-                                    (ppu->wsWorldClip[world_band] & (1u << layer)) != 0);
+                                    (ppu->wsWorldClip[world_band] & (1u << layer)) != 0,
+                                    ppu->wsWorldRepeat[world_band][layer]);
   } else if (stretch_band) {
     PpuMergeStretchedBackground(ppu, dstbuf, &layerbuf);
   } else {

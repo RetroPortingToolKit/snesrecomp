@@ -5363,10 +5363,10 @@ static void cmd_get_ppu_state(const char *args) {
              "\"worldBands\":["
                "{\"slot\":0,\"y0\":[%u,%u,%u,%u],\"y1\":[%u,%u,%u,%u],"
                  "\"left\":[%u,%u,%u,%u],\"right\":[%u,%u,%u,%u],"
-                 "\"clipMask\":%u,\"reference\":[%u,%u,%u,%u]},"
+                 "\"clipMask\":%u,\"repeatWidth\":[%u,%u,%u,%u],\"reference\":[%u,%u,%u,%u]},"
                "{\"slot\":1,\"y0\":[%u,%u,%u,%u],\"y1\":[%u,%u,%u,%u],"
                  "\"left\":[%u,%u,%u,%u],\"right\":[%u,%u,%u,%u],"
-                 "\"clipMask\":%u,\"reference\":[%u,%u,%u,%u]}],"
+                 "\"clipMask\":%u,\"repeatWidth\":[%u,%u,%u,%u],\"reference\":[%u,%u,%u,%u]}],"
              "\"elasticBands\":%s},"
              "\"evenFrame\":%s}",
              p->inidisp, p->bgmode & 7, p->mosaic, p->obsel,
@@ -5397,7 +5397,8 @@ static void cmd_get_ppu_state(const char *args) {
              p->wsWorldLeft[0][2], p->wsWorldLeft[0][3],
              p->wsWorldRight[0][0], p->wsWorldRight[0][1],
              p->wsWorldRight[0][2], p->wsWorldRight[0][3],
-             p->wsWorldClip[0], p->wsWorldReference[0][0],
+             p->wsWorldClip[0], p->wsWorldRepeat[0][0], p->wsWorldRepeat[0][1],
+             p->wsWorldRepeat[0][2], p->wsWorldRepeat[0][3], p->wsWorldReference[0][0],
              p->wsWorldReference[0][1], p->wsWorldReference[0][2],
              p->wsWorldReference[0][3],
              p->wsWorldY0[1][0], p->wsWorldY0[1][1], p->wsWorldY0[1][2],
@@ -5408,7 +5409,8 @@ static void cmd_get_ppu_state(const char *args) {
              p->wsWorldLeft[1][2], p->wsWorldLeft[1][3],
              p->wsWorldRight[1][0], p->wsWorldRight[1][1],
              p->wsWorldRight[1][2], p->wsWorldRight[1][3],
-             p->wsWorldClip[1], p->wsWorldReference[1][0],
+             p->wsWorldClip[1], p->wsWorldRepeat[1][0], p->wsWorldRepeat[1][1],
+             p->wsWorldRepeat[1][2], p->wsWorldRepeat[1][3], p->wsWorldReference[1][0],
              p->wsWorldReference[1][1], p->wsWorldReference[1][2],
              p->wsWorldReference[1][3],
              eb,

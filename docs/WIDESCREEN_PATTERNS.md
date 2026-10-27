@@ -106,6 +106,14 @@ and must equal the reflected source column; mid-scroll the margin must equal
 what the tilemap authors there (i.e. must be byte-identical to the natural
 render), which is the assertion that catches a viewport-space fold.
 
+Reflection also copies dynamic changes. If an arena can destroy its interior
+floor, use `PpuSetWidescreenLayerWorldRepeatBand` to repeat a short undamaged
+strip at each world edge instead. All authored room columns, including real
+offscreen damage, and every native column remain unchanged. This keeps a
+floor pit or entrance from being duplicated outside the room. Width0 disables
+the band; larger widths are bounded by the authored span. As with reflection,
+the source strip must be in the rendered line.
+
 Finite object canvases need a different source rule from scenery. X3's Maoh
 paints its BG2 body over a reused circular map: neighboring map entries still
 contain old level tiles. A complete map is not necessarily a complete authored
