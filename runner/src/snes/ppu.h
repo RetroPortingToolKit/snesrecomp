@@ -290,6 +290,9 @@ struct Ppu {
   uint8_t wsWorldY0[kPpuWsWorldBands][4], wsWorldY1[kPpuWsWorldBands][4];
   uint16_t wsWorldLeft[kPpuWsWorldBands][4];
   uint16_t wsWorldRight[kPpuWsWorldBands][4];
+  uint8_t wsWorldClip[kPpuWsWorldBands]; /* layer bits: clip instead of reflect */
+  /* 0 keeps the layer's own phase; 1..4 selects BG1..BG4 as the reference. */
+  uint8_t wsWorldReference[kPpuWsWorldBands][4];
   // Piecewise horizontal remaps for the elastic anchor bands (see
   // PpuSetWidescreenLayerElasticBand). nseg == 0 or y1 <= y0 = slot off.
   uint8_t wsElasticY0[kPpuWsElasticBands][4];
@@ -922,6 +925,19 @@ void PpuSetWidescreenLayerWorldMirrorBand(Ppu *ppu, uint8_t layer, uint8_t y0,
 void PpuSetWidescreenLayerWorldMirrorBandSlot(
     Ppu *ppu, uint8_t slot, uint8_t layer, uint8_t y0, uint8_t y1,
     uint16_t world_left_px, uint16_t world_right_px);
+
+// Contain a Mode-1 object canvas within another scrolling plane's authored
+// room. Only margin pixels outside [left,right), measured using the reference
+// layer's actual PPU scroll on this line, are omitted. Native256 columns and
+// genuine in-room margin art remain untouched. No canvas pixels are reflected.
+// Reference/layer indices are0..3. Invalid inputs disable the slot. This is
+// frame-local, outside save-state spans, and reset by PpuSetExtraSpace*.
+void PpuSetWidescreenLayerWorldClipBand(
+    Ppu *ppu, uint8_t layer, uint8_t y0, uint8_t y1, uint8_t reference_layer,
+    uint16_t world_left_px, uint16_t world_right_px);
+void PpuSetWidescreenLayerWorldClipBandSlot(
+    Ppu *ppu, uint8_t slot, uint8_t layer, uint8_t y0, uint8_t y1,
+    uint8_t reference_layer, uint16_t world_left_px, uint16_t world_right_px);
 
 // ELASTIC ANCHOR BANDS -- anchor a raster status bar's chrome to the widened
 // viewport edges and bridge the gap that opens by stretching only the
