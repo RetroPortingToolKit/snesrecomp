@@ -42,6 +42,7 @@ if str(_RECOMPILER_DIR) not in sys.path:
 
 from snes65816 import (  # noqa: E402
     decode_insn, lorom_offset, rom_bank_mirror, is_materialized_rom_address, Insn,
+    get_rom_mapping,
     ABS, INDIR, INDIR_X, LONG, IMM,
 )
 
@@ -714,9 +715,15 @@ def _resolve_indirect_dispatch_targets(rom: bytes, bank: int, insn,
                 return None
             # Zero is a real null dispatch slot, not bank:$0000. Preserve it
             # so every downstream consumer can skip the slot consistently.
-            entries.append(
-                0 if tv == 0 else (
-                    tv if tv > 0xFFFF else ((bank << 16) | (tv & 0xFFFF))))
+            if tv == 0:
+                entries.append(0)
+            elif get_rom_mapping() == 'hirom' and _dispatch_kind(insn, bases) == 'short':
+                # An inherited contract may spell the physical target in its
+                # authored bank. Near transfers keep the executing PB, which
+                # can give the same bytes different successors (ROM vs RAM).
+                entries.append((bank << 16) | (tv & 0xFFFF))
+            else:
+                entries.append(tv if tv > 0xFFFF else ((bank << 16) | tv))
         if len(entries) != count:
             return None
         return entries
@@ -905,6 +912,11 @@ def _labeled_successors(insn: Insn, key: DecodeKey, bank: int,
     next_pc = (pc + insn.length) & 0xFFFF
 
     mnem = insn.mnem
+
+    if mnem == 'BRK' and getattr(insn, 'brk_rti', False):
+        # brk_rti: the interrupt round trip returns past the signature byte
+        # with P restored, so the widths and the PHP stack are unchanged.
+        return [(DecodeKey(addr24(bank, next_pc), key.m, key.x, key.p_stack), 'fall')]
 
     if mnem in _TERMINATORS:
         return []
@@ -1899,8 +1911,10 @@ def decode_function(rom: bytes, bank: int, start: int,
                      inline_arg_map: Optional[Dict[int, int]] = None,
                      terminal_jsr_sites: Optional[set] = None,
                      noreturn_jsr_sites: Optional[set] = None,
+                     brk_rti_sites: Optional[set] = None,
                      stop_on_unknown_callee_exit: bool = False,
                      hle_entry_pcs: Optional[set] = None,
+                     live_operand_sites: Optional[set] = None,
                     ) -> "FunctionDecodeGraph":
     """Public cached wrapper around `_decode_function_uncached`.
 
@@ -1925,8 +1939,10 @@ def decode_function(rom: bytes, bank: int, start: int,
             inline_arg_map=inline_arg_map,
             terminal_jsr_sites=terminal_jsr_sites,
             noreturn_jsr_sites=noreturn_jsr_sites,
+            brk_rti_sites=brk_rti_sites,
             stop_on_unknown_callee_exit=stop_on_unknown_callee_exit,
             hle_entry_pcs=hle_entry_pcs,
+            live_operand_sites=live_operand_sites,
         )
 
     cache_key = (
@@ -1942,8 +1958,10 @@ def decode_function(rom: bytes, bank: int, start: int,
         _identity(inline_arg_map),
         _identity(terminal_jsr_sites),
         _identity(noreturn_jsr_sites),
+        _identity(brk_rti_sites),
         bool(stop_on_unknown_callee_exit),
         frozenset(pc & 0xFFFF for pc in (hle_entry_pcs or ())),
+        frozenset(pc & 0xFFFFFF for pc in (live_operand_sites or ())),
     )
     cached = _DECODE_CACHE.get(cache_key)
     if cached is not None:
@@ -1967,8 +1985,10 @@ def decode_function(rom: bytes, bank: int, start: int,
         inline_arg_map=inline_arg_map,
         terminal_jsr_sites=terminal_jsr_sites,
         noreturn_jsr_sites=noreturn_jsr_sites,
+        brk_rti_sites=brk_rti_sites,
         stop_on_unknown_callee_exit=stop_on_unknown_callee_exit,
         hle_entry_pcs=hle_entry_pcs,
+        live_operand_sites=live_operand_sites,
     )
     _DECODE_CACHE[cache_key] = graph
     return graph
@@ -1989,8 +2009,10 @@ def _decode_function_uncached(rom: bytes, bank: int, start: int,
                      inline_arg_map: Optional[Dict[int, int]] = None,
                      terminal_jsr_sites: Optional[set] = None,
                      noreturn_jsr_sites: Optional[set] = None,
+                     brk_rti_sites: Optional[set] = None,
                      stop_on_unknown_callee_exit: bool = False,
                      hle_entry_pcs: Optional[set] = None,
+                     live_operand_sites: Optional[set] = None,
                     ) -> FunctionDecodeGraph:
     """Decode a function starting at (bank, start) with entry (m, x) state.
 
@@ -2130,9 +2152,13 @@ def _decode_function_uncached(rom: bytes, bank: int, start: int,
         # own start, so back-edges to entry are unaffected. The PHB/
         # PLB-balanced cross-fn-jump case is unaffected — those targets
         # aren't in `sibling_entry_pcs`.
+        # Not while this path holds a PHP the sibling will PLP (Super
+        # Metroid QueueSfxN_MaxK -> QueueSfxN_Internal): split there, the
+        # sibling pops a P it never pushed. Mirrors the native decoder.
         if (sibling_entry_pcs is not None
                 and edge_kind == 'jump'
                 and not getattr(graph, 'has_internal_stack_dispatch', False)
+                and not key.p_stack
                 and pc in sibling_entry_pcs):
             boundary = ((bank << 16) | (pred_pc & 0xFFFF), key)
             if boundary not in graph.boundary_exits:
@@ -2159,8 +2185,29 @@ def _decode_function_uncached(rom: bytes, bank: int, start: int,
                 f"${bank:02X}:{pc:04X} entry_mx=({key.m},{key.x})"
             )
 
+        # A conditional branch arm entering authority data at a BRK byte
+        # executes it as a software interrupt (the `BPL +; db $00; +:`
+        # assertion trap). BRK is a terminator; like a cfg data region reached
+        # by control flow it is executed exactly in the interpreter. A call
+        # continuation landing on data is the callee's inline arguments, not
+        # a reachable BRK, and stays a conflict. Mirrors the native decoder.
+        authority_data = _AUTHORITY_DATA.get(bank, b'')
+        pred_is_cond_branch = False
+        if pred_pc >= 0:
+            try:
+                pred_offset = lorom_offset(bank, pred_pc & 0xFFFF)
+            except AssertionError:
+                pred_offset = None
+            pred_is_cond_branch = (pred_offset is not None and pred_offset < len(rom)
+                                   and rom[pred_offset] in (0x10, 0x30, 0x50, 0x70,
+                                                            0x90, 0xB0, 0xD0, 0xF0))
+        authority_data_trap = (pred_is_cond_branch and insn.mnem == 'BRK'
+                               and pc < len(authority_data)
+                               and bool(authority_data[pc]))
         expected = _INSTRUCTION_AUTHORITY.get(key.pc)
-        if (any(_AUTHORITY_DATA.get(bank, b'')[pc:pc+insn.length])
+        if authority_data_trap:
+            graph.data_region_exec_pcs.add(key.pc & 0xFFFFFF)
+        elif (any(authority_data[pc:pc+insn.length])
                 or (expected is not None and
              (len(expected) != insn.length or rom[offset:offset + insn.length] != expected))
                 or any(_INSTRUCTION_AUTHORITY.get(key.pc + n)
@@ -2194,6 +2241,10 @@ def _decode_function_uncached(rom: bytes, bank: int, start: int,
                     f"JSR at ${insn.addr & 0xFFFFFF:06X} cannot be both "
                     "terminal_jsr and noreturn_jsr")
             insn.noreturn_jsr = True
+        if brk_rti_sites and (insn.addr & 0xFFFFFF) in brk_rti_sites:
+            from v2.brk_rti import check_brk_rti_site
+            check_brk_rti_site(rom, insn.addr)
+            insn.brk_rti = True
 
         # JSL/JML dispatch-table detection: if the call target is a
         # registered dispatch helper, decode the bytes immediately
@@ -2969,7 +3020,7 @@ def _decode_function_uncached(rom: bytes, bank: int, start: int,
     # Constant-Z branch fold + reachability prune. Runs once after the
     # worklist drains so predecessor counts are stable. See
     # `_apply_constant_z_fold` for the narrow scope.
-    _apply_constant_z_fold(graph)
+    _apply_constant_z_fold(graph, live_operand_sites)
 
     return graph
 
@@ -3575,7 +3626,8 @@ def analyze_function_exit_mx(graph: 'FunctionDecodeGraph',
     return (exit_m, exit_x)
 
 
-def _apply_constant_z_fold(graph: FunctionDecodeGraph) -> None:
+def _apply_constant_z_fold(graph: FunctionDecodeGraph,
+                           live_operand_sites: Optional[set] = None) -> None:
     """Decoder post-pass: rewrite BEQ/BNE successors to a single live
     edge when the same-block predecessor is an immediate LDA/LDX/LDY
     that makes Z statically known.
@@ -3634,6 +3686,11 @@ def _apply_constant_z_fold(graph: FunctionDecodeGraph) -> None:
         if pred_insn.mnem not in ('LDA', 'LDX', 'LDY'):
             continue
         if pred_insn.mode != IMM:
+            continue
+        # A `live_operand` immediate is read from the ROM image at run time,
+        # so the bytes decoded here say nothing about Z when the branch runs.
+        if (live_operand_sites
+                and (pred_insn.addr & 0xFFFFFF) in live_operand_sites):
             continue
         if len(pred_di.successors) != 1 or pred_di.successors[0] != k:
             continue

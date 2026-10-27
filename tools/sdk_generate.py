@@ -18,6 +18,7 @@ import contextlib
 import io
 import os
 import pathlib
+import tempfile
 import sys
 from typing import Optional, Sequence
 
@@ -52,7 +53,7 @@ def _resolve_under(root: Optional[pathlib.Path], value: str) -> pathlib.Path:
     return path.resolve()
 
 
-def generate(
+def _generate(
     *,
     rom: pathlib.Path,
     cfg_dir: pathlib.Path,
@@ -62,13 +63,25 @@ def generate(
     no_host_root_scan: bool = False,
     source_roots: Optional[Sequence[pathlib.Path]] = None,
     profile_manifests: Optional[Sequence[pathlib.Path]] = None,
+    historical_profile_manifests: Optional[Sequence[pathlib.Path]] = None,
     legacy_profile_rom_sha256: Optional[str] = None,
+    generation_recipe_digest: Optional[str] = None,
     analysis_backend: str = "native",
     expected_crc32: Optional[str] = None,
     expected_sha256: Optional[str] = None,
     progress: Optional[ProgressReporter] = None,
+    _report_result: bool = True,
+    _funcs_h_destination: Optional[pathlib.Path] = None,
 ) -> dict:
-    """Verify a ROM, emit C into ``out_dir``, optionally sync ``funcs.h``."""
+    """Verify a ROM, emit C into ``out_dir``, optionally sync ``funcs.h``.
+
+    ``funcs.h`` is written from the cfg BEFORE the emit, into a pending file.
+    When it is the funcs.h beside the cfg files -- the one the emitter reads
+    host aliases from -- the emitter reads the pending file instead, so a
+    fresh checkout's first regeneration equals every later one rather than
+    differing by whatever an earlier run left on disk.
+    ``_funcs_h_destination`` names where a staged ``funcs_h`` is published.
+    """
     from tools import v2_emit, v2_sync_funcs_h
 
     reporter = progress or ProgressReporter()
@@ -119,6 +132,11 @@ def generate(
     for manifest in profile_manifests or ():
         emit_args.extend(
             ["--profile-manifest", str(pathlib.Path(manifest).resolve())])
+    for manifest in historical_profile_manifests or ():
+        emit_args.extend(
+            ["--historical-profile-manifest", str(pathlib.Path(manifest).resolve())])
+    if generation_recipe_digest:
+        emit_args.extend(["--generation-recipe-digest", generation_recipe_digest])
     if legacy_profile_rom_sha256:
         emit_args.extend(["--legacy-profile-rom-sha256", legacy_profile_rom_sha256])
 
@@ -134,36 +152,53 @@ def generate(
                 reporter.log(line)
         return code
 
-    reporter.phase(
-        "emit",
-        pct=0.15,
-        message=f"Analyzing ROM and generating C into {out_dir}",
-    )
-    code = run_captured(v2_emit, emit_args)
-    if code != 0:
-        raise RuntimeError(f"source generation failed (exit {code})")
-
     funcs_count = None
-    if funcs_h is not None:
+    with tempfile.TemporaryDirectory(prefix="snesrecomp-funcs-h-") as header_temp:
+        pending_header = None
+        if funcs_h is not None:
+            # symbols.toml adds cfg functions; the emitter applies it first
+            # thing, so do the same before deriving funcs.h from the cfg.
+            # The emitter reports the synchronization; keep stdout clean here.
+            from sync_symbols import sync_symbols
+            with contextlib.redirect_stdout(io.StringIO()):
+                sync_symbols(cfg_dir)
+            pending_header = pathlib.Path(header_temp) / "funcs.h"
+            sync_code = run_captured(
+                v2_sync_funcs_h,
+                ["--cfg-dir", str(cfg_dir), "--out", str(pending_header)],
+            )
+            if sync_code != 0:
+                raise RuntimeError(f"funcs.h sync failed (exit {sync_code})")
+            destination = pathlib.Path(_funcs_h_destination or funcs_h).resolve()
+            if destination == (cfg_dir / "funcs.h").resolve():
+                emit_args.extend(["--host-alias-header", str(pending_header)])
+
         reporter.phase(
-            "sync_funcs_h",
-            pct=0.9,
-            message=f"Syncing function declarations to {funcs_h}",
+            "emit",
+            pct=0.15,
+            message=f"Analyzing ROM and generating C into {out_dir}",
         )
-        sync_code = run_captured(
-            v2_sync_funcs_h,
-            ["--cfg-dir", str(cfg_dir), "--out", str(funcs_h)],
-        )
-        if sync_code != 0:
-            raise RuntimeError(f"funcs.h sync failed (exit {sync_code})")
-        try:
-            text = funcs_h.read_text(encoding="utf-8")
-            for line in text.splitlines():
-                if line.startswith("/* ") and " functions across all banks" in line:
-                    funcs_count = int(line.split()[1])
-                    break
-        except (OSError, ValueError):
-            funcs_count = None
+        code = run_captured(v2_emit, emit_args)
+        if code != 0:
+            raise RuntimeError(f"source generation failed (exit {code})")
+
+        if funcs_h is not None:
+            reporter.phase(
+                "sync_funcs_h",
+                pct=0.9,
+                message=f"Syncing function declarations to {funcs_h}",
+            )
+            text = pending_header.read_text(encoding="utf-8")
+            funcs_h.parent.mkdir(parents=True, exist_ok=True)
+            funcs_h.write_text(text, encoding="utf-8", newline="\n")
+            reporter.log(f"funcs.h: wrote {funcs_h}")
+            try:
+                for line in text.splitlines():
+                    if line.startswith("/* ") and " functions across all banks" in line:
+                        funcs_count = int(line.split()[1])
+                        break
+            except ValueError:
+                funcs_count = None
 
     result = {
         "ok": True,
@@ -175,6 +210,74 @@ def generate(
         "cfg_roots": bool(cfg_roots),
         "analysis_backend": analysis_backend,
     }
+    if _report_result:
+        reporter.phase("done", pct=1.0, message="Generate complete")
+        reporter.result(**result)
+    return result
+
+
+def generate(**kwargs) -> dict:
+    """Generate with the project's automatic recipe, including launcher calls.
+
+    A failed hook leaves the published C and funcs.h unchanged. Hooks receive
+    a new tree, so even in-place writers cannot mutate hard-linked live files.
+    """
+    from tools.generation_recipe import load_recipe
+
+    cfg_dir = pathlib.Path(kwargs["cfg_dir"]).resolve()
+    recipe = load_recipe(cfg_dir)
+    if recipe is None:
+        return _generate(**kwargs)
+    ensure_tool_paths(pathlib.Path(__file__).resolve().parents[1])
+    from v2.atomic_output import AtomicOutputDir
+    options = dict(kwargs)
+    reporter = options.get("progress") or ProgressReporter()
+    options["progress"] = reporter
+    identity = recipe.identity()
+    for key in ("expected_crc32", "expected_sha256"):
+        declared, supplied = identity.get(key), options.get(key)
+        if declared and supplied and declared.lower().removeprefix("0x") != supplied.lower().removeprefix("0x"):
+            raise ValueError(f"{key} disagrees with recipe identity file")
+        options[key] = supplied or declared or None
+    rom = pathlib.Path(options["rom"]).resolve()
+    verified = verify_rom(rom, expected_crc32=options.get("expected_crc32"),
+                          expected_sha256=options.get("expected_sha256"))
+    if recipe.data.get("bind_legacy_profiles"):
+        if not options.get("expected_sha256"):
+            raise ValueError("binding legacy profiles requires a verified expected SHA-256")
+        supplied = options.get("legacy_profile_rom_sha256")
+        if supplied and supplied.lower() != verified["sha256"].lower():
+            raise ValueError("legacy profile binding differs from verified recipe ROM")
+        options["legacy_profile_rom_sha256"] = verified["sha256"]
+    for key in ("cfg_roots", "no_host_root_scan"):
+        options[key] = bool(options.get(key) or recipe.data.get(key))
+    for key, recipe_key in (("profile_manifests", "profiles"),
+                            ("historical_profile_manifests", "historical_profiles")):
+        options[key] = list(dict.fromkeys(
+            [*recipe.profiles(recipe_key), *(options.get(key) or [])]))
+    options["generation_recipe_digest"] = recipe.digest()
+    target = pathlib.Path(options["out_dir"]).resolve()
+    header = pathlib.Path(options["funcs_h"]).resolve() if options.get("funcs_h") else None
+    recipe.run("prepare", rom=rom, cfg_dir=cfg_dir, out_dir=target, reporter=reporter)
+    transaction = AtomicOutputDir(target, seed_existing=False)
+    try:
+        with tempfile.TemporaryDirectory(prefix="snesrecomp-sdk-header-") as temp:
+            staged_header = pathlib.Path(temp) / "funcs.h" if header else None
+            options.update(out_dir=transaction.staging, funcs_h=staged_header,
+                           _funcs_h_destination=header, _report_result=False)
+            result = _generate(**options)
+            recipe.run("postprocess", rom=rom, cfg_dir=cfg_dir,
+                       out_dir=transaction.staging, reporter=reporter)
+            transaction.publish()
+            if header:
+                # Header may be on another volume; atomic_output writes its
+                # replacement beside the destination before renaming it.
+                from v2.atomic_output import write_if_changed
+                write_if_changed(header, staged_header.read_text(encoding="utf-8"))
+    finally:
+        transaction.cleanup()
+    result.update(out_dir=str(target), funcs_h=str(header) if header else None,
+                  recipe=str(recipe.path))
     reporter.phase("done", pct=1.0, message="Generate complete")
     reporter.result(**result)
     return result

@@ -21,6 +21,9 @@
 #include "common_cpu_infra.h"  /* cpu_take_tailcall_return_context — swallow a stale
                                 * tail-armed context on the LLE yield unwind */
 #include "ppu_dma_trace.h"      /* ppudma_note_interrupt — per-frame tally */
+#if defined(_MSC_VER) && !defined(__clang__)
+#include <intrin.h>             /* _BitScanForward64 */
+#endif
 
 /* Guest-time-anchored APU (Rockman X JP gate #3 / audio pacing): the interp
  * tier advances the SPC per interpreted opcode by guest master cycles, exactly
@@ -145,6 +148,11 @@ static int bridge_apu_port_diag_enabled(void) {
  * WRAM / MMIO / SRAM / ROM. One memory map, zero divergence. */
 uint64_t g_interp_bridge_write_epoch;
 static uint64_t s_interp_continuous_read_epoch;
+/* Like s_interp_continuous_read_epoch, except that a declared poll's reads
+ * leave it alone. Only the idle-poll replay keys on it; the
+ * quiescent detector keeps the full epoch, so declaring a poll never changes
+ * what that detector decides. */
+static uint64_t s_interp_idle_live_epoch;
 static uint64_t s_interp_dynamic_progress_epoch;
 /* Bumped by every read whose value can change while the CPU only reads: MMIO,
  * coprocessor windows, cartridge RAM a coprocessor shares, open bus. A read of
@@ -160,6 +168,7 @@ static BridgeDynamicValue s_bridge_dynamic_values[64];
 void interp_bridge_reset_dynamic_cache(void) {
     memset(s_bridge_dynamic_values, 0, sizeof(s_bridge_dynamic_values));
     s_interp_continuous_read_epoch = 0;
+    s_interp_idle_live_epoch = 0;
     s_interp_dynamic_progress_epoch = 0;
     s_interp_volatile_read_epoch = 0;
     g_interp_bridge_write_epoch = 0;
@@ -177,10 +186,77 @@ static unsigned bridge_region_speed(uint32_t adr) {
     return (unsigned)cpu_region_speed(adr);
 }
 
+/* Index of the lowest set bit; v must be non-zero. */
+static inline unsigned bridge_ctz64(uint64_t v) {
+#if defined(_MSC_VER) && !defined(__clang__)
+    unsigned long i;
+    _BitScanForward64(&i, v);
+    return (unsigned)i;
+#else
+    return (unsigned)__builtin_ctzll(v);
+#endif
+}
+
 static void bridge_timing_bus(uint32_t adr) {
     if (!s_interp_bus_timing_active) return;
     s_interp_bus_cycles++;
     s_interp_bus_master+=bridge_region_speed(adr);
+}
+
+/* interp_bridge_set_idle_poll: the opcodes declared as a pure interrupt
+ * wait's poll, and whether the one executing now is one of them. Host
+ * configuration, not guest state: it lasts until cleared and is not saved. */
+enum { kInterpIdlePollSlots = 8 };
+static uint32_t s_idle_poll_pcs[kInterpIdlePollSlots];
+static int s_idle_poll_count;
+static int s_idle_poll_now;
+
+bool interp_bridge_set_idle_poll(uint32_t pc24) {
+    const uint32_t key = pc24 & 0x7FFFFFu;
+    for (int i = 0; i < s_idle_poll_count; i++)
+        if (s_idle_poll_pcs[i] == key) return true;
+    if (s_idle_poll_count >= kInterpIdlePollSlots) return false;
+    s_idle_poll_pcs[s_idle_poll_count++] = key;
+    return true;
+}
+
+void interp_bridge_clear_idle_polls(void) {
+    s_idle_poll_count = 0;
+    s_idle_poll_now = 0;
+}
+
+static int bridge_is_idle_poll(uint32_t pc24) {
+    const uint32_t key = pc24 & 0x7FFFFFu;
+    for (int i = 0; i < s_idle_poll_count; i++)
+        if (s_idle_poll_pcs[i] == key) return 1;
+    return 0;
+}
+
+/* Can a stable cycle of `period` steps be replayed to the master deadline
+ * without skipping an event the interpreted run would meet? Under a deadline
+ * the bridge samples one kind of event between instructions: an IRQ. The
+ * replay syncs the beam only at APU flushes and at the end, so no IRQ may be
+ * able to fire: either I is set (stable across the cycle), or no H/V timer
+ * is armed. Coprocessors that run their own programs and assert IRQ are not
+ * replayed at all, and neither is a frame whose HDMA writes the WRAM data
+ * port: that is the one device that can change the polled byte without the
+ * CPU, and interpreted, the poll would see it. */
+static int bridge_idle_replay_allowed(const Interp816 *in, long period) {
+    if (period <= 0 || period > 32 || !g_snes)
+        return 0;
+    if (!in->i && (g_snes->hIrqEnabled || g_snes->vIrqEnabled)) return 0;
+    if (g_snes->cart && (g_snes->cart->superfx || g_snes->cart->cx4 ||
+                         g_snes->cart->sa1))
+        return 0;
+    if (g_snes->dma) {
+        for (int c = 0; c < 8; c++) {
+            const DmaChannel *ch = &g_snes->dma->channel[c];
+            if (ch->hdmaActive && !ch->terminated &&
+                ch->bAdr >= 0x7D && ch->bAdr <= 0x83)
+                return 0;
+        }
+    }
+    return 1;
 }
 
 static int bridge_continuous_read(uint32_t adr) {
@@ -229,7 +305,14 @@ static uint8_t bridge_bus_read(void *mem, uint32_t adr) {
     bridge_timing_bus(adr);
     if (!bridge_read_is_stable(adr)) s_interp_volatile_read_epoch++;
     int continuous=bridge_continuous_read(adr);
-    if (continuous) s_interp_continuous_read_epoch++;
+    if (continuous) {
+        s_interp_continuous_read_epoch++;
+        /* A declared idle poll's read changes only when an interrupt handler
+         * runs: not live for the replay. A declared PC that reads a device
+         * instead (MMIO, an APU port) still bumps the volatile epoch, and the
+         * replay requires that one unchanged too. */
+        if (!s_idle_poll_now) s_interp_idle_live_epoch++;
+    }
     if (bridge_is_apu_port(adr)) bridge_apu_flush(cpu);
     uint8_t value=cpu_read8(cpu,(uint8)((adr>>16)&0xff),(uint16)adr);
     if (continuous) {
@@ -420,8 +503,9 @@ static void sync_interp_to_cpu(const Interp816 *in, CpuState *c) {
  * sites use 16). Callbacks may mutate CpuState and live DMA/PPU MMIO mirrors;
  * changes to CpuState are copied back into the interpreter before the opcode
  * runs. */
-/* MW widescreen + H2H vert-widen alone registers ~125 unique PCs. */
-enum { kInterpPreOpcodeHookSlots = 192 };
+/* MW widescreen + H2H vert-widen registers ~125 unique PCs. MMX co-op,
+ * weapon hooks and Boss Rush together need more than the former 192 slots. */
+enum { kInterpPreOpcodeHookSlots = 256 };
 static struct {
     uint32_t pc24;
     InterpPreOpcodeHook hook;
@@ -1548,11 +1632,33 @@ static int _interp_run_core(CpuState *cpu, uint32_t entry_pc24,
         uint8_t db, k, c, z, v, n, i, d, mf, xf, e;
         uint64_t write_epoch;
         uint64_t continuous_read_epoch;
+        uint64_t idle_live_epoch, volatile_read_epoch;
         long step;
-        unsigned repeats;
+        unsigned repeats, idle_repeats;
     } QuiescentState;
     QuiescentState qring[64];
     memset(qring, 0, sizeof qring);
+    /* What each step cost, parallel to qring, for replaying a declared idle
+     * poll's cycle (interp_bridge_set_idle_poll). Recorded on every step, so
+     * a poll declared while a run is live never replays a stale entry. */
+    struct { uint64_t master; uint8_t cyc, open_bus; } idle_cost[64];
+    /* The quiescent detector's candidates, bucketed by a hash of every field
+     * both matchers compare (PC, registers, flags, widths, write epoch and
+     * idle-live read epoch). The ordinary matcher still compares its full
+     * continuous-read epoch; the idle matcher also compares volatile reads.
+     * An entry
+     * that matches has the same hash, so it is in now's bucket: qbucket[b]
+     * has bit s set while ring slot s holds a state hashing to b, and
+     * qslot_bucket[s] says which bucket that is (0xFF: slot still empty).
+     * Every slot in the bucket is a candidate, not just the latest visit to
+     * the PC -- a loop whose state at a PC alternates matches only an older
+     * one -- and they are compared in full in ascending slot order, so the
+     * entry chosen, and with it the repeat count, is the one the full
+     * 64-entry scan chooses. A collision only costs a compare. */
+    uint64_t qbucket[64];
+    uint8_t qslot_bucket[64];
+    memset(qbucket, 0, sizeof qbucket);
+    memset(qslot_bucket, 0xFF, sizeof qslot_bucket);
     /* Stable-poll detector state: the architectural state at the last few
      * loop heads this frame branched back to (see the detector below). */
     typedef struct PollHeadState {
@@ -1590,6 +1696,13 @@ static int _interp_run_core(CpuState *cpu, uint32_t entry_pc24,
     }
     for (; steps < step_cap; steps++) {
         const uint32_t pc_before = ((uint32_t)in.k << 16) | in.pc;
+        /* Settle the DRAM refresh tax owed by clocks generated code charged
+         * after its last per-block settlement: the interpreter settles after
+         * each of its own opcodes, so without this the first interpreted step
+         * after a compiled body samples the deadline and IRQs 40 master
+         * clocks early per owed line. A no-op when the previous step was
+         * interpreted. */
+        snes_refresh_charge();
 #ifdef SNESRECOMP_INTERP_PROFILE
         g_interp_total_steps++;
         interp_hist_init();
@@ -1934,17 +2047,114 @@ static int _interp_run_core(CpuState *cpu, uint32_t entry_pc24,
             now.d=in.d; now.mf=in.mf; now.xf=in.xf; now.e=in.e;
             now.write_epoch=g_interp_bridge_write_epoch; now.step=steps;
             now.continuous_read_epoch=s_interp_continuous_read_epoch;
-            for (unsigned qi=0; qi<64; qi++) {
-                QuiescentState *old=&qring[qi];
-                if (old->step && steps-old->step<=256 &&
-                    old->pc==now.pc && old->a==now.a && old->x==now.x &&
-                    old->y==now.y && old->sp==now.sp && old->dp==now.dp &&
-                    old->db==now.db && old->k==now.k && old->c==now.c &&
-                    old->z==now.z && old->v==now.v && old->n==now.n &&
-                    old->i==now.i && old->d==now.d && old->mf==now.mf &&
-                    old->xf==now.xf && old->e==now.e &&
-                    old->write_epoch==now.write_epoch &&
-                    old->continuous_read_epoch==now.continuous_read_epoch) {
+            now.idle_live_epoch=s_interp_idle_live_epoch;
+            now.volatile_read_epoch=s_interp_volatile_read_epoch;
+            int idle_seen = 0;
+            unsigned qb;
+            {
+                const uint64_t k = 0x9E3779B97F4A7C15ull;
+                uint64_t h = now.pc;
+                h = h * k ^ ((uint64_t)now.a << 32 | (uint64_t)now.x << 16 | now.y);
+                h = h * k ^ ((uint64_t)now.sp << 32 | (uint64_t)now.dp << 16 |
+                             (uint64_t)now.db << 8 | now.k);
+                h = h * k ^ ((uint64_t)now.c | (uint64_t)now.z << 8 |
+                             (uint64_t)now.v << 16 | (uint64_t)now.n << 24 |
+                             (uint64_t)now.i << 32 | (uint64_t)now.d << 40 |
+                             (uint64_t)now.mf << 48 | (uint64_t)now.xf << 56);
+                h = h * k ^ now.e;
+                h = h * k ^ now.write_epoch;
+                h = h * k ^ now.idle_live_epoch;
+                h *= k;
+                qb = (unsigned)(h >> 58);
+            }
+            for (uint64_t qm = qbucket[qb]; qm; qm &= qm - 1) {
+                QuiescentState *old=&qring[bridge_ctz64(qm)];
+                if (!(old->step && steps-old->step<=256 &&
+                      old->pc==now.pc && old->a==now.a && old->x==now.x &&
+                      old->y==now.y && old->sp==now.sp && old->dp==now.dp &&
+                      old->db==now.db && old->k==now.k && old->c==now.c &&
+                      old->z==now.z && old->v==now.v && old->n==now.n &&
+                      old->i==now.i && old->d==now.d && old->mf==now.mf &&
+                      old->xf==now.xf && old->e==now.e &&
+                      old->write_epoch==now.write_epoch))
+                    continue;
+                /* A declared idle poll's cycle: same state, no write, no
+                 * volatile read, and no live read but the declared poll's.
+                 * Replay it to the deadline (docs/IDLE_POLL.md). Every guard
+                 * that fails leaves the run to the detector below, exactly
+                 * as if nothing were declared. */
+                if (s_idle_poll_count && !idle_seen &&
+                    old->idle_live_epoch==now.idle_live_epoch &&
+                    old->volatile_read_epoch==now.volatile_read_epoch) {
+                    idle_seen = 1;
+                    now.idle_repeats=old->idle_repeats+1;
+                    if (now.idle_repeats>=2 && s_lle_master_deadline &&
+                        bridge_idle_replay_allowed(&in, steps - old->step)) {
+                        const long first = old->step;
+                        const long period = steps - old->step;
+                        int idle = 0, irq_unmasked = 0;
+                        for (long j = 0; j < period; j++) {
+                            const QuiescentState *state = &qring[(first + j) & 63];
+                            idle |= bridge_is_idle_poll(state->pc);
+                            irq_unmasked |= !state->i;
+                        }
+                        /* Equal endpoint flags do not prove I stayed set:
+                         * SEI / poll / CLI can recur at a masked phase while
+                         * an armed timer is observable elsewhere in the cycle. */
+                        if (idle && !(irq_unmasked &&
+                            (g_snes->hIrqEnabled || g_snes->vIrqEnabled))) {
+                            const int apu_pending =
+                                rtl_apu_extended_frame_timing() ||
+                                !interp_bridge_use_absolute_apu_timeline(
+                                    rtl_apu_frame_timeline_active(),
+                                    cart_has_sa1(g_snes->cart), false);
+                            const QuiescentState *at = &qring[first & 63];
+                            int capped = 0;
+                            for (long j = 0;; j++) {
+                                const long e = (first + j % period) & 63;
+                                at = &qring[e];
+                                /* The checks the interpreted loop makes before
+                                 * each step, in its order: the step cap, then
+                                 * the deadline. */
+                                if (steps + j >= step_cap) { capped = 1; break; }
+                                if (cpu->master_cycles >= s_lle_master_deadline)
+                                    break;
+                                g_interp_bridge_steps++;
+                                cpu->cycles += idle_cost[e].cyc;
+                                cpu->master_cycles += idle_cost[e].master;
+                                snes_refresh_charge();
+                                cpu->open_bus = idle_cost[e].open_bus;
+                                if (apu_pending) {
+                                    s_apu_pending_master += idle_cost[e].master;
+                                    if (s_apu_pending_master >= bridge_bounce_flush_thresh()) {
+                                        cpu->coprocessor_master_cycles = cpu->master_cycles;
+                                        snes_sync_master_clock(g_snes, cpu->master_cycles);
+                                        bridge_apu_flush(cpu);
+                                    }
+                                }
+                            }
+                            in.k = at->k; in.pc = (uint16_t)at->pc;
+                            in.a = at->a; in.x = at->x; in.y = at->y;
+                            in.sp = at->sp; in.dp = at->dp; in.db = at->db;
+                            in.c = at->c; in.z = at->z; in.v = at->v; in.n = at->n;
+                            in.i = at->i; in.d = at->d; in.mf = at->mf;
+                            in.xf = at->xf; in.e = at->e;
+                            cpu->coprocessor_master_cycles = cpu->master_cycles;
+                            snes_sync_master_clock(g_snes, cpu->master_cycles);
+                            if (g_snes->cart)
+                                cart_sync_coprocessors(g_snes->cart, cpu->master_cycles);
+                            if (capped) {
+                                steps = step_cap;
+                                goto idle_replay_step_cap;
+                            }
+                            lle_resume_set(at->pc, INTERP_RESUME_SITE_DEADLINE, in.sp);
+                            sync_interp_to_cpu(&in, cpu);
+                            bridge_apu_flush(cpu);
+                            return 1;
+                        }
+                    }
+                }
+                if (old->continuous_read_epoch==now.continuous_read_epoch) {
                     now.repeats=old->repeats+1;
                     if (now.repeats>=2) {
                         /* Stable CPU/memory state is a genuine cooperative
@@ -1970,6 +2180,13 @@ static int _interp_run_core(CpuState *cpu, uint32_t entry_pc24,
                     }
                     break;
                 }
+            }
+            {
+                const unsigned qs = (unsigned)(steps & 63);
+                if (qslot_bucket[qs] != 0xFF)
+                    qbucket[qslot_bucket[qs]] &= ~(1ull << qs);
+                qbucket[qb] |= 1ull << qs;
+                qslot_bucket[qs] = (uint8_t)qb;
             }
             qring[steps & 63]=now;
         }
@@ -2441,7 +2658,9 @@ static int _interp_run_core(CpuState *cpu, uint32_t entry_pc24,
         if (g_interp_bridge_pc_hook)
             g_interp_bridge_pc_hook(pc_before & 0xFFFFFFu,
                                     in.mf ? 1 : 0, in.xf ? 1 : 0);
+        if (s_idle_poll_count) s_idle_poll_now = bridge_is_idle_poll(pc_before);
         int _cyc = interp816_runOpcode(&in);   /* executes the opcode; pushes/pops frames */
+        s_idle_poll_now = 0;
         if (s_interp_pctrace && steps < 4)
             fprintf(stderr, "[pctrace] step=%ld post-runOpcode cyc=%d pc=%02X:%04X\n",
                     steps, _cyc, in.k, in.pc);
@@ -2502,6 +2721,9 @@ static int _interp_run_core(CpuState *cpu, uint32_t entry_pc24,
                     if (s_apu_pending_master >= bridge_bounce_flush_thresh()) bridge_apu_flush(cpu);
                 }
             }
+            idle_cost[steps & 63].master = _master;
+            idle_cost[steps & 63].cyc = (uint8_t)_cyc;
+            idle_cost[steps & 63].open_bus = cpu->open_bus;
         }
 
         /* Env-gated per-instruction cycle watch (SNESRECOMP_CYC_WATCH="lo-hi"
@@ -2885,6 +3107,7 @@ static int _interp_run_core(CpuState *cpu, uint32_t entry_pc24,
 
         }
     }
+idle_replay_step_cap:
     if (trace) {
         itrace_dump(entry_pc24, head, (int)(itn < 8 ? itn : 8), ring, itn);
         interp_bridge_dump_recent_edges(64, stderr);
@@ -3430,8 +3653,6 @@ RecompReturn interp_tier_dispatch_tail(CpuState *cpu, uint32_t target_pc24,
 
 RecompReturn interp_tier_dispatch_tail_ex(CpuState *cpu, uint32_t target_pc24,
     uint32_t site_pc24, uint16_t entry_s, uint8_t hrv, bool from_indirect) {
-    if (cpu_interrupt_context_active())
-        return interp_tier_dispatch_interrupt(cpu, target_pc24);
     /* This tail transfer abandons every compiled guest frame beneath the AOT
      * root that the active interpreter bounced into.  Starting a new nested
      * interpreter here leaves those host frames live; if the guest continuation
@@ -3443,6 +3664,12 @@ RecompReturn interp_tier_dispatch_tail_ex(CpuState *cpu, uint32_t target_pc24,
      * AOT tail fallbacks retain the balanced nested-interpreter path below. */
     if (s_interp_bounce_owner_depth > 0)
         return interp_bridge_lle_yield_unwind(cpu, target_pc24);
+    /* A subroutine called inside NMI/IRQ still returns with RTS/RTL. Let an
+     * owning interpreter resume first; a nested interrupt interpreter would
+     * consume its continuation and RTI before returning to a live AOT caller.
+     * Only a tail with no paired subroutine return frame is an interrupt root. */
+    if (cpu_interrupt_context_active() && hrv == 0)
+        return interp_tier_dispatch_interrupt(cpu, target_pc24);
     return interp_tier_dispatch_balanced(cpu, target_pc24, site_pc24,
                                             entry_s, hrv, from_indirect);
 }
@@ -3746,6 +3973,37 @@ static void tier2_emit_discoveries(FILE *f, const char *indent) {
         fprintf(f, "%s%s", i ? ",\n" : "\n", indent);
         tier2_emit_row(f, &g_tier2_cov[i]);
     }
+}
+
+void InterpExecutionShareGet(InterpExecutionShare *out) {
+    extern CpuState g_cpu;
+    extern int snes_frame_counter;
+    out->interp_insns = interp816_insns_total();
+    out->interp_cycles = interp816_cycles_total();
+    out->cpu_cycles = g_cpu.cycles;
+    out->master_cycles = g_cpu.master_cycles;
+    out->frame = snes_frame_counter;
+    double pct = out->cpu_cycles
+        ? 100.0 * (double)out->interp_cycles / (double)out->cpu_cycles : 0.0;
+    /* The interpreter's bus-cycle rounding can put it a hair over the total;
+     * a headline above 100% is a sub-percent accounting artifact. */
+    if (pct > 100.0) pct = 100.0;
+    out->interp_cycle_pct = pct;
+    out->aot_cycle_pct = out->cpu_cycles ? 100.0 - pct : 0.0;
+}
+
+void InterpExecutionShareDumpJson(FILE *f) {
+    InterpExecutionShare s;
+    InterpExecutionShareGet(&s);
+    fprintf(f, "  \"execution_share\": {\"frame\": %d, \"interp_insns\": %llu, "
+               "\"interp_cycles\": %llu, \"cpu_cycles\": %llu, "
+               "\"master_cycles\": %llu, \"interp_cycle_pct\": %.4f, "
+               "\"aot_cycle_pct\": %.4f},\n",
+            s.frame, (unsigned long long)s.interp_insns,
+            (unsigned long long)s.interp_cycles,
+            (unsigned long long)s.cpu_cycles,
+            (unsigned long long)s.master_cycles,
+            s.interp_cycle_pct, s.aot_cycle_pct);
 }
 
 void Tier2CoverageDumpJson(FILE *f) {

@@ -5,11 +5,17 @@ All work lives on the `feat/shadow-enhancements` branch / `_shadow_snesrecomp`
 worktree — it does not touch the in-flight `fix/apu-audio-accuracy`,
 `feat/*-widescreen`, etc.
 
-## Governing principle (the carve-out)
+## Scope of this historical enhancement design
 
-Faithfulness is the product; these are an opt-in layer on top. The one
-permitted form of HLE here is a **verified-enhancement shadow**, allowed only
-when ALL hold:
+This document describes the existing optional presentation enhancement. Its
+shadow verification rules below apply to that enhancement, not to performance
+HLE replacements. New HLE/LLE work follows the shared
+[HLE policy](https://github.com/mstan/recomp-ai-rules/blob/main/HLE.md): keep a
+functioning LLE build, select the implementation at build time, and validate
+the caller contract and measured benefit. HLE may replace load-bearing work
+without simultaneously executing a reference copy.
+
+The historical shadow enhancement was designed with these requirements:
 
 1. The emulated (canon) path keeps running and stays both the authoritative
    output and the verify oracle. The shadow is never ground truth.
@@ -21,8 +27,8 @@ when ALL hold:
 
 Worst-case failure is "the user hears/sees the authentic hardware output," and
 it cannot mask a recompiler bug because the canon path it shadows is still the
-thing being diffed. (Same rule now in `recomp-template/PRINCIPLES.md`,
-"Verified-Enhancement HLE Is Allowed; Load-Bearing HLE Is Not".)
+thing being diffed. This is the rationale for that presentation feature;
+it does not constrain separately built performance replacements.
 
 ## What ports verbatim vs what is SNES-specific
 

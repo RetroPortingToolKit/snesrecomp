@@ -9,6 +9,8 @@ import shutil
 import subprocess
 import sys
 
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
+from native_analyzer_identity import source_digest, write_stamp  # noqa: E402
 
 REPO = pathlib.Path(__file__).resolve().parent.parent
 CRATE = REPO / "recompiler-rs"
@@ -56,6 +58,9 @@ def main() -> int:
     binary = CRATE / "target" / profile / BINARY_NAME
     if not binary.is_file():
         raise RuntimeError(f"Cargo succeeded but did not create {binary}")
+    # Record which sources this binary is, so a later framework update cannot
+    # reuse it as if it were built from the new ones.
+    write_stamp(binary, source_digest(CRATE))
     print(f"build_native_analyzer: ready: {binary}")
     return 0
 

@@ -1,21 +1,29 @@
-# Content variants: several recompiled programs in one executable
+# Program-module and content-selector internals
 
-A **content variant** is something the player can pick to run inside a title's
-executable: the stock game, another game from a user-supplied cartridge image
-(Super Mario All-Stars' Super Mario Bros. inside Super Mario World), or a ROM
-hack. Every variant has its own recompiled **program module**, its own ROM
-source and verification, its own boot policy, and its own isolated saves, and
-the player switches between them in-game with Left/Right on a screen the
-active variant declares safe.
+This is a maintainer reference for the existing module registry, selector,
+and save namespaces. For mod authoring, use [`MOD_AUTHORING.md`](MOD_AUTHORING.md).
 
-This replaces per-title hand wiring (F-Zero's `deluxe_` externs and a regex
-namespace header) with one registry, one manifest vocabulary and one picker.
+**Recompiling ROM hacks is deprecated.** Do not build new mods by recompiling
+a patched ROM and selecting it through the legacy package patch/variant
+mechanism. Reimplement the hack's behavior and supported data as a `.snesmod`
+against the stock ROM. Legacy patch declarations remain readable with a
+deprecation warning for compatibility; their authoring example has been
+removed.
+
+Super Mario World's ingestion project and F-Zero Forever's import engine are
+separate title-specific work. This notice does not deprecate those systems or
+prescribe their implementation.
+
+A **content variant** identifies a program selection inside an executable.
+Its **program module** supplies the compiled dispatch tables and image
+identity. The registry associates a selection with its ROM source, boot
+policy, safe selector screen, and isolated saves. These facilities do not
+make arbitrary patched ROMs supported mods.
 
 ```
         executable
         ├── stock program module        (src/gen, unprefixed)        -> variant "smw"
-        ├── program module "smas"       (src/gen-smas, prefix smas_) -> variants smas.smb1, smas.smbll, ...
-        └── program module "<hack>"     (src/gen-<hack>, prefixed)   -> variant "<hack>"
+        └── program module "smas"       (src/gen-smas, prefix smas_) -> variants smas.smb1, smas.smbll, ...
 ```
 
 ## Program modules (`runner/src/program_module.h`)
@@ -62,31 +70,25 @@ snes_variant_register_builtin("smw", "Super Mario World", "main",
 snes_variant_bind_game_info("main", &kSmwGameInfo);
 ```
 
-Everything else comes from mod packages. Manifest format 1 gains three
-sections and one key:
+The existing format-1 registry can also describe an unmodified external
+program in a title that already integrates it. This fragment documents that
+integration contract, not a general mod-author workflow:
 
 ```toml
-[[external_rom]]            # unchanged, plus:
+[[external_rom]]
 feature = "smas"
 id = "smas-usa"
 label = "Super Mario All-Stars (USA)"
 format = "snes"
 size = 2097152
-sha256 = "..."              # NEW: verified by the engine before any use
+sha256 = "..."              # verified by the engine before any use
 
-[[patch]]                   # NEW: an IPS/BPS applied in memory
-feature = "hack"
-id = "main"
-file = "hack.bps"           # relative to the package version directory
-target_sha256 = "..."       # digest of the patched image
-
-[[variant]]                 # NEW
+[[variant]]
 feature = "smas"
 id = "smas.smb1"
 display_name = "Super Mario Bros."
 module = "smas"             # program module id
 source_rom = "smas-usa"     # external_rom id; omit for the launched ROM
-patch = "main"              # optional [[patch]] id
 save_namespace = "smas.smb1"   # default: id
 selector_group = "mario"    # variants sharing the stock variant's picker
 selector_order = 10
@@ -96,10 +98,10 @@ boot_entry = 0x008000          # optional entry PC instead of the reset vector
 ```
 
 A variant is **available** only when: its feature is enabled in the committed
-plan, its module is linked, its source ROM is selected and hashes as declared,
-and its patch applies and hashes as declared. The runtime additionally checks
-that the final image matches the module's own recorded digest. A wrong ROM
-never boots; the picker shows the reason instead.
+plan, its module is linked, and its source ROM is selected and hashes as
+declared. The runtime additionally checks that the image matches the module's
+own recorded digest. A wrong ROM never boots; the picker shows the reason
+instead.
 
 ### Frame drivers
 
@@ -127,7 +129,7 @@ Host-driven, on the port's existing session-reboot path:
 RtlWriteSram()                      // old namespace
 snes_free()
 snes_variant_prepare(v, profile, launched_rom, size, &rom, &rom_size, &owned, err, cap)
-    // verify -> patch -> module select -> RtlRegisterGame(driver) -> save root
+    // verify -> module select -> RtlRegisterGame(driver) -> save root
 SnesInit(rom, rom_size)
 RtlReadSram()                       // new namespace
 snes_variant_selector_sync()

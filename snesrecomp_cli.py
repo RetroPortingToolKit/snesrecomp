@@ -130,9 +130,11 @@ def resolve_analyzer(backend: str) -> str:
     """Point the emitter at the native analyzer, the only analyzer there is.
 
     Packaged builds ship the binary beside this file, so it is named here
-    rather than left to the emitter's repo-relative lookup. In a source
-    checkout without a built binary the emitter builds it. `auto` and
-    `native` both mean native; `python` names the retired analyzer.
+    rather than left to the emitter's repo-relative lookup. A source checkout
+    is left to the emitter, which builds the binary when it is missing and
+    rebuilds it when it was built from other recompiler-rs sources; naming it
+    here would bypass that check. `auto` and `native` both mean native;
+    `python` names the retired analyzer.
     """
     if backend == "python":
         raise RuntimeError(
@@ -140,7 +142,7 @@ def resolve_analyzer(backend: str) -> str:
             "only one (drop --analysis-backend python)")
     analyzer = ROOT / "recompiler-rs" / "target" / "release" / (
         "snesrecomp-analyze.exe" if os.name == "nt" else "snesrecomp-analyze")
-    if analyzer.is_file():
+    if getattr(sys, "_MEIPASS", None) and analyzer.is_file():
         os.environ["SNESRECOMP_NATIVE_ANALYZER"] = str(analyzer)
     return "native"
 

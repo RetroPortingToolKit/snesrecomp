@@ -7,5 +7,6 @@
 
 pub mod cfg;
 pub mod decoder;
+pub mod hirom_cfg;
 pub mod insn;
 pub mod rom;

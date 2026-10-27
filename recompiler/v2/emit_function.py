@@ -50,13 +50,74 @@ from v2.ir import (  # noqa: E402
     IROp, IRBlock, Value,
     CondBranch, Goto, IndirectGoto, Call, Return,
     PullReg, PushReg, Pull, Push, PushEffectiveAddress, Reg,
+    ConstI, Read, SegRef, SegKind,
 )
+
+
+def _own_inline_skip(fn_entry_pc: int, inline_arg_map=None) -> int:
+    """Inline argument bytes the function at fn_entry_pc consumes (0 if none).
+
+    Same lookup as the dispatch table: the exact PC, then its ROM mirror.
+    Falls back to the decoder's process-wide map, as decode_function does."""
+    import v2.decoder as _decoder
+    from snes65816 import rom_bank_mirror
+    active = inline_arg_map if inline_arg_map is not None else _decoder._ACTIVE_INLINE_ARG_MAP
+    if not active:
+        return 0
+    skip = active.get(fn_entry_pc)
+    if skip is None:
+        bank = (fn_entry_pc >> 16) & 0xFF
+        if rom_bank_mirror(bank) is not None:
+            skip = active.get(((bank ^ 0x80) << 16) | (fn_entry_pc & 0xFFFF))
+    return int(skip or 0)
 
 
 def _label_for(key: DecodeKey) -> str:
     """C label name for a block keyed by (pc, m, x)."""
     pc = key.pc & 0xFFFF
     return f"L_{pc:04X}_M{key.m}X{key.x}"
+
+
+# Immediate-mode instructions whose operand is data: changing it changes a
+# value, never a width or a control-flow edge, so every fact the analyzer
+# proved about the routine still holds. REP and SEP change the widths every
+# later decode depends on, MVN/MVP name banks, BRK/COP/WDM are signatures:
+# none of those may be live, and each is refused by name.
+LIVE_OPERAND_MNEMONICS = frozenset({
+    'LDA', 'LDX', 'LDY', 'ADC', 'SBC', 'AND', 'ORA', 'EOR',
+    'CMP', 'CPX', 'CPY', 'BIT',
+})
+
+
+def _live_operand(insn, ops: List[IROp]) -> List[IROp]:
+    """`live_operand`: replace the folded immediate with a ROM read of it.
+
+    The operand bytes follow the opcode in the program bank, so the read is
+    PB:(pc+1) at the instruction's own width -- exactly the bytes the CPU
+    fetches. Only the constant changes; the opcode, and with it the cycle
+    charge, stays the IMM form.
+    """
+    pc = insn.addr & 0xFFFFFF
+    if insn.mode != _MODE_IMM:
+        raise ValueError(
+            f"live_operand at ${pc:06X}: {insn.mnem} is not "
+            f"an immediate-mode instruction")
+    if insn.mnem not in LIVE_OPERAND_MNEMONICS:
+        what = ("a status operand: it changes the widths decoded after it"
+                if insn.mnem in ('REP', 'SEP') else
+                "not a data operand")
+        raise ValueError(
+            f"live_operand at ${pc:06X}: {insn.mnem} #imm is {what}; only "
+            f"{', '.join(sorted(LIVE_OPERAND_MNEMONICS))} are supported")
+    seg = SegRef(kind=SegKind.LONG, offset=(pc + 1) & 0xFFFF,
+                 bank=(pc >> 16) & 0xFF)
+    # Every supported mnemonic lowers its IMM operand as the first op.
+    first = ops[0] if ops else None
+    if not (isinstance(first, ConstI) and first.value == insn.operand):
+        raise ValueError(
+            f"live_operand at ${pc:06X}: {insn.mnem} lowers without a leading "
+            f"constant operand to replace")
+    return [Read(seg=seg, width=first.width, out=first.out)] + list(ops[1:])
 
 
 def _block_cycle_const(pairs) -> int:
@@ -468,6 +529,9 @@ def emit_function(rom: bytes, bank: int, start: int,
                   inline_arg_map=None,
                   terminal_jsr_sites=None,
                   noreturn_jsr_sites=None,
+                  live_operand_sites=None,
+                  entry_hooks=None,
+                  brk_rti_sites=None,
                   entry_s_offset: int = 0) -> str:
     """Emit a complete v2 C function source for one 65816 function.
 
@@ -594,8 +658,10 @@ def emit_function(rom: bytes, bank: int, start: int,
                             inline_arg_map=inline_arg_map,
                             terminal_jsr_sites=terminal_jsr_sites,
                             noreturn_jsr_sites=noreturn_jsr_sites,
+                            brk_rti_sites=brk_rti_sites,
                             hle_entry_pcs=(set(hle_func or ()) |
-                                           set(hle_spc_upload or ())))
+                                           set(hle_spc_upload or ())),
+                            live_operand_sites=live_operand_sites)
     # Forward any suppressed indirect calls upward so emit_bank can
     # aggregate them into the build report. List-of-records.
     if suppressed_collector is not None:
@@ -612,7 +678,15 @@ def emit_function(rom: bytes, bank: int, start: int,
     # cfg directive, no auto-recovery). v2_regen hard-fails on any.
     if unresolved_indirect_collector is not None:
         unresolved_indirect_collector.extend(graph.unresolved_indirects)
-    cfg = build_cfg(graph, instruction_blocks=get_rom_mapping() == ROM_MAP_SA1)
+    # `entry_hook` sites of this bank. Each starts a block wherever it is
+    # decoded, so the call sits at an instruction boundary after the block's
+    # deadline check, in the routine's own body and in any other body that
+    # reaches the same instruction.
+    hook_by_pc24 = {pc24 & 0xFFFFFF: name
+                    for pc24, name in (entry_hooks or {}).items()
+                    if ((pc24 >> 16) & 0xFF) == bank}
+    cfg = build_cfg(graph, instruction_blocks=get_rom_mapping() == ROM_MAP_SA1,
+                    extra_leader_pcs={pc24 & 0xFFFF for pc24 in hook_by_pc24})
 
     # A tight, side-effect-free memory poll cannot execute atomically under
     # the LLE frame scheduler: the value it observes is commonly changed by
@@ -802,6 +876,9 @@ def emit_function(rom: bytes, bank: int, start: int,
         flat: List[IROp] = []
         for di in cfg.blocks[key].insns:
             ops = lower(di.insn, value_factory=vf)
+            if (live_operand_sites
+                    and (di.insn.addr & 0xFFFFFF) in live_operand_sites):
+                ops = _live_operand(di.insn, ops)
             pairs.append((di.insn, ops))
             flat.extend(ops)
         block_per_insn_ir[key] = pairs
@@ -879,7 +956,7 @@ def emit_function(rom: bytes, bank: int, start: int,
         # balance); the trailing PLA PLA is the NLR skip. The old per-block
         # "no push/pull in setup" check rejected this pattern, causing the
         # recomp to emit literal pops that consumed caller-frame bytes.
-        # 2026-05-21 fix for Zelda camera axis-swap bug (see ISSUES.md).
+        # 2026-05-21 fix for Zelda camera axis-swap bug (see the historical issue notes).
         setup_pushes = 0
         setup_pulls = 0
         for op in ops[:pla_start]:
@@ -1163,7 +1240,7 @@ def emit_function(rom: bytes, bank: int, start: int,
             'pla_at_start': True,
         }
 
-    # Option-1 cpu->S return-frame ABI (see IMPROVEMENTS.md): the PLA*N NLR
+    # Option-1 cpu->S return-frame ABI (see docs/MULTI_TIER.md): the PLA*N NLR
     # idiom is now handled by emitting the PLAs as NORMAL cpu->S pops and
     # letting RTS/RTL consume the exposed return frame (host_return_valid +
     # cpu_dispatch_pc). The detector is retained for DIAGNOSTICS ONLY and no
@@ -2072,7 +2149,7 @@ def emit_function(rom: bytes, bank: int, start: int,
             f'  /* entry_s_offset:{entry_s_offset} — caller left stack imbalanced */')
     else:
         src.append(f'  uint16 _entry_s = cpu->S;')
-    # Option-1 cpu->S return-frame ABI (see IMPROVEMENTS.md): capture whether
+    # Option-1 cpu->S return-frame ABI (see docs/MULTI_TIER.md): capture whether
     # a paired host-C caller exists at entry. RTS/RTL may host-return NORMAL
     # only when _hrv==1 AND the stack is balanced (cpu->S == _entry_s);
     # otherwise it dispatches on the popped PC. The caller sets
@@ -2098,8 +2175,23 @@ def emit_function(rom: bytes, bank: int, start: int,
     src.append(f'    uint16 _host_rpcl = cpu_read8(cpu, 0x00, (uint16)(_entry_s + 1u));')
     src.append(f'    uint16 _host_rpch = cpu_read8(cpu, 0x00, (uint16)(_entry_s + 2u));')
     src.append(f'    uint8 _host_rpb = (_hrv == 3) ? cpu_read8(cpu, 0x00, (uint16)(_entry_s + 3u)) : cpu->PB;')
+    # A callee that consumes N inline argument bytes rewrites its own return
+    # frame (`LDA 3,S; ADC #N; STA 3,S`) and returns N bytes past the call.
+    # Its callers already continue there (the analyzer's inline-argument
+    # skip), so that rewritten address IS the host return. Sampling only the
+    # pushed address made the RTL treat it as foreign and dispatch the
+    # caller's continuation as a new frame, which the caller then ran again
+    # (Super Metroid: SpawnHdmaObject decoded through its PHP/PLP tail ran
+    # Phantoon2_Init twice and crashed Phantoon's room load). Before the
+    # tail was decoded through, its separate RTL re-sampled the frame after
+    # the rewrite, which hid the defect.
+    own_inline_skip = _own_inline_skip(fn_entry_pc, inline_arg_map)
     src.append(f'    _host_return_pc24 = ((uint32)_host_rpb << 16) |')
-    src.append(f'        (uint16)((((_host_rpch << 8) | _host_rpcl) + 1u) & 0xFFFFu);')
+    if own_inline_skip:
+        src.append(f'        (uint16)((((_host_rpch << 8) | _host_rpcl) + 1u + {own_inline_skip}u) & 0xFFFFu);'
+                   f'  /* + inline argument bytes this function consumes */')
+    else:
+        src.append(f'        (uint16)((((_host_rpch << 8) | _host_rpcl) + 1u) & 0xFFFFu);')
     src.append(f'  }}')
     src.append(f'  (void)_entry_s;  /* used by trampoline balance check */')
     src.append(f'  (void)_hrv;')
@@ -2109,6 +2201,12 @@ def emit_function(rom: bytes, bank: int, start: int,
     # resolved to a SKIP_N non-local return (cpu_resolve_ancestor_skip).
     # Index by the just-pushed g_recomp_stack_top; pop is implicit (top--).
     src.append(f'  if (g_recomp_stack_top >= 1) g_cpu_entry_s[g_recomp_stack_top - 1] = _entry_s;')
+    # `entry_hook`: observational host callbacks (docs/ENTRY_HOOK.md).
+    for hook_name in sorted({hook_by_pc24[(bank << 16) | (key.pc & 0xFFFF)]
+                             for key in block_order
+                             if ((bank << 16) | (key.pc & 0xFFFF))
+                             in hook_by_pc24}):
+        src.append(f'  extern void {hook_name}(const CpuState *cpu, uint32 pc24);')
     for i, key in enumerate(block_order):
         src.append(f"  {_label_for(key)}:")
         # Trace block entry — gives us the SNES PC chain in the trace ring.
@@ -2142,6 +2240,11 @@ def emit_function(rom: bytes, bank: int, start: int,
             f'      return interp_bridge_lle_yield_unwind('
             f'cpu, {_transfer_target_expr(block_pc24, False)});')
         src.append('    }')
+        # Once per execution of the hooked instruction: after the deadline
+        # check (a yield there hands the instruction, and with it the report,
+        # to the interpreter) and before the block's cycles are charged.
+        if block_pc24 in hook_by_pc24:
+            src.append(f'    {hook_by_pc24[block_pc24]}(cpu, 0x{block_pc24:06X}u);')
         # Cartridge coprocessors observe CPU bus accesses no earlier than this
         # architectural block boundary. The aggregate static charge below
         # advances the frame clock to the end of the block before its emitted

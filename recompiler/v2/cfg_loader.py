@@ -174,6 +174,29 @@ class BankCfg:
     # terminal_jsr, the callee does not consume the call frame as inline data;
     # emission preserves the real frame and hands the exceptional path to LLE.
     noreturn_jsr: set = field(default_factory=set)
+    # `live_operand <site_pc16>` — the immediate operand of the instruction at
+    # this site is read from the ROM image at run time instead of being
+    # folded into the generated C. For an operand the host edits in the
+    # loaded ROM (a cheat raising a limit, a patch toggled live): compiled
+    # code then sees the edit exactly as the interpreter would. Cycle cost
+    # is unchanged -- it comes from the opcode, which is still the IMM form.
+    live_operand: set = field(default_factory=set)
+    # `entry_hook <pc16> <c_function>` — compiled code calls the host's
+    # `void c_function(const CpuState *cpu, uint32 pc24)` each time it is
+    # about to execute the instruction at <pc16>, in any compiled body: the
+    # compiled counterpart of an interpreter pre-opcode hook at that PC, so a
+    # host that observes a routine's calls no longer has to keep it
+    # interpreted. Observational only. Map: pc16 -> c_function. Contract:
+    # docs/ENTRY_HOOK.md.
+    entry_hook: dict = field(default_factory=dict)
+    # `brk_rti <site_pc16>` -- the BRK at this site is a two-byte no-op on
+    # hardware: the native BRK vector points at a bare RTI, so the interrupt
+    # pushes PB, PC+2 and P and the RTI pulls them straight back. Decode falls
+    # through it and the emitter compiles the round trip (the stack bytes
+    # written, the RTI's cycles). Emission and the native analyzer both reject
+    # a site that is not a BRK and a vector that is not a bare RTI
+    # (v2/brk_rti.py). Contract: docs/BRK_RTI.md.
+    brk_rti: set = field(default_factory=set)
     # `hle_spc_upload <pc>` directives — replace the recompiled body of
     # the function starting at <pc> with a single call to the runtime
     # HLE helper RtlUploadSpcImageFromDp. The standard SNES SPC upload
@@ -503,6 +526,75 @@ def load_bank_cfg(path: str) -> BankCfg:
                         f"{path}: JSR site ${site_pc16:04X} cannot be both "
                         "terminal_jsr and noreturn_jsr")
                 cfg.noreturn_jsr.add(site_pc16)
+                continue
+
+            # live_operand <site_pc16> — read this site's immediate from ROM
+            # at run time. The emitter validates the opcode against its
+            # supported set (data operands only: never REP/SEP/MVN/MVP).
+            if head == 'live_operand':
+                if len(tokens) != 2:
+                    raise ValueError(
+                        f"{path}: live_operand needs exactly one <site_pc16>, "
+                        f"got: {stripped!r}")
+                try:
+                    site_pc16 = _parse_hex(tokens[1])
+                except ValueError as e:
+                    raise ValueError(
+                        f"{path}: live_operand bad site {tokens[1]!r}: {e}")
+                if not 0 <= site_pc16 <= 0xFFFF:
+                    raise ValueError(
+                        f"{path}: live_operand needs a 16-bit PC in this cfg's bank, "
+                        f"got {tokens[1]!r}")
+                if site_pc16 in cfg.live_operand:
+                    raise ValueError(
+                        f"{path}: live_operand duplicate site "
+                        f"${site_pc16:04X}")
+                cfg.live_operand.add(site_pc16)
+                continue
+
+            # entry_hook <pc16> <c_function> — call a host function on entry
+            # to the compiled routine at <pc16>. See BankCfg.entry_hook.
+            if head == 'entry_hook':
+                if len(tokens) != 3:
+                    raise ValueError(
+                        f"{path}: entry_hook needs <pc16> <c_function>, "
+                        f"got: {stripped!r}")
+                try:
+                    pc16 = _parse_hex(tokens[1])
+                except ValueError as e:
+                    raise ValueError(
+                        f"{path}: entry_hook bad pc {tokens[1]!r}: {e}")
+                if not 0 <= pc16 <= 0xFFFF:
+                    raise ValueError(
+                        f"{path}: entry_hook needs a 16-bit PC in this cfg's bank, "
+                        f"got {tokens[1]!r}")
+                c_name = tokens[2]
+                if not c_name.replace('_', '').isalnum() or c_name[0].isdigit():
+                    raise ValueError(
+                        f"{path}: entry_hook c_function must be a valid C "
+                        f"identifier, got: {c_name!r}")
+                if pc16 in cfg.entry_hook:
+                    raise ValueError(
+                        f"{path}: entry_hook duplicate pc ${pc16:04X} "
+                        f"({cfg.entry_hook[pc16]} and {c_name})")
+                cfg.entry_hook[pc16] = c_name
+                continue
+
+            # brk_rti <site_pc16> — a BRK whose vector is a bare RTI.
+            if head == 'brk_rti':
+                if len(tokens) != 2:
+                    raise ValueError(
+                        f"{path}: brk_rti needs exactly one <site_pc16>, "
+                        f"got: {stripped!r}")
+                try:
+                    site_pc16 = _parse_hex(tokens[1]) & 0xFFFF
+                except ValueError as e:
+                    raise ValueError(
+                        f"{path}: brk_rti bad site {tokens[1]!r}: {e}")
+                if site_pc16 in cfg.brk_rti:
+                    raise ValueError(
+                        f"{path}: brk_rti duplicate site ${site_pc16:04X}")
+                cfg.brk_rti.add(site_pc16)
                 continue
 
             # hle_dispatch <site_pc16> <c_function_name> — replace the
@@ -950,5 +1042,15 @@ def load_bank_cfg(path: str) -> BankCfg:
             continue
         cfg.entries.append(BankEntry(name=nd.name, start=local_pc))
         existing_starts.add(local_pc)
+
+    # An HLE-replaced routine runs no compiled instruction at its entry, so a
+    # hook there would silently never fire: observe it in the C helper.
+    for pc16 in sorted(cfg.entry_hook):
+        for directive, table in (('hle_func', cfg.hle_func),
+                                 ('hle_spc_upload', cfg.hle_spc_upload)):
+            if pc16 in table:
+                raise ValueError(
+                    f"{path}: entry_hook ${pc16:04X} names a routine replaced "
+                    f"by {directive}; no compiled instruction runs there")
 
     return cfg

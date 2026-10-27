@@ -136,7 +136,8 @@ void snes_saveload(Snes *snes, SaveLoadInfo *sli) {
       ppu_header[0] == 0x30555050u &&
       ppu_header[1] == PPU_SAVESTATE_REGS_SIZE + PPU_SAVESTATE_MEM_SIZE;
   if (legacy_layout) {
-    uint8_t saved[216];
+    /* A validation stream counts bytes without filling destinations. */
+    uint8_t saved[216] = {0};
     sli->func(sli, saved, sizeof(saved));
     _Static_assert(sizeof(snes->dma->channel) == 208, "legacy DMA channel layout");
     memcpy(snes->dma->channel, saved, 208);
@@ -171,7 +172,7 @@ void snes_saveload(Snes *snes, SaveLoadInfo *sli) {
      * the explanation for anyone who tries to lower that bound again. */
     assert(!"savestate format 4/5 is no longer supported");
   } else if (legacy_layout) {
-    uint8_t saved[40];
+    uint8_t saved[40] = {0};
     sli->func(sli, saved, sizeof(saved));
     memset(&snes->hPos, 0, sizeof(*snes) - offsetof(Snes, hPos));
     memcpy(&snes->hPos, saved, 26); /* hPos through inIrq */
@@ -291,9 +292,7 @@ void snes_catchupApu(Snes* snes) {
   apucyc_prof_calls++;
   clock_t _t1 = clock();
 #endif
-  for(int i = 0; i < catchupCycles; i++) {
-    apu_cycle(snes->apu);
-  }
+  apu_runCycles(snes->apu, (uint32_t)catchupCycles);
 #ifdef SNESRECOMP_INTERP_PROFILE
   apucyc_prof_ms += 1000.0 * ((double)(clock() - _t1)) / CLOCKS_PER_SEC;
 #endif

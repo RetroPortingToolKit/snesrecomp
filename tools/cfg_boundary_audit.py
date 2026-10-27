@@ -6,7 +6,7 @@ function. Ingesters commonly derive `end:` from the NEXT known symbol, which is
 not the same claim: everything between a function and the next symbol -- data
 tables, inline call arguments, padding -- gets swallowed into the function
 above it and translated as code. That is not a cosmetic error. Two shipped bugs
-in SuperMetroidRecomp came from it (DEVELOPMENT.md, 2026-09-19): misaligned
+in SuperMetroidRecomp came from it (docs/validation/bringup-history.md, 2026-09-19): misaligned
 bytes inside a swallowed HDMA table decoded as `BNE` into a phantom block that
 corrupted a Mode 7 register, and a 31 KB message-box data region translated as
 code.

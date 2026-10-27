@@ -54,6 +54,16 @@ int main(int argc,char **argv) {
   assert(SNESRecomp::mod_runtime_initialize(root,"test",digest));
   assert(std::string(get("test.zero").path)==std::string(get("test.x3").path));assert(get("test.zero").verified);
   set("test.x3",root/"wrong.sfc");assert(!get("test.zero").verified);
+  // A catalogued wrong ROM is named, with the dump to select instead.
+  const std::string wrong_digest=hash(wrong);
+  const SnesRomRevision catalog[]={{"Source (USA)",digest.c_str(),nullptr,nullptr,nullptr},
+                                   {"Source (Japan)",wrong_digest.c_str(),nullptr,nullptr,nullptr}};
+  snes_mod_runtime_set_rom_catalog_c(catalog,2);
+  {const std::string status=get("test.zero").status;
+   assert(status=="Wrong ROM: this is Source (Japan). Select Source (USA) (SHA-256 "+digest+").");}
+  snes_mod_runtime_set_rom_catalog_c(nullptr,0);
+  {const std::string status=get("test.zero").status;
+   assert(status.find("Not a known dump")==0 && status.find(digest)!=std::string::npos);}
   assert(snes_mod_runtime_missing_files_c("test.zero",missing,sizeof(missing))==1); // wrong ROM counts as missingassert(!SNESRecomp::mod_runtime_commit());
   assert(p->feature_resource_set_path(p->ctx,"test.x3","enabled","rom",""));
   assert(!get("test.zero").path[0] && !get("test.x3").path[0]);

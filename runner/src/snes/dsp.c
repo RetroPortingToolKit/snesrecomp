@@ -137,6 +137,7 @@ void dsp_free(Dsp* dsp) {
 }
 
 void dsp_reset(Dsp* dsp) {
+  dsp->suppressOutput = false;
   DspOutputFilter *filter = dsp->output_filter;
   if (filter) {
     uint8_t voices = filter->voices;
@@ -229,6 +230,10 @@ void dsp_saveload(Dsp *dsp, SaveLoadInfo *sli) {
   sli->func(sli, &dsp->ram, sizeof(Dsp) - offsetof(Dsp, ram));
 }
 
+void dsp_set_output_suppressed(Dsp *dsp, bool suppressed) {
+  if (dsp) dsp->suppressOutput = suppressed;
+}
+
 void dsp_cycle(Dsp* dsp) {
   int totalL = 0;
   int totalR = 0;
@@ -268,16 +273,18 @@ void dsp_cycle(Dsp* dsp) {
   // (~256 ms unconsumed = the audio thread has stalled), which never
   // happens under normal pacing. The old code instead dropped on every
   // catch-up burst past 534 samples, which is the music-rate tick.
-  uint32_t fill = dsp->sampleWrite - dsp->sampleRead;
-  int dropped = fill >= DSP_SAMPLE_RING;
-  if (!dropped) {
-    uint32_t w = dsp->sampleWrite & (DSP_SAMPLE_RING - 1);
-    dsp->sampleBuffer[w * 2] = totalL;
-    dsp->sampleBuffer[w * 2 + 1] = totalR;
-    dsp->sampleWrite++;
+  if (!dsp->suppressOutput) {
+    uint32_t fill = dsp->sampleWrite - dsp->sampleRead;
+    int dropped = fill >= DSP_SAMPLE_RING;
+    if (!dropped) {
+      uint32_t w = dsp->sampleWrite & (DSP_SAMPLE_RING - 1);
+      dsp->sampleBuffer[w * 2] = totalL;
+      dsp->sampleBuffer[w * 2 + 1] = totalR;
+      dsp->sampleWrite++;
+    }
+    audio_trace_on_sample((int16_t)totalL, (int16_t)totalR, dropped,
+                          dropped ? fill : fill + 1);
   }
-  audio_trace_on_sample((int16_t)totalL, (int16_t)totalR, dropped,
-                        dropped ? fill : fill + 1);
   dsp->evenCycle = !dsp->evenCycle;
 }
 

@@ -1075,9 +1075,30 @@ int cpu_aot_rom_mapping_matches(uint32 pc24, uint32 offset, unsigned length) {
     return 1;
 }
 
+/* Keep full-bank fallback checks out of the established low-bank fast path.
+ * This helper runs only after the old bank/address predicate rejects a PC.
+ * Prevent compilers from merging its cart tests into that common path. */
+static NOINLINE int dispatch_has_full_hirom_mirror(uint32 pc24)
+#if defined(__GNUC__) || defined(__clang__)
+    __attribute__((noinline))
+#endif
+    ;
+static int dispatch_has_full_hirom_mirror(uint32 pc24) {
+    unsigned bank = pc24 >> 16;
+    /* Full HiROM banks pair with full banks only. Sharing the upper ROM
+     * bytes with a low bank does not make its short calls/fetches equivalent.
+     * The generator emits separately analyzed low/full-bank entries. */
+    if (!g_snes || !g_snes->cart || g_snes->cart->type != CART_HIROM ||
+        !((bank >= 0x40 && bank < 0x7E) || (bank >= 0xC0 && bank < 0xFE))) return 0;
+    uint8 *a = cart_getRomPtr(g_snes->cart, bank, (uint16)pc24);
+    uint8 *b = cart_getRomPtr(g_snes->cart, bank ^ 0x80, (uint16)pc24);
+    return a && a == b;
+}
+
 static int dispatch_has_rom_mirror(uint32 pc24) {
     unsigned bank = pc24 >> 16;
-    if (!((bank < 0x40 || (bank >= 0x80 && bank < 0xC0)) && (pc24 & 0xFFFF) >= 0x8000)) return 0;
+    if (!((bank < 0x40 || (bank >= 0x80 && bank < 0xC0)) && (pc24 & 0xFFFF) >= 0x8000))
+        return dispatch_has_full_hirom_mirror(pc24);
     if (!g_snes || !g_snes->cart) return 1; /* isolated dispatch fixtures */
     uint8 *a = cart_getRomPtr(g_snes->cart, bank, (uint16)pc24);
     uint8 *b = cart_getRomPtr(g_snes->cart, bank ^ 0x80, (uint16)pc24);
@@ -1257,8 +1278,17 @@ RecompReturn cpu_dispatch_call_pc_pushed(CpuState *cpu, uint32 pc24,
     }
     _dispatch_log_record(pc24, source_pc24, mx_idx, fp != NULL, via_mirror);
     if (fp != NULL) {
+        /* PHK; PEA; JML changes PB before entering the handler. The generated
+         * RTL host-return does not restore PB, so scope it like a direct JSL.
+         * Preserve the requested bank even when lookup used a ROM mirror:
+         * indexed indirect jumps and LLE continuations use architectural PB.
+         * The unwind carries its own resume PC; the host caller still needs
+         * its bank restored while propagating that unwind. */
+        uint8 saved_pb = cpu->PB;
+        if (frame_size == 3) cpu->PB = (uint8)(pc24 >> 16);
         cpu->host_return_valid = frame_size;
         RecompReturn r = fp(cpu);
+        cpu->PB = saved_pb;
         return r;
     }
     return interp_tier_run_call_frame(cpu, pc24, source_pc24, frame_size,

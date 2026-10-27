@@ -112,6 +112,7 @@ static const KeyNameId kKeyNameId[] = {
   S(Fullscreen), S(Reset),
   S(Pause), S(PauseDimmed), S(Turbo), S(WindowBigger), S(WindowSmaller), S(VolumeUp), S(VolumeDown), S(DisplayPerf), S(ToggleRenderer), S(ToggleWidescreen),
   S(SaveStateMenu), S(Rewind), S(Screenshot), S(OpenLauncher),
+  S(ToggleVSync), S(ToggleFrameBlend), S(ToggleRunAhead),
 };
 #undef S
 #undef M

@@ -8,7 +8,7 @@ root=Path(__file__).resolve().parents[2]
 source=(root/'runner/src/common_rtl.c').read_text()
 names=('void RtlSetSaveRoot(', 'const char *RtlSaveRoot(', 'static void ensure_save_root(',
        'void RtlEnsureSaveDir(',
-       'void RtlSramFilePath(', 'int RtlTryWriteSram(', 'int RtlWriteSram(')
+       'void RtlSramFilePath(', 'int RtlWriteSramImage(', 'int RtlTryWriteSram(', 'int RtlWriteSram(')
 parts=[]
 for name in names:
     start=source.index(name)

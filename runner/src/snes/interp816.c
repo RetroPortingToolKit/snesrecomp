@@ -985,7 +985,7 @@ static void interp816_doOpcode(Interp816* cpu, uint8_t opcode) {
          * $00; this continued one byte at a time, so an off-rails run slid
          * through blank memory, crossed back into real code and corrupted the
          * stack before anything trapped. Super Metroid's Morph Ball freeze
-         * (DEVELOPMENT.md, 2026-09-19) executed 240 such bytes and only
+         * (docs/validation/bringup-history.md, 2026-09-19) executed 240 such bytes and only
          * stopped on an unrelated COP ~9,000 steps later, by which point the
          * instruction ring held nothing but the slide and the original bad
          * jump was unrecoverable.
@@ -1012,6 +1012,7 @@ static void interp816_doOpcode(Interp816* cpu, uint8_t opcode) {
         if(!cpu->e) interp816_pushByte(cpu, cpu->k);
         interp816_pushWord(cpu, cpu->pc);
         interp816_pushByte(cpu, interp816_getFlags(cpu) | (cpu->e ? 0x10 : 0));
+        if(!cpu->e) cpu->cyclesUsed++; // native mode: 1 extra cycle (as COP)
         cpu->i = true;
         cpu->d = false;
         cpu->k = 0;

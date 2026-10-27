@@ -17,7 +17,8 @@ use std::sync::{Arc, Mutex};
 
 use crate::insn::{decode_insn, Insn, Mode};
 use crate::rom::{
-    addr_in_reloc_region, addr_to_rom_offset, is_rom_address, RelocRegion, RomMapping,
+    addr_in_reloc_region, addr_to_rom_offset, execution_mirror_bank, is_rom_address, RelocRegion,
+    RomMapping,
 };
 
 pub const PHP_STACK_MAX_DEPTH: usize = 8;
@@ -131,6 +132,10 @@ pub struct ConstZFold {
 pub struct FunctionDecodeGraph {
     pub entry: Option<DecodeKey>,
     pub authority_conflict: bool,
+    /// Where each authority conflict was found: (instruction pc24, decode m,
+    /// decode x, predecessor pc or -1 for the entry). Diagnostic only; reported in the node reasons
+    /// so a poisoned variant names its first contradicting decode.
+    pub authority_conflict_sites: Vec<(u32, u8, u8, i64)>,
     pub rom_mapping: RomMapping,
     insns_vec: Vec<DecodedInsn>,
     index: HashMap<DecodeKey, usize>,
@@ -230,6 +235,11 @@ pub struct DecodeEnv<'a> {
     pub callee_inline_skip: Option<&'a HashMap<u32, i32>>,
     pub inline_dispatch_loop_pcs: Option<&'a std::collections::BTreeSet<u32>>,
     pub terminal_jsr_sites: Option<&'a std::collections::BTreeSet<u32>>,
+    /// cfg `live_operand` sites (24-bit): immediates read from the ROM image
+    /// at run time, so the constant-Z fold must not use their decoded bytes.
+    pub live_operand_sites: Option<&'a std::collections::BTreeSet<u32>>,
+    /// `brk_rti` sites (24-bit, mirrors included): BRK falls through.
+    pub brk_rti_sites: Option<&'a std::collections::BTreeSet<u32>>,
     /// Folded-in process-global the Python decode path read (set_global_inline_skip).
     pub global_inline_skip: Option<&'a HashMap<u32, i32>>,
     /// LLE-first analysis must not guess that a callee preserves M/X.  Stop
@@ -688,6 +698,10 @@ fn resolve_indirect_dispatch_targets(
                     // Preserve an explicit null slot instead of turning it
                     // into bank:$0000; every downstream consumer skips zero.
                     Some(0)
+                } else if mapping == RomMapping::HiRom && !is_long_dispatch(insn, bases) {
+                    // A copied physical contract may name its authored bank;
+                    // a near transfer still executes in this bank's PB.
+                    Some((bank << 16) | (target & 0xFFFF))
                 } else if target > 0xFFFF {
                     Some(target)
                 } else {
@@ -793,6 +807,18 @@ fn labeled_successors(
     let next_pc = (pc + insn.length as u32) & 0xFFFF;
     let mnem = insn.mnem;
 
+    if mnem == "BRK"
+        && env
+            .brk_rti_sites
+            .is_some_and(|s| s.contains(&(insn.addr & 0xFFFFFF)))
+    {
+        // brk_rti: the round trip through a bare RTI returns past the
+        // signature byte with P restored -- widths and PHP stack unchanged.
+        return vec![(
+            DecodeKey::with_stack(addr24(bank, next_pc), key.m, key.x, key.p_stack.clone()),
+            "fall",
+        )];
+    }
     if is_terminator(mnem) {
         return vec![];
     }
@@ -850,7 +876,7 @@ fn labeled_successors(
             let mut skip = map.get(&tp).copied();
             if skip.is_none() {
                 let tbank = (tp >> 16) & 0xFF;
-                if mapping != RomMapping::Sa1 && (tbank < 0x40 || (0x80..0xC0).contains(&tbank)) {
+                if execution_mirror_bank(mapping, tbank).is_some() {
                     skip = map.get(&(tp ^ 0x800000)).copied();
                 }
             }
@@ -866,8 +892,7 @@ fn labeled_successors(
                 let mut hit = cem.get(&(tp, post_m, post_x)).copied();
                 if hit.is_none() {
                     let tbank = (tp >> 16) & 0xFF;
-                    if mapping != RomMapping::Sa1 && (tbank < 0x40 || (0x80..0xC0).contains(&tbank))
-                    {
+                    if execution_mirror_bank(mapping, tbank).is_some() {
                         hit = cem.get(&(tp ^ 0x800000, post_m, post_x)).copied();
                     }
                 }
@@ -883,8 +908,7 @@ fn labeled_successors(
                 let mut mode_set: Option<Vec<(u8, u8)>> = cmm.get(&(tp, post_m, post_x)).cloned();
                 if mode_set.is_none() {
                     let tbank = (tp >> 16) & 0xFF;
-                    if mapping != RomMapping::Sa1 && (tbank < 0x40 || (0x80..0xC0).contains(&tbank))
-                    {
+                    if execution_mirror_bank(mapping, tbank).is_some() {
                         mode_set = cmm.get(&(tp ^ 0x800000, post_m, post_x)).cloned();
                     }
                 }
@@ -1012,9 +1036,18 @@ pub fn decode_function(
                 continue;
             }
         }
-        // Jump edge onto a named sibling function entry.
+        // Jump edge onto a named sibling function entry. Not while this path
+        // holds a PHP the sibling will PLP: `PHP; SEP #$30; ...; BRA Common`
+        // where Common ends `PLP; RTL` (Super Metroid's QueueSfxN_MaxK ->
+        // QueueSfxN_Internal). Split there, the sibling pops a P it never
+        // pushed and its exit width is unknowable; decoded through, the PLP
+        // restores the tracked entry width exactly.
         if let Some(sib) = env.sibling_entry_pcs {
-            if edge_kind == "jump" && sib.contains(&pc) && !pred_in_territory {
+            if edge_kind == "jump"
+                && sib.contains(&pc)
+                && !pred_in_territory
+                && key.p_stack.is_empty()
+            {
                 let boundary = (addr24(bank, pred_pc as u32), key.clone());
                 if !graph.boundary_exits.contains(&boundary) {
                     graph.boundary_exits.push(boundary);
@@ -1042,7 +1075,34 @@ pub fn decode_function(
 
         let mut insn = decode_insn(rom, offset, pc, bank, key.m, key.x)
             .unwrap_or_else(|| panic!("v2 decoder: unknown opcode at ${bank:02X}:{pc:04X}"));
-        if env
+        // A conditional branch arm that enters authority-declared data at a
+        // BRK byte executes that byte as a software interrupt: the
+        // assertion-trap idiom `BPL +; db $00; +:` (Super Metroid
+        // PrepareBitAccess). BRK is a terminator, so the trap ends this arm,
+        // and like a cfg data region reached by control flow
+        // (data_region_exec_pcs) it is executed exactly in the interpreter
+        // rather than poisoning the function. Its signature byte is never an
+        // instruction start of this path, so it may overlap the authority's
+        // next instruction. Only a Bcc arm qualifies: the continuation of a
+        // JSR/JSL that lands on data is the callee's inline arguments
+        // (DecompressToMem's `JSL $80B0FF; dl src`), not a reachable BRK.
+        // Entry at data, any other predecessor or opcode, and a decode that
+        // runs from a code start into data remain authority conflicts.
+        let pred_is_cond_branch = pred_pc >= 0
+            && try_rom_offset(mapping, bank, (pred_pc as u32) & 0xFFFF, reloc)
+                .and_then(|o| rom.get(o).copied())
+                .is_some_and(|op| {
+                    matches!(op, 0x10 | 0x30 | 0x50 | 0x70 | 0x90 | 0xB0 | 0xD0 | 0xF0)
+                });
+        let authority_data_trap = pred_is_cond_branch
+            && insn.mnem == "BRK"
+            && env
+                .authority_data
+                .and_then(|data| data.get(&bank))
+                .is_some_and(|mask| mask[pc as usize]);
+        if authority_data_trap {
+            graph.data_region_exec_pcs.insert(addr24(bank, pc));
+        } else if env
             .authority_data
             .and_then(|data| data.get(&bank))
             .is_some_and(|mask| {
@@ -1050,9 +1110,12 @@ pub fn decode_function(
             })
         {
             graph.authority_conflict = true;
+            graph
+                .authority_conflict_sites
+                .push((addr24(bank, pc), key.m, key.x, pred_pc));
             continue;
         }
-        if let Some(authority) = env.authority_bytes {
+        if let Some(authority) = env.authority_bytes.filter(|_| !authority_data_trap) {
             let size = insn.length as usize;
             if authority.get(&key.pc).is_some_and(|raw| {
                 raw.len() != size || rom.get(offset..offset + size) != Some(raw.as_slice())
@@ -1062,6 +1125,9 @@ pub fn decode_function(
                     .is_some_and(|r| !r.is_empty())
             }) {
                 graph.authority_conflict = true;
+                graph
+                    .authority_conflict_sites
+                    .push((addr24(bank, pc), key.m, key.x, pred_pc));
                 continue;
             }
         }
@@ -1916,7 +1982,7 @@ pub fn decode_function(
     }
 
     dedupe_by_pcmx(&mut graph);
-    apply_constant_z_fold(&mut graph);
+    apply_constant_z_fold(&mut graph, env.live_operand_sites);
     graph
 }
 
@@ -1980,7 +2046,10 @@ fn dedupe_by_pcmx(graph: &mut FunctionDecodeGraph) {
 }
 
 /// Constant-Z branch fold + reachability prune. Port of `_apply_constant_z_fold`.
-fn apply_constant_z_fold(graph: &mut FunctionDecodeGraph) {
+fn apply_constant_z_fold(
+    graph: &mut FunctionDecodeGraph,
+    live_operand_sites: Option<&std::collections::BTreeSet<u32>>,
+) {
     if graph.is_empty() {
         return;
     }
@@ -2016,6 +2085,11 @@ fn apply_constant_z_fold(graph: &mut FunctionDecodeGraph) {
             continue;
         }
         if pred_insn.mode != Mode::Imm {
+            continue;
+        }
+        // A `live_operand` immediate is read from the ROM image at run time:
+        // the decoded bytes say nothing about Z when the branch executes.
+        if live_operand_sites.is_some_and(|s| s.contains(&(pred_insn.addr & 0xFFFFFF))) {
             continue;
         }
         if pred_di.successors.len() != 1 || pred_di.successors[0] != k {
@@ -2444,7 +2518,7 @@ fn lookup_exit_mx(
     let key = (pc24 & 0xFFFFFF, m & 1, x & 1);
     map.get(&key).copied().or_else(|| {
         let bank = (pc24 >> 16) & 0xFF;
-        if mapping != RomMapping::Sa1 && (bank < 0x40 || (0x80..0xC0).contains(&bank)) {
+        if execution_mirror_bank(mapping, bank).is_some() {
             map.get(&((pc24 ^ 0x800000) & 0xFFFFFF, m & 1, x & 1))
                 .copied()
         } else {
@@ -2468,7 +2542,7 @@ fn lookup_exit_mx_modes(
     let key = (pc24 & 0xFFFFFF, m & 1, x & 1);
     let mut result = map.get(&key).cloned().or_else(|| {
         let bank = (pc24 >> 16) & 0xFF;
-        if mapping != RomMapping::Sa1 && (bank < 0x40 || (0x80..0xC0).contains(&bank)) {
+        if execution_mirror_bank(mapping, bank).is_some() {
             map.get(&((pc24 ^ 0x800000) & 0xFFFFFF, m & 1, x & 1))
                 .cloned()
         } else {
@@ -3410,18 +3484,14 @@ pub(crate) fn compute_deps(
         if let Some(tp) = tp {
             cem_keys.push((tp, ins.m_flag, ins.x_flag));
             let tbank = (tp >> 16) & 0xFF;
-            if graph.rom_mapping != RomMapping::Sa1
-                && (tbank < 0x40 || (0x80..0xC0).contains(&tbank))
-            {
+            if execution_mirror_bank(graph.rom_mapping, tbank).is_some() {
                 cem_keys.push((tp ^ 0x800000, ins.m_flag, ins.x_flag));
             }
         }
         for tp in dispatch_targets {
             cem_keys.push((tp, ins.m_flag, ins.x_flag));
             let tbank = (tp >> 16) & 0xFF;
-            if graph.rom_mapping != RomMapping::Sa1
-                && (tbank < 0x40 || (0x80..0xC0).contains(&tbank))
-            {
+            if execution_mirror_bank(graph.rom_mapping, tbank).is_some() {
                 cem_keys.push((tp ^ 0x800000, ins.m_flag, ins.x_flag));
             }
         }
@@ -4305,6 +4375,22 @@ mod tests {
     }
 
     #[test]
+    fn brk_rti_site_falls_through() {
+        // 8000 BRK #$00 / LDA #$01 / RTS
+        let rom = rom_at_8000(&[0x00, 0x00, 0xA9, 0x01, 0x60]);
+        let plain = decode_function(&rom, 0, 0x8000, 1, 1, None, &DecodeEnv::default());
+        assert!(plain.get(&k(0x8002)).is_none());
+        let sites = std::collections::BTreeSet::from([0x008000u32]);
+        let env = DecodeEnv {
+            brk_rti_sites: Some(&sites),
+            ..DecodeEnv::default()
+        };
+        let graph = decode_function(&rom, 0, 0x8000, 1, 1, None, &env);
+        assert!(graph.get(&k(0x8002)).is_some());
+        assert!(graph.get(&k(0x8004)).is_some());
+    }
+
+    #[test]
     fn ptrcall_uses_pea_return_without_inlining_explicit_target() {
         // PEA $8008; JMP ($0010). The dispatched RTS resumes at $8009,
         // while $8010 is an independently discovered handler target.
@@ -4444,6 +4530,35 @@ mod tests {
             resolve_indirect_dispatch_targets(&rom, RomMapping::LoRom, 0, &insn, 1, &[], &[0], &[],),
             Some(vec![0])
         );
+    }
+
+    #[test]
+    fn hirom_explicit_dispatch_uses_near_pb_and_preserves_long_banks() {
+        for bank in [0, 0x40, 0x80, 0xc0] {
+            for opcode in [0x6c, 0x7c, 0xfc, 0xdc] {
+                let rom = rom_at_8000(&[opcode, 0x10, 0x80]);
+                let insn = decode_insn(&rom, 0, 0x8000, bank, 1, 1).unwrap();
+                let expected = if opcode == 0xdc {
+                    vec![0, 0xc09010, 0xc19020]
+                } else {
+                    vec![0, (bank << 16) | 0x9010, (bank << 16) | 0x9020]
+                };
+                assert_eq!(
+                    resolve_indirect_dispatch_targets(
+                        &rom,
+                        RomMapping::HiRom,
+                        bank,
+                        &insn,
+                        3,
+                        &[],
+                        &[0, 0xc09010, 0xc19020],
+                        &[],
+                    ),
+                    Some(expected),
+                    "bank={bank:02x}, opcode={opcode:02x}"
+                );
+            }
+        }
     }
 
     #[test]
@@ -4619,6 +4734,31 @@ mod tests {
         assert!(g.get(&k(0x8004)).is_none());
         assert!(g.get(&k(0x8006)).is_some());
         assert_eq!(g.const_z_folds.len(), 1);
+    }
+
+    #[test]
+    fn const_z_fold_skips_a_live_operand() {
+        // The same LDA #$00 ; BEQ, but the immediate is a cfg live_operand: the
+        // host may edit it in the loaded image, so both paths must survive.
+        let mut bytes = vec![0u8; 7];
+        bytes[0] = 0xA9;
+        bytes[1] = 0x00;
+        bytes[2] = 0xF0;
+        bytes[3] = 0x02;
+        bytes[4] = 0x60;
+        bytes[6] = 0x60;
+        let rom = rom_at_8000(&bytes);
+        let live = std::collections::BTreeSet::from([0x008000u32]);
+        let env = DecodeEnv {
+            live_operand_sites: Some(&live),
+            ..DecodeEnv::default()
+        };
+        let g = decode_function(&rom, 0, 0x8000, 1, 1, None, &env);
+        let beq = g.get(&k(0x8002)).unwrap();
+        assert_eq!(beq.successors, vec![k(0x8004), k(0x8006)]);
+        assert!(!beq.insn.const_z_fold_unconditional);
+        assert!(g.get(&k(0x8004)).is_some() && g.get(&k(0x8006)).is_some());
+        assert!(g.const_z_folds.is_empty());
     }
 
     #[test]

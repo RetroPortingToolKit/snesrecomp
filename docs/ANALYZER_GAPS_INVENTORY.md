@@ -613,7 +613,7 @@ shapes recur enough to warrant cataloguing.
 - **Construct:** `_augment_sig_with_livein` deliberately widens
   but never narrows. Once a function gets `(uint8 k)` introduced,
   it's pinned forever even if `k` is never read.
-- **Status:** OPEN. ISSUES.md framework gap (autonomous-rip
+- **Status:** OPEN. the historical issue tracker framework gap (autonomous-rip
   session 2026-04-20). Cosmetic in current SMW (the `k` parameter
   is dead in every dispatched site) but the next dispatch target
   that actually reads X would silently miscompile.
@@ -637,7 +637,7 @@ shapes recur enough to warrant cataloguing.
   phantom entries (e.g., `auto_01_ECEC` caps `Spr035_Yoshi`'s
   emit range). Three different heuristics tried 2026-04-26 all
   regressed. Test-locked.
-- **Status:** OPEN-blocked. See ISSUES.md Issue C. Requires a
+- **Status:** OPEN-blocked. See the historical issue tracker Issue C. Requires a
   more discriminating heuristic; regression-locked by
   `test_attract_demo_regression`.
 
@@ -658,13 +658,13 @@ called out separately because the wrapper-class bug surfaced in
   `8B 4B AB 20 LO HI AB 6B` (the wrapper signature) and `<fn>`'s
   declared PC ≠ `<HI:LO>`.
 - **Status:** OPEN-queued. Would catch all 5 known wrappers
-  automatically. ISSUES.md framework-cleanup queue.
+  automatically. the historical issue tracker framework-cleanup queue.
 
 ### I3. Latent wrapper-bypass candidates
 - **Construct:** $01:801A, $01:8022, $01:8032, $01:803A — same
   wrapper pattern, but their bodies access only mirrored low-RAM
   (<$2000) so DB-mismatch is invisible.
-- **Status:** OPEN-latent. Tracked in ISSUES.md "may be silent."
+- **Status:** OPEN-latent. Tracked in the historical issue tracker "may be silent."
 
 ### I4. Dispatch synthesis SEP #$30 mirror
 - **Construct:** the synthesized C `switch` for an ExecutePtr-style
@@ -815,6 +815,6 @@ Before any consumer of decoder/CFG/codegen output lands:
 
 - 2026-05-17: initial inventory. Synthesized from
   `ABSTRACT_INTERPRETATION_GAPS.md`, `ENHANCEMENTS.md`,
-  `ISSUES.md`, snesrecomp commit log, and SMW memory entries.
+  `the historical issue tracker`, snesrecomp commit log, and SMW memory entries.
   ~45 entries across 11 categories. ~40 CLOSED, ~15 OPEN /
   PARTIAL / N/A.

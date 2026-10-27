@@ -15,6 +15,11 @@
 #include <string.h>
 #include <stdint.h>
 
+#ifdef _WIN32
+#  define WIN32_LEAN_AND_MEAN
+#  include <windows.h>
+#endif
+
 /* ---- Shared resolution policy ---- */
 
 typedef int (*RomCandidateValidator)(const char *path, int positional,
@@ -97,19 +102,56 @@ static int validate_crc(const char *path, int positional,
     return 1;
 }
 
-typedef struct ShaPolicy {
-    const uint8_t *expected;
-} ShaPolicy;
+static const char *verdict_title(SnesRomVerdict verdict) {
+    switch (verdict) {
+    case kSnesRom_Wrong:      return "Wrong ROM";
+    case kSnesRom_Unknown:    return "ROM not recognized";
+    case kSnesRom_Archive:    return "Archive, not a ROM";
+    case kSnesRom_Unreadable: return "ROM unreadable";
+    case kSnesRom_Ok:         break;
+    }
+    return "ROM verified";
+}
 
-static int validate_sha(const char *path, int positional,
-                        const void *context) {
-    const ShaPolicy *policy = (const ShaPolicy *)context;
-    if (snesrecomp_rom_verify_sha256(path, policy->expected)) return 1;
-    if (!positional) return 0;
-    fprintf(stderr,
-            "[Launcher] Warning: SHA-256 mismatch for '%s' - "
-            "continuing anyway\n", path);
-    return 1;
+static int validate_identity(const char *path, int positional,
+                             const void *context) {
+    const SnesRomIdentityPolicy *policy = (const SnesRomIdentityPolicy *)context;
+    char why[1536];
+    SnesRomFacts facts;
+    const SnesRomVerdict verdict = snes_rom_identity_check_file(
+        path, policy->catalog, policy->catalog_count,
+        policy->required_sha256_hex,
+        policy->subject && policy->subject[0] ? policy->subject : "This game",
+        policy->help, &facts, why, sizeof(why));
+    if (verdict == kSnesRom_Ok) return 1;
+    fprintf(stderr, "[Launcher] %s: '%s'\n[Launcher] %s\n",
+            verdict_title(verdict), path, why);
+    /* A cached path to a ROM that has since moved just reopens the picker. */
+    if (!positional && verdict == kSnesRom_Unreadable &&
+        !snesrecomp_rom_is_readable(path))
+        return 0;
+    /* Positional validators preserve the historical warning-and-continue
+     * behavior for explicit command-line overrides. */
+    if (positional) {
+        fprintf(stderr, "[Launcher] Warning: continuing anyway with an "
+                        "unverified ROM\n");
+        return 1;
+    }
+#ifdef _WIN32
+    char box[1700];
+    snprintf(box, sizeof(box), "%s\n\nPlease select the correct ROM file.", why);
+    MessageBoxA(NULL, box, verdict_title(verdict), MB_ICONWARNING | MB_OK);
+#endif
+    return 0;
+}
+
+static void sha256_bytes_to_hex(const uint8_t *sha, char hex[65]) {
+    static const char digits[] = "0123456789abcdef";
+    for (int i = 0; i < 32; ++i) {
+        hex[i * 2] = digits[sha[i] >> 4];
+        hex[i * 2 + 1] = digits[sha[i] & 15];
+    }
+    hex[64] = '\0';
 }
 
 typedef struct MultiShaPolicy {
@@ -148,9 +190,19 @@ int snesrecomp_launcher_resolve_rom(int argc, char **argv,
 int snesrecomp_launcher_resolve_rom_sha256(int argc, char **argv,
                                            char *out_path, size_t max_len,
                                            const uint8_t *expected_sha256) {
-    const ShaPolicy policy = {expected_sha256};
+    char hex[65] = "";
+    if (expected_sha256) sha256_bytes_to_hex(expected_sha256, hex);
+    const SnesRomIdentityPolicy policy = {hex, NULL, 0, NULL, NULL};
     return resolve_rom_common(argc, argv, out_path, max_len,
-                              validate_sha, &policy);
+                              validate_identity, &policy);
+}
+
+int snesrecomp_launcher_resolve_rom_identity(int argc, char **argv,
+                                             char *out_path, size_t max_len,
+                                             const SnesRomIdentityPolicy *policy) {
+    const SnesRomIdentityPolicy none = {NULL, NULL, 0, NULL, NULL};
+    return resolve_rom_common(argc, argv, out_path, max_len, validate_identity,
+                              policy ? policy : &none);
 }
 
 int snesrecomp_launcher_resolve_rom_sha256_multi(

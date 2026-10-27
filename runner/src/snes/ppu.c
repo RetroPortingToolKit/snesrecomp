@@ -19,6 +19,12 @@ extern unsigned char g_snesrecomp_last_hdmaen;
 #include "snes_regs.h"
 #include "ws_shadow.h"
 
+#ifndef SNESRECOMP_PPU_8BPP_HLE
+#define SNESRECOMP_PPU_8BPP_HLE 0
+#endif
+#if SNESRECOMP_PPU_8BPP_HLE != 0 && SNESRECOMP_PPU_8BPP_HLE != 1
+#error SNESRECOMP_PPU_8BPP_HLE must be 0 or 1
+#endif
 
 extern Snes *g_snes;
 extern unsigned char g_snesrecomp_last_hdmaen;
@@ -764,28 +770,42 @@ int ppu_wlog_collect(uint32_t frame, PpuWlogEntry *out, int cap, int *lost) {
   return count;
 }
 
-void ppu_runLine(Ppu* ppu, int line) {
+/* BG modes the optimized line renderer implements. PpuDrawWholeLine knows
+ * modes 0-3 and treats everything else as mode 7, so a mode 4/5/6 screen
+ * (8bpp with offset-per-tile, and the two 512-pixel hi-res modes) came out
+ * as mode-7 garbage (a mode 5 menu with hi-res text over a 4bpp background
+ * showed up as vertical colour stripes). Those modes take the
+ * compatibility renderer's scanline until the optimized one grows them;
+ * it samples the main screen from the odd hi-res column, as it always did
+ * with NewRenderer=0. Regression: tests/ppu/ppu_hires_mode_test.c. */
+static bool PpuOptimizedRendererHandlesMode(uint mode) {
+  return mode <= 3 || mode == 7;
+}
+
+static void PpuRunLineJob(Ppu* ppu, int line, bool pixels, bool live) {
   PPU_T0_DECL
   /* Writes from here to the next ppu_runLine land on line + 1; no register
    * write happens inside a line's render. */
-  s_wlog_line = line + 1;
-  s_wlog_line_frame = (uint32_t)snes_frame_counter;
-  /* Per-line HDMA state must be captured here, not at end-of-frame: games can
-   * rewrite windows and scroll registers before every scanline. */
-  debug_server_on_ppu_line(line);
-  /* Snapshot the OAM the scanline renderer is about to consume, once per
-   * frame, on whichever line the host actually starts with.
-   *
-   * This used to sit inside the line == 0 block, which silently disabled it
-   * for every frame-model host: those render the visible field as lines
-   * 1..224 and never pass line 0 at all. The ring therefore stayed empty
-   * forever and oam_render_get answered {"count":0,"snaps":[]} -- "no
-   * sprites recorded" -- for a screen full of sprites. An instrument that
-   * reports nothing is indistinguishable from a subsystem that did nothing,
-   * which is the most expensive way for a probe to fail. */
-  if (s_oam_snap_frame != snes_frame_counter) {
-    s_oam_snap_frame = snes_frame_counter;
-    debug_server_on_oam_render();
+  if (live) {
+    s_wlog_line = line + 1;
+    s_wlog_line_frame = (uint32_t)snes_frame_counter;
+    /* Per-line HDMA state must be captured here, not at end-of-frame: games can
+     * rewrite windows and scroll registers before every scanline. */
+    debug_server_on_ppu_line(line);
+    /* Snapshot the OAM the scanline renderer is about to consume, once per
+     * frame, on whichever line the host actually starts with.
+     *
+     * This used to sit inside the line == 0 block, which silently disabled it
+     * for every frame-model host: those render the visible field as lines
+     * 1..224 and never pass line 0 at all. The ring therefore stayed empty
+     * forever and oam_render_get answered {"count":0,"snaps":[]} -- "no
+     * sprites recorded" -- for a screen full of sprites. An instrument that
+     * reports nothing is indistinguishable from a subsystem that did nothing,
+     * which is the most expensive way for a probe to fail. */
+    if (s_oam_snap_frame != snes_frame_counter) {
+      s_oam_snap_frame = snes_frame_counter;
+      debug_server_on_oam_render();
+    }
   }
   PpuUpdateWidescreenOamHistory(ppu, line);
   /* Snapshot the OAM the scanline renderer is about to consume, once per
@@ -798,7 +818,7 @@ void ppu_runLine(Ppu* ppu, int line) {
    * sprites recorded" -- for a screen full of sprites. An instrument that
    * reports nothing is indistinguishable from a subsystem that did nothing,
    * which is the most expensive way for a probe to fail. */
-  if (s_oam_snap_frame != snes_frame_counter) {
+  if (live && s_oam_snap_frame != snes_frame_counter) {
     s_oam_snap_frame = snes_frame_counter;
     debug_server_on_oam_render();
   }
@@ -838,19 +858,34 @@ void ppu_runLine(Ppu* ppu, int line) {
              sizeof(ppu->overlayBuffers[kPpuOverlaySource_Obj]));
     ppu->lineHasSprites = !PPU_forcedBlank(ppu) && ppu_evaluateSprites(ppu, line - 1);
 
-    if (ppu->renderFlags & kPpuRenderFlags_NewRenderer) {
-      debug_server_on_ppu_line_drawn(line, 1, ppu->bgmode);
+    if (!pixels) return;
+
+    if ((ppu->renderFlags & kPpuRenderFlags_NewRenderer) &&
+        PpuOptimizedRendererHandlesMode(PPU_mode(ppu))) {
+      if (live) debug_server_on_ppu_line_drawn(line, 1, ppu->bgmode);
       PPU_T0; PpuDrawWholeLine(ppu, line); PPU_ACC(g_ppu_sec_line_ms);
 #ifdef SNESRECOMP_INTERP_PROFILE
       g_ppu_sec_line_n++;
 #endif
     } else {
-      debug_server_on_ppu_line_drawn(line, 0, ppu->bgmode);
+      if (live) debug_server_on_ppu_line_drawn(line, 0, ppu->bgmode);
       ppu_draw_whole_line_legacy(ppu, line);
     }
     if (ppu->mode7Hd.pixels)
       PpuDrawMode7HdLine(ppu, (unsigned)line);
   }
+}
+
+void ppu_runLine(Ppu* ppu, int line) {
+  PpuRunLineJob(ppu, line, true, true);
+}
+
+void ppu_runLineState(Ppu* ppu, int line) {
+  PpuRunLineJob(ppu, line, false, true);
+}
+
+void ppu_drawCapturedLine(Ppu* ppu, int line, bool pixels) {
+  PpuRunLineJob(ppu, line, pixels, false);
 }
 
 typedef struct PpuWindows {
@@ -1191,8 +1226,9 @@ static void PpuDrawBackground_4bpp(Ppu *ppu, PpuPixelPrioBufs *dstbuf,
  * implemented mode 1's 4bpp/2bpp layers and treated every other mode as mode
  * 7.  Super FX games commonly DMA their planar framebuffer into a mode-3 BG1,
  * so that fallback interpreted perfectly valid tile data as a mode-7 bitmap.
- * Keep this scalar for clarity; 256 pixels per line is insignificant beside
- * the coprocessor workload and gives us the complete 8x8/16x16 tile contract. */
+ * The default scalar implementation is the reference for 8x8/16x16 tiles.
+ * The build-selected HLE resolves map/character/plane reads once per span
+ * ending at an 8-pixel source boundary. All state is local to this call. */
 static void PpuDrawBackground_8bpp(Ppu *ppu, uint y, bool sub, uint layer,
                                   PpuZbufType zhi, PpuZbufType zlo) {
   if (!IS_SCREEN_ENABLED(ppu, sub, layer))
@@ -1218,7 +1254,7 @@ static void PpuDrawBackground_8bpp(Ppu *ppu, uint y, bool sub, uint layer,
     const int right = win.edges[windex + 1];
     PpuZbufType *dstz = ppu->bgBuffers[sub].data + left + kPpuExtraLeftRight;
 
-    for (int screen_x = left; screen_x < right; screen_x++, dstz++) {
+    for (int screen_x = left; screen_x < right;) {
       const int sx = screen_x + ppu->hScroll[layer];
       int sc = mapadr + (((sy >> tile_shift) & 31) << 5);
       if (((sy >> page_shift) & 1) && PPU_bgTilemapHigher(ppu, layer))
@@ -1243,6 +1279,26 @@ static void PpuDrawBackground_8bpp(Ppu *ppu, uint y, bool sub, uint layer,
       const uint16 p23 = PpuRenderVram(ppu)[(addr + 8) & 0x7fff];
       const uint16 p45 = PpuRenderVram(ppu)[(addr + 16) & 0x7fff];
       const uint16 p67 = PpuRenderVram(ppu)[(addr + 24) & 0x7fff];
+#if SNESRECOMP_PPU_8BPP_HLE
+      /* A 16x16 tile can select a different character at its midpoint;
+       * windows and negative widescreen coordinates can clip either end. */
+      unsigned width = 8 - ((unsigned)sx & 7);
+      if (width > (unsigned)(right - screen_x))
+        width = (unsigned)(right - screen_x);
+      const PpuZbufType z = (tile & 0x2000) ? zhi : zlo;
+      for (unsigned i = 0; i < width; i++) {
+        const unsigned b = (tile & 0x4000) ? bit + i : bit - i;
+        const unsigned pixel =
+            ((p01 >> b) & 1) | (((p01 >> (b + 8)) & 1) << 1) |
+            (((p23 >> b) & 1) << 2) | (((p23 >> (b + 8)) & 1) << 3) |
+            (((p45 >> b) & 1) << 4) | (((p45 >> (b + 8)) & 1) << 5) |
+            (((p67 >> b) & 1) << 6) | (((p67 >> (b + 8)) & 1) << 7);
+        if (pixel && z > dstz[i])
+          dstz[i] = z + pixel;
+      }
+      screen_x += (int)width;
+      dstz += width;
+#else
       const unsigned pixel =
           ((p01 >> bit) & 1) | (((p01 >> (bit + 8)) & 1) << 1) |
           (((p23 >> bit) & 1) << 2) | (((p23 >> (bit + 8)) & 1) << 3) |
@@ -1251,6 +1307,9 @@ static void PpuDrawBackground_8bpp(Ppu *ppu, uint y, bool sub, uint layer,
       const PpuZbufType z = (tile & 0x2000) ? zhi : zlo;
       if (pixel && z > *dstz)
         *dstz = z + pixel;
+      screen_x++;
+      dstz++;
+#endif
     }
   }
 }

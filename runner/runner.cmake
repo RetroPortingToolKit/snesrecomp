@@ -16,8 +16,19 @@ set_property(SOURCE "${CMAKE_CURRENT_LIST_DIR}/src/desktop/host_main.c"
     APPEND PROPERTY COMPILE_DEFINITIONS
     SNESRECOMP_FRAME_STAGING_HLE=$<STREQUAL:${SNESRECOMP_FRAME_IMPL},HLE>)
 message(STATUS "SNES desktop frame composition: ${SNESRECOMP_FRAME_IMPL}")
+set(SNESRECOMP_APU_TIME_IMPL "LLE" CACHE STRING
+    "Audio time advancement (LLE or NATIVE)")
+set_property(CACHE SNESRECOMP_APU_TIME_IMPL PROPERTY STRINGS LLE NATIVE)
+if(NOT SNESRECOMP_APU_TIME_IMPL MATCHES "^(LLE|NATIVE)$")
+    message(FATAL_ERROR "SNESRECOMP_APU_TIME_IMPL must be LLE or NATIVE")
+endif()
+set_property(SOURCE "${CMAKE_CURRENT_LIST_DIR}/src/snes/apu.c"
+    APPEND PROPERTY COMPILE_DEFINITIONS
+    SNESRECOMP_APU_NATIVE=$<STREQUAL:${SNESRECOMP_APU_TIME_IMPL},NATIVE>)
+message(STATUS "SNES audio time advancement: ${SNESRECOMP_APU_TIME_IMPL}")
 option(SNESRECOMP_EXPOSE_COVERAGE_MOD "Show the default-off Coverage Capture mod" OFF)
 add_compile_definitions(SNESRECOMP_EXPOSE_COVERAGE_MOD=$<BOOL:${SNESRECOMP_EXPOSE_COVERAGE_MOD}>)
+include(${CMAKE_CURRENT_LIST_DIR}/ppu_8bpp_backend.cmake)
 
 # runner.cmake — shared source list for snesrecomp game projects.
 #
@@ -33,6 +44,20 @@ add_compile_definitions(SNESRECOMP_EXPOSE_COVERAGE_MOD=$<BOOL:${SNESRECOMP_EXPOS
 # of this list — it is a developer-only verify backend, off for normal builds.
 
 set(SNESRECOMP_RUNNER_ROOT ${CMAKE_CURRENT_LIST_DIR})
+set(SNESRECOMP_CRC32_IMPL "BYTE" CACHE STRING "IEEE CRC implementation (BYTE or SLICE8)")
+set_property(CACHE SNESRECOMP_CRC32_IMPL PROPERTY STRINGS BYTE SLICE8)
+if(SNESRECOMP_CRC32_IMPL STREQUAL "SLICE8")
+    set(_SNESRECOMP_CRC32_SLICES 8)
+elseif(SNESRECOMP_CRC32_IMPL STREQUAL "BYTE")
+    set(_SNESRECOMP_CRC32_SLICES 1)
+else()
+    message(FATAL_ERROR "SNESRECOMP_CRC32_IMPL must be BYTE or SLICE8")
+endif()
+set_property(SOURCE "${SNESRECOMP_RUNNER_ROOT}/src/crc32.c" APPEND PROPERTY
+    COMPILE_DEFINITIONS SNESRECOMP_CRC32_SLICES=${_SNESRECOMP_CRC32_SLICES})
+message(STATUS "SNES IEEE CRC: ${SNESRECOMP_CRC32_IMPL}")
+unset(_SNESRECOMP_CRC32_SLICES)
+include(${SNESRECOMP_RUNNER_ROOT}/dsp1_backend.cmake)
 # The framework checkout itself (runner/..). Derived, not taken from the
 # caller's SNESRECOMP_ROOT: that one is the includer's own spelling and a
 # project is free not to define it at all.
@@ -200,6 +225,8 @@ set(SNESRECOMP_RUNNER_SOURCES
     ${SNESRECOMP_RUNNER_ROOT}/src/launcher_cache.c
     ${SNESRECOMP_RUNNER_ROOT}/src/launcher_picker.c
     ${SNESRECOMP_RUNNER_ROOT}/src/rom_image_verify.c
+    ${SNESRECOMP_RUNNER_ROOT}/src/rom_identity.c
+    ${SNESRECOMP_RUNNER_ROOT}/src/sha1.c
     ${SNESRECOMP_RUNNER_ROOT}/src/crc32.c
     ${SNESRECOMP_RUNNER_ROOT}/src/snapshot_guard.c
     ${SNESRECOMP_RUNNER_ROOT}/src/sha256.c
@@ -266,6 +293,29 @@ set(SNESRECOMP_RUNNER_SOURCES
 list(APPEND SNESRECOMP_RUNNER_SOURCES
     ${SNESRECOMP_RUNNER_ROOT}/src/snes/cx4.c)
 message(STATUS "Cx4: instruction-level HG51B S169 core (ares, ISC)")
+
+# ── Windows: UTF-8 process code page ──────────────────────────────────────
+# Paths cross the host as narrow strings: GetModuleFileNameA, fopen and the
+# command line on the C side; std::filesystem, SDL and the launcher's pickers
+# on the other. On Windows those disagreed (ANSI vs UTF-8), and an install
+# folder such as "Mega Man X Recompilé" aborted at startup. The manifest makes
+# the process code page UTF-8 (Windows 10 1903+), so every narrow path is
+# UTF-8 on both sides. It rides in the runner sources so every host
+# executable carries it (resources in a static library would be dropped).
+if(WIN32)
+    set(_snes_utf8_manifest "${SNESRECOMP_RUNNER_ROOT}/windows/snesrecomp_utf8.manifest")
+    if(MSVC)
+        list(APPEND SNESRECOMP_RUNNER_SOURCES "${_snes_utf8_manifest}")
+    else()
+        enable_language(RC)
+        set(_snes_utf8_rc "${CMAKE_BINARY_DIR}/snesrecomp_utf8_manifest.rc")
+        file(WRITE "${_snes_utf8_rc}.in"
+            "1 24 \"${_snes_utf8_manifest}\"\n")
+        configure_file("${_snes_utf8_rc}.in" "${_snes_utf8_rc}" COPYONLY)
+        set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${_snes_utf8_manifest}")
+        list(APPEND SNESRECOMP_RUNNER_SOURCES "${_snes_utf8_rc}")
+    endif()
+endif()
 
 # Execution policy DEFAULT for optimized (HLE) replacements over the faithful
 # LLE floor. This chooses the default only — the policy itself is resolved at
@@ -380,7 +430,7 @@ if(SNESRECOMP_ENABLE_TRACE AND WIN32)
     list(APPEND SNESRECOMP_RUNNER_LIBRARIES ws2_32 dbghelp)
 endif()
 
-# Differential co-simulation (SNES_COSIM.md): full-state first-divergence oracle.
+# Differential co-simulation (docs/COSIM.md): full-state first-divergence oracle.
 # DEV/DIAGNOSTICS ONLY — must NEVER be enabled in a shipping Production config.
 # Adds the frame-keyed park/step engine (cosim.c) + canonical state hash
 # (cosim_state.c) + a loopback TCP server; needs ws2_32 on Windows. Defines

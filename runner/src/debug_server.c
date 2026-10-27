@@ -34,6 +34,7 @@ typedef int socket_t;
 #include <string.h>
 #include <stdarg.h>
 #include <limits.h>
+#include <errno.h>
 #include "debug_server.h"
 
 #ifndef SNESRECOMP_FRAME_FINGERPRINTS
@@ -4309,6 +4310,48 @@ static void cmd_write_ram(const char *args) {
     send_fmt("{\"ok\":true,\"addr\":\"0x%x\",\"count\":%d}", addr, count);
 }
 
+/* Super FX titles use cartridge RAM for live player/sprite state. This is a
+ * bounded RAM edit, never a bus/MMIO write. Validate the entire request before
+ * changing any byte, and only accept it at a stopped debug frame boundary. */
+static void cmd_write_sram(const char *args) {
+    char *end;
+    errno = 0;
+    unsigned long parsed = strtoul(args, &end, 16);
+    if (end == args || errno == ERANGE || parsed > UINT_MAX ||
+        (*end != ' ' && *end != '\t') || !g_sram || g_sram_size <= 0 ||
+        parsed >= (unsigned int)g_sram_size) {
+        send_fmt("{\"error\":\"usage: write_sram <offset_hex> <hex_bytes> within cartridge RAM\"}");
+        return;
+    }
+    if (!s_paused) {
+        send_fmt("{\"error\":\"write_sram requires a stopped frame boundary\"}");
+        return;
+    }
+    const char *bytes = end;
+    size_t count = 0, available = (size_t)g_sram_size - parsed;
+    for (const char *p = bytes; *p;) {
+        if (*p == ' ' || *p == '\t') { ++p; continue; }
+        if (!p[1] || _hex_nibble(p[0]) < 0 || _hex_nibble(p[1]) < 0 ||
+            count == available) {
+            send_fmt("{\"error\":\"invalid hex or cartridge RAM range\"}");
+            return;
+        }
+        ++count;
+        p += 2;
+    }
+    if (!count) {
+        send_fmt("{\"error\":\"empty cartridge RAM write\"}");
+        return;
+    }
+    size_t index = parsed;
+    for (const char *p = bytes; *p;) {
+        if (*p == ' ' || *p == '\t') { ++p; continue; }
+        g_sram[index++] = (uint8_t)((_hex_nibble(p[0]) << 4) | _hex_nibble(p[1]));
+        p += 2;
+    }
+    send_fmt("{\"ok\":true,\"addr\":\"0x%lx\",\"count\":%u}", parsed, (unsigned)count);
+}
+
 static void cmd_zero_ram(const char *args) {
     (void)args;
     memset(g_ram, 0, 0x20000);
@@ -6162,8 +6205,6 @@ extern void cpu_dispatch_found_totals(uint64_t *found1, uint64_t *found0);
 extern long interp_tier_hit_count(void);
 extern void interp_tier2_stats(int *sites, unsigned long long *clean,
                                unsigned long long *bail);
-extern uint64_t interp816_insns_total(void);
-extern uint64_t interp816_cycles_total(void);
 static void cmd_interp_stats(const char *args) {
     (void)args;
     uint64_t f1 = 0, f0 = 0;
@@ -6200,16 +6241,18 @@ static void cmd_interp_stats(const char *args) {
      * are the same unit and the ratio is meaningful. master_cycles is still
      * reported, because pacing and APU work want it -- it is just not what
      * the share is computed from.
+     *
+     * The computation is InterpExecutionShareGet(), shared with the
+     * post-mortem report's "execution_share" section, so an exit report and
+     * a live query cannot disagree.
      */
-    uint64_t icyc = interp816_cycles_total();
-    uint64_t iins = interp816_insns_total();
-    uint64_t mcyc = g_cpu.master_cycles;
-    uint64_t ccyc = g_cpu.cycles;
-    double icyc_pct = ccyc ? (100.0 * (double)icyc / (double)ccyc) : 0.0;
-    /* Clamped for report only: the interpreter's own bus-cycle rounding can
-     * put it a hair over the total, and a headline reading 100.4% invites a
-     * bug hunt into what is a sub-percent accounting artifact. */
-    if (icyc_pct > 100.0) icyc_pct = 100.0;
+    InterpExecutionShare share;
+    InterpExecutionShareGet(&share);
+    uint64_t icyc = share.interp_cycles;
+    uint64_t iins = share.interp_insns;
+    uint64_t mcyc = share.master_cycles;
+    uint64_t ccyc = share.cpu_cycles;
+    double icyc_pct = share.interp_cycle_pct;
     uint64_t nirq_runs = 0, nirq_miss = 0;
     send_fmt("{\"ok\":true,\"dispatch_total\":%u,"
              "\"found1\":%llu,\"found0\":%llu,\"found0_pct\":%.3f,"
@@ -6224,7 +6267,7 @@ static void cmd_interp_stats(const char *args) {
              (unsigned long long)nirq_runs, (unsigned long long)nirq_miss,
              (unsigned long long)iins, (unsigned long long)icyc,
              (unsigned long long)ccyc, (unsigned long long)mcyc,
-             icyc_pct, 100.0 - icyc_pct);
+             icyc_pct, share.aot_cycle_pct);
 }
 
 /* interp_profile [top=N] [min_cycles=N]
@@ -7166,7 +7209,7 @@ static void cmd_mx_claim_get_all(const char *args) {
  * cpu->m_flag or cpu->x_flag that occur between two cpu_trace_block
  * hooks WITHOUT a corresponding cpu_trace_px_record (i.e. without
  * going through an emitted SEP/REP/PHP/PLP/RTI/XCE). The DA49 entry
- * in ISSUES.md is the canonical example of the class this catches.
+ * in the historical issue notes is the canonical example of the class this catches.
  *
  *   mx_async_check_arm                    — arm tripwire (clear trip)
  *   mx_async_check_get                    — return current trip snapshot
@@ -8001,7 +8044,7 @@ static void cmd_audio_stats(const char *args) {
     RtlApuUnlock();
     static char buf[65536];
     int pos = snprintf(buf, sizeof(buf),
-        "{\"ok\":true,\"produced\":%llu,\"produced_cpu\":%llu,\"produced_audio\":%llu,"
+        "{\"ok\":true,\"apu_time_impl\":\"%s\",\"produced\":%llu,\"produced_cpu\":%llu,\"produced_audio\":%llu,"
         "\"dropped\":%llu,\"dropped_audible\":%llu,\"drop_runs\":%llu,\"consumed\":%llu,"
         "\"fast_forward_discarded\":%llu,\"output_underflows\":%llu,\"output_priming\":%llu,"
         "\"output_missing_frames\":%llu,"
@@ -8017,7 +8060,7 @@ static void cmd_audio_stats(const char *args) {
         "\"cpu_port_overwrites\":[%llu,%llu,%llu,%llu],"
         "\"apu_port_queue_depth\":%u,\"apu_port_queue_lag\":%llu,"
         "\"event_count\":%llu,\"snap_count\":%llu,\"snaps\":[",
-        (unsigned long long)st.produced, (unsigned long long)st.produced_cpu,
+        apu_time_implementation(), (unsigned long long)st.produced, (unsigned long long)st.produced_cpu,
         (unsigned long long)st.produced_audio, (unsigned long long)st.dropped,
         (unsigned long long)st.dropped_audible,
         (unsigned long long)st.drop_runs, (unsigned long long)st.consumed,
@@ -8632,6 +8675,7 @@ static const CmdEntry s_commands[] = {
     {"dump_cart",     cmd_dump_cart},
     {"xlate_stats",   cmd_xlate_stats},
     {"read_sram",     cmd_read_sram},
+    {"write_sram",    cmd_write_sram},
     {"call_stack",    cmd_call_stack},
     {"watch",         cmd_watch},
     {"unwatch",       cmd_unwatch},
@@ -8767,6 +8811,17 @@ static void process_command(char *line) {
 // ---- Public API ----
 
 int debug_server_init(int port) {
+    /* Own this override here so title-specific hosts using a fixed default
+     * participate in the same isolated tooling sessions as host_main.c. */
+    const char *port_env = getenv("SNESRECOMP_DEBUG_PORT");
+    if (port_env && port_env[0]) {
+        char *end = NULL;
+        long selected = strtol(port_env, &end, 10);
+        if (end != port_env && *end == '\0' && selected > 0 && selected <= 65535)
+            port = (int)selected;
+        else
+            fprintf(stderr, "[debug_server] invalid SNESRECOMP_DEBUG_PORT; using %d\n", port);
+    }
 #ifdef _WIN32
     WSADATA wsa;
     if (WSAStartup(MAKEWORD(2, 2), &wsa) != 0) return -1;

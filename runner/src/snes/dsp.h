@@ -56,6 +56,9 @@ typedef struct DspChannel {
 
 struct Dsp {
   uint8_t *apu_ram;
+  // Host publication policy, outside the guest snapshot. Speculation still
+  // executes every DSP cycle but must never enter the live consumer queue.
+  bool suppressOutput;
   // MP2K-style verified-enhancement shadow mixer (opt-in; default off).
   // Placed BEFORE `ram` so it lies outside the dsp_saveload region
   // (which serializes from `ram` to end) — savestate layout is unchanged.
@@ -117,6 +120,8 @@ bool dsp_set_output_voices(Dsp *dsp, uint8_t voices);
 /* Preserve the presentation echo during a discarded rollback replay. The
  * canonical mixer still runs; its temporary output will be discarded. */
 void dsp_suspend_output_filter(Dsp *dsp, bool suspended);
+/* Call under the APU lock. This gates host PCM publication, not synthesis. */
+void dsp_set_output_suppressed(Dsp *dsp, bool suppressed);
 uint8_t dsp_read(Dsp* dsp, uint8_t adr);
 void dsp_write(Dsp* dsp, uint8_t adr, uint8_t val);
 /* Native-rate output-ring access. The consumer (RtlRenderAudio) reconciles the

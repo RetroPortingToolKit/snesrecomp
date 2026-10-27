@@ -3,10 +3,21 @@
 For the shared Windows startup stall and optional in-memory presentation
 timing capture, see [Windows startup and frame delivery](WINDOWS_STARTUP_TIMING.md).
 
-This worktree exists to create enough uncapped headroom for lower-power hosts,
-including the original Xbox, without weakening the faithful SNES hardware
-model. Performance is measured as uncapped frames per second, not as the
-ability to sit at a paced 60 FPS.
+This work creates uncapped headroom for lower-power hosts, including the
+original Xbox, while maintaining a functioning faithful SNES reference.
+Performance is measured as host cost per useful frame and uncapped throughput,
+not only as the ability to sit at a paced 60 FPS.
+
+For HLE replacements, follow the shared
+[HLE policy](https://github.com/mstan/recomp-ai-rules/blob/main/HLE.md).
+The build selects the implementation. HLE preserves the caller-facing
+contract and may use different algorithms, internal timing and documented,
+practically unnoticeable output differences. Exact state/frame/audio equality
+requirements below apply to changes promising exact equivalence. For HLE,
+compare exact contract fields exactly and qualify allowed differences at the
+observable boundary, including affected gameplay progression. A runtime
+selector, continuously executing LLE shadow, or cross-build savestate
+conversion is not required.
 
 The original Xbox is a budget target for CPU, memory, and cache pressure. The
 measurements below were taken on a modern Windows desktop and are not hardware
@@ -22,7 +33,7 @@ The approach is adapted from the useful NDS work:
 - use interleaved, order-balanced A/B runs and retain rejected experiments;
 - require state, framebuffer, audio, attract-mode, gameplay, and fuzz gates.
 
-## Current baseline
+## Initial baseline audit
 
 Super Mario World and Mega Man X already provide
 `--benchmark <frames> <rom>`. It disables pacing, VSync, audio, autosave, and
@@ -74,11 +85,161 @@ and exactness both survive.
    compared run. Audio-enabled correctness runs are separate from the
    audio-disabled throughput benchmark.
 
-A candidate is retained when the order-balanced median is positive outside
-run noise and the full correctness gates pass. Code-size changes are reported
-because instruction-cache pressure matters on the Xbox.
+A candidate may be retained when every tested game is neutral or improves
+and its correctness contract passes. Mixed small results within run variation
+are neutral/inconclusive, not demonstrated wins. Never offset a reproducible
+regression in one game with gains in another. Identical original/candidate
+failures are shared defects, not optimization disqualifiers. Report code and
+memory costs because cache pressure matters on constrained targets.
 
 ## Retained results
+
+### Native runtime experiment, 2026-10-26
+
+The isolated `perf/native-runtime-20261026` experiment starts from framework
+`503063e443844409b055f4df1633f21aba63321b` and Mega Man X
+`452ac3180e0557f2cd6226af87ae0f6704b14f1a`. The existing desktop HLE frame
+scheduler is already in the baseline. The additional work comprises:
+
+- `SNESRECOMP_APU_TIME_IMPL=NATIVE`: advance the APU between SPC instruction,
+  DSP sample and queued-port events instead of dispatching every clock. The
+  SPC/DSP implementations, event order, timer state and serialized state remain
+  the reference implementation's. `LLE` retains the scalar clock loop.
+- `MMX_RASTER_IMPL=NATIVE` in the consumer: produce the owned custom image once,
+  retain live sprite/status evaluation, and materialize the independent stock
+  image from captured data only on an explicit readback. Unsupported lines keep
+  the normal PPU raster path.
+- Shared portable jobs in `snes/raster_jobs.h`: Mode-1 tile rows, duplicate-safe
+  OAM lookup and caller-owned brightness tables. The title still owns scene
+  reconstruction, overlays, windows and complex color math. These jobs know
+  nothing about Mega Man X assets or gameplay. No guest object allocation,
+  WRAM layout, game logic or persistent save format is replaced.
+
+Both selectors are build-time choices and currently default to `LLE`. This is
+an implementation experiment, not approval to change release defaults.
+
+### Broader campaign, 2026-10-27
+
+The finite opportunity burndown is central Bead `beads-8wg.2.154`, related to
+the cross-engine `optimization campaign` (`beads-2wy8.1`). It includes explicit
+retained, already-optimized, deferred and rejected outcomes. Raw per-game
+samples, workload/package labels, source/binary identities and cost caveats
+are retained there for later campaign figures.
+
+`snes/raster_image.h` generalizes deferred independent stock-image readback
+for MMX and Super Metroid. Consumers supply immutable captured registers,
+palette, OAM and VRAM; the service owns private PPU scratch. Live scanlines
+still execute PPU status/OAM/mosaic work. Extra surfaces/callbacks, interlace
+and unsupported scene lines retain normal rasterization. Real resets and
+loaded captures invalidate derived ownership; current/previous frames have
+independent lifetimes. Readback neither invokes guest code nor changes live
+PPU state. Its mixed-line/idempotence test compares against the actual PPU.
+If capture allocation fails after a claimed prefix, the service reconstructs
+only the omitted prefix rows into the primary field without allocating or
+changing live PPU state. The title then draws the failed and remaining lines
+normally and uses its original stock-image fallback for that frame.
+
+The shared window job resolves all six window layers through four precomputed
+regions. Geometry remains explicit so a title can adapt widened effect bounds.
+Randomized Mode-1 output comparisons use the independent full PPU, including
+window enables, inversions, logic, large tiles, flips and scroll wrap.
+
+`SNESRECOMP_CRC32_IMPL=SLICE8` is portable C for the existing IEEE CRC/streaming
+interface, with a `BYTE` floor. Tables are immutable and reproducible with
+`tools/generate_crc32_slices.py`; no host instruction or endian assumption is
+required. It retains checksums, snapshot guards and rewind. The native gate
+compares arbitrary seeds, unaligned inputs, tails and split streams against a
+bitwise reference. It adds 8 KiB of read-only tables in place of the byte path's
+1 KiB writable table. Per-game qualification, not component throughput, decides
+adoption.
+
+For shared-host measurements, `STATE_TRACE_START_FRAME` (with the title's
+environment prefix, e.g. `SM_STATE_TRACE_START_FRAME`) can limit an existing
+state trace to the final frame. Default behavior still traces every frame.
+Both compared binaries must support the setting; verify the actual row count.
+This separates production timing from repeated diagnostic WRAM hashing while
+retaining matched final WRAM/CPU checks. Keep full per-frame correctness runs
+as separate evidence. A whole-process result with full diagnostic traces must
+be labeled accordingly.
+
+Two final Super Metroid color/cache experiments preserved state and pixels but
+did not improve the measured workload: a compact indexed palette cache and a
+full RGB lookup with parallel integer color math. Both trended slower in four
+of five 7,200-frame pairs and were removed. Existing 32-bit software/OpenGL
+output needs no format renaming or game-specific asset conversion. Their raw
+receipts and rejected source/binary snapshots remain campaign evidence.
+
+The complete Mega Man X game executable, including its existing mod packages,
+was measured with a fixed 16:9 view, the same Highway input script, software SDL
+presentation, and audio emulation/output enabled through a dummy audio device.
+After warming both binaries, five alternating A/B pairs of 4,200 frames saved
+48.84%, 39.98%, 41.61%, 50.38% and 43.76% process CPU time respectively:
+**43.76% median CPU reduction**. Median uncapped throughput was 323.767 FPS
+for the original baseline and 582.667 FPS for the shared native candidate.
+Every pair had identical ROM/config/mod inputs and the same sampled gameplay
+image. This result is specific to the measured custom-renderer workload; plain
+stock 4:3 does not adopt that renderer and gains only the APU changes.
+
+The candidate game SHA-256 is
+`c63987dbe0e86826e1c64859c3073191b9a5eb77b81097e67a01128268fa8376`.
+The bounded run receipts are in `runs/native-shared-wide` under the experiment
+workspace `snes-native-20261026`; preserve these with the source branches.
+This desktop measurement does not qualify original Xbox/mobile performance.
+The candidate adds 8,512 bytes of `.text` and 2,508,544 bytes of static `.bss`
+against that original game executable (10,358 more file bytes). The latter
+includes the 2 MiB caller-owned brightness cache and private captured-PPU work
+buffers. Lower-memory target qualification must include that cost.
+
+GCC and Clang passed the shared APU differential tests (both compile choices)
+and independent PPU/tile/OAM fixtures. The Mega Man X native candidate passed
+all four Magic Carpet cases, including its negative control and active
+save/load/rollback checks. Its positive object/state trace matched the frozen
+baseline. Current-source `LLE/LLE` builds also passed those cases. Current-build
+state/rewind, Modern Zero, weapon menus, independent source packs and real
+Saber activity passed in both choices. The preceding OAM candidate additionally
+passed the Boss Rush report and 180-case pause/death/spawn ROM gates.
+
+Three broader feature checks initially failed at the same assertions in the frozen original
+and the native candidate: the upgraded Zero menu-transition body, P2 buster
+damage, and a synthetic vertically separated co-op view. They are pre-existing
+shared failures, not optimization regressions, and do not disqualify adopting
+the optimization. Preserve them as separate defects and fix shared behavior
+for both implementations where appropriate. Further adoption work evaluates
+introduced regressions and cross-title runtime behavior, rather than requiring
+an unrelated clean baseline.
+The synthetic shaft fixture was subsequently found to retain Highway's valid
+per-player camera limits while changing only its copied WRAM limits. Isolating
+that artificial history, covering both WRAM fallback and valid per-player
+limits, and restoring the live history fixes the fixture without changing the
+runtime or relaxing either assertion. The complete independent-view ROM gate
+now passes in both builds (`MegamanXRecomp` commit `6fc091f`).
+
+Super Metroid `00779950c3638d82a7180742bd000dbcc046fcfe` was also regenerated
+with the supported native pipeline (two byte-identical full generations) and
+built with its full feature set against the shared engine. All 17 title/unit
+tests passed. Separate game executables select only APU `LLE` versus `NATIVE`;
+its renderer is unchanged. Five warmed, alternating 3,900-frame pairs per
+stock/16:9 view, with audio enabled and the Eye fixture, matched every per-frame
+WRAM/CPU trace and the sampled image within each viewport. Paired median CPU
+reductions were 2.21% stock and 2.35% wide, but the variation exceeded these
+small effects. These runs establish matching observed behavior; they do not
+establish a robust Super Metroid speedup.
+Both binaries also passed a combined run-ahead=1, 120 FPS presentation and
+in-game save/load check at frame 3,700: 3,900 simulation records and the final
+image matched across implementations, with 7,897/7,899 actual presentations.
+This is behavior coverage, not a throughput measurement: its single paced
+pair used more native CPU time, prompting a longer balanced run-ahead check.
+That follow-up used five warmed, alternating 7,200-frame widescreen pairs with
+run-ahead=1. State/image checks passed throughout; paired CPU savings were
+11.77%, 4.52%, -1.32%, -3.71% and 2.07% (median 2.07%). It did not reproduce
+a consistent regression; its mixed results still do not demonstrate a robust
+Super Metroid speedup.
+
+The older stock-versus-wide equality assertion in its live renderer harness
+fails at frame 3,114 in the LLE baseline. Its latest widened enemy activity
+deliberately changes the simulated world, so compare the same viewport and
+input across implementations for this native regression check. Do not turn
+that existing cross-viewport assertion into a native adoption blocker.
 
 The September 2026 title measurements below use each title's default
 `SNESRECOMP_EXECUTION_MODE=lle` path. In SMW and MMX that means a faithful LLE

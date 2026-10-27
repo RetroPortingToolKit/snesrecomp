@@ -17,6 +17,9 @@ uint32_t g_interp_wlog_pc24 = 0;
 uint8 g_memsel;
 
 static int g_aot_calls;
+static uint8 g_aot_pb;
+static uint8 g_aot_hrv;
+static RecompReturn g_aot_return;
 static int g_lle_calls;
 static uint32 g_lle_target;
 static uint32 g_lle_site;
@@ -83,8 +86,10 @@ void debug_on_wram_write_word(uint32 addr, uint16 old_value, uint16 new_value) {
 
 static RecompReturn fake_aot(CpuState *cpu) {
     g_aot_calls++;
+    g_aot_pb = cpu->PB;
+    g_aot_hrv = cpu->host_return_valid;
     cpu->A++;
-    return RECOMP_RETURN_NORMAL;
+    return g_aot_return;
 }
 
 const DispatchEntry g_dispatch_table[] = {
@@ -285,6 +290,58 @@ int main(void) {
                    == RECOMP_RETURN_NORMAL, "mirror return");
     fails += check(g_aot_calls == 2, "LoROM mirror finds exact AOT");
     fails += check(cpu.PB == 0x80, "requested mirror bank remains architectural PB");
+
+    /* Phantoon's PHK/PEA/JML crosses A0 -> A7. Its handler has a JMP
+     * ($0012), so a stale caller PB executes unrelated ROM and crashes. */
+    const DispatchEntry pushed[] = {{0x27808au, {fake_aot, NULL, NULL, NULL}, 0}};
+    cpu_select_program(pushed, 1, NULL, 0);
+    cpu.PB = 0xa0;
+    uint32 continuation = 0xa0c284u;
+    fails += check(cpu_dispatch_call_pc_pushed(&cpu, 0xa7808au, 0xa0c292u,
+                                               3, &continuation) == RECOMP_RETURN_NORMAL,
+                   "pushed long call returns normally");
+    fails += check(g_aot_pb == 0xa7 && g_aot_hrv == 3 && cpu.PB == 0xa0,
+                   "long call uses requested mirror PB and restores caller");
+    fails += check(continuation == 0xa0c284u,
+                   "normal AOT return keeps compiled continuation");
+    g_aot_return = (RecompReturn)RECOMP_RETURN_LLE_UNWIND_BASE;
+    fails += check(cpu_dispatch_call_pc_pushed(&cpu, 0x27808au, 0xa0c292u,
+                                               3, &continuation) == g_aot_return,
+                   "long call propagates LLE yield");
+    fails += check(g_aot_pb == 0x27 && cpu.PB == 0xa0,
+                   "yield uses requested low bank and restores host caller");
+    g_aot_return = RECOMP_RETURN_NORMAL;
+    cpu.PB = 0xa7;
+    cpu_dispatch_call_pc_pushed(&cpu, 0xa7808au, 0xa78000u, 2, &continuation);
+    fails += check(g_aot_pb == 0xa7 && g_aot_hrv == 2 && cpu.PB == 0xa7,
+                   "pushed near call retains caller PB");
+    /* Full HiROM pairs share the entire ROM bank. Low/full aliases only
+     * share bytes: a short jump below $8000 has different meaning. */
+    const DispatchEntry hirom_entries[] = {
+        {0xC01000u, {fake_aot, NULL, NULL, NULL}, 0},
+        {0xC09000u, {fake_aot, NULL, NULL, NULL}, 0},
+        {0xFE9000u, {fake_aot, NULL, NULL, NULL}, 0},
+    };
+    int previous_cart_type = cart.type;
+    cart.type = CART_HIROM;
+    cpu_select_program(hirom_entries, 3, NULL, 0);
+    fails += check(cpu_dispatch_has_entry(&cpu, 0x401000u),
+                   "full HiROM lower-half mirror finds compiled entry");
+    fails += check(cpu_dispatch_has_entry(&cpu, 0x409000u),
+                   "full HiROM upper-half mirror finds compiled entry");
+    fails += check(!cpu_dispatch_has_entry(&cpu, 0x009000u) &&
+                       !cpu_dispatch_has_entry(&cpu, 0x809000u),
+                   "low HiROM banks cannot reuse a full-bank compiled body");
+    fails += check(!cpu_dispatch_has_entry(&cpu, 0x7E9000u),
+                   "WRAM never aliases bank FE code");
+    memset(&cpu, 0, sizeof cpu);
+    cpu.S = 0x1C0;
+    fails += check(cpu_dispatch_pc_from(&cpu, 0x401000u, 0x1C2, 0x409000u)
+                   == RECOMP_RETURN_NORMAL && cpu.PB == 0x40 && cpu.A == 1,
+                   "full HiROM mirror executes with requested architectural PB");
+    --g_aot_calls;
+    cart.type = previous_cart_type;
+    cpu_select_program(NULL, 0, NULL, 0);
 
     const DispatchEntry alternate[] = {{0x008300u, {NULL, NULL, NULL, NULL}, 3}};
     cpu_select_program(alternate, 1, NULL, 0);

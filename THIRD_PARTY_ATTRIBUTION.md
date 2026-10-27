@@ -22,6 +22,12 @@ the notice to travel with binary distributions, not just source.
   (`runner/src/snes/ppu.c`, `runner/src/widescreen.h`), function-boundary
   conventions, and the default input layout (`runner/src/keybinds.c`).
 
+Widescreen and quality-of-life concepts for A Link to the Past were also
+referenced from [xander-haj/Z3R](https://github.com/xander-haj/Z3R) and its
+`z3c` base, both MIT-licensed forks of `zelda3`. Game-specific policies are
+reimplemented against the original ROM rather than copied from their C.
+Credit and thanks to those authors.
+
 Individual algorithms inside that core are credited inline to snes9x; the
 upstream 65816 CPU core is separately attributed under
 [LakeSnes](#lakesnes--65816-cpu-core) below, which is the same MIT lineage

@@ -1017,7 +1017,8 @@ def _emit_xce(op: XCE) -> List[str]:
         "  uint8 _t = cpu->emulation;",
         "  cpu->emulation = cpu->_flag_C;",
         "  cpu->_flag_C = _t;",
-        "  if (cpu->emulation) { cpu->m_flag = 1; cpu->x_flag = 1; cpu_mirrors_to_p(cpu); }",
+        "  if (cpu->emulation) { cpu->m_flag = 1; cpu->x_flag = 1; cpu->X &= 0xFFu; cpu->Y &= 0xFFu;",
+        "                        cpu_mirrors_to_p(cpu); }",
         "  cpu_trace_px_record(cpu, 0, 7 /*XCE*/, _old_p, cpu->P);",
         "}",
     ]
@@ -2173,7 +2174,7 @@ def _emit_return_frame_push(op: 'Call') -> List[str]:
 
     MUST be paired with the always-pop _emit_return; and every OTHER
     invoke path (_emit_dispatch, indirect/tail emitters) must agree on
-    push-vs-no-push or cpu->S leaks. See IMPROVEMENTS.md "Option-1".
+    push-vs-no-push or cpu->S leaks. See docs/MULTI_TIER.md "Generated call/return contract".
     """
     site = (op.source_pc24 & 0xFFFFFF) if op.source_pc24 is not None else None
     # A direct generated JSR/JSL call always has a paired host-C caller +
@@ -2518,7 +2519,7 @@ def _emit_return(op: Return) -> List[str]:
         # to it via the existing SKIP_N decrement contract, so the ancestor
         # host-returns NORMAL and its caller resumes correctly. (A one-level
         # NORMAL miss-unwind here instead resumes intermediate frames that
-        # hardware skipped — the fish-explosion OAM wipe; see ISSUES.md.)
+        # hardware skipped — the fish-explosion OAM wipe; see the historical issue notes.)
         # Intentionally not gated by cpu_dispatch_has_entry(): a popped PC can
         # be both a valid continuation entry and a return-to-ancestor target.
         "  if (_ret_s != _entry_s) {",
@@ -2556,17 +2557,19 @@ def _emit_return(op: Return) -> List[str]:
         "        interp_bridge_has_direct_paired_bounce()) {",
         f"      return interp_tier_dispatch_rewritten_return(cpu, _rpc24, 0x{src24:06x}u); }}",
         "  }",
-        # A computed RTS may push a synthetic target frame below entry and
-        # consume it completely, leaving cpu->S exactly back at _entry_s.
+        # A computed RTS/RTL may push a synthetic target below entry, with
+        # saved locals or another synthetic continuation beneath that target.
         # During a direct interpreter->AOT bounce, that means the real paired
         # caller frame is still owned by the interpreter.  Hand the computed
-        # continuation back to that owner.  Starting a popped-return bridge
-        # here creates a nested interpreter whose watermark is _entry_s; if a
+        # continuation back to that owner with the entire remaining stack.
+        # Starting a popped-return bridge creates a nested interpreter; if a
         # later helper non-locally returns through the preserved caller, the
         # nested bridge exits at the caller epilogue and the outer interpreter
-        # executes that epilogue a second time (LttP sprite dispatch: PHA;RTS
-        # selector followed by Sprite_ReturnIfInactive's PLA;PLA;RTS).
-        "  if (_ret_s != _entry_s && cpu->S == _entry_s &&",
+        # executes that epilogue a second time. A synthesized far call is also
+        # affected: the nested bridge stops at its local RTL continuation and
+        # the bounce then skips that continuation (YI's PHK/PEA/.../RTL helper).
+        "  if (_ret_s != _entry_s &&",
+        "      (uint16)(_entry_s - _ret_s) < 0x8000u &&",
         "      interp_bridge_has_direct_paired_bounce()) {",
         f"    return interp_tier_dispatch_rewritten_return(cpu, _rpc24, 0x{src24:06x}u);",
         "  }",
@@ -2635,6 +2638,31 @@ def _emit_stop(op: Stop) -> List[str]:
 
 
 def _emit_break(op: Break) -> List[str]:
+    if op.rti_round_trip and op.source_pc24 is not None:
+        # brk_rti: BRK pushes PB, the address past its signature byte and P
+        # (native mode), sets I and clears D; the vector's bare RTI pulls the
+        # same four bytes. What stays is the bytes left below S and the time:
+        # the BRK's cycles are the block's, the RTI's 7 (6 + 1 native) are
+        # charged here at the speed of bank $00, where the vector points.
+        # Only the native vector ($FFE6) was validated: in emulation mode
+        # BRK goes through $FFFE, so that case runs in the interpreter.
+        site = op.source_pc24 & 0xFFFFFF
+        ret = (site + 2) & 0xFFFF
+        return [
+            "/* BRK to a bare RTI (brk_rti): the round trip, then on */",
+            "if (cpu->emulation) {",
+            f"  return interp_tier_dispatch_tail(cpu, "
+            f"{_transfer_target_expr(site, False)}, 0x{site:06x}u, _entry_s, _hrv);",
+            "}",
+            "{ uint16 _s = cpu->S;",
+            "  cpu_mirrors_to_p(cpu);",
+            "  cpu_write8(cpu, 0x00, _s, cpu->PB);",
+            f"  cpu_write8(cpu, 0x00, (uint16)(_s - 1), 0x{ret >> 8:02x});",
+            f"  cpu_write8(cpu, 0x00, (uint16)(_s - 2), 0x{ret & 0xFF:02x});",
+            "  cpu_write8(cpu, 0x00, (uint16)(_s - 3), (uint8)cpu->P);",
+            "  cpu->cycles += 7;",
+            "  cpu->master_cycles += 7 * 8; }",
+        ]
     if not op.tier_to_lle:
         return ["/* COP: software interrupt */" if op.cop
                 else "/* BRK: software interrupt */"]

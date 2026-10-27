@@ -123,7 +123,7 @@ def test_aliases_require_mapper_and_rom_window():
     assert canonical_pc(0x808100, "lorom") == 0x008100
     assert canonical_pc(0x807100, "lorom") == 0x807100
     assert canonical_pc(0x808100, "sa1") == 0x808100
-    assert canonical_pc(0x808100, "hirom") == 0x808100
+    assert canonical_pc(0x808100, "hirom") == 0xC08100
 
 
 def test_legacy_identity_is_an_explicit_generation_input(tmp_path):

@@ -10,8 +10,10 @@ $args = @(
     "$root\runner\src\launcher_cache.c",
     "$root\runner\src\launcher_picker.c",
     "$root\runner\src\rom_image_verify.c",
+    "$root\runner\src\rom_identity.c",
     "$root\runner\src\host_paths.c",
     "$root\runner\src\crc32.c",
+    "$root\runner\src\sha1.c",
     "$root\runner\src\sha256.c",
     "-lcomdlg32",
     "-o", $out

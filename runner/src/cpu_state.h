@@ -105,7 +105,7 @@ typedef struct CpuState {
     uint8  DB;
     uint8  PB;
 
-    /* Option-1 cpu->S return-frame ABI (see IMPROVEMENTS.md). NON-ZERO
+    /* Option-1 cpu->S return-frame ABI (see docs/MULTI_TIER.md). NON-ZERO
      * when the current function was entered via a direct generated JSR/JSL
      * C call (a paired host-C caller exists and pushed a matching return
      * frame on cpu->S) — and the value IS the pushed frame size in bytes:
@@ -155,7 +155,7 @@ typedef struct CpuState {
      * / PB-relative addressing all resolve through the cpu_ helpers. */
     uint8 *ram;
 
-    /* Axis-2 cycle accounting (SNES_ACCURACY_BURNDOWN.md). Cumulative 65816
+    /* Axis-2 cycle accounting (docs/validation/accuracy-history.md). Cumulative 65816
      * CPU (bus) cycles, charged by the v2 emitter as a per-block integer
      * constant (recompiler/snes_cycles.py is the authority; the interp816
      * reference + bsnes hook validate it). One add per block — near-free, the
@@ -373,6 +373,11 @@ static inline void cpu_p_to_mirrors(CpuState *cpu) {
     cpu->_flag_D = (cpu->P & CPU_P_D) ? 1 : 0;
     cpu->_flag_V = (cpu->P & CPU_P_V) ? 1 : 0;
     cpu->_flag_N = (cpu->P & CPU_P_N) ? 1 : 0;
+    /* 65816: with X set the index registers are 8-bit and their high bytes
+     * read as zero (SEP #$10, PLP, RTI). 8-bit X/Y writes zero-extend, but a
+     * register kept across the switch would otherwise carry its old high byte
+     * into the next 16-bit use (e.g. an IRQ handler's REP #$30; PHX). */
+    if (cpu->x_flag) { cpu->X &= 0xFFu; cpu->Y &= 0xFFu; }
 }
 
 static inline void cpu_mirrors_to_p(CpuState *cpu) {

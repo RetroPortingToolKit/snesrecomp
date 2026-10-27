@@ -144,6 +144,12 @@ static const char *scancode_to_name(SDL_Scancode sc) {
 static char s_ini_path[512] = {0};
 
 static void derive_ini_path(const char *exe_path) {
+#if defined(__linux__)
+    /* Match host_paths.c: argv[0] names the read-only AppImage payload,
+     * while APPIMAGE names the file beside the launcher's writable settings. */
+    const char *appimage = getenv("APPIMAGE");
+    if (appimage && *appimage) exe_path = appimage;
+#endif
     if (!exe_path || !*exe_path) {
         strcpy(s_ini_path, "keybinds.ini");
         return;

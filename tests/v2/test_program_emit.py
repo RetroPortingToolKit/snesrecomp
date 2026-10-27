@@ -48,6 +48,28 @@ def _generated(out_dir):
             for path in sorted(out_dir.glob("*_v2.c"))}
 
 
+def test_live_operand_and_entry_hook_changes_invalidate_emission_cache(tmp_path):
+    """Config-only changes must reach C even when the manifest stays unchanged."""
+    rom_path, cfg_dir, out_dir = _fixture(tmp_path)
+    rom = bytearray(rom_path.read_bytes())
+    rom[:5] = bytes.fromhex('A9 01 85 40 60')  # LDA #1; STA $40; RTS
+    rom_path.write_bytes(rom)
+    cfg_path = cfg_dir / 'bank00.cfg'
+    base = 'bank = 00\nfunc I_RESET 8000 end:8005 entry_mx:1,1\n'
+    for live in (False, True, False):
+        cfg_path.write_text(base + ('live_operand 8000\nentry_hook 8002 HostSaw\n'
+                                    if live else ''), encoding='utf-8')
+        changed = _run(rom_path, cfg_dir, out_dir)
+        assert changed.returncode == 0, changed.stdout + changed.stderr
+        assert '1 bank(s) emitted, 0 reused' in changed.stdout
+        source = (out_dir / 'bank00_v2.c').read_text(encoding='utf-8')
+        assert ('HostSaw(cpu, 0x008002u);' in source) is live
+        assert ('cpu_read8(cpu, 0x00, (uint16)(0x8001))' in source) is live
+        cached = _run(rom_path, cfg_dir, out_dir)
+        assert cached.returncode == 0, cached.stdout + cached.stderr
+        assert '0 bank(s) emitted, 1 reused' in cached.stdout
+
+
 def test_rom_change_regenerates_banks_in_place(tmp_path):
     # A byte change inside a body keeps every node, demand and disposition,
     # so nothing in the manifest moves. Regenerating into the same directory

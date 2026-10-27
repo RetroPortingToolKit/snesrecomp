@@ -1,3 +1,13 @@
+# Game bring-up investigation history
+
+Retained measurements and investigation notes from earlier development branches.
+Status labels and owner-gated plans below describe those historical checkpoints;
+they are not the current support matrix or an active issue queue. See the
+[project README](../../README.md) for current support and the maintained guides
+under `docs/` for integration contracts. Active work is tracked in central Beads.
+
+---
+
 # snesrecomp — Development Log (branch `investigate/sm-0012-blocker`)
 
 Recompiler-side development record for the Super Metroid (game #4) bring-up.
