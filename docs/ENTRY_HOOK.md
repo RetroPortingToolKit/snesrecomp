@@ -48,8 +48,9 @@ The compiled body continues with the facts the analyzer proved for this point
 (M/X widths, stack shape, constant folds), so a hook that changed state would
 run the rest of the block on facts that no longer hold. This is the difference
 from the interpreter's pre-opcode hook, which may edit `CpuState` and redirect
-the PC: anything that changes behaviour belongs in `hle_func` or in the
-interpreter hook on an LLE-only routine.
+the PC: anything that changes behaviour belongs in
+[`mod_hook`](MOD_HOOK.md), which mutates and redirects in both tiers and is
+armed at run time, or in `hle_func` when the whole routine is replaced.
 
 ## When it fires: once per execution of the instruction
 
@@ -133,8 +134,8 @@ instruction size, or decoded M/X state requires regeneration or LLE.
 
 Ports using custom `runtime_immediate` or `opcode_hook` directives should
 use these existing upstream directives when migrating. A mutable CPU callback
-must instead use an HLE replacement or an interpreter hook on an LLE routine;
-the observer contract above still applies. No interpreter callback is installed
+must instead use [`mod_hook`](MOD_HOOK.md) or an HLE replacement; the
+observer contract above still applies. No interpreter callback is installed
 by a cfg directive: register it separately when observing both tiers.
 
 ## Tests

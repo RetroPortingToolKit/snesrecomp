@@ -180,6 +180,12 @@ plugins activate. Check enabled-to-disabled behavior in the same executable.
 Keep registration and actual gameplay effects separate: registration makes
 code available; activation makes it run.
 
+To change what the game's own code does at a specific instruction (skip a
+check, adjust a value before it is used, return early), declare a
+[`mod_hook`](MOD_HOOK.md) in the port's bank cfg and arm it from activation
+with `snes_mod_hook_arm()`; disarm it in the reset callback. The hook runs in
+compiled and interpreted code alike, so the routine stays compiled.
+
 ## Add options and data
 
 An option gives the launcher a control. Your plugin must read and implement
