@@ -212,6 +212,23 @@ destination run; and the gauge sweep -- every `k` from 0 to `n`, both gauges,
 within 1px of `round(k*dw/n)` of each other and of the ideal.
 `tests/ppu/ppu_elastic_band_test.c`.
 
+### P2d. A view can slide inside room bounds without moving the guest camera
+
+`PpuSetWidescreenViewAnchor` and `PpuSetExtraSideSpace` let a consumer
+allocate its total horizontal expansion to the open side of a room. The
+physical frame origin follows the live margins. Native background and OBJ
+coordinates stay unchanged; HUD groups keep their screen positions. Clear
+padding when a room cannot fill the requested span. The policy resets each
+frame and stays outside guest save-state spans.
+
+This mechanism reuses the accepted, parked X1 experiment `c3dc50a` with its
+physical-centre HUD correction. The parked X1 worktrees remain untouched.
+Consumers must validate their own camera bounds, streaming and spawn envelope;
+this engine change does not enable anchoring for any title automatically.
+`ppu_view_anchor_test` checks actual image placement, both edges, narrow rooms,
+HUD, native/default-off output, reset and storage boundaries. One-sided spans
+remain limited by the existing priority-buffer and ordinary 9-bit OBJ ranges.
+
 ### P3. Periodic layers fold; world-anchored layers use history
 
 **Defect:** treating a horizontally periodic layer (sky, repeating city glow) as

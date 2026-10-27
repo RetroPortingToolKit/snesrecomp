@@ -1550,8 +1550,12 @@ static char s_frange_dir[400];
 typedef struct DebugPpuHostState {
     uint8_t *render_buffer;
     uint32_t render_pitch, render_flags;
-    uint8_t extra_left_cur, extra_right_cur, extra_left_right;
+    /* uint16_t, like the PPU's own fields: a uint8_t here silently truncated
+     * any budget past 255 px when an observer restored the host state. */
+    uint16_t extra_left_cur, extra_right_cur, extra_left_right;
     uint8_t extra_bottom_cur;
+    uint8_t ws_view_anchor;
+    uint16_t extra_frame_left, extra_frame_right;
     PpuWidescreenLineEnhancer *enhancer;
     void *enhancer_context;
 } DebugPpuHostState;
@@ -1564,6 +1568,9 @@ static void DebugPpuSaveHostState(Ppu *ppu, DebugPpuHostState *state) {
     state->extra_right_cur = ppu->extraRightCur;
     state->extra_left_right = ppu->extraLeftRight;
     state->extra_bottom_cur = ppu->extraBottomCur;
+    state->ws_view_anchor = ppu->wsViewAnchor;
+    state->extra_frame_left = ppu->extraFrameLeft;
+    state->extra_frame_right = ppu->extraFrameRight;
     state->enhancer = ppu->widescreenLineEnhancer;
     state->enhancer_context = ppu->widescreenLineEnhancerContext;
 }
@@ -1577,6 +1584,9 @@ static void DebugPpuRestoreHostState(Ppu *ppu,
     ppu->extraRightCur = state->extra_right_cur;
     ppu->extraLeftRight = state->extra_left_right;
     ppu->extraBottomCur = state->extra_bottom_cur;
+    ppu->wsViewAnchor = state->ws_view_anchor;
+    ppu->extraFrameLeft = state->extra_frame_left;
+    ppu->extraFrameRight = state->extra_frame_right;
     PpuSetWidescreenLineEnhancer(ppu, state->enhancer,
                                  state->enhancer_context);
 }
@@ -5357,6 +5367,7 @@ static void cmd_get_ppu_state(const char *args) {
              "\"cgramPointer\":\"0x%02x\","
              "\"window1left\":%d,\"window1right\":%d,\"window2left\":%d,\"window2right\":%d,"
              "\"widescreen\":{\"budget\":%u,\"left\":%u,\"right\":%u,\"bottom\":%u,"
+             "\"viewAnchor\":%u,\"frameLeft\":%u,\"frameRight\":%u,"
              "\"layerWiden\":\"0x%02x\",\"layerClamp\":\"0x%02x\","
              "\"layerMirror\":\"0x%02x\",\"layerRepeat\":\"0x%02x\","
              "\"windowExpandLayers\":\"0x%02x\",\"windowExpandWindows\":\"0x%02x\","
@@ -5383,7 +5394,9 @@ static void cmd_get_ppu_state(const char *args) {
              p->cgramPointer,
              p->window1left, p->window1right, p->window2left, p->window2right,
              p->extraLeftRight, p->extraLeftCur, p->extraRightCur,
-             p->extraBottomCur, p->wsLayerWidenMask, p->wsLayerClamp,
+             p->extraBottomCur,
+             p->wsViewAnchor, p->extraFrameLeft, p->extraFrameRight,
+             p->wsLayerWidenMask, p->wsLayerClamp,
              p->wsLayerMirror, p->wsLayerRepeat,
              p->wsWindowExpandLayers, p->wsWindowExpandWindows,
              /* worldBands: authored-world mirror/clip spans. reference=0

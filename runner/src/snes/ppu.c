@@ -309,6 +309,7 @@ static inline void PpuResetLayerPolicies(Ppu *ppu) {
   memset(ppu->wsViewportInsetR, 0, sizeof(ppu->wsViewportInsetR));
   ppu->wsWindowExpandLayers = 0;
   ppu->wsWindowExpandWindows = 0;
+  ppu->wsViewAnchor = 0;
 }
 
 int PpuWsExtraOverride(void) {
@@ -331,6 +332,8 @@ void PpuSetExtraSpace(Ppu *ppu, uint16_t extra) {
   ppu->extraLeftRight = extra;
   ppu->extraLeftCur = extra;
   ppu->extraRightCur = extra;
+  ppu->extraFrameLeft = extra;
+  ppu->extraFrameRight = extra;
   PpuResetLayerPolicies(ppu);
 }
 
@@ -344,6 +347,8 @@ void PpuSetExtraSpaceCentered(Ppu *ppu, uint16_t budget) {
   ppu->extraLeftRight = budget;
   ppu->extraLeftCur = 0;
   ppu->extraRightCur = 0;
+  ppu->extraFrameLeft = budget;
+  ppu->extraFrameRight = budget;
   PpuResetLayerPolicies(ppu);
 }
 
@@ -353,9 +358,46 @@ void PpuSetExtraSideSpace(Ppu *ppu, int left, int right, int bottom) {
   // the line renderer's window edges stay inside the priority buffers, bottom
   // clamps to the 16px overscan band. See ppu.h for the symmetric-vs-dynamic
   // distinction.
-  ppu->extraLeftCur = (uint16_t)IntMin(IntMax(left, 0), ppu->extraLeftRight);
-  ppu->extraRightCur = (uint16_t)IntMin(IntMax(right, 0), ppu->extraLeftRight);
+  const int budget = ppu->extraLeftRight;
+  if (ppu->wsViewAnchor) {
+    // Anchored (PpuSetWidescreenViewAnchor): the margins share ONE allowance
+    // of 2*budget columns rather than getting budget each, and the frame
+    // origin slides with them so a margin the game clamped to 0 becomes
+    // picture on the other side instead of a black bar on this one.
+    const int span = budget * 2;
+    const int cap = IntMin(span, kPpuExtraLeftRight);
+    left = IntMin(IntMax(left, 0), cap);
+    right = IntMin(IntMax(right, 0), cap);
+    if (right > span - left)
+      right = span - left;
+    // Whatever the two margins leave unclaimed is padding, split evenly; the
+    // odd column goes right, because the origin takes the floor.
+    int frame_left = left + (span - left - right) / 2;
+    // The priority buffers only hold kPpuExtraLeftRight columns either side of
+    // native x, so a budget past half of that cannot slide the whole way.
+    // Saturate and leave the remainder pillarboxed rather than addressing
+    // columns that do not exist.
+    frame_left = IntMin(IntMax(frame_left, span - kPpuExtraLeftRight),
+                        kPpuExtraLeftRight);
+    ppu->extraLeftCur = (uint16_t)left;
+    ppu->extraRightCur = (uint16_t)right;
+    ppu->extraFrameLeft = (uint16_t)frame_left;
+    ppu->extraFrameRight = (uint16_t)(span - frame_left);
+  } else {
+    ppu->extraLeftCur = (uint16_t)IntMin(IntMax(left, 0), budget);
+    ppu->extraRightCur = (uint16_t)IntMin(IntMax(right, 0), budget);
+    ppu->extraFrameLeft = (uint16_t)budget;
+    ppu->extraFrameRight = (uint16_t)budget;
+  }
   ppu->extraBottomCur = (uint8_t)IntMin(IntMax(bottom, 0), 16);
+}
+
+void PpuSetWidescreenViewAnchor(Ppu *ppu, bool enabled) {
+  ppu->wsViewAnchor = enabled ? 1 : 0;
+  // Re-derive the origin from the margins already published this frame, so a
+  // game may publish the anchor and the margins in either order.
+  PpuSetExtraSideSpace(ppu, ppu->extraLeftCur, ppu->extraRightCur,
+                       ppu->extraBottomCur);
 }
 
 void PpuSetWidescreenHudSplit(Ppu *ppu, uint8_t height, uint8_t left_end,
@@ -712,19 +754,24 @@ void ppu_handleVblank(Ppu* ppu) {
 }
 
 // The columns anything can reach this frame: the 256 hardware ones plus the
-// per-side budget the host asked for. Every read of a priority buffer is
-// bounded by a window edge, and PpuWidescreenLayerExtra never hands out more
-// than extraLeftRight, so nothing outside this span is ever looked at.
+// columns between native x=0 and each physical frame edge. Every read of a
+// priority buffer is bounded by a window edge, and PpuWidescreenLayerExtra
+// never hands out more than the live margin, so nothing outside this span is
+// ever looked at. extraFrameLeft/extraFrameRight are the budget either side
+// unless view anchoring slid the origin, in which case they are what the slide
+// made them -- and they are never smaller than the live margins.
 //
 // Rounded out to whole uint64 stores, because that is how ClearBackdrop
 // writes.
 static inline void PpuActiveSpan(const Ppu *ppu, size_t *begin,
                                  size_t *end) {
-  size_t extra = ppu->extraLeftRight;
-  if (extra > kPpuExtraLeftRight)
-    extra = kPpuExtraLeftRight;
-  size_t b = ((size_t)kPpuExtraLeftRight - extra) & ~(size_t)3;
-  size_t e = ((size_t)kPpuExtraLeftRight + kPpuXPixels + extra + 3) &
+  size_t left = ppu->extraFrameLeft, right = ppu->extraFrameRight;
+  if (left > kPpuExtraLeftRight)
+    left = kPpuExtraLeftRight;
+  if (right > kPpuExtraLeftRight)
+    right = kPpuExtraLeftRight;
+  size_t b = ((size_t)kPpuExtraLeftRight - left) & ~(size_t)3;
+  size_t e = ((size_t)kPpuExtraLeftRight + kPpuXPixels + right + 3) &
              ~(size_t)3;
   if (e > kPpuBufWidth)
     e = kPpuBufWidth;
@@ -1152,9 +1199,9 @@ static bool PpuApplyLayerAnchorBand(Ppu *ppu, uint layer, uint y,
   const bool full_budget =
       (ppu->wsHudSplitHeight & 0x80) && ppu->extraLeftRight;
   const int left_extra =
-      full_budget ? ppu->extraLeftRight : ppu->extraLeftCur;
+      full_budget ? ppu->extraFrameLeft : ppu->extraLeftCur;
   const int right_extra =
-      full_budget ? ppu->extraLeftRight : ppu->extraRightCur;
+      full_budget ? ppu->extraFrameRight : ppu->extraRightCur;
   if (!(left_extra | right_extra))
     return false;
   win->nr = 5;
@@ -1742,7 +1789,9 @@ static void PpuDrawBackground_2bpp(Ppu *ppu, PpuPixelPrioBufs *dstbuf, uint y, b
   // Widescreen HUD split (PpuSetWidescreenHudSplit): on HUD scanlines,
   // replace the single span with five — left chunk re-anchored to the left
   // border edge, a transparent gap, the centered chunk, a gap, and the
-  // right chunk re-anchored to the right border edge. ws_bias shifts each
+  // right chunk re-anchored to the right border edge. Those edges are the
+  // PHYSICAL frame edges (extraFrameLeft/Right), which equal the budget
+  // unless view anchoring slid the origin. ws_bias shifts each
   // drawn span's source x so the chunks keep sampling their authentic
   // tilemap columns. Normally applied only when the computed window set is
   // one full drawn span: games (SMW) often enable screen-level window masking
@@ -1758,14 +1807,16 @@ static void PpuDrawBackground_2bpp(Ppu *ppu, PpuPixelPrioBufs *dstbuf, uint y, b
       (hud_always_visible || (win.nr == 1 && win.bits == 0))) {
     win.nr = 5;
     win.bits = 0x0A;  // spans 1 and 3 are the gaps
-    win.edges[0] = -ppu->extraLeftRight;
-    win.edges[1] = ppu->wsHudLeftEnd - ppu->extraLeftRight;
-    win.edges[2] = ppu->wsHudLeftEnd;
-    win.edges[3] = ppu->wsHudRightStart;
-    win.edges[4] = ppu->wsHudRightStart + ppu->extraLeftRight;
-    win.edges[5] = 256 + ppu->extraLeftRight;
-    ws_bias[0] = ppu->extraLeftRight;
-    ws_bias[4] = -(int16)ppu->extraLeftRight;
+    win.edges[0] = -(int16)ppu->extraFrameLeft;
+    win.edges[1] = (int16)(ppu->wsHudLeftEnd - ppu->extraFrameLeft);
+    const int center_shift = (int)ppu->extraLeftRight - ppu->extraFrameLeft;
+    win.edges[2] = (int16)(ppu->wsHudLeftEnd + center_shift);
+    win.edges[3] = (int16)(ppu->wsHudRightStart + center_shift);
+    win.edges[4] = (int16)(ppu->wsHudRightStart + ppu->extraFrameRight);
+    win.edges[5] = (int16)(256 + ppu->extraFrameRight);
+    ws_bias[0] = (int16)ppu->extraFrameLeft;
+    ws_bias[2] = (int16)-center_shift;
+    ws_bias[4] = -(int16)ppu->extraFrameRight;
   } else {
     PpuApplyMarginGap(ppu, layer, &win, ws_bias);
   }
@@ -1935,8 +1986,8 @@ static void PpuMergePaddedBackground(Ppu *ppu, PpuPixelPrioBufs *dstbuf,
                                      bool repeat, bool full_budget) {
   PpuZbufType *dst = dstbuf->data;
   const PpuZbufType *src = layerbuf->data;
-  int left_extra = full_budget ? ppu->extraLeftRight : ppu->extraLeftCur;
-  int right_extra = full_budget ? ppu->extraLeftRight : ppu->extraRightCur;
+  int left_extra = full_budget ? ppu->extraFrameLeft : ppu->extraLeftCur;
+  int right_extra = full_budget ? ppu->extraFrameRight : ppu->extraRightCur;
   for (int x = 0; x < kPpuXPixels; x++) {
     int i = x + kPpuExtraLeftRight;
     if (src[i] > dst[i]) dst[i] = src[i];
@@ -2044,8 +2095,8 @@ static void PpuMergeStretchedBackground(Ppu *ppu, PpuPixelPrioBufs *dstbuf,
                                         const PpuPixelPrioBufs *layerbuf) {
   PpuZbufType *dst = dstbuf->data;
   const PpuZbufType *src = layerbuf->data;
-  const int left_extra = ppu->extraLeftRight;
-  const int right_extra = ppu->extraLeftRight;
+  const int left_extra = ppu->extraFrameLeft;
+  const int right_extra = ppu->extraFrameRight;
   const int out_width = kPpuXPixels + left_extra + right_extra;
   if (out_width <= 0)
     return;
@@ -2323,8 +2374,8 @@ static void PpuDrawSprites(Ppu *ppu, uint y, uint sub, bool clear_backdrop) {
       (ppu->wsHudOamSlots || ppu->wsHudOamSlots2) &&
       ppu->extraLeftRight;
   if (oam_hud_full_width && win.nr == 1 && win.bits == 0) {
-    win.edges[0] = -(int16_t)ppu->extraLeftRight;
-    win.edges[1] = 256 + ppu->extraLeftRight;
+    win.edges[0] = -(int16_t)ppu->extraFrameLeft;
+    win.edges[1] = (int16_t)(256 + ppu->extraFrameRight);
   }
   for (size_t windex = 0; windex < win.nr; windex++) {
     if (win.bits & (1 << windex))
@@ -2558,6 +2609,8 @@ static NOINLINE void PpuDrawWholeLine(Ppu *ppu, uint y) {
   PpuClearOverlayRenderLine(ppu, y);
   if (PPU_forcedBlank(ppu)) {
     uint8 *dst = &ppu->renderBuffer[(y - 1) * ppu->renderPitch];
+    // The whole row, so the origin does not matter: the frame is
+    // 256 + 2*extraLeftRight wide however view anchoring places native x=0.
     size_t n = sizeof(uint32) * (256 + ppu->extraLeftRight * 2);
     memset(dst, 0, n);
     return;
@@ -2612,17 +2665,17 @@ static NOINLINE void PpuDrawWholeLine(Ppu *ppu, uint y) {
   bool compose_full_budget = false;
   if (any_hud_full_width) {
     PpuWindows_CalcWithExtra(&cwin, ppu, 5, y,
-                             ppu->extraLeftRight, ppu->extraLeftRight);
+                             ppu->extraFrameLeft, ppu->extraFrameRight);
     compose_full_budget = true;
   } else if (hud_height && y < hud_height && ppu->extraLeftRight &&
              cwin.nr == 1 && cwin.bits == 0) {
-    cwin.edges[0] = -(int16_t)ppu->extraLeftRight;
-    cwin.edges[1] = 256 + ppu->extraLeftRight;
+    cwin.edges[0] = -(int16_t)ppu->extraFrameLeft;
+    cwin.edges[1] = (int16_t)(256 + ppu->extraFrameRight);
     compose_full_budget = true;
   } else if (PpuWidescreenLineRepeatBandActive(ppu, y) &&
              ppu->extraLeftRight && cwin.nr == 1 && cwin.bits == 0) {
-    cwin.edges[0] = -(int16_t)ppu->extraLeftRight;
-    cwin.edges[1] = 256 + ppu->extraLeftRight;
+    cwin.edges[0] = -(int16_t)ppu->extraFrameLeft;
+    cwin.edges[1] = (int16_t)(256 + ppu->extraFrameRight);
     compose_full_budget = true;
   }
   static const uint8 kCwBitsMod[8] = {
@@ -2634,7 +2687,9 @@ static NOINLINE void PpuDrawWholeLine(Ppu *ppu, uint y) {
 
   uint32 *dst = (uint32*)&ppu->renderBuffer[(y - 1) * ppu->renderPitch], *dst_org = dst;
 
-  dst += compose_full_budget ? 0 : (ppu->extraLeftRight - ppu->extraLeftCur);
+  // Frame column of native x is x + extraFrameLeft, and this row starts at the
+  // leftmost column the composition windows will actually visit.
+  dst += compose_full_budget ? 0 : (ppu->extraFrameLeft - ppu->extraLeftCur);
 
   uint32 hud_world_left = kPpuExtraLeftRight - ppu->extraLeftCur;
   uint32 hud_world_right = kPpuExtraLeftRight + 256 + ppu->extraRightCur;
@@ -2879,20 +2934,31 @@ static bool PpuWidescreenHudOamSlot(Ppu *ppu, uint8_t index, uint8_t y) {
 
 static int PpuAdjustWidescreenHudOamX(Ppu *ppu, uint8_t index, uint8_t y,
                                       int x) {
+  // Full-budget HUD sprites ride the PHYSICAL frame edges, so they follow the
+  // sliding origin; the rest ride the live world margin, which at a fully
+  // anchored edge IS the frame edge anyway.
   const bool full_budget = (ppu->wsHudSplitHeight & 0x80) != 0;
   const int left_extra =
-      full_budget ? ppu->extraLeftRight : ppu->extraLeftCur;
+      full_budget ? ppu->extraFrameLeft : ppu->extraLeftCur;
   const int right_extra =
-      full_budget ? ppu->extraLeftRight : ppu->extraRightCur;
+      full_budget ? ppu->extraFrameRight : ppu->extraRightCur;
   if (PpuWidescreenHudOamSlot(ppu, index, y)) {
     if (x >= 0 && x < ppu->wsHudLeftEnd)
       x -= left_extra;
     else if (x >= ppu->wsHudRightStart && x < 256)
       x += right_extra;
+    else if (x >= 0 && x < 256)
+      x += (int)ppu->extraLeftRight - ppu->extraFrameLeft;
   }
   return x;
 }
 
+/* OAM X is 9 bits, so the reachable span is 512 columns: raw >= 256 +
+ * extraRightCur decodes negative, which puts the deepest reachable left column
+ * at -(256 - extraRightCur). A frame whose LIVE margins total more than 256
+ * therefore has a far-side sliver no sprite can be placed in -- nothing is
+ * mis-decoded, it is simply unaddressable. Only view anchoring can produce
+ * that, and only above a 128 px budget; see PpuSetWidescreenViewAnchor. */
 static int PpuDecodeOamX(Ppu *ppu, uint8_t index) {
   int x = ppu->oam[index] & 0xff;
   x |= ((ppu->highOam[index >> 3] >> (index & 7)) & 1) << 8;
@@ -3059,7 +3125,7 @@ static bool ppu_evaluateSprites(Ppu* ppu, int line) {
       const int left_extra =
           PpuWidescreenHudOamSlot(ppu, index, y) &&
                   (ppu->wsHudSplitHeight & 0x80)
-              ? ppu->extraLeftRight
+              ? ppu->extraFrameLeft
               : ppu->extraLeftCur;
       if (PpuWidescreenOamLeftHintAllows(ppu, index, x, spriteSize,
                                           left_extra)) {
@@ -3089,9 +3155,9 @@ static bool ppu_evaluateSprites(Ppu* ppu, int line) {
         PpuWidescreenHudOamSlot(ppu, index, sprite_y) &&
         (ppu->wsHudSplitHeight & 0x80);
     const int left_extra =
-        full_budget_hud ? ppu->extraLeftRight : ppu->extraLeftCur;
+        full_budget_hud ? ppu->extraFrameLeft : ppu->extraLeftCur;
     const int right_extra =
-        full_budget_hud ? ppu->extraLeftRight : ppu->extraRightCur;
+        full_budget_hud ? ppu->extraFrameRight : ppu->extraRightCur;
     x = PpuAdjustWidescreenHudOamX(ppu, index, sprite_y, x);
         if(PPU_objInterlace(ppu)) row = row * 2 + (ppu->evenFrame ? 0 : 1);
         int oam1 = ppu->oam[index + 1];

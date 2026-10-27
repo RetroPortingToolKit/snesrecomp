@@ -242,6 +242,16 @@ struct Ppu {
 
   uint16_t extraLeftCur, extraRightCur, extraLeftRight;
   uint8_t extraBottomCur;
+  // Widescreen view anchoring (see PpuSetWidescreenViewAnchor). 0 = off, and
+  // off is what every existing consumer renders with.
+  uint8_t wsViewAnchor;
+  // Columns between native x=0 and the PHYSICAL left/right framebuffer edges,
+  // i.e. the frame column of native x is x + extraFrameLeft. They always sum
+  // to 2*extraLeftRight -- the frame is the same width either way, only its
+  // origin moves. With anchoring off both are extraLeftRight (the fixed
+  // centre origin); with it on they slide as the live margins reach the
+  // authored bounds. Host presentation only, like the margins themselves.
+  uint16_t extraFrameLeft, extraFrameRight;
   // Widescreen BG3 HUD split (see PpuSetWidescreenHudSplit). 0 height = off.
   uint8_t wsHudSplitHeight, wsHudLeftEnd, wsHudRightStart;
   // Widescreen HUD OAM anchor (see PpuSetWsHudOamShiftRange): an OAM slot
@@ -710,6 +720,12 @@ void ppu_rb_residue_set(Ppu *ppu, const PpuRollbackResidue *in);
 // Replace stale BG1 tilemap pixels in widened side margins before final
 // composition. The callback is host-only and runs independently for main and
 // subscreen buffers.
+// The callback writes PRIORITY-BUFFER columns (native x at
+// data[x + kPpuExtraLeftRight]), not framebuffer columns, so the widened span
+// it should fill is the LIVE margin -- extraLeftCur/extraRightCur -- and never
+// the budget. An enhancer written that way needs no change under view
+// anchoring; one that reads extraLeftRight as "how far the margin reaches"
+// would under- or over-fill as soon as a game opts in.
 void PpuSetWidescreenLineEnhancer(Ppu *ppu,
                                   PpuWidescreenLineEnhancer *enhancer,
                                   void *context);
@@ -765,6 +781,54 @@ void PpuSetExtraSpaceCentered(Ppu *ppu, uint16_t budget);
 // scroll/room-bounds state drives the visible margin dynamically (Zelda),
 // versus PpuSetExtraSpace's fixed symmetric border (SMW).
 void PpuSetExtraSideSpace(Ppu *ppu, int left, int right, int bottom);
+
+// VIEW ANCHORING (opt-in, off by default) -- let the presentation viewport
+// SLIDE inside the authored bounds instead of pillarboxing at them.
+//
+// Without it the frame origin is fixed: native x=0 always lands at framebuffer
+// column extraLeftRight, and PpuSetExtraSideSpace clamps each margin to that
+// same budget. A game that clamps its margins to the level bounds (SMW, Zelda)
+// therefore gets a black bar on the bounded side while the other side still
+// shows only `budget` columns of world -- half the widescreen it paid for, and
+// the half it lost is the half it could actually have filled.
+//
+// With anchoring on, the two margins share ONE allowance of 2*extraLeftRight
+// columns and the origin follows them:
+//   at the level's left edge   left=0, right=2*budget -- native x=0 sits at
+//                              frame column 0 and the whole extra span is
+//                              world on the right;
+//   at the right edge          the mirror image;
+//   a level narrower than the  the live span is centred and the leftover is
+//   frame                      padded equally either side (an odd remainder
+//                              goes to the right, since extraFrameLeft takes
+//                              the floor);
+//   mid-level                  left=right=budget, i.e. exactly the fixed
+//                              centre origin, so nothing moves where nothing
+//                              needs to.
+// The guest camera is never touched: this moves only where the rendered
+// columns are placed in the framebuffer, and which of them are live.
+//
+// Constraints:
+//  - Publish it AFTER PpuSetExtraSpace/PpuSetExtraSpaceCentered (those reset
+//    the widescreen policies) and it takes effect on the next
+//    PpuSetExtraSideSpace; toggling it re-derives the origin from the margins
+//    already published, so the two calls may come in either order per frame.
+//  - OBJ positions are 9 bits, so the reachable span is 512 columns wide: a
+//    sprite at native x is written raw x+512 when negative, and ppu.c decodes
+//    raw >= 256 + extraRightCur as negative. The left margin is therefore only
+//    reachable by sprites down to native x = -(256 - extraRightCur), which
+//    means the LIVE TOTAL extraLeftCur + extraRightCur must stay <= 256 for a
+//    sprite to be placeable anywhere in the frame. Anchoring can put the whole
+//    2*budget allowance on one side, so that total is 2*budget: a budget above
+//    128 px per side (an internal width above 512) leaves a far-margin sliver
+//    no sprite can reach. Backgrounds are unaffected, nothing is MIS-placed,
+//    and every shipping budget (43 px MMX, 71 px SMW 16:9) is far inside it,
+//    so this is documented rather than clamped -- clamping would throw away
+//    real background columns to spare a sprite artefact.
+//  - The priority buffers carry kPpuExtraLeftRight columns per side, so a
+//    budget past half of that cannot slide the whole way; the origin saturates
+//    and the remainder stays pillarboxed.
+void PpuSetWidescreenViewAnchor(Ppu *ppu, bool enabled);
 
 // Widescreen HUD split (opt-in, configured by the game frontend): for
 // scanlines < height, BG3 (layer 2) is drawn as three chunks — source

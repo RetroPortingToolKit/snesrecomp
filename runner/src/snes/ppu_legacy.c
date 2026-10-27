@@ -130,7 +130,9 @@ static void ppu_render_pixel(Ppu *ppu, int x, int y) {
     }
   }
   int row = y - 1;
-  uint8 *pixelBuffer = (uint8 *)&ppu->renderBuffer[row * ppu->renderPitch + (x + ppu->extraLeftRight) * 4];
+  // Frame column of native x is x + extraFrameLeft (the budget, unless view
+  // anchoring slid the origin).
+  uint8 *pixelBuffer = (uint8 *)&ppu->renderBuffer[row * ppu->renderPitch + (x + ppu->extraFrameLeft) * 4];
   pixelBuffer[0] = ((b << 3) | (b >> 2)) * PPU_brightness(ppu) / 15;
   pixelBuffer[1] = ((g << 3) | (g >> 2)) * PPU_brightness(ppu) / 15;
   pixelBuffer[2] = ((r << 3) | (r >> 2)) * PPU_brightness(ppu) / 15;
