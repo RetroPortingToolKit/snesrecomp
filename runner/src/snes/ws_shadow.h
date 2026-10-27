@@ -5,12 +5,14 @@
 #include <stdint.h>
 
 // Presentation-only, world-keyed BG tilemap storage for streaming games.
-// Games opt a layer in each frame; the authentic 256-pixel region always
-// continues to read real VRAM. Supports 8x8 and 16x16 (BGMODE big-tile)
+// Games opt a layer in each frame; the authentic 256-pixel region reads real
+// VRAM unless an explicit presentation override applies. Supports 8x8 and 16x16 (BGMODE big-tile)
 // layers, and both 64-wide and streamed 32-wide tilemaps.
 enum {
   kWsShadowXTiles = 4096,
-  kWsShadowYTiles = 512,
+  /* X2/X3 layouts span 32 screens vertically. Keep dynamic game writes
+   * addressable through that full height, including the rocket hangar. */
+  kWsShadowYTiles = 1024,
 };
 
 void WsShadowReset(void);
@@ -20,6 +22,27 @@ void WsShadowReset(void);
  * For strip-streaming games (Metal Warriors), pass the WRAM camera and also
  * call WsShadowSetScroll with the PPU buffer scroll. */
 void WsShadowSetWorld(int layer, uint32_t worldX, uint32_t worldY);
+/* Per-frame opt-out for a complete hardware canvas (for example a static
+ * parallax texture). Render the actual circular VRAM map in the gutters.
+ * The next SetWorld/Frame registration restores world-source lookup. */
+void WsShadowUseVram(int layer);
+
+/* Exact, uncached map source for a streaming title. Register after SetWorld
+ * each frame. Queries use the rendered scanline's scroll phase and map-width
+ * horizontal aliases, and cover positions beyond the history cache bounds.
+ * Native pixels retain VRAM; recent explicit game writes keep precedence,
+ * except for an explicit Override result. nativeOverrides additionally allows
+ * that result inside the native region. MarginOverride wins over uploads only
+ * outside the native region; Exact never replaces native VRAM. */
+typedef enum WsShadowSource {
+  kWsShadowMiss, kWsShadowExact, kWsShadowOverride, kWsShadowMarginOverride
+} WsShadowSource;
+/* Override is a presentation substitution (for example the hidden face of a
+ * two-sided boss door), which also wins over recent dynamic game uploads. */
+typedef WsShadowSource (*WsShadowWorldProvider)(void *context, uint32_t worldTileX,
+                                      uint32_t worldTileY, uint16_t *entry);
+void WsShadowSetWorldProvider(int layer, WsShadowWorldProvider provider,
+                              void *context, bool nativeOverrides);
 
 /* PPU scroll used to address the streaming VRAM tilemap window and to convert
  * scanline-wrapped Y back to world Y. Defaults to the SetWorld values. */

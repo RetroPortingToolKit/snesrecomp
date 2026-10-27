@@ -268,7 +268,8 @@ set(SNESRECOMP_RUNNER_SOURCES
 # it, authored from this core's observed behavior.
 #
 list(APPEND SNESRECOMP_RUNNER_SOURCES
-    ${SNESRECOMP_RUNNER_ROOT}/src/snes/cx4.c)
+    ${SNESRECOMP_RUNNER_ROOT}/src/snes/cx4.c
+    ${SNESRECOMP_RUNNER_ROOT}/src/snes/mmx23_background.c)
 message(STATUS "Cx4: instruction-level HG51B S169 core (ares, ISC)")
 
 # ── Windows: UTF-8 process code page ──────────────────────────────────────

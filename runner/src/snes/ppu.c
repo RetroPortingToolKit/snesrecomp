@@ -1374,13 +1374,17 @@ static void PpuDrawBackgroundBig(Ppu *ppu, PpuPixelPrioBufs *dstbuf, uint y,
   }
 }
 
-static uint16 PpuReadTilemapEntry(Ppu *ppu, uint layer, int tx, int ty) {
+static uint16 PpuTilemapWordAddress(Ppu *ppu, uint layer, int tx, int ty) {
   int addr = PPU_bgTilemapAdr(ppu, layer) + ((ty & 31) << 5) + (tx & 31);
   if (((ty >> 5) & 1) && PPU_bgTilemapHigher(ppu, layer))
     addr += PPU_bgTilemapWider(ppu, layer) ? 0x800 : 0x400;
   if (((tx >> 5) & 1) && PPU_bgTilemapWider(ppu, layer))
     addr += 0x400;
-  return PpuRenderVram(ppu)[addr & 0x7fff];
+  return (uint16)(addr & 0x7fff);
+}
+
+static uint16 PpuReadTilemapEntry(Ppu *ppu, uint layer, int tx, int ty) {
+  return PpuRenderVram(ppu)[PpuTilemapWordAddress(ppu, layer, tx, ty)];
 }
 
 /* Capture a native-width Mode 1 4bpp layer independently of the compositor.
@@ -1492,6 +1496,7 @@ static void PpuDrawBackground_4bpp_opt(Ppu *ppu, uint y, bool sub, uint layer,
   const int opt_hrow = (opt_vscroll & opt_coord_mask) >> opt_shift;
   const int opt_vrow = ((opt_vscroll + 8) & opt_coord_mask) >> opt_shift;
   const uint16 enable = (uint16)(0x2000u << layer);
+  const bool ws_shadow = WsShadowLayerActive((int)layer);
 
   for (size_t windex = 0; windex < win.nr; windex++) {
     if (win.bits & (1 << windex))
@@ -1530,10 +1535,33 @@ static void PpuDrawBackground_4bpp_opt(Ppu *ppu, uint y, bool sub, uint layer,
       if (width > (unsigned)(right - screen_x))
         width = right - screen_x;
 
+      const uint16 map_word = PpuTilemapWordAddress(
+          ppu, layer, sx >> tile_shift, sy >> tile_shift);
+      const uint16 real_tile = PpuRenderVram(ppu)[map_word];
+      uint16 shadow_tile = real_tile;
+      if (ws_shadow) {
+        /* Preserve the native segment. Resolve its continuation with the
+         * effective OPT offsets, not the unmodified global scroll. The
+         * segment ends at the next source-tile boundary, so one lookup also
+         * serves a straddling native/margin segment without changing native
+         * pixels or doing a world lookup for every output pixel. */
+        const int margin_x = screen_x < 0 ? screen_x :
+                             screen_x >= 256 ? screen_x : 256;
+        if (screen_x < 0 || screen_x + (int)width > 256) {
+          const unsigned map_height =
+              (PPU_bgTilemapHigher(ppu, layer) ? 64u : 32u) << tile_shift;
+          int vdelta = (voffset - vscroll) & (map_height - 1);
+          if (vdelta >= (int)map_height / 2) vdelta -= map_height;
+          shadow_tile = WsShadowTile(
+              (int)layer, margin_x + sample_bias, vscroll + vdelta + y,
+              (uint16_t)hoffset, map_word, real_tile);
+        }
+      }
+
       for (unsigned i = 0; i < width; i++, dstz++) {
         unsigned source_x = (sx + i) & coord_mask;
-        uint16 tile = PpuReadTilemapEntry(
-            ppu, layer, source_x >> tile_shift, sy >> tile_shift);
+        const int output_x = screen_x + (int)i;
+        uint16 tile = output_x < 0 || output_x >= 256 ? shadow_tile : real_tile;
         unsigned px = source_x & tile_mask;
         unsigned py = sy & tile_mask;
         if (tile & 0x4000)
