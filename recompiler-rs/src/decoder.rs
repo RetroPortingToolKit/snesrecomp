@@ -156,6 +156,10 @@ pub struct FunctionDecodeGraph {
     /// The whole-program solver marks variants whose exit fact changed after
     /// publication.  They remain reachable but are never eligible for AOT.
     pub unstable_exit_fact: bool,
+    /// A cfg `mod_hook` / `mod_hook_target` PC is decoded in this function, so
+    /// whole-function value idioms (the TSC/TCS entry-stack restore) are not
+    /// proven. Port of the Python graph's `mod_hook_barrier`.
+    pub mod_hook_barrier: bool,
 }
 
 impl FunctionDecodeGraph {
@@ -238,6 +242,12 @@ pub struct DecodeEnv<'a> {
     /// cfg `live_operand` sites (24-bit): immediates read from the ROM image
     /// at run time, so the constant-Z fold must not use their decoded bytes.
     pub live_operand_sites: Option<&'a std::collections::BTreeSet<u32>>,
+    /// cfg `mod_hook` sites (24-bit, mirrors included): a mutating host
+    /// callback may run before the instruction, so no value fact crosses it.
+    pub mod_hook_sites: Option<&'a std::collections::BTreeSet<u32>>,
+    /// cfg `mod_hook_target` PCs (24-bit, mirrors included): entered from a
+    /// hook redirect as well as their graph predecessors (a hidden join).
+    pub mod_hook_target_sites: Option<&'a std::collections::BTreeSet<u32>>,
     /// `brk_rti` sites (24-bit, mirrors included): BRK falls through.
     pub brk_rti_sites: Option<&'a std::collections::BTreeSet<u32>>,
     /// Folded-in process-global the Python decode path read (set_global_inline_skip).
@@ -580,6 +590,7 @@ fn autorecover_local_stride_runway(
     end: Option<u32>,
     data_regions: Option<&[(u32, u32, u32)]>,
     reloc: &[RelocRegion],
+    barriers: &[Option<&std::collections::BTreeSet<u32>>],
 ) -> Option<Vec<u32>> {
     if insn.mnem != "JMP" || insn.mode != Mode::Indir || insn.length != 3 {
         return None;
@@ -623,6 +634,17 @@ fn autorecover_local_stride_runway(
         .iter()
         .any(|&(relative, byte)| read8(pattern_start + relative) != Some(byte))
     {
+        return None;
+    }
+    // The pointer is computed by the pattern's own instructions. A `mod_hook`
+    // (or a redirect into the pattern) after its first instruction may change
+    // A, D or the slot before the JMP reads it: no target universe is proven.
+    if ((pattern_start + 1)..=site_pc).any(|pc16| {
+        let pc24 = ((bank & 0xFF) << 16) | pc16;
+        barriers
+            .iter()
+            .any(|b| b.is_some_and(|s| s.contains(&pc24)))
+    }) {
         return None;
     }
 
@@ -1326,6 +1348,8 @@ pub fn decode_function(
                         insn.opcode == 0xDC,
                         data_regions,
                         reloc,
+                        env.mod_hook_sites,
+                        env.mod_hook_target_sites,
                     ) {
                         auth = Some(Auth {
                             count: targets.len() as u32,
@@ -1394,6 +1418,7 @@ pub fn decode_function(
                     end,
                     data_regions,
                     reloc,
+                    &[env.mod_hook_sites, env.mod_hook_target_sites],
                 ) {
                     auth = Some(Auth {
                         count: entries.len() as u32,
@@ -1982,7 +2007,17 @@ pub fn decode_function(
     }
 
     dedupe_by_pcmx(&mut graph);
-    apply_constant_z_fold(&mut graph, env.live_operand_sites);
+    apply_constant_z_fold(
+        &mut graph,
+        env.live_operand_sites,
+        env.mod_hook_sites,
+        env.mod_hook_target_sites,
+    );
+    graph.mod_hook_barrier = graph.insns().iter().any(|d| {
+        let pc = d.key.pc & 0xFFFFFF;
+        env.mod_hook_sites.is_some_and(|s| s.contains(&pc))
+            || env.mod_hook_target_sites.is_some_and(|s| s.contains(&pc))
+    });
     graph
 }
 
@@ -2049,6 +2084,8 @@ fn dedupe_by_pcmx(graph: &mut FunctionDecodeGraph) {
 fn apply_constant_z_fold(
     graph: &mut FunctionDecodeGraph,
     live_operand_sites: Option<&std::collections::BTreeSet<u32>>,
+    mod_hook_sites: Option<&std::collections::BTreeSet<u32>>,
+    mod_hook_target_sites: Option<&std::collections::BTreeSet<u32>>,
 ) {
     if graph.is_empty() {
         return;
@@ -2069,6 +2106,14 @@ fn apply_constant_z_fold(
         };
         let insn = &di.insn;
         if insn.mnem != "BEQ" && insn.mnem != "BNE" {
+            continue;
+        }
+        // A `mod_hook` at the branch may change Z after the load; a
+        // `mod_hook_target` branch is also entered from the hook.
+        let branch_pc = insn.addr & 0xFFFFFF;
+        if mod_hook_sites.is_some_and(|s| s.contains(&branch_pc))
+            || mod_hook_target_sites.is_some_and(|s| s.contains(&branch_pc))
+        {
             continue;
         }
         let my_preds = preds.get(&k).cloned().unwrap_or_default();
@@ -2219,6 +2264,11 @@ fn direct_tail_exit_keys(graph: &FunctionDecodeGraph, di: &DecodedInsn) -> Vec<(
 /// Prove the narrow `TSC; STA scratch ... LDA scratch; TCS` entry-stack
 /// restore idiom used by DKC2's 3D background builder.
 fn entry_stack_restore_tcs_keys(graph: &FunctionDecodeGraph) -> HashSet<DecodeKey> {
+    // A mutating `mod_hook` may rewrite the scratch slot or D between the
+    // save and the restore: the saved S is not proven.
+    if graph.mod_hook_barrier {
+        return HashSet::new();
+    }
     let Some(entry) = graph.entry.as_ref() else {
         return HashSet::new();
     };
@@ -2805,6 +2855,18 @@ pub fn classify_dispatch_helper(
     bank: u32,
     addr: u32,
 ) -> Option<&'static str> {
+    classify_dispatch_helper_with_barrier(rom, mapping, bank, addr, None)
+}
+
+/// `classify_dispatch_helper` that refuses a classification whose scanned
+/// instructions include a cfg `mod_hook` / `mod_hook_target` PC past the entry.
+pub fn classify_dispatch_helper_with_barrier(
+    rom: &[u8],
+    mapping: RomMapping,
+    bank: u32,
+    addr: u32,
+    barrier: Option<&std::collections::BTreeSet<u32>>,
+) -> Option<&'static str> {
     let mut insns: Vec<Insn> = Vec::new();
     let mut pc = addr & 0xFFFF;
     let mut m = 1u8;
@@ -2812,6 +2874,13 @@ pub fn classify_dispatch_helper(
     let mut safety = 0;
     while safety < 256 {
         safety += 1;
+        // cfg `mod_hook` / `mod_hook_target` past the entry: a host callback
+        // (or a redirect) may change A, X, Y, D or memory mid-idiom.
+        if pc != (addr & 0xFFFF)
+            && barrier.is_some_and(|b| b.contains(&(((bank & 0xFF) << 16) | pc)))
+        {
+            return None;
+        }
         if !is_rom_address(mapping, bank, pc) {
             return None;
         }
@@ -2892,6 +2961,20 @@ pub fn detect_inline_arg_bytes(
     addr: u32,
     entry_m: u8,
     entry_x: u8,
+) -> Option<u8> {
+    detect_inline_arg_bytes_with_barrier(rom, mapping, bank, addr, entry_m, entry_x, None)
+}
+
+/// `detect_inline_arg_bytes` that refuses a match whose scanned instructions
+/// include a cfg `mod_hook` / `mod_hook_target` PC past the entry.
+pub fn detect_inline_arg_bytes_with_barrier(
+    rom: &[u8],
+    mapping: RomMapping,
+    bank: u32,
+    addr: u32,
+    entry_m: u8,
+    entry_x: u8,
+    barrier: Option<&std::collections::BTreeSet<u32>>,
 ) -> Option<u8> {
     fn preserves_a(opcode: u8) -> bool {
         matches!(
@@ -3076,6 +3159,13 @@ pub fn detect_inline_arg_bytes(
     let mut x_added = 0u32;
 
     for _ in 0..96 {
+        // cfg `mod_hook` / `mod_hook_target` past the entry: a host callback
+        // (or a redirect) may change A, X, Y, D or memory mid-idiom.
+        if pc != (addr & 0xFFFF)
+            && barrier.is_some_and(|b| b.contains(&(((bank & 0xFF) << 16) | pc)))
+        {
+            return None;
+        }
         let offset = rom_offset_opt(mapping, bank, pc)?;
         if offset >= rom.len() {
             return None;
@@ -4690,6 +4780,7 @@ mod tests {
                 None,
                 None,
                 &[],
+                &[],
             ),
             Some(vec![0x009000, 0x009003, 0x009006, 0x009009])
         );
@@ -4733,6 +4824,41 @@ mod tests {
         // Dead fall-through ($8004) pruned by reachability.
         assert!(g.get(&k(0x8004)).is_none());
         assert!(g.get(&k(0x8006)).is_some());
+        assert_eq!(g.const_z_folds.len(), 1);
+    }
+
+    #[test]
+    fn const_z_fold_does_not_cross_a_mod_hook_or_target() {
+        // LDA #$00 ; BEQ +2 ; RTS ; db 0 ; RTS -- a hook at the branch (or a
+        // redirect target there) may change Z after the load.
+        let mut bytes = vec![0u8; 7];
+        bytes[..5].copy_from_slice(&[0xA9, 0x00, 0xF0, 0x02, 0x60]);
+        bytes[6] = 0x60;
+        let rom = rom_at_8000(&bytes);
+        let branch = std::collections::BTreeSet::from([0x008002u32]);
+        let load = std::collections::BTreeSet::from([0x008000u32]);
+        for env in [
+            DecodeEnv {
+                mod_hook_sites: Some(&branch),
+                ..DecodeEnv::default()
+            },
+            DecodeEnv {
+                mod_hook_sites: Some(&load),
+                mod_hook_target_sites: Some(&branch),
+                ..DecodeEnv::default()
+            },
+        ] {
+            let g = decode_function(&rom, 0, 0x8000, 1, 1, None, &env);
+            assert!(g.const_z_folds.is_empty());
+            assert!(g.get(&k(0x8004)).is_some() && g.get(&k(0x8006)).is_some());
+            assert!(g.mod_hook_barrier);
+        }
+        // A hook at the load runs before it: the load still decides Z.
+        let env = DecodeEnv {
+            mod_hook_sites: Some(&load),
+            ..DecodeEnv::default()
+        };
+        let g = decode_function(&rom, 0, 0x8000, 1, 1, None, &env);
         assert_eq!(g.const_z_folds.len(), 1);
     }
 

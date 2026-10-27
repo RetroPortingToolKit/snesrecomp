@@ -8,13 +8,23 @@ from snes65816 import IMM, ABS_X, ABS_Y, LONG_X, DP, ACC, lorom_offset
 
 
 def recover_pointer_targets(rom, graph, site_key, pointer, long_pointer=False,
-                            target_is_code=lambda pc: True):
+                            target_is_code=lambda pc: True,
+                            hook_sites=frozenset(), join_sites=frozenset()):
     chain = []
     current = site_key
     visited = set()
     # Consume only a unique fall-through chain. Branch joins, backward edges,
     # calls and unknown effects cannot donate a pointer fact.
     while len(chain) < 256:
+        # cfg `mod_hook_target`: the hook can redirect here, an extra
+        # predecessor the graph does not show -- the same as a join.
+        if (current.pc & 0xFFFFFF) in join_sites:
+            return None
+        # cfg `mod_hook`: a host callback may change registers, D and memory
+        # just before `current` runs, so nothing earlier donates a fact
+        # (the same as reaching the function entry).
+        if (current.pc & 0xFFFFFF) in hook_sites:
+            break
         preds = [di for di in graph.insns.values() if current in di.successors]
         if not preds:
             break
