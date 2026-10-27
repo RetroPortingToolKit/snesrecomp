@@ -134,6 +134,10 @@ and unsupported scene lines retain normal rasterization. Real resets and
 loaded captures invalidate derived ownership; current/previous frames have
 independent lifetimes. Readback neither invokes guest code nor changes live
 PPU state. Its mixed-line/idempotence test compares against the actual PPU.
+If capture allocation fails after a claimed prefix, the service reconstructs
+only the omitted prefix rows into the primary field without allocating or
+changing live PPU state. The title then draws the failed and remaining lines
+normally and uses its original stock-image fallback for that frame.
 
 The shared window job resolves all six window layers through four precomputed
 regions. Geometry remains explicit so a title can adapt widened effect bounds.

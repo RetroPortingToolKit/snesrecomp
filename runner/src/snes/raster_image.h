@@ -48,14 +48,15 @@ static inline bool SnesRasterImageClaim(SnesRasterImage *image, unsigned line) {
 }
 /* Materialization is idempotent. Visit every line for private sprite/mosaic
  * state, but draw only omitted rows. Existing stock rows remain untouched. */
-static inline bool SnesRasterImageMaterialize(SnesRasterImage *image,
-    uint32_t stock[256 * 224], SnesRasterImageReadLine *read, const void *context) {
+static inline bool SnesRasterImageMaterializePrefix(SnesRasterImage *image,
+    uint32_t stock[256 * 224], SnesRasterImageReadLine *read, const void *context, unsigned rows) {
+  if (rows > 224) return false;
   bool missing = false;
-  for (unsigned y = 0; y < 224; ++y) missing |= image->missing[y];
+  for (unsigned y = 0; y < rows; ++y) missing |= image->missing[y];
   if (!missing) return true;
   if (!image->valid || !stock || !read) return false;
   /* Validate the entire capture before changing any output. */
-  for (unsigned y = 0; y < 224; ++y) {
+  for (unsigned y = 0; y < rows; ++y) {
     SnesRasterImageLine line;
     if (!read(context, y, &line) || !line.registers || !line.palette ||
         !line.oam || !line.high_oam || !line.vram) return false;
@@ -70,7 +71,7 @@ static inline bool SnesRasterImageMaterialize(SnesRasterImage *image,
   p->widescreenLineEnhancer = NULL; p->widescreenLineEnhancerContext = NULL;
   memset(p->overlayRenderBuffer, 0, sizeof(p->overlayRenderBuffer));
   ppu_drawCapturedLine(p, 0, false);
-  for (unsigned y = 0; y < 224; ++y) {
+  for (unsigned y = 0; y < rows; ++y) {
     SnesRasterImageLine line;
     if (!read(context, y, &line)) return false;
     memcpy(p, line.registers, PPU_SAVESTATE_REGS_SIZE);
@@ -80,7 +81,28 @@ static inline bool SnesRasterImageMaterialize(SnesRasterImage *image,
     memcpy(p->vram, line.vram, sizeof(p->vram));
     ppu_drawCapturedLine(p, (int)y + 1, image->missing[y]);
   }
-  memset(image->missing, 0, sizeof(image->missing));
+  memset(image->missing, 0, rows * sizeof(*image->missing));
+  return true;
+}
+static inline bool SnesRasterImageMaterialize(SnesRasterImage *image,
+    uint32_t stock[256 * 224], SnesRasterImageReadLine *read, const void *context) {
+  return SnesRasterImageMaterializePrefix(image, stock, read, context, 224);
+}
+/* Capture allocation may fail after some rows were claimed. Recover that
+ * immutable prefix into the primary image; the caller draws the failed and
+ * remaining rows normally. Never touch live registers/status or overwrite
+ * already rasterized rows. No allocation is required to recover. */
+static inline bool SnesRasterImageRecoverPrefix(SnesRasterImage *image,
+    uint32_t stock[256 * 224], const Ppu *live, SnesRasterImageReadLine *read,
+    const void *context, unsigned rows) {
+  if (rows > 224 || !live || !live->renderBuffer || live->renderPitch < 256 * 4) return false;
+  for (unsigned y = rows; y < 224; ++y) if (image->missing[y]) return false;
+  bool missing[224];
+  memcpy(missing, image->missing, sizeof(missing));
+  if (!SnesRasterImageMaterializePrefix(image, stock, read, context, rows)) return false;
+  for (unsigned y = 0; y < rows; ++y) if (missing[y])
+    memcpy(live->renderBuffer + (size_t)y * live->renderPitch, stock + y * 256, 256 * 4);
+  SnesRasterImageReset(image);
   return true;
 }
 #endif

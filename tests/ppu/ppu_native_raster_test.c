@@ -136,6 +136,17 @@ int main(void) {
         fprintf(stderr,"captured raster pixels mismatch sample=%u line=%u\n",sample,line);
         return 1;
       }
+      if (sample >= 8 && line == 113) {
+        /* A capture failure before line114 leaves this complete prefix.
+         * Recover only its omitted rows, then continue ordinary live drawing. */
+        before=*deferred;
+        if (!SnesRasterImageRecoverPrefix(&image,captured_pixels,deferred,deferred_read,NULL,line) ||
+            memcmp(reference_pixels,deferred_pixels,line*256*4) ||
+            memcmp(deferred,&before,sizeof(before)) || image.valid || image.count) {
+          fprintf(stderr,"partial native image fallback mismatch sample=%u\n",sample);
+          return 1;
+        }
+      }
     }
     before=*deferred;
     if (!SnesRasterImageMaterialize(&image,deferred_pixels,deferred_read,NULL) ||
