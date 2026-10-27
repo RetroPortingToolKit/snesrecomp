@@ -219,6 +219,98 @@ static void check_camera(Ppu *ppu, int hscroll, const char *label,
     free(out);
 }
 
+/* An independent-scrolling BG2/BG3 canvas must follow the physical room's
+ * BG1 phase for containment, while keeping all genuine canvas pixels. */
+static void render_clipped_canvas(Ppu *ppu, uint32_t *out, int layer,
+                                  bool big, bool mosaic, int reference_scroll,
+                                  int policy, int extra) {
+    memset(out, 0, sizeof(uint32_t) * kWide);
+    ppu_reset(ppu);
+    PpuBeginDrawing(ppu, (uint8_t *)out, sizeof(uint32_t) * kWide,
+                    kPpuRenderFlags_NewRenderer);
+    setup_arena_bg1(ppu);
+    ppu->screenEnabled[0] = (uint8_t)(1u << layer);
+    ppu->bgXsc[layer] = ppu->bgXsc[0];
+    ppu->bgTileAdr = (uint16_t)(1u << (layer * 4));
+    if (big) ppu->bgmode |= (uint8_t)(0x10u << layer);
+    if (mosaic) ppu->mosaic = (uint8_t)(0x30u | (1u << layer));
+    PpuSetExtraSpace(ppu, (uint16_t)extra);
+    ppu->hScroll[0] = 128; /* Change after configuring: use live PPU phase. */
+    if (policy) {
+        PpuSetWidescreenLayerWorldClipBand(ppu, (uint8_t)layer, 0, 225,
+                                          policy == 5 ? 4 : 0,
+                                          kWorldLeft, kWorldRight);
+        if (policy == 3)
+            PpuSetWidescreenLayerWorldMirrorBand(ppu, (uint8_t)layer, 0, 225,
+                                                 kWorldLeft, kWorldRight);
+        if (policy == 4) PpuSetExtraSpace(ppu, (uint16_t)extra);
+    }
+    if (layer == 2) PpuSetWidescreenBg3Widen(ppu, 1);
+    ppu->hScroll[0] = (uint16_t)reference_scroll;
+    ppu->hScroll[layer] = big ? 256 : 128;
+    ppu_runLine(ppu, 0);
+    ppu->hScroll[0] = (uint16_t)reference_scroll;
+    ppu->hScroll[layer] = big ? 256 : 128;
+    ppu_runLine(ppu, kLine);
+}
+
+static void check_world_clip(Ppu *ppu) {
+    uint32_t raw[kWide], clipped[kWide];
+    const int scrolls[] = {64, 128, 192, 61, 195};
+    for (int layer = 1; layer <= 2; ++layer) {
+        for (int big = 0; big <= 1; ++big) {
+            for (int mosaic = 0; mosaic <= 1; ++mosaic) {
+                for (unsigned s = 0; s < sizeof(scrolls)/sizeof(scrolls[0]); ++s) {
+                    int scroll = scrolls[s], outside = 0;
+                    int kept_bad = 0, clipped_bad = 0;
+                    char message[160];
+                    render_clipped_canvas(ppu, raw, layer, big, mosaic,
+                                          scroll, 0, kExtra);
+                    render_clipped_canvas(ppu, clipped, layer, big, mosaic,
+                                          scroll, 1, kExtra);
+                    for (int x = -kExtra; x < 256 + kExtra; ++x) {
+                        int world = scroll + x, index = x + kExtra;
+                        if ((x >= 0 && x < 256) ||
+                            (world >= kWorldLeft && world < kWorldRight)) {
+                            kept_bad += raw[index] != clipped[index];
+                        } else {
+                            clipped_bad += clipped[index] != 0;
+                            outside += raw[index] != 0;
+                        }
+                    }
+                    snprintf(message, sizeof message,
+                             "clip layer%d big%d mosaic%d ref%d preserves native/in-room art",
+                             layer, big, mosaic, scroll);
+                    check(kept_bad == 0, message);
+                    snprintf(message, sizeof message,
+                             "clip layer%d big%d mosaic%d ref%d hides out-of-room copies",
+                             layer, big, mosaic, scroll);
+                    check(clipped_bad == 0, message);
+                    if (scroll != 128) {
+                        snprintf(message, sizeof message,
+                                 "clip layer%d big%d mosaic%d ref%d exercises nonblank overflow",
+                                 layer, big, mosaic, scroll);
+                        check(outside > 0, message);
+                    }
+                }
+            }
+        }
+        render_clipped_canvas(ppu, raw, layer, false, false, 61, 0, 0);
+        render_clipped_canvas(ppu, clipped, layer, false, false, 61, 1, 0);
+        check(memcmp(raw, clipped, sizeof raw) == 0,
+              "world clip is inert at native width, including camera shake");
+        render_clipped_canvas(ppu, raw, layer, false, false, 64, 0, kExtra);
+        for (int policy = 3; policy <= 5; ++policy) {
+            render_clipped_canvas(ppu, clipped, layer, false, false, 64,
+                                  policy, kExtra);
+            check(memcmp(raw, clipped, sizeof raw) == 0,
+                  policy == 3 ? "mirror setter clears previous canvas clip/reference" :
+                  policy == 4 ? "per-frame reset removes canvas clip" :
+                                "invalid reference disables canvas clip");
+        }
+    }
+}
+
 int main(void) {
     Ppu *ppu = ppu_init();
     if (!ppu) return 2;
@@ -302,6 +394,7 @@ int main(void) {
               "slot 1 is independently addressable");
     }
 
+    check_world_clip(ppu);
     ppu_free(ppu);
     printf("ppu_world_mirror_test: %s\n", failures ? "FAIL" : "PASS");
     return failures ? 1 : 0;
