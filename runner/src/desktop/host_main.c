@@ -2515,6 +2515,24 @@ static void post_mortem_atexit(void) {
 
 #if SNESRECOMP_ENABLE_MODS
 static int g_mods_ready;
+
+/* Mod input transforms (mod_runtime.h) on one local seat's button word,
+ * before netplay, replay recording, run-ahead or the guest see it. */
+static uint16 ModTransformSeat(uint16 buttons, int player) {
+  const GamepadInfo *pad = &g_gamepad[player & 1];
+  SnesModInputContext ctx = {
+    .player = player, .wram = g_ram,
+    .right_x = pad->right_axis_x, .right_y = pad->right_axis_y,
+    .left_trigger = pad->left_trigger, .right_trigger = pad->right_trigger,
+  };
+  return snes_mod_runtime_transform_input_c(buttons & 0x0fff, &ctx);
+}
+static uint32 ModTransformInputs(uint32 inputs) {
+  if (!g_mods_ready) return inputs;
+  uint32 p1 = ModTransformSeat((uint16)(inputs & 0x0fff), 0);
+  uint32 p2 = ModTransformSeat((uint16)((inputs >> 12) & 0x0fff), 1);
+  return (inputs & ~0xffffffu) | p1 | p2 << 12;
+}
 #endif
 
 #if defined(SNES_HAS_LOBBY_CLIENT)
@@ -2638,26 +2656,6 @@ static void NetplayMenuSelftest(uint32_t frame) {
     return;
   }
 }
-
-#if SNESRECOMP_ENABLE_MODS
-/* Mod input transforms (mod_runtime.h) on one local seat's button word,
- * before netplay, replay recording, run-ahead or the guest see it. */
-static uint16 ModTransformSeat(uint16 buttons, int player) {
-  const GamepadInfo *pad = &g_gamepad[player & 1];
-  SnesModInputContext ctx = {
-    .player = player, .wram = g_ram,
-    .right_x = pad->right_axis_x, .right_y = pad->right_axis_y,
-    .left_trigger = pad->left_trigger, .right_trigger = pad->right_trigger,
-  };
-  return snes_mod_runtime_transform_input_c(buttons & 0x0fff, &ctx);
-}
-static uint32 ModTransformInputs(uint32 inputs) {
-  if (!g_mods_ready) return inputs;
-  uint32 p1 = ModTransformSeat((uint16)(inputs & 0x0fff), 0);
-  uint32 p2 = ModTransformSeat((uint16)((inputs >> 12) & 0x0fff), 1);
-  return (inputs & ~0xffffffu) | p1 | p2 << 12;
-}
-#endif
 
 static uint16_t netplay_capture_pad(void *ctx) {
   (void)ctx;
