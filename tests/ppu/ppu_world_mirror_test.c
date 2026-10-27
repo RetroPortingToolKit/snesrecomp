@@ -221,15 +221,25 @@ static void check_camera(Ppu *ppu, int hscroll, const char *label,
 
 /* An independent-scrolling BG2/BG3 canvas must follow the physical room's
  * BG1 phase for containment, while keeping all genuine canvas pixels. */
-static void render_clipped_canvas(Ppu *ppu, uint32_t *out, int layer,
+static void render_clipped_canvas_windows(Ppu *ppu, uint32_t *out, int layer,
                                   bool big, bool mosaic, int reference_scroll,
-                                  int policy, int extra) {
+                                  int policy, int extra, uint8_t windows,
+                                  int window_op) {
     memset(out, 0, sizeof(uint32_t) * kWide);
     ppu_reset(ppu);
     PpuBeginDrawing(ppu, (uint8_t *)out, sizeof(uint32_t) * kWide,
                     kPpuRenderFlags_NewRenderer);
     setup_arena_bg1(ppu);
     ppu->screenEnabled[0] = (uint8_t)(1u << layer);
+    if (windows) {
+        ppu->screenWindowed[0] = (uint8_t)(1u << layer);
+        ppu->windowsel = (uint32_t)windows << (layer * 4);
+        ppu->window1left = 0;
+        ppu->window1right = 80;
+        ppu->window2left = 160;
+        ppu->window2right = 255;
+        ppu->wbgobjlog = (uint16_t)(window_op << (layer * 2));
+    }
     ppu->bgXsc[layer] = ppu->bgXsc[0];
     ppu->bgTileAdr = (uint16_t)(1u << (layer * 4));
     if (big) ppu->bgmode |= (uint8_t)(0x10u << layer);
@@ -244,6 +254,13 @@ static void render_clipped_canvas(Ppu *ppu, uint32_t *out, int layer,
             PpuSetWidescreenLayerWorldMirrorBand(ppu, (uint8_t)layer, 0, 225,
                                                  kWorldLeft, kWorldRight);
         if (policy == 4) PpuSetExtraSpace(ppu, (uint16_t)extra);
+        if (policy == 6) {
+            PpuSetWidescreenLayerWorldMirrorBand(ppu, (uint8_t)layer,
+                                                 0, 0, 0, 0);
+            PpuSetWidescreenLayerWorldClipBandSlot(ppu, 1, (uint8_t)layer,
+                                                  0, 225, 0,
+                                                  kWorldLeft, kWorldRight);
+        }
     }
     if (layer == 2) PpuSetWidescreenBg3Widen(ppu, 1);
     ppu->hScroll[0] = (uint16_t)reference_scroll;
@@ -254,9 +271,16 @@ static void render_clipped_canvas(Ppu *ppu, uint32_t *out, int layer,
     ppu_runLine(ppu, kLine);
 }
 
+static void render_clipped_canvas(Ppu *ppu, uint32_t *out, int layer,
+                                  bool big, bool mosaic, int reference_scroll,
+                                  int policy, int extra) {
+    render_clipped_canvas_windows(ppu, out, layer, big, mosaic,
+                                  reference_scroll, policy, extra, 0, 0);
+}
+
 static void check_world_clip(Ppu *ppu) {
     uint32_t raw[kWide], clipped[kWide];
-    const int scrolls[] = {64, 128, 192, 61, 195};
+    const int scrolls[] = {64, 128, 192, 61, 195, 512};
     for (int layer = 1; layer <= 2; ++layer) {
         for (int big = 0; big <= 1; ++big) {
             for (int mosaic = 0; mosaic <= 1; ++mosaic) {
@@ -299,6 +323,10 @@ static void check_world_clip(Ppu *ppu) {
         render_clipped_canvas(ppu, clipped, layer, false, false, 61, 1, 0);
         check(memcmp(raw, clipped, sizeof raw) == 0,
               "world clip is inert at native width, including camera shake");
+        render_clipped_canvas(ppu, raw, layer, false, false, 64, 1, kExtra);
+        render_clipped_canvas(ppu, clipped, layer, false, false, 64, 6, kExtra);
+        check(memcmp(raw, clipped, sizeof raw) == 0,
+              "world clip second slot has the same rendered contract");
         render_clipped_canvas(ppu, raw, layer, false, false, 64, 0, kExtra);
         for (int policy = 3; policy <= 5; ++policy) {
             render_clipped_canvas(ppu, clipped, layer, false, false, 64,
@@ -307,6 +335,28 @@ static void check_world_clip(Ppu *ppu) {
                   policy == 3 ? "mirror setter clears previous canvas clip/reference" :
                   policy == 4 ? "per-frame reset removes canvas clip" :
                                 "invalid reference disables canvas clip");
+        }
+        const uint8_t window_flags[] = {2, 3, 8, 10, 15};
+        for (unsigned w = 0; w < sizeof(window_flags); ++w) {
+            for (int op = 0; op < 4; ++op) {
+                for (int scroll = 61; scroll <= 195; scroll += 134) {
+                    render_clipped_canvas_windows(ppu, raw, layer, false,
+                        false, scroll, 0, kExtra, window_flags[w], op);
+                    render_clipped_canvas_windows(ppu, clipped, layer, false,
+                        false, scroll, 1, kExtra, window_flags[w], op);
+                    int kept_bad = 0, clipped_bad = 0;
+                    for (int x = -kExtra; x < 256 + kExtra; ++x) {
+                        int world = scroll + x, index = x + kExtra;
+                        if ((x >= 0 && x < 256) ||
+                            (world >= kWorldLeft && world < kWorldRight))
+                            kept_bad += raw[index] != clipped[index];
+                        else
+                            clipped_bad += clipped[index] != 0;
+                    }
+                    check(kept_bad == 0 && clipped_bad == 0,
+                          "world clip preserves hardware windows, inverse masks and pinned edges");
+                }
+            }
         }
     }
 }
