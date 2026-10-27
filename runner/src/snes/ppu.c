@@ -885,6 +885,65 @@ typedef struct PpuWindows {
   uint8 bits;
 } PpuWindows;
 
+static unsigned PpuWorldReferenceLayer(const Ppu *ppu, int band, uint layer) {
+  unsigned reference = ppu->wsWorldReference[band][layer];
+  return reference >= 1 && reference <= 4 ? reference - 1 : layer;
+}
+
+// A clip does not resample pixels. When the room and native view touch, their
+// union is one interval which the ordinary windowed draw can render directly.
+// Keep the isolated compositor for disjoint rooms, mosaic and source anchors.
+static bool PpuWorldClipBounds(const Ppu *ppu, uint layer, int y,
+                                int *left, int *right) {
+  if (layer >= 4 ||
+      !((ppu->wsWorldClip[0] | ppu->wsWorldClip[1]) & (1u << layer)) ||
+      PPU_mode(ppu) != 1 ||
+      (PPU_mosaicEnabled(ppu, layer) && PPU_mosaicSize(ppu) > 1))
+    return false;
+  int band = PpuWidescreenLayerWorldBandAt(ppu, layer, y);
+  if (band < 0 || !(ppu->wsWorldClip[band] & (1u << layer)) ||
+      PpuWidescreenLayerElasticBandAt(ppu, layer, y) >= 0)
+    return false;
+  for (uint slot = 0; slot < kPpuWsAnchorBands; ++slot) {
+    if (y >= ppu->wsAnchorY0[slot][layer] &&
+        y < ppu->wsAnchorY1[slot][layer] &&
+        ppu->wsAnchorLeftEnd[slot][layer] &&
+        ppu->wsAnchorLeftEnd[slot][layer] < ppu->wsAnchorRightStart[slot][layer])
+      return false;
+  }
+  int scroll = ppu->hScroll[PpuWorldReferenceLayer(ppu, band, layer)];
+  int a = ppu->wsWorldLeft[band][layer] - scroll;
+  int b = ppu->wsWorldRight[band][layer] - scroll;
+  if (a > kPpuXPixels || b < 0)
+    return false;
+  *left = IntMin(a, 0);
+  *right = IntMax(b, kPpuXPixels);
+  return true;
+}
+
+static void PpuWindows_ClipWorld(PpuWindows *win, const Ppu *ppu,
+                                 uint layer, int y) {
+  int left, right;
+  if (!PpuWorldClipBounds(ppu, layer, y, &left, &right))
+    return;
+  // Crop after evaluating hardware windows so pinned edges and inverse masks
+  // retain their original meaning. Removing outer spans never adds an edge.
+  uint nr = 0;
+  uint8 bits = 0;
+  for (uint i = 0; i < win->nr; ++i) {
+    int a = IntMax(win->edges[i], left);
+    int b = IntMin(win->edges[i + 1], right);
+    if (a >= b)
+      continue;
+    win->edges[nr] = (int16)a;
+    win->edges[nr + 1] = (int16)b;
+    bits |= (uint8)(((win->bits >> i) & 1u) << nr);
+    ++nr;
+  }
+  win->nr = (uint8)nr;
+  win->bits = bits;
+}
+
 // Per-layer widescreen side margin. BG3 (layer 2) carries the HUD and is
 // clamped to the authentic 256-wide region so a BG3 status bar never tiles into
 // the margins -- EXCEPT on scanlines >= wsBg3WidenY, where the game renders
@@ -1120,6 +1179,7 @@ static void PpuDrawBackground_4bpp(Ppu *ppu, PpuPixelPrioBufs *dstbuf,
     return;  // layer is completely hidden
   PpuWindows win;
   IS_SCREEN_WINDOWED(ppu, sub, layer) ? PpuWindows_Calc(&win, ppu, layer, y) : PpuWindows_Clear(&win, ppu, layer, y);
+  PpuWindows_ClipWorld(&win, ppu, layer, (int)y);
   int16 ws_bias[8] = { 0 };
   if (!PpuApplyLayerAnchorBand(ppu, layer, y, &win, ws_bias))
     PpuApplyMarginGap(ppu, layer, &win, ws_bias);
@@ -1294,6 +1354,7 @@ static void PpuDrawBackgroundBig(Ppu *ppu, PpuPixelPrioBufs *dstbuf, uint y,
   PpuWindows win;
   IS_SCREEN_WINDOWED(ppu, sub, layer) ? PpuWindows_Calc(&win, ppu, layer, y)
                                       : PpuWindows_Clear(&win, ppu, layer, y);
+  PpuWindows_ClipWorld(&win, ppu, layer, (int)y);
   const int sy = (int)(mosaic ? ppu->mosaicModulo[y] : y) + ppu->vScroll[layer];
   const int tileadr = PPU_bgTileAdr(ppu, layer);
   const int words = (bpp == 4) ? 16 : 8;          /* vram words per 8x8 char */
@@ -1597,6 +1658,7 @@ static void PpuDrawBackground_2bpp(Ppu *ppu, PpuPixelPrioBufs *dstbuf, uint y, b
     return;  // layer is completely hidden
   PpuWindows win;
   IS_SCREEN_WINDOWED(ppu, sub, layer) ? PpuWindows_Calc(&win, ppu, layer, y) : PpuWindows_Clear(&win, ppu, layer, y);
+  PpuWindows_ClipWorld(&win, ppu, layer, (int)y);
   // Widescreen HUD split (PpuSetWidescreenHudSplit): on HUD scanlines,
   // replace the single span with five — left chunk re-anchored to the left
   // border edge, a transparent gap, the centered chunk, a gap, and the
@@ -1814,12 +1876,6 @@ static void PpuMergePaddedBackground(Ppu *ppu, PpuPixelPrioBufs *dstbuf,
   }
 }
 
-// Reference0 means the original, own-plane phase for existing world bands.
-static unsigned PpuWorldReferenceLayer(const Ppu *ppu, int band, uint layer) {
-  unsigned reference = ppu->wsWorldReference[band][layer];
-  return reference >= 1 && reference <= 4 ? reference - 1 : layer;
-}
-
 // Preserve authored room columns, including genuine margin art. Outside the
 // room, either reflect the layer's own art or omit a bounded object canvas.
 // A canvas can follow another plane's PPU phase without sharing its scroll.
@@ -1927,8 +1983,10 @@ static void PpuDrawBackground_4bpp_policy(Ppu *ppu, PpuPixelPrioBufs *dstbuf,
   bool stretch_band = PpuWidescreenLayerStretchBandActive(ppu, layer, y);
   int world_band = PpuWidescreenLayerWorldBandAt(ppu, layer, (int)y);
   int elastic_band = PpuWidescreenLayerElasticBandAt(ppu, layer, (int)y);
+  int clip_left, clip_right;
   if (!(padding & (1u << layer)) && !repeat_band && !stretch_band &&
-      world_band < 0 && elastic_band < 0) {
+      ((world_band < 0 && elastic_band < 0) ||
+       PpuWorldClipBounds(ppu, layer, (int)y, &clip_left, &clip_right))) {
     if (PPU_bigTiles(ppu, layer))
       PpuDrawBackgroundBig(ppu, dstbuf, y, sub, layer, 4, zhi, zlo, mosaic);
     else if (mosaic)
@@ -1986,8 +2044,10 @@ static void PpuDrawBackground_2bpp_policy(Ppu *ppu, PpuPixelPrioBufs *dstbuf,
   bool stretch_band = PpuWidescreenLayerStretchBandActive(ppu, layer, y);
   int world_band = PpuWidescreenLayerWorldBandAt(ppu, layer, (int)y);
   int elastic_band = PpuWidescreenLayerElasticBandAt(ppu, layer, (int)y);
+  int clip_left, clip_right;
   if (!(padding & (1u << layer)) && !repeat_band && !stretch_band &&
-      world_band < 0 && elastic_band < 0) {
+      ((world_band < 0 && elastic_band < 0) ||
+       PpuWorldClipBounds(ppu, layer, (int)y, &clip_left, &clip_right))) {
     if (PPU_bigTiles(ppu, layer))
       PpuDrawBackgroundBig(ppu, dstbuf, y, sub, layer, 2, zhi, zlo, mosaic);
     else if (mosaic)
