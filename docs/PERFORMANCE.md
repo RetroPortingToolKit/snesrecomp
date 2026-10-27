@@ -33,7 +33,7 @@ The approach is adapted from the useful NDS work:
 - use interleaved, order-balanced A/B runs and retain rejected experiments;
 - require state, framebuffer, audio, attract-mode, gameplay, and fuzz gates.
 
-## Current baseline
+## Initial baseline audit
 
 Super Mario World and Mega Man X already provide
 `--benchmark <frames> <rom>`. It disables pacing, VSync, audio, autosave, and
@@ -85,9 +85,12 @@ and exactness both survive.
    compared run. Audio-enabled correctness runs are separate from the
    audio-disabled throughput benchmark.
 
-A candidate is retained when the order-balanced median is positive outside
-run noise and the full correctness gates pass. Code-size changes are reported
-because instruction-cache pressure matters on the Xbox.
+A candidate may be retained when every tested game is neutral or improves
+and its correctness contract passes. Mixed small results within run variation
+are neutral/inconclusive, not demonstrated wins. Never offset a reproducible
+regression in one game with gains in another. Identical original/candidate
+failures are shared defects, not optimization disqualifiers. Report code and
+memory costs because cache pressure matters on constrained targets.
 
 ## Retained results
 
@@ -114,6 +117,53 @@ scheduler is already in the baseline. The additional work comprises:
 
 Both selectors are build-time choices and currently default to `LLE`. This is
 an implementation experiment, not approval to change release defaults.
+
+### Broader campaign, 2026-10-27
+
+The finite opportunity burndown is central Bead `beads-8wg.2.154`, related to
+the cross-engine `optimization campaign` (`beads-2wy8.1`). It includes explicit
+retained, already-optimized, deferred and rejected outcomes. Raw per-game
+samples, workload/package labels, source/binary identities and cost caveats
+are retained there for later campaign figures.
+
+`snes/raster_image.h` generalizes deferred independent stock-image readback
+for MMX and Super Metroid. Consumers supply immutable captured registers,
+palette, OAM and VRAM; the service owns private PPU scratch. Live scanlines
+still execute PPU status/OAM/mosaic work. Extra surfaces/callbacks, interlace
+and unsupported scene lines retain normal rasterization. Real resets and
+loaded captures invalidate derived ownership; current/previous frames have
+independent lifetimes. Readback neither invokes guest code nor changes live
+PPU state. Its mixed-line/idempotence test compares against the actual PPU.
+
+The shared window job resolves all six window layers through four precomputed
+regions. Geometry remains explicit so a title can adapt widened effect bounds.
+Randomized Mode-1 output comparisons use the independent full PPU, including
+window enables, inversions, logic, large tiles, flips and scroll wrap.
+
+`SNESRECOMP_CRC32_IMPL=SLICE8` is portable C for the existing IEEE CRC/streaming
+interface, with a `BYTE` floor. Tables are immutable and reproducible with
+`tools/generate_crc32_slices.py`; no host instruction or endian assumption is
+required. It retains checksums, snapshot guards and rewind. The native gate
+compares arbitrary seeds, unaligned inputs, tails and split streams against a
+bitwise reference. It adds 8 KiB of read-only tables in place of the byte path's
+1 KiB writable table. Per-game qualification, not component throughput, decides
+adoption.
+
+For shared-host measurements, `STATE_TRACE_START_FRAME` (with the title's
+environment prefix, e.g. `SM_STATE_TRACE_START_FRAME`) can limit an existing
+state trace to the final frame. Default behavior still traces every frame.
+Both compared binaries must support the setting; verify the actual row count.
+This separates production timing from repeated diagnostic WRAM hashing while
+retaining matched final WRAM/CPU checks. Keep full per-frame correctness runs
+as separate evidence. A whole-process result with full diagnostic traces must
+be labeled accordingly.
+
+Two final Super Metroid color/cache experiments preserved state and pixels but
+did not improve the measured workload: a compact indexed palette cache and a
+full RGB lookup with parallel integer color math. Both trended slower in four
+of five 7,200-frame pairs and were removed. Existing 32-bit software/OpenGL
+output needs no format renaming or game-specific asset conversion. Their raw
+receipts and rejected source/binary snapshots remain campaign evidence.
 
 The complete Mega Man X game executable, including its existing mod packages,
 was measured with a fixed 16:9 view, the same Highway input script, software SDL

@@ -30,3 +30,11 @@ $out = Join-Path $OutputDirectory 'ppu-native-raster.exe'
 if ($LASTEXITCODE -ne 0) { throw 'PPU build failed' }
 & $out
 if ($LASTEXITCODE -ne 0) { throw 'PPU execution failed' }
+foreach ($slices in @(1, 8)) {
+    $out = Join-Path $OutputDirectory "crc32-$slices.exe"
+    & $Compiler @common "-DSNESRECOMP_CRC32_SLICES=$slices" `
+        "$root\tests\crc32_native_test.c" "$root\runner\src\crc32.c" '-o' $out
+    if ($LASTEXITCODE -ne 0) { throw "CRC build failed: $slices" }
+    & $out
+    if ($LASTEXITCODE -ne 0) { throw "CRC execution failed: $slices" }
+}

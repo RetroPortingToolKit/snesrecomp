@@ -22,6 +22,40 @@ typedef struct SnesRenderColorCache {
   bool ready[16];
 } SnesRenderColorCache;
 
+/* Resolve all six window layers from two geometry tests per pixel. Geometry
+ * is explicit: a title may supply wider effect bounds without putting scene
+ * knowledge in this job. Table entries are masks of BG1..BG4, OBJ, color. */
+typedef struct SnesRenderWindowPlan {
+  int left[2], right[2];
+  uint8_t inside[4];
+} SnesRenderWindowPlan;
+static inline SnesRenderWindowPlan SnesRenderWindows(const Ppu *p,
+    int left1, int right1, int left2, int right2) {
+  SnesRenderWindowPlan plan = {{left1, left2}, {right1, right2}, {0}};
+  for (unsigned region = 0; region < 4; ++region)
+    for (unsigned layer = 0; layer < 6; ++layer) {
+      unsigned flags = (p->windowsel >> (layer * 4)) & 15;
+      bool a = ((region & 1) != 0) != ((flags & 1) != 0);
+      bool b = ((region & 2) != 0) != ((flags & 4) != 0);
+      bool inside;
+      if (!(flags & 2)) inside = (flags & 8) && b;
+      else if (!(flags & 8)) inside = a;
+      else switch ((p->wbgobjlog >> (layer * 2)) & 3) {
+        case 0: inside = a || b; break;
+        case 1: inside = a && b; break;
+        case 2: inside = a != b; break;
+        default: inside = a == b; break;
+      }
+      if (inside) plan.inside[region] |= (uint8_t)(1u << layer);
+    }
+  return plan;
+}
+static inline unsigned SnesRenderWindowMask(const SnesRenderWindowPlan *plan, int x) {
+  unsigned a = x >= plan->left[0] && x <= plan->right[0];
+  unsigned b = x >= plan->left[1] && x <= plan->right[1];
+  return plan->inside[a | (b << 1)];
+}
+
 static inline uint64_t SnesRenderOamKey(int x, int y, uint16_t attr) {
   return ((uint64_t)attr << 17) | ((unsigned)y & 255u) << 9 | ((unsigned)x & 511u);
 }

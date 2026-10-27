@@ -44,6 +44,19 @@ include(${CMAKE_CURRENT_LIST_DIR}/ppu_8bpp_backend.cmake)
 # of this list — it is a developer-only verify backend, off for normal builds.
 
 set(SNESRECOMP_RUNNER_ROOT ${CMAKE_CURRENT_LIST_DIR})
+set(SNESRECOMP_CRC32_IMPL "BYTE" CACHE STRING "IEEE CRC implementation (BYTE or SLICE8)")
+set_property(CACHE SNESRECOMP_CRC32_IMPL PROPERTY STRINGS BYTE SLICE8)
+if(SNESRECOMP_CRC32_IMPL STREQUAL "SLICE8")
+    set(_SNESRECOMP_CRC32_SLICES 8)
+elseif(SNESRECOMP_CRC32_IMPL STREQUAL "BYTE")
+    set(_SNESRECOMP_CRC32_SLICES 1)
+else()
+    message(FATAL_ERROR "SNESRECOMP_CRC32_IMPL must be BYTE or SLICE8")
+endif()
+set_property(SOURCE "${SNESRECOMP_RUNNER_ROOT}/src/crc32.c" APPEND PROPERTY
+    COMPILE_DEFINITIONS SNESRECOMP_CRC32_SLICES=${_SNESRECOMP_CRC32_SLICES})
+message(STATUS "SNES IEEE CRC: ${SNESRECOMP_CRC32_IMPL}")
+unset(_SNESRECOMP_CRC32_SLICES)
 include(${SNESRECOMP_RUNNER_ROOT}/dsp1_backend.cmake)
 # The framework checkout itself (runner/..). Derived, not taken from the
 # caller's SNESRECOMP_ROOT: that one is the includer's own spelling and a
