@@ -7,6 +7,13 @@
 extern "C" {
 #endif
 
+/* Optional once-per-session execution-profile barrier, backed by recomp-net.
+ * Call before start; actual CPU/backend capabilities, never OS heuristics.
+ * The callback runs once before rollback boot capture or any guest frame. */
+void snes_netplay_set_profile_caps(uint32_t qualification,uint32_t cpu_features,
+    uint32_t backends,uint32_t profiles,uint32_t architecture,
+    void (*settled)(uint32_t profile,uint32_t transcript));
+
 /*
  * Delay-sync netplay facade over recomp-net for SNES recomp hosts.
  *

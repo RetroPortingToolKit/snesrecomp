@@ -64,6 +64,8 @@ struct Dsp {
   // (which serializes from `ram` to end) — savestate layout is unchanged.
   // void* to keep dsp.h free of the shadow header; dsp.c owns the type.
   void *shadow;
+  // Host voice/echo routing, outside the serialized simulation like shadow.
+  void *output_filter;
   // mirror ram
   uint8_t ram[0x80];
   // 8 channels
@@ -110,6 +112,14 @@ Dsp *dsp_init(uint8_t *ram);
 void dsp_free(Dsp* dsp);
 void dsp_reset(Dsp* dsp);
 void dsp_cycle(Dsp* dsp);
+/* Presentation only. Select dry voices AND their native echo at the DAC;
+ * every canonical voice, echo RAM write and clock still runs unchanged.
+ * 0xff restores ordinary output (the default). Caller holds the APU lock.
+ * False means allocation failed; ordinary output remains available. */
+bool dsp_set_output_voices(Dsp *dsp, uint8_t voices);
+/* Preserve the presentation echo during a discarded rollback replay. The
+ * canonical mixer still runs; its temporary output will be discarded. */
+void dsp_suspend_output_filter(Dsp *dsp, bool suspended);
 /* Call under the APU lock. This gates host PCM publication, not synthesis. */
 void dsp_set_output_suppressed(Dsp *dsp, bool suppressed);
 uint8_t dsp_read(Dsp* dsp, uint8_t adr);

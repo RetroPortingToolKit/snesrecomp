@@ -93,6 +93,10 @@ Apu* apu_init();
 void apu_free(Apu* apu);
 void apu_reset(Apu* apu);
 void apu_cycle(Apu* apu);
+/* Advance one bounded job. The build selects scalar clocks or native event
+ * spans; both preserve port order, SPC/timer state and DSP sample edges. */
+void apu_runCycles(Apu* apu, uint32_t clocks);
+const char *apu_time_implementation(void);
 uint8_t apu_cpuRead(Apu* apu, uint16_t adr);
 void apu_cpuWrite(Apu* apu, uint16_t adr, uint8_t val);
 void apu_saveload(Apu *apu, SaveLoadInfo *sli);

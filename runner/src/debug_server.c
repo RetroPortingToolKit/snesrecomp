@@ -8052,7 +8052,7 @@ static void cmd_audio_stats(const char *args) {
     RtlApuUnlock();
     static char buf[65536];
     int pos = snprintf(buf, sizeof(buf),
-        "{\"ok\":true,\"produced\":%llu,\"produced_cpu\":%llu,\"produced_audio\":%llu,"
+        "{\"ok\":true,\"apu_time_impl\":\"%s\",\"produced\":%llu,\"produced_cpu\":%llu,\"produced_audio\":%llu,"
         "\"dropped\":%llu,\"dropped_audible\":%llu,\"drop_runs\":%llu,\"consumed\":%llu,"
         "\"fast_forward_discarded\":%llu,\"output_underflows\":%llu,\"output_priming\":%llu,"
         "\"output_missing_frames\":%llu,"
@@ -8068,7 +8068,7 @@ static void cmd_audio_stats(const char *args) {
         "\"cpu_port_overwrites\":[%llu,%llu,%llu,%llu],"
         "\"apu_port_queue_depth\":%u,\"apu_port_queue_lag\":%llu,"
         "\"event_count\":%llu,\"snap_count\":%llu,\"snaps\":[",
-        (unsigned long long)st.produced, (unsigned long long)st.produced_cpu,
+        apu_time_implementation(), (unsigned long long)st.produced, (unsigned long long)st.produced_cpu,
         (unsigned long long)st.produced_audio, (unsigned long long)st.dropped,
         (unsigned long long)st.dropped_audible,
         (unsigned long long)st.drop_runs, (unsigned long long)st.consumed,

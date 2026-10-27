@@ -292,9 +292,7 @@ void snes_catchupApu(Snes* snes) {
   apucyc_prof_calls++;
   clock_t _t1 = clock();
 #endif
-  for(int i = 0; i < catchupCycles; i++) {
-    apu_cycle(snes->apu);
-  }
+  apu_runCycles(snes->apu, (uint32_t)catchupCycles);
 #ifdef SNESRECOMP_INTERP_PROFILE
   apucyc_prof_ms += 1000.0 * ((double)(clock() - _t1)) / CLOCKS_PER_SEC;
 #endif

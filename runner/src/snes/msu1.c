@@ -191,6 +191,9 @@ static void msu_resolve_base_if_dir(void) {
 }
 
 void msu1_init(void) {
+    /* Cold game/profile changes may initialize again in the same process. */
+    if (g.track) fclose(g.track);
+    if (g.data) fclose(g.data);
     memset(&g, 0, sizeof(g));
     g.volume = 255;  /* full unless the game says otherwise */
     const char *e = getenv("SNESRECOMP_MSU1");

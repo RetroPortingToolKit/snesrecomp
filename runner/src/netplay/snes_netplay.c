@@ -1,5 +1,21 @@
 #include "snes_netplay.h"
 
+static struct {
+    uint32_t qualification,cpu,backends,profiles,architecture;
+    void (*settled)(uint32_t,uint32_t);
+    int pending;
+    const char *refusal;
+    uint32_t started_ms;
+} g_profiles;
+void snes_netplay_set_profile_caps(uint32_t qualification,uint32_t cpu_features,
+    uint32_t backends,uint32_t profiles,uint32_t architecture,
+    void (*settled)(uint32_t,uint32_t))
+{
+    g_profiles.qualification=qualification;g_profiles.cpu=cpu_features;
+    g_profiles.backends=backends;g_profiles.profiles=profiles;
+    g_profiles.architecture=architecture;g_profiles.settled=settled;
+}
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -11,6 +27,7 @@
 
 #if defined(SNESRECOMP_NET)
 #include "recomp_net/recomp_net.h"
+#include "recomp_net/startup_profiles.h"
 #include "snes_netplay_diagnostic_state.h"
 /*
  * Rollback is an optional build (snesrecomp_enable_rollback). A game that
@@ -450,6 +467,8 @@ static void np_rollback_try_start(void)
 #if defined(SNESRECOMP_NET_ROLLBACK)
     SnesNetplayRbBindings b;
 
+    if(g_profiles.pending)return;
+
     g_np_rollback = 0;
     if (!snes_netplay_rb_enabled())
         return;
@@ -684,6 +703,7 @@ int snes_netplay_draining(void)
 
 const char *snes_netplay_refusal(void)
 {
+    if(g_profiles.refusal)return g_profiles.refusal;
     return snes_netplay_rollback_active() ? snes_netplay_rb_refusal() : NULL;
 }
 
@@ -920,6 +940,14 @@ int snes_netplay_start(const SnesNetplayConfig *cfg)
 
     g_np.session = rnet_session_create(&rcfg, &host);
     if (!g_np.session) return -2;
+    g_profiles.pending=g_profiles.qualification!=0;g_profiles.refusal=NULL;
+    g_profiles.started_ms=(uint32_t)np_diagnostic_clock_ms();
+    if(g_profiles.pending) {
+        RNetProfileCaps caps={g_profiles.cpu,g_profiles.backends,g_profiles.profiles,g_profiles.architecture};
+        if(rnet_session_profiles_begin(g_np.session,g_profiles.qualification,&caps)!=0) {
+            rnet_session_destroy(g_np.session);g_np.session=NULL;return -2;
+        }
+    }
     np_diagnostic_reset(&g_np.timing, np_diagnostic_clock_ms());
     g_np.last_slow_operation[0] = '\0';
     g_np.max_slow_operation[0] = '\0';
@@ -1335,6 +1363,12 @@ static int np_apply_slot_file(int slot)
 static void np_commit_load_sync(void)
 {
     rnet_session_hard_resync(g_np.session);
+    /* A new wire epoch needs a new rollback history rooted at the state
+     * just loaded, as the synchronized slot browser already does. */
+    if (g_np_rollback && !snes_netplay_rb_start()) {
+        snes_netplay_request_return_to_lobby();
+        return;
+    }
     np_prime_after_hard_resync();
     RtlNetplayAudioReset();
     g_np.needs_advance = 0;
@@ -2327,7 +2361,7 @@ int snes_netplay_is_host(void)
 int snes_netplay_request_save(int slot)
 {
     uint8_t *buf;
-    size_t cap = 512u * 1024u;
+    size_t cap;
     size_t n;
     if (!snes_netplay_active() || !rnet_session_is_running(g_np.session))
         return 0;
@@ -2346,6 +2380,10 @@ int snes_netplay_request_save(int slot)
     RtlSaveLoad(kSaveLoad_Save, slot);
     RtlWriteSram(); /* keep battery file continuous with host progress */
 
+    /* Game-owned state is part of the snapshot too. Its size need not fit
+     * the historical SNES-only 512 KiB buffer (for example F-Zero VS worlds). */
+    cap = RtlSaveSnapshotToMemory(NULL, 0);
+    if (!cap || cap > 8u * 1024u * 1024u - 8u) return 1;
     buf = (uint8_t *)malloc(cap);
     if (!buf) return 1;
     n = RtlSaveSnapshotToMemory(buf, cap);
@@ -2705,6 +2743,20 @@ int snes_netplay_poll_admit(void)
     if (!snes_netplay_active()) return 1;
 
     np_pump_session();
+    if(g_profiles.pending) {
+        rnet_u32 profile=0,transcript=0;
+        int status=rnet_session_profiles_status(g_np.session,&profile,&transcript);
+        if(status<0 || (uint32_t)((uint32_t)np_diagnostic_clock_ms()-g_profiles.started_ms)>30000u) {
+            g_profiles.refusal=status<0?"execution_profile_refused":"execution_profile_timeout";
+            snes_netplay_request_return_to_lobby();return 0;
+        }
+        if(!status)return 0;
+        g_profiles.pending=0;
+        fprintf(stderr,"snes_netplay: execution profile=%u transcript=%08x qualification=%08x\n",
+                (unsigned)profile,(unsigned)transcript,(unsigned)g_profiles.qualification);
+        if(g_profiles.settled)g_profiles.settled(profile,transcript);
+        np_rollback_try_start();
+    }
     if (!rnet_session_is_running(g_np.session)) {
         /* Rollback's coordinated stop must still be pumped here: a peer that
          * drained first leaves, its BYE stops this session, and the driver

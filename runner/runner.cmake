@@ -16,6 +16,24 @@ set_property(SOURCE "${CMAKE_CURRENT_LIST_DIR}/src/desktop/host_main.c"
     APPEND PROPERTY COMPILE_DEFINITIONS
     SNESRECOMP_FRAME_STAGING_HLE=$<STREQUAL:${SNESRECOMP_FRAME_IMPL},HLE>)
 message(STATUS "SNES desktop frame composition: ${SNESRECOMP_FRAME_IMPL}")
+# Game-by-game qualification covers Windows x64. Other targets keep the
+# portable reference defaults; both implementations remain selectable.
+set(_SNESRECOMP_APU_DEFAULT "LLE")
+set(_SNESRECOMP_CRC_DEFAULT "BYTE")
+if(_SNESRECOMP_FRAME_DEFAULT STREQUAL "HLE")
+    set(_SNESRECOMP_APU_DEFAULT "NATIVE")
+    set(_SNESRECOMP_CRC_DEFAULT "SLICE8")
+endif()
+set(SNESRECOMP_APU_TIME_IMPL "${_SNESRECOMP_APU_DEFAULT}" CACHE STRING
+    "Audio time advancement (LLE or NATIVE)")
+set_property(CACHE SNESRECOMP_APU_TIME_IMPL PROPERTY STRINGS LLE NATIVE)
+if(NOT SNESRECOMP_APU_TIME_IMPL MATCHES "^(LLE|NATIVE)$")
+    message(FATAL_ERROR "SNESRECOMP_APU_TIME_IMPL must be LLE or NATIVE")
+endif()
+set_property(SOURCE "${CMAKE_CURRENT_LIST_DIR}/src/snes/apu.c"
+    APPEND PROPERTY COMPILE_DEFINITIONS
+    SNESRECOMP_APU_NATIVE=$<STREQUAL:${SNESRECOMP_APU_TIME_IMPL},NATIVE>)
+message(STATUS "SNES audio time advancement: ${SNESRECOMP_APU_TIME_IMPL}")
 option(SNESRECOMP_EXPOSE_COVERAGE_MOD "Show the default-off Coverage Capture mod" OFF)
 add_compile_definitions(SNESRECOMP_EXPOSE_COVERAGE_MOD=$<BOOL:${SNESRECOMP_EXPOSE_COVERAGE_MOD}>)
 include(${CMAKE_CURRENT_LIST_DIR}/ppu_8bpp_backend.cmake)
@@ -34,6 +52,19 @@ include(${CMAKE_CURRENT_LIST_DIR}/ppu_8bpp_backend.cmake)
 # of this list — it is a developer-only verify backend, off for normal builds.
 
 set(SNESRECOMP_RUNNER_ROOT ${CMAKE_CURRENT_LIST_DIR})
+set(SNESRECOMP_CRC32_IMPL "${_SNESRECOMP_CRC_DEFAULT}" CACHE STRING "IEEE CRC implementation (BYTE or SLICE8)")
+set_property(CACHE SNESRECOMP_CRC32_IMPL PROPERTY STRINGS BYTE SLICE8)
+if(SNESRECOMP_CRC32_IMPL STREQUAL "SLICE8")
+    set(_SNESRECOMP_CRC32_SLICES 8)
+elseif(SNESRECOMP_CRC32_IMPL STREQUAL "BYTE")
+    set(_SNESRECOMP_CRC32_SLICES 1)
+else()
+    message(FATAL_ERROR "SNESRECOMP_CRC32_IMPL must be BYTE or SLICE8")
+endif()
+set_property(SOURCE "${SNESRECOMP_RUNNER_ROOT}/src/crc32.c" APPEND PROPERTY
+    COMPILE_DEFINITIONS SNESRECOMP_CRC32_SLICES=${_SNESRECOMP_CRC32_SLICES})
+message(STATUS "SNES IEEE CRC: ${SNESRECOMP_CRC32_IMPL}")
+unset(_SNESRECOMP_CRC32_SLICES)
 include(${SNESRECOMP_RUNNER_ROOT}/dsp1_backend.cmake)
 # The framework checkout itself (runner/..). Derived, not taken from the
 # caller's SNESRECOMP_ROOT: that one is the includer's own spelling and a

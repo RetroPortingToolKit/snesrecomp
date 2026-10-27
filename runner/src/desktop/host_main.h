@@ -213,6 +213,10 @@ typedef struct SnesDesktopHostGame {
   /* One line added to every refusal. NULL: a note that headered (.smc) and
    * headerless (.sfc) copies of the right dump both work. */
   const char *rom_help;
+  /* Optional native producer publishes the primary 256x224 ARGB field after
+   * raster-state capture. The host owns this writable surface. A separate
+   * draw_frame may retain a wider image for presentation. */
+  void (*publish_native_field)(uint8_t *field, unsigned number);
 } SnesDesktopHostGame;
 
 /* The whole program. Returns the process exit code. */

@@ -1280,6 +1280,7 @@ static void CaptureSimulationFrame(unsigned number) {
   if (g_rtl_game_info && g_rtl_game_info->draw_ppu_frame)
     g_rtl_game_info->draw_ppu_frame();
   if (g_game->end_sim_frame) g_game->end_sim_frame(g_my_pixels, number);
+  if (g_game->publish_native_field) g_game->publish_native_field(g_my_pixels, number);
 }
 
 #if defined(SNESRECOMP_NET_ROLLBACK)
@@ -4016,6 +4017,10 @@ error_reading:;
   unsigned run_frames = run_frames_env ? (unsigned)strtoul(run_frames_env, NULL, 10) : 0;
   const char *trace_path = HostGetenv("STATE_TRACE");
   FILE *state_trace = trace_path ? fopen(trace_path, "w") : NULL;
+  /* Keep a final-state correctness check without timing a full-WRAM CRC
+   * every frame. The default retains existing per-frame diagnostic traces. */
+  const char *trace_first_env = HostGetenv("STATE_TRACE_START_FRAME");
+  unsigned trace_first = trace_first_env ? (unsigned)strtoul(trace_first_env, NULL, 10) : 1;
   uint64_t presentations = 0;
   const char *frame_timing_path = HostGetenv("FRAME_TIMING");
   if (frame_timing_path) g_frame_timings = calloc(kFrameTimingCapacity, sizeof(*g_frame_timings));
@@ -4514,7 +4519,7 @@ error_reading:;
     g_audio_producer_active = false;
     ProfileEnd(kProfileRaster, profile_start);
     profile_start = ProfileStart();
-    if (state_trace)
+    if (state_trace && frameCtr >= trace_first)
       fprintf(state_trace, "%u,%08x,%04x,%04x,%04x,%04x,%04x,%02x,%02x,%02x\n",
               frameCtr, crc32_compute(g_ram, 0x20000), g_cpu.A, g_cpu.X, g_cpu.Y,
               g_cpu.S, g_cpu.D, g_cpu.DB, g_cpu.PB, g_cpu.P);
