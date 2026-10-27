@@ -91,6 +91,65 @@ because instruction-cache pressure matters on the Xbox.
 
 ## Retained results
 
+### Native runtime experiment, 2026-10-26
+
+The isolated `perf/native-runtime-20261026` experiment starts from framework
+`503063e443844409b055f4df1633f21aba63321b` and Mega Man X
+`452ac3180e0557f2cd6226af87ae0f6704b14f1a`. The existing desktop HLE frame
+scheduler is already in the baseline. The additional work comprises:
+
+- `SNESRECOMP_APU_TIME_IMPL=NATIVE`: advance the APU between SPC instruction,
+  DSP sample and queued-port events instead of dispatching every clock. The
+  SPC/DSP implementations, event order, timer state and serialized state remain
+  the reference implementation's. `LLE` retains the scalar clock loop.
+- `MMX_RASTER_IMPL=NATIVE` in the consumer: produce the owned custom image once,
+  retain live sprite/status evaluation, and materialize the independent stock
+  image from captured data only on an explicit readback. Unsupported lines keep
+  the normal PPU raster path.
+- Shared portable jobs in `snes/raster_jobs.h`: Mode-1 tile rows, duplicate-safe
+  OAM lookup and caller-owned brightness tables. The title still owns scene
+  reconstruction, overlays, windows and complex color math. These jobs know
+  nothing about Mega Man X assets or gameplay. No guest object allocation,
+  WRAM layout, game logic or persistent save format is replaced.
+
+Both selectors are build-time choices and currently default to `LLE`. This is
+an implementation experiment, not approval to change release defaults.
+
+The complete Mega Man X game executable, including its existing mod packages,
+was measured with a fixed 16:9 view, the same Highway input script, software SDL
+presentation, and audio emulation/output enabled through a dummy audio device.
+After warming both binaries, five alternating A/B pairs of 4,200 frames saved
+48.84%, 39.98%, 41.61%, 50.38% and 43.76% process CPU time respectively:
+**43.76% median CPU reduction**. Median uncapped throughput was 323.767 FPS
+for the original baseline and 582.667 FPS for the shared native candidate.
+Every pair had identical ROM/config/mod inputs and the same sampled gameplay
+image. This result is specific to the measured custom-renderer workload; plain
+stock 4:3 does not adopt that renderer and gains only the APU changes.
+
+The candidate game SHA-256 is
+`c63987dbe0e86826e1c64859c3073191b9a5eb77b81097e67a01128268fa8376`.
+The bounded run receipts are in `runs/native-shared-wide` under the experiment
+workspace `snes-native-20261026`; preserve these with the source branches.
+This desktop measurement does not qualify original Xbox/mobile performance.
+
+GCC and Clang passed the shared APU differential tests (both compile choices)
+and independent PPU/tile/OAM fixtures. The Mega Man X native candidate passed
+all four Magic Carpet cases, including its negative control and active
+save/load/rollback checks. Its positive object/state trace matched the frozen
+baseline. Current-source `LLE/LLE` builds also passed those cases. Current-build
+state/rewind, Modern Zero, weapon menus, independent source packs and real
+Saber activity passed in both choices. The preceding OAM candidate additionally
+passed the Boss Rush report and 180-case pause/death/spawn ROM gates.
+
+Three broader feature checks fail at the same assertions in the frozen original
+and the native candidate: the upgraded Zero menu-transition body, P2 buster
+damage, and a synthetic vertically separated co-op view. They are pre-existing
+shared failures, not optimization regressions, and do not disqualify adopting
+the optimization. Preserve them as separate defects and fix shared behavior
+for both implementations where appropriate. Further adoption work evaluates
+introduced regressions and cross-title runtime behavior, rather than requiring
+an unrelated clean baseline.
+
 The September 2026 title measurements below use each title's default
 `SNESRECOMP_EXECUTION_MODE=lle` path. In SMW and MMX that means a faithful LLE
 scheduler/main-loop is interpreted, while guest calls bounce into generated AOT

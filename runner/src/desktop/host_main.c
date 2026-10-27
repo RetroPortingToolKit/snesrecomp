@@ -1280,6 +1280,7 @@ static void CaptureSimulationFrame(unsigned number) {
   if (g_rtl_game_info && g_rtl_game_info->draw_ppu_frame)
     g_rtl_game_info->draw_ppu_frame();
   if (g_game->end_sim_frame) g_game->end_sim_frame(g_my_pixels, number);
+  if (g_game->publish_native_field) g_game->publish_native_field(g_my_pixels, number);
 }
 
 #if defined(SNESRECOMP_NET_ROLLBACK)

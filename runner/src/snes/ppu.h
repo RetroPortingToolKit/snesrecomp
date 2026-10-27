@@ -571,6 +571,12 @@ void ppu_reset(Ppu* ppu);
 bool ppu_checkOverscan(Ppu* ppu);
 void ppu_handleVblank(Ppu* ppu);
 void ppu_runLine(Ppu* ppu, int line);
+/* Native image producers still need the live PPU's line/status work. Omit
+ * color rasterization only when the caller owns that line's final pixels. */
+void ppu_runLineState(Ppu* ppu, int line);
+/* Render an immutable caller-owned PPU copy, without recording another live
+ * hardware line. Used for explicit reference-image/readback requests. */
+void ppu_drawCapturedLine(Ppu* ppu, int line, bool pixels);
 
 /* Bind an additional XRGB8888 frame with 1..4 samples per native pixel in
  * each dimension. Width is 256 + twice the current centering budget; height

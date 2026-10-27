@@ -782,28 +782,30 @@ static bool PpuOptimizedRendererHandlesMode(uint mode) {
   return mode <= 3 || mode == 7;
 }
 
-void ppu_runLine(Ppu* ppu, int line) {
+static void PpuRunLineJob(Ppu* ppu, int line, bool pixels, bool live) {
   PPU_T0_DECL
   /* Writes from here to the next ppu_runLine land on line + 1; no register
    * write happens inside a line's render. */
-  s_wlog_line = line + 1;
-  s_wlog_line_frame = (uint32_t)snes_frame_counter;
-  /* Per-line HDMA state must be captured here, not at end-of-frame: games can
-   * rewrite windows and scroll registers before every scanline. */
-  debug_server_on_ppu_line(line);
-  /* Snapshot the OAM the scanline renderer is about to consume, once per
-   * frame, on whichever line the host actually starts with.
-   *
-   * This used to sit inside the line == 0 block, which silently disabled it
-   * for every frame-model host: those render the visible field as lines
-   * 1..224 and never pass line 0 at all. The ring therefore stayed empty
-   * forever and oam_render_get answered {"count":0,"snaps":[]} -- "no
-   * sprites recorded" -- for a screen full of sprites. An instrument that
-   * reports nothing is indistinguishable from a subsystem that did nothing,
-   * which is the most expensive way for a probe to fail. */
-  if (s_oam_snap_frame != snes_frame_counter) {
-    s_oam_snap_frame = snes_frame_counter;
-    debug_server_on_oam_render();
+  if (live) {
+    s_wlog_line = line + 1;
+    s_wlog_line_frame = (uint32_t)snes_frame_counter;
+    /* Per-line HDMA state must be captured here, not at end-of-frame: games can
+     * rewrite windows and scroll registers before every scanline. */
+    debug_server_on_ppu_line(line);
+    /* Snapshot the OAM the scanline renderer is about to consume, once per
+     * frame, on whichever line the host actually starts with.
+     *
+     * This used to sit inside the line == 0 block, which silently disabled it
+     * for every frame-model host: those render the visible field as lines
+     * 1..224 and never pass line 0 at all. The ring therefore stayed empty
+     * forever and oam_render_get answered {"count":0,"snaps":[]} -- "no
+     * sprites recorded" -- for a screen full of sprites. An instrument that
+     * reports nothing is indistinguishable from a subsystem that did nothing,
+     * which is the most expensive way for a probe to fail. */
+    if (s_oam_snap_frame != snes_frame_counter) {
+      s_oam_snap_frame = snes_frame_counter;
+      debug_server_on_oam_render();
+    }
   }
   PpuUpdateWidescreenOamHistory(ppu, line);
   /* Snapshot the OAM the scanline renderer is about to consume, once per
@@ -816,7 +818,7 @@ void ppu_runLine(Ppu* ppu, int line) {
    * sprites recorded" -- for a screen full of sprites. An instrument that
    * reports nothing is indistinguishable from a subsystem that did nothing,
    * which is the most expensive way for a probe to fail. */
-  if (s_oam_snap_frame != snes_frame_counter) {
+  if (live && s_oam_snap_frame != snes_frame_counter) {
     s_oam_snap_frame = snes_frame_counter;
     debug_server_on_oam_render();
   }
@@ -856,20 +858,34 @@ void ppu_runLine(Ppu* ppu, int line) {
              sizeof(ppu->overlayBuffers[kPpuOverlaySource_Obj]));
     ppu->lineHasSprites = !PPU_forcedBlank(ppu) && ppu_evaluateSprites(ppu, line - 1);
 
+    if (!pixels) return;
+
     if ((ppu->renderFlags & kPpuRenderFlags_NewRenderer) &&
         PpuOptimizedRendererHandlesMode(PPU_mode(ppu))) {
-      debug_server_on_ppu_line_drawn(line, 1, ppu->bgmode);
+      if (live) debug_server_on_ppu_line_drawn(line, 1, ppu->bgmode);
       PPU_T0; PpuDrawWholeLine(ppu, line); PPU_ACC(g_ppu_sec_line_ms);
 #ifdef SNESRECOMP_INTERP_PROFILE
       g_ppu_sec_line_n++;
 #endif
     } else {
-      debug_server_on_ppu_line_drawn(line, 0, ppu->bgmode);
+      if (live) debug_server_on_ppu_line_drawn(line, 0, ppu->bgmode);
       ppu_draw_whole_line_legacy(ppu, line);
     }
     if (ppu->mode7Hd.pixels)
       PpuDrawMode7HdLine(ppu, (unsigned)line);
   }
+}
+
+void ppu_runLine(Ppu* ppu, int line) {
+  PpuRunLineJob(ppu, line, true, true);
+}
+
+void ppu_runLineState(Ppu* ppu, int line) {
+  PpuRunLineJob(ppu, line, false, true);
+}
+
+void ppu_drawCapturedLine(Ppu* ppu, int line, bool pixels) {
+  PpuRunLineJob(ppu, line, pixels, false);
 }
 
 typedef struct PpuWindows {
