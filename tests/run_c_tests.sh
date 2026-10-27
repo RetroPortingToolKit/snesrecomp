@@ -478,6 +478,17 @@ echo "=== mod runtime: exceptions stay inside the C boundary ==="
     -o "$OUT/mod_c_boundary_test"
 (cd "$OUT" && ./mod_c_boundary_test)
 
+echo "=== mod runtime: input transforms ==="
+"${CXX:-g++}" -std=c++17 -Wall -Wextra -O1 \
+    -I "$ROOT/runner/src" \
+    "$ROOT/tests/mod_resources/input_transform_test.cpp" \
+    -x c++ "$ROOT/runner/src/mod_runtime.cpp" \
+    "$ROOT/runner/src/sha256.c" "$ROOT/runner/src/snes/tier2_capture.c" \
+    "$ROOT/runner/src/crc32.c" \
+    "$ROOT/runner/src/rom_identity.c" "$ROOT/runner/src/sha1.c" \
+    -o "$OUT/mod_input_transform_test"
+(cd "$OUT" && ./mod_input_transform_test)
+
 echo "=== mod providers: a title's built-in Mods compose with the package catalog ==="
 # The provider type is recomp-ui's. Point RECOMP_UI_ROOT at a checkout (a
 # game's recomp-ui submodule); skipped without one, like the SDL-gated tests.

@@ -138,6 +138,8 @@ typedef struct GamepadInfo {
   uint8 axis_buttons;
   uint16 last_cmd[kGamepadBtn_Count];
   Sint16 last_axis_x, last_axis_y;
+  /* Read by mod input transforms only (SnesModInputContext). */
+  Sint16 right_axis_x, right_axis_y, left_trigger, right_trigger;
 } GamepadInfo;
 
 #if SNESRECOMP_SDL3
@@ -2637,13 +2639,37 @@ static void NetplayMenuSelftest(uint32_t frame) {
   }
 }
 
+#if SNESRECOMP_ENABLE_MODS
+/* Mod input transforms (mod_runtime.h) on one local seat's button word,
+ * before netplay, replay recording, run-ahead or the guest see it. */
+static uint16 ModTransformSeat(uint16 buttons, int player) {
+  const GamepadInfo *pad = &g_gamepad[player & 1];
+  SnesModInputContext ctx = {
+    .player = player, .wram = g_ram,
+    .right_x = pad->right_axis_x, .right_y = pad->right_axis_y,
+    .left_trigger = pad->left_trigger, .right_trigger = pad->right_trigger,
+  };
+  return snes_mod_runtime_transform_input_c(buttons & 0x0fff, &ctx);
+}
+static uint32 ModTransformInputs(uint32 inputs) {
+  if (!g_mods_ready) return inputs;
+  uint32 p1 = ModTransformSeat((uint16)(inputs & 0x0fff), 0);
+  uint32 p2 = ModTransformSeat((uint16)((inputs >> 12) & 0x0fff), 1);
+  return (inputs & ~0xffffffu) | p1 | p2 << 12;
+}
+#endif
+
 static uint16_t netplay_capture_pad(void *ctx) {
   (void)ctx;
   PollKeyboardControls(snesrecomp_sdl_get_keyboard_state());
   const unsigned player = snes_netplay_input_player() == 1 ? 1 : 0;
-  return (uint16_t)snes_savestate_menu_filter_guest_input(
+  uint16_t pad = (uint16_t)snes_savestate_menu_filter_guest_input(
       (((g_input_state | g_pad_buttons) >> (player * 12)) |
        g_gamepad[player].axis_buttons) & 0x0fffu);
+#if SNESRECOMP_ENABLE_MODS
+  if (g_mods_ready) pad = ModTransformSeat(pad, (int)player);
+#endif
+  return pad;
 }
 
 static void netplay_poll_events(void *ctx, int *want_soft_exit) {
@@ -4459,6 +4485,9 @@ error_reading:;
       break;
     }
     inputs |= debug_server_get_controller_inputs();
+#if SNESRECOMP_ENABLE_MODS
+    inputs = ModTransformInputs(inputs);
+#endif
     double profile_start = ProfileStart();
     double guest_start = MonotonicSeconds();
     PushExtraSeats();
@@ -5055,7 +5084,13 @@ static void HandleGamepadAxisInput(GamepadInfo *gi, int axis, Sint16 value) {
       buttons = kSegmentToButtons[(uint8)(angle + 16 + 64) >> 5];
     }
     gi->axis_buttons = buttons;
+  } else if (axis == SDL_CONTROLLER_AXIS_RIGHTX) {
+    gi->right_axis_x = value;
+  } else if (axis == SDL_CONTROLLER_AXIS_RIGHTY) {
+    gi->right_axis_y = value;
   } else if ((axis == SDL_CONTROLLER_AXIS_TRIGGERLEFT || axis == SDL_CONTROLLER_AXIS_TRIGGERRIGHT)) {
+    *(axis == SDL_CONTROLLER_AXIS_TRIGGERLEFT ? &gi->left_trigger : &gi->right_trigger) =
+        value > 0 ? value : 0;
     if (value < 12000 || value >= 16000)  // hysteresis
       HandleGamepadInput(gi, axis == SDL_CONTROLLER_AXIS_TRIGGERLEFT ? kGamepadBtn_L2 : kGamepadBtn_R2, value >= 12000);
   }

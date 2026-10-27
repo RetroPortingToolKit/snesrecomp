@@ -255,6 +255,11 @@ std::vector<SNESModApuWriteCallback>& apu_write_callbacks() {
     return value;
 }
 
+std::vector<SNESModInputTransform>& input_transforms() {
+    static std::vector<SNESModInputTransform> value;
+    return value;
+}
+
 uint32_t& synthetic_sram_size() {
     static uint32_t value = 0;
     return value;
@@ -3083,6 +3088,7 @@ void mod_runtime_activate_plugins() {
     if (!runtime.initialized) return;
     frame_callbacks().clear();
     apu_write_callbacks().clear();
+    input_transforms().clear();
     synthetic_sram_size() = 0;
     for (SNESModActivationCallback callback : reset_callbacks())
         if (callback) callback();
@@ -3157,6 +3163,27 @@ extern "C" int snes_mod_register_apu_write_callback(
         callbacks.push_back(callback);
     return 1;
     SNES_MOD_C_END(0)
+}
+
+extern "C" int snes_mod_register_input_transform(
+    SNESModInputTransform transform) {
+    SNES_MOD_C_BEGIN
+    if (!transform) return 0;
+    auto& transforms = SNESRecomp::input_transforms();
+    if (std::find(transforms.begin(), transforms.end(), transform) ==
+        transforms.end())
+        transforms.push_back(transform);
+    return 1;
+    SNES_MOD_C_END(0)
+}
+
+extern "C" uint16_t snes_mod_runtime_transform_input_c(
+    uint16_t buttons, const SnesModInputContext* ctx) {
+    SNES_MOD_C_BEGIN
+    for (SNESModInputTransform transform : SNESRecomp::input_transforms())
+        if (transform) buttons = (uint16_t)(transform(buttons, ctx) & 0x0fffu);
+    return buttons;
+    SNES_MOD_C_END(buttons)
 }
 
 extern "C" void snes_mod_runtime_frame_tick_c(void) {
