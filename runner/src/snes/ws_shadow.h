@@ -22,6 +22,10 @@ void WsShadowReset(void);
  * For strip-streaming games (Metal Warriors), pass the WRAM camera and also
  * call WsShadowSetScroll with the PPU buffer scroll. */
 void WsShadowSetWorld(int layer, uint32_t worldX, uint32_t worldY);
+/* Per-frame opt-out for a complete hardware canvas (for example a static
+ * parallax texture). Render the actual circular VRAM map in the gutters.
+ * The next SetWorld/Frame registration restores world-source lookup. */
+void WsShadowUseVram(int layer);
 
 /* Exact, uncached map source for a streaming title. Register after SetWorld
  * each frame. Queries use the rendered scanline's scroll phase and map-width

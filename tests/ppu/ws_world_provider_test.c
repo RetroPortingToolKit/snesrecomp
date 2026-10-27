@@ -83,6 +83,17 @@ int main(void) {
   WsShadowOnVramWrite(0x5400,0xabcd);
   assert(WsShadowTile(0,256,0x200,0,0x5400,0)!=0xabcd);
   result=kWsShadowExact;
+  WsShadowUseVram(0);
+  assert(!WsShadowLayerActive(0));
+  assert(WsShadowTile(0,256,0x200,0,0x5400,0x9876)==0x9876);
+  WsShadowSetWorld(0,0,0x200);
+  WsShadowSetWorldProvider(0,provider,&p,false);
+  WsShadowSetRespectGameWrites(0,0);
+  WsShadowFrame(&p);
+  assert(WsShadowLayerActive(0));
+  calls=0;
+  got=WsShadowTile(0,256,0x200,0,0x5400,0x9876);
+  assert(calls==1 && got==(uint16_t)(0x2000|((last_x+last_y*3)&1023)));
   puts("exact world provider: high-Y, signed raster phase, native pixels, dynamic writes and lifecycle passed");
   return 0;
 }

@@ -245,6 +245,15 @@ void WsShadowSetWorldProvider(int layerIndex, WsShadowWorldProvider provider,
   s_layers[layerIndex].providerNativeOverrides = provider && nativeOverrides;
 }
 
+void WsShadowUseVram(int layerIndex) {
+  if (layerIndex < 0 || layerIndex >= kLayers) return;
+  WsShadowLayer *layer = &s_layers[layerIndex];
+  layer->active = layer->registered = layer->worldSet = layer->fold = false;
+  layer->provider = NULL;
+  layer->providerContext = NULL;
+  layer->providerNativeOverrides = false;
+}
+
 void WsShadowSetScroll(int layerIndex, uint32_t scrollX, uint32_t scrollY) {
   if (layerIndex < 0 || layerIndex >= kLayers)
     return;
