@@ -5362,9 +5362,11 @@ static void cmd_get_ppu_state(const char *args) {
              "\"windowExpandLayers\":\"0x%02x\",\"windowExpandWindows\":\"0x%02x\","
              "\"worldBands\":["
                "{\"slot\":0,\"y0\":[%u,%u,%u,%u],\"y1\":[%u,%u,%u,%u],"
-                 "\"left\":[%u,%u,%u,%u],\"right\":[%u,%u,%u,%u]},"
+                 "\"left\":[%u,%u,%u,%u],\"right\":[%u,%u,%u,%u],"
+                 "\"clipMask\":%u,\"reference\":[%u,%u,%u,%u]},"
                "{\"slot\":1,\"y0\":[%u,%u,%u,%u],\"y1\":[%u,%u,%u,%u],"
-                 "\"left\":[%u,%u,%u,%u],\"right\":[%u,%u,%u,%u]}],"
+                 "\"left\":[%u,%u,%u,%u],\"right\":[%u,%u,%u,%u],"
+                 "\"clipMask\":%u,\"reference\":[%u,%u,%u,%u]}],"
              "\"elasticBands\":%s},"
              "\"evenFrame\":%s}",
              p->inidisp, p->bgmode & 7, p->mosaic, p->obsel,
@@ -5384,9 +5386,9 @@ static void cmd_get_ppu_state(const char *args) {
              p->extraBottomCur, p->wsLayerWidenMask, p->wsLayerClamp,
              p->wsLayerMirror, p->wsLayerRepeat,
              p->wsWindowExpandLayers, p->wsWindowExpandWindows,
-             /* worldBands: per-layer authored-world spans for the
-              * world-mirror policy (PpuSetWidescreenLayerWorldMirrorBand).
-              * y1<=y0 or right<=left on a layer means that slot is off. */
+             /* worldBands: authored-world mirror/clip spans. reference=0
+              * means own scroll; 1..4 selects BG1..BG4. y1<=y0 or
+              * right<=left on a layer means that slot is off. */
              p->wsWorldY0[0][0], p->wsWorldY0[0][1], p->wsWorldY0[0][2],
              p->wsWorldY0[0][3],
              p->wsWorldY1[0][0], p->wsWorldY1[0][1], p->wsWorldY1[0][2],
@@ -5395,6 +5397,9 @@ static void cmd_get_ppu_state(const char *args) {
              p->wsWorldLeft[0][2], p->wsWorldLeft[0][3],
              p->wsWorldRight[0][0], p->wsWorldRight[0][1],
              p->wsWorldRight[0][2], p->wsWorldRight[0][3],
+             p->wsWorldClip[0], p->wsWorldReference[0][0],
+             p->wsWorldReference[0][1], p->wsWorldReference[0][2],
+             p->wsWorldReference[0][3],
              p->wsWorldY0[1][0], p->wsWorldY0[1][1], p->wsWorldY0[1][2],
              p->wsWorldY0[1][3],
              p->wsWorldY1[1][0], p->wsWorldY1[1][1], p->wsWorldY1[1][2],
@@ -5403,6 +5408,9 @@ static void cmd_get_ppu_state(const char *args) {
              p->wsWorldLeft[1][2], p->wsWorldLeft[1][3],
              p->wsWorldRight[1][0], p->wsWorldRight[1][1],
              p->wsWorldRight[1][2], p->wsWorldRight[1][3],
+             p->wsWorldClip[1], p->wsWorldReference[1][0],
+             p->wsWorldReference[1][1], p->wsWorldReference[1][2],
+             p->wsWorldReference[1][3],
              eb,
              p->evenFrame ? "true" : "false");
 }
