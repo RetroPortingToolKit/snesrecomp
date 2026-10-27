@@ -13,6 +13,7 @@
 static Snes *s_snes;
 static Ppu *s_ppu;
 static uint8_t *s_ram;
+static uint16_t s_bg1_repeat_right;
 /* A frame-local memo avoids decoding the same metatile on all eight raster
  * lines. Its size is independent of world height; collisions re-resolve. */
 static uint32_t s_tile_keys[4096];
@@ -197,6 +198,13 @@ static WsShadowSource world_provider(void *context, uint32_t tx, uint32_t ty,
                                      uint16_t *entry) {
   const MmxBgStream *stream = context;
   if (tx >= 1024 || ty >= 1024) return kWsShadowMiss;
+  if (stream == &kBgStreams[0] && s_bg1_repeat_right &&
+      tx >= (uint32_t)s_bg1_repeat_right / 8) {
+    uint32_t boundary = (uint32_t)s_bg1_repeat_right / 8;
+    uint32_t sample = boundary - 32 + ((tx - boundary) & 31);
+    *entry = source_tile(stream, sample, ty);
+    return kWsShadowMarginOverride;
+  }
   int x = (int)tx * 8, y = (int)ty * 8;
   if (stream == &kBgStreams[0] && door_body(x, y)) {
     bool left = door_body(x - 16, y), right = door_body(x + 16, y);
@@ -217,7 +225,8 @@ static WsShadowSource world_provider(void *context, uint32_t tx, uint32_t ty,
   return kWsShadowExact;
 }
 
-void Mmx23ConfigureWsBgMargins(Snes *snes, Ppu *ppu, uint8_t *ram, bool enabled) {
+void Mmx23ConfigureWsBgMarginsForRoom(Snes *snes, Ppu *ppu, uint8_t *ram,
+                                    bool enabled, uint16_t bg1RepeatRight) {
   if (!ppu) return;
   static int on = -1, debug = -1;
   if (on < 0) {
@@ -225,6 +234,8 @@ void Mmx23ConfigureWsBgMargins(Snes *snes, Ppu *ppu, uint8_t *ram, bool enabled)
     e=getenv("SNESRECOMP_WS_BG_MARGINS_DEBUG"); debug=e && e[0]!='0';
   }
   s_snes=snes; s_ppu=ppu; s_ram=ram;
+  s_bg1_repeat_right = bg1RepeatRight >= 256 && !(bg1RepeatRight & 7)
+                          ? bg1RepeatRight : 0;
   unsigned mode=ppu->bgmode & 0x37;
   /* Ostrich's heat shimmer switches to mode2 offset-per-tile while keeping
    * the same two 4bpp streams. The renderer supplies the effective raster/
@@ -264,4 +275,8 @@ void Mmx23ConfigureWsBgMargins(Snes *snes, Ppu *ppu, uint8_t *ram, bool enabled)
     if (!(calls++%120)) fprintf(stderr,"[mmx23_bg] scene=%u layers=%u/%u\n",
         scene,WsShadowLayerActive(0),WsShadowLayerActive(1));
   }
+}
+
+void Mmx23ConfigureWsBgMargins(Snes *snes, Ppu *ppu, uint8_t *ram, bool enabled) {
+  Mmx23ConfigureWsBgMarginsForRoom(snes,ppu,ram,enabled,0);
 }

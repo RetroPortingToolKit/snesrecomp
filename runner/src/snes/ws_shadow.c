@@ -1350,7 +1350,8 @@ uint16_t WsShadowTile(int layerIndex, int screenX, uint32_t wrappedY,
       WsShadowSource source = layer->provider(layer->providerContext,
                              (uint32_t)worldX >> shift,
                              (uint32_t)worldY >> shift, &exactEntry);
-      if (source == kWsShadowOverride) return exactEntry;
+      if (source == kWsShadowOverride ||
+          (source == kWsShadowMarginOverride && !native)) return exactEntry;
       if (native) return realTile;
       exact = source == kWsShadowExact;
       if (exact) WsShadowForceTile(layerIndex, (uint32_t)worldX >> shift,

@@ -81,6 +81,29 @@ int main(void) {
     }
     assert(door_body(0,0) && door_body(0,16) && door_body(0,32));
   }
+  init(); s_ram=ram; s_snes=&snes;
+  for (unsigned block=1;block<256;block++)
+    for (unsigned q=0;q<4;q++) put(rom,0x8000+block*8+q*2,0x1000+block*4+q);
+  ram[0xe800+32+10]=1; ram[0xe800+32+11]=2;
+  for (unsigned row=0;row<16;row++) for (unsigned col=0;col<16;col++) {
+    unsigned block=1+((row*16+col)%255);
+    put(ram,0x2800+512+row*32+col*2,block);
+    put(ram,0x2800+1024+row*32+col*2,col<8?block:0);
+  }
+  put(ram,0x1e5d,0xa80); put(ram,0x1e60,0x100);
+  p.hScroll[0]=0x280; p.vScroll[0]=0x100;
+  for (unsigned y=0;y<224;y+=8) for (unsigned x=0;x<256;x+=8)
+    p.vram[vram_word(&kBgStreams[0],0xa80+x,0x100+y)]=world_tile(&kBgStreams[0],0xa80+x,0x100+y);
+  Mmx23ConfigureWsBgMarginsForRoom(&snes,&p,ram,true,0xb80);
+  assert(WsShadowLayerActive(0));
+  assert(world_tile(&kBgStreams[0],0xb80,0x100)==0x0c00);
+  snes_frame_counter=100;
+  WsShadowOnVramWrite(vram_word(&kBgStreams[0],0xb80,0x100),0xdead);
+  assert(WsShadowTile(0,256,0x100,0x280,0x5000,0xdead)==world_tile(&kBgStreams[0],0xa80,0x100));
+  assert(WsShadowTile(0,100,0x100,0x280,0x5000,0x1234)==0x1234);
+  assert(WsShadowTile(0,-40,0x100,0x280,0x5000,0xdead)==world_tile(&kBgStreams[0],0xa58,0x100));
+  Mmx23ConfigureWsBgMargins(&snes,&p,ram,true);
+  assert(!s_bg1_repeat_right); /* ordinary room/load clears the extension */
   puts("X2/X3 source selection: blank terrain, object safeguard and 512px parallax alias passed");
   return 0;
 }
