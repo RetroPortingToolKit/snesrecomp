@@ -527,6 +527,19 @@ bool interp_bridge_add_pre_opcode_hook(uint32_t pc24, InterpPreOpcodeHook hook) 
     return true;
 }
 
+bool interp_bridge_remove_pre_opcode_hook(uint32_t pc24, InterpPreOpcodeHook hook) {
+    const uint32_t key = pc24 & 0x7FFFFFu;
+    for (int i = 0; i < s_pre_opcode_hook_count; ++i) {
+        if (s_pre_opcode_hooks[i].pc24 == key && s_pre_opcode_hooks[i].hook == hook) {
+            for (int j = i + 1; j < s_pre_opcode_hook_count; ++j)
+                s_pre_opcode_hooks[j - 1] = s_pre_opcode_hooks[j];
+            --s_pre_opcode_hook_count;
+            return true;
+        }
+    }
+    return false;
+}
+
 void interp_bridge_set_pre_opcode_hook(uint32_t pc24,
                                        InterpPreOpcodeHook hook) {
     if (!hook) {
@@ -2193,11 +2206,19 @@ static int _interp_run_core(CpuState *cpu, uint32_t entry_pc24,
         if (s_pre_opcode_hook_count > 0) {
             const uint32_t key = pc_before & 0x7FFFFFu;
             bool redirected = false;
-            for (int hi = 0; hi < s_pre_opcode_hook_count; hi++) {
-                if (s_pre_opcode_hooks[hi].pc24 == key) {
+            /* Snapshot this PC's callbacks first: one may add or remove
+             * registrations (a mod_hook disarming itself), which reorders the
+             * table under a live index. */
+            InterpPreOpcodeHook matched[kInterpPreOpcodeHookSlots];
+            int matched_count = 0;
+            for (int hi = 0; hi < s_pre_opcode_hook_count; hi++)
+                if (s_pre_opcode_hooks[hi].pc24 == key)
+                    matched[matched_count++] = s_pre_opcode_hooks[hi].hook;
+            for (int hi = 0; hi < matched_count; hi++) {
+                {
                     sync_interp_to_cpu(&in, cpu);
                     s_pre_opcode_redirect_valid = 0;
-                    s_pre_opcode_hooks[hi].hook(cpu, pc_before);
+                    matched[hi](cpu, pc_before);
                     sync_cpu_to_interp(cpu, &in);
                     if (s_pre_opcode_redirect_valid) {
                         in.k = (uint8_t)((s_pre_opcode_redirect_pc24 >> 16) & 0xFF);

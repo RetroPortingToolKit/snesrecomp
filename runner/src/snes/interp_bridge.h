@@ -147,6 +147,10 @@ void interp_bridge_set_pre_opcode_hook(uint32_t pc24,
  * idempotent. Returns false on invalid input/capacity exhaustion. Callbacks run
  * in registration order; a redirect completes handling for that original PC. */
 bool interp_bridge_add_pre_opcode_hook(uint32_t pc24, InterpPreOpcodeHook hook);
+/* Remove exactly the (pc24, hook) registration added above; every other
+ * owner's callback at that PC, and the order of the rest, is unchanged.
+ * Returns false when that pair is not registered. */
+bool interp_bridge_remove_pre_opcode_hook(uint32_t pc24, InterpPreOpcodeHook hook);
 void interp_bridge_pre_opcode_redirect(uint32_t pc24);
 
 /* Declare the instruction at pc24 the poll of a pure interrupt wait: what it
