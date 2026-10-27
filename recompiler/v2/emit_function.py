@@ -78,6 +78,71 @@ def _label_for(key: DecodeKey) -> str:
     return f"L_{pc:04X}_M{key.m}X{key.x}"
 
 
+def _block_entry_stack_depths(cfg: V2CFG) -> Dict[DecodeKey, set]:
+    """Local cpu->S delta (bytes pushed since entry) at each block's entry.
+
+    Each block maps to the set of deltas reaching it; None marks a path whose
+    depth is unknown (TCS/TXS). Used to refuse a `mod_hook` redirect that
+    would land at a different stack depth than the hook.
+    """
+    if cfg.entry not in cfg.blocks:
+        return {}
+    states: Dict[DecodeKey, set] = {cfg.entry: {0}}
+    work: List[DecodeKey] = [cfg.entry]
+    while work:
+        key = work.pop()
+        block = cfg.blocks.get(key)
+        if block is None:
+            continue
+        cur = set(states.get(key, ()))
+        ended = False
+        for di in block.insns:
+            if di.insn.mnem in ('RTS', 'RTL', 'RTI'):
+                ended = True
+                break
+            delta = _stack_delta_for_trampoline_scan(di)
+            cur = {None if (d is None or delta is None)
+                   else _clamp_stack_delta(d + delta) for d in cur}
+        if ended:
+            continue
+        for succ in block.successors:
+            if succ not in cfg.blocks:
+                continue
+            old = states.get(succ, set())
+            new = old | cur
+            if new != old:
+                states[succ] = new
+                work.append(succ)
+    return states
+
+
+def _mod_hook_lines(key: DecodeKey, block_pc24: int, spec,
+                    local_labels, func_name: str) -> List[str]:
+    """The armed-flag test, callback and redirect gotos of one hooked block.
+
+    docs/MOD_HOOK.md: one load + branch when disarmed. The callback may have
+    changed registers, flags and memory; every later op of the block reads
+    them from CpuState, so nothing is re-cached here. A redirect lands on the
+    target's block at the hook's own widths.
+    """
+    _name, slot, targets = spec
+    bank = (block_pc24 >> 16) & 0xFF
+    lines = [f'    if (g_snes_mod_hook_armed[{slot}]) {{']
+    if not targets:
+        lines.append(f'      (void)snes_mod_hook_dispatch(cpu, {slot}u, '
+                     f'0x{block_pc24:06X}u);')
+    else:
+        lines.append(f'      uint32 _mh = snes_mod_hook_dispatch(cpu, {slot}u, '
+                     f'0x{block_pc24:06X}u);')
+        for target16 in targets:
+            target24 = (bank << 16) | (target16 & 0xFFFF)
+            label = _label_for(DecodeKey(target24, key.m, key.x, ()))
+            assert label in local_labels, (func_name, label)
+            lines.append(f'      if (_mh == 0x{target24:06X}u) goto {label};')
+    lines.append('    }')
+    return lines
+
+
 # Immediate-mode instructions whose operand is data: changing it changes a
 # value, never a width or a control-flow edge, so every fact the analyzer
 # proved about the routine still holds. REP and SEP change the widths every
@@ -532,7 +597,8 @@ def emit_function(rom: bytes, bank: int, start: int,
                   live_operand_sites=None,
                   entry_hooks=None,
                   brk_rti_sites=None,
-                  entry_s_offset: int = 0) -> str:
+                  entry_s_offset: int = 0,
+                  mod_hooks=None) -> str:
     """Emit a complete v2 C function source for one 65816 function.
 
     Pipeline:
@@ -646,6 +712,14 @@ def emit_function(rom: bytes, bank: int, start: int,
             "",
         ])
 
+    # `mod_hook` sites of this bank: pc24 -> (c_function, slot, target pc16s).
+    # Hook and target PCs are value barriers for the decoder (docs/MOD_HOOK.md).
+    mod_by_pc24 = {pc24 & 0xFFFFFF: spec
+                   for pc24, spec in (mod_hooks or {}).items()
+                   if ((pc24 >> 16) & 0xFF) == bank}
+    mod_target_pc24s = {((bank & 0xFF) << 16) | (t & 0xFFFF)
+                        for _n, _s, targets in mod_by_pc24.values()
+                        for t in targets}
     graph = decode_function(rom, bank, start, entry_m, entry_x, end=end,
                             dispatch_helpers=dispatch_helpers,
                             indirect_call_tables=indirect_call_tables,
@@ -661,7 +735,9 @@ def emit_function(rom: bytes, bank: int, start: int,
                             brk_rti_sites=brk_rti_sites,
                             hle_entry_pcs=(set(hle_func or ()) |
                                            set(hle_spc_upload or ())),
-                            live_operand_sites=live_operand_sites)
+                            live_operand_sites=live_operand_sites,
+                            mod_hook_sites=set(mod_by_pc24) or None,
+                            mod_hook_target_sites=mod_target_pc24s or None)
     # Forward any suppressed indirect calls upward so emit_bank can
     # aggregate them into the build report. List-of-records.
     if suppressed_collector is not None:
@@ -686,7 +762,10 @@ def emit_function(rom: bytes, bank: int, start: int,
                     for pc24, name in (entry_hooks or {}).items()
                     if ((pc24 >> 16) & 0xFF) == bank}
     cfg = build_cfg(graph, instruction_blocks=get_rom_mapping() == ROM_MAP_SA1,
-                    extra_leader_pcs={pc24 & 0xFFFF for pc24 in hook_by_pc24})
+                    extra_leader_pcs=(
+                        {pc24 & 0xFFFF for pc24 in hook_by_pc24}
+                        | {pc24 & 0xFFFF for pc24 in mod_by_pc24}
+                        | {pc24 & 0xFFFF for pc24 in mod_target_pc24s}))
 
     # A tight, side-effect-free memory poll cannot execute atomically under
     # the LLE frame scheduler: the value it observes is commonly changed by
@@ -812,6 +891,38 @@ def emit_function(rom: bytes, bank: int, start: int,
     # function. The auto-promote loop in v2_regen ensures that callable
     # function exists in the same emit pass (or a later iteration).
     local_labels = {_label_for(k) for k in block_order}
+
+    # `mod_hook_target`: every body that compiles the hooked instruction must
+    # also compile each target at the hook's widths and at the same stack
+    # depth, or a redirect could not be a local goto (docs/MOD_HOOK.md).
+    mod_hook_keys = [k for k in block_order
+                     if ((bank << 16) | (k.pc & 0xFFFF)) in mod_by_pc24]
+    if mod_hook_keys:
+        depths = _block_entry_stack_depths(cfg)
+        for hk in mod_hook_keys:
+            hook24 = (bank << 16) | (hk.pc & 0xFFFF)
+            hook_name, _slot, targets = mod_by_pc24[hook24]
+            for target16 in targets:
+                target24 = (bank << 16) | (target16 & 0xFFFF)
+                tkey = next((k for k in block_order
+                             if (k.pc & 0xFFFFFF) == target24
+                             and k.m == hk.m and k.x == hk.x), None)
+                if tkey is None:
+                    raise ValueError(
+                        f"mod_hook ${hook24:06X} ({hook_name}): "
+                        f"mod_hook_target ${target24:06X} is not compiled at "
+                        f"M{hk.m}X{hk.x} in {func_name}, which compiles the "
+                        "hook; a "
+                        "redirect must land on an instruction start this body "
+                        "reaches at the hook's widths")
+                hd, td = depths.get(hk, set()), depths.get(tkey, set())
+                if (len(hd) == 1 and len(td) == 1 and None not in hd
+                        and None not in td and hd != td):
+                    raise ValueError(
+                        f"mod_hook ${hook24:06X} ({hook_name}): "
+                        f"mod_hook_target ${target24:06X} runs at stack depth "
+                        f"{next(iter(td))} but the hook at {next(iter(hd))}; "
+                        "a redirect must not change S")
 
     # ── Pre-lower IR for every block ────────────────────────────────────
     # CRITICAL: lower() advances the per-function value-id counter `vf`,
@@ -2207,6 +2318,12 @@ def emit_function(rom: bytes, bank: int, start: int,
                              if ((bank << 16) | (key.pc & 0xFFFF))
                              in hook_by_pc24}):
         src.append(f'  extern void {hook_name}(const CpuState *cpu, uint32 pc24);')
+    if mod_hook_keys:
+        # docs/MOD_HOOK.md: per-module armed flags and dispatcher, defined in
+        # the generated mod_hooks_v2.c.
+        src.append('  extern uint8 g_snes_mod_hook_armed[];')
+        src.append('  extern uint32 snes_mod_hook_dispatch(CpuState *cpu, '
+                   'unsigned slot, uint32 pc24);')
     for i, key in enumerate(block_order):
         src.append(f"  {_label_for(key)}:")
         # Trace block entry — gives us the SNES PC chain in the trace ring.
@@ -2243,6 +2360,11 @@ def emit_function(rom: bytes, bank: int, start: int,
         # Once per execution of the hooked instruction: after the deadline
         # check (a yield there hands the instruction, and with it the report,
         # to the interpreter) and before the block's cycles are charged.
+        # `mod_hook`: the mutating hook runs first. A redirect leaves before
+        # the observer, because the hooked instruction then does not execute.
+        if block_pc24 in mod_by_pc24:
+            src.extend(_mod_hook_lines(key, block_pc24, mod_by_pc24[block_pc24],
+                                       local_labels, func_name))
         if block_pc24 in hook_by_pc24:
             src.append(f'    {hook_by_pc24[block_pc24]}(cpu, 0x{block_pc24:06X}u);')
         # Cartridge coprocessors observe CPU bus accesses no earlier than this
