@@ -131,6 +131,10 @@ The candidate game SHA-256 is
 The bounded run receipts are in `runs/native-shared-wide` under the experiment
 workspace `snes-native-20261026`; preserve these with the source branches.
 This desktop measurement does not qualify original Xbox/mobile performance.
+The candidate adds 8,512 bytes of `.text` and 2,508,544 bytes of static `.bss`
+against that original game executable (10,358 more file bytes). The latter
+includes the 2 MiB caller-owned brightness cache and private captured-PPU work
+buffers. Lower-memory target qualification must include that cost.
 
 GCC and Clang passed the shared APU differential tests (both compile choices)
 and independent PPU/tile/OAM fixtures. The Mega Man X native candidate passed
@@ -149,6 +153,33 @@ the optimization. Preserve them as separate defects and fix shared behavior
 for both implementations where appropriate. Further adoption work evaluates
 introduced regressions and cross-title runtime behavior, rather than requiring
 an unrelated clean baseline.
+
+Super Metroid `00779950c3638d82a7180742bd000dbcc046fcfe` was also regenerated
+with the supported native pipeline (two byte-identical full generations) and
+built with its full feature set against the shared engine. All 17 title/unit
+tests passed. Separate game executables select only APU `LLE` versus `NATIVE`;
+its renderer is unchanged. Five warmed, alternating 3,900-frame pairs per
+stock/16:9 view, with audio enabled and the Eye fixture, matched every per-frame
+WRAM/CPU trace and the sampled image within each viewport. Paired median CPU
+reductions were 2.21% stock and 2.35% wide, but the variation exceeded these
+small effects. These runs establish matching observed behavior; they do not
+establish a robust Super Metroid speedup.
+Both binaries also passed a combined run-ahead=1, 120 FPS presentation and
+in-game save/load check at frame 3,700: 3,900 simulation records and the final
+image matched across implementations, with 7,897/7,899 actual presentations.
+This is behavior coverage, not a throughput measurement: its single paced
+pair used more native CPU time, prompting a longer balanced run-ahead check.
+That follow-up used five warmed, alternating 7,200-frame widescreen pairs with
+run-ahead=1. State/image checks passed throughout; paired CPU savings were
+11.77%, 4.52%, -1.32%, -3.71% and 2.07% (median 2.07%). It did not reproduce
+a consistent regression; its mixed results still do not demonstrate a robust
+Super Metroid speedup.
+
+The older stock-versus-wide equality assertion in its live renderer harness
+fails at frame 3,114 in the LLE baseline. Its latest widened enemy activity
+deliberately changes the simulated world, so compare the same viewport and
+input across implementations for this native regression check. Do not turn
+that existing cross-viewport assertion into a native adoption blocker.
 
 The September 2026 title measurements below use each title's default
 `SNESRECOMP_EXECUTION_MODE=lle` path. In SMW and MMX that means a faithful LLE
