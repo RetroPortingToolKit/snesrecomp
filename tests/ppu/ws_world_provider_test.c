@@ -50,6 +50,8 @@ int main(void) {
   assert(last_x==(0x1c00-40+128)/8 && last_y==(0x1300-24)/8);
   (void)WsShadowTile(0,256,0x308,896,0x5000,0xdead);
   assert(last_x==(0x1d00-128)/8);
+  (void)WsShadowTile(0,256,0x3c8,0,0x5400,0xdead);
+  assert(last_y==(0x1300+200)/8); /* output y is not a signed map-scroll delta */
   setup(0,0x200); snes_frame_counter=10;
   WsShadowOnVramWrite(0x5400,0xabcd);
   assert(WsShadowTile(0,256,0x200,0,0x5400,0)==0xabcd);
