@@ -145,7 +145,7 @@ state/rewind, Modern Zero, weapon menus, independent source packs and real
 Saber activity passed in both choices. The preceding OAM candidate additionally
 passed the Boss Rush report and 180-case pause/death/spawn ROM gates.
 
-Three broader feature checks fail at the same assertions in the frozen original
+Three broader feature checks initially failed at the same assertions in the frozen original
 and the native candidate: the upgraded Zero menu-transition body, P2 buster
 damage, and a synthetic vertically separated co-op view. They are pre-existing
 shared failures, not optimization regressions, and do not disqualify adopting
@@ -153,6 +153,12 @@ the optimization. Preserve them as separate defects and fix shared behavior
 for both implementations where appropriate. Further adoption work evaluates
 introduced regressions and cross-title runtime behavior, rather than requiring
 an unrelated clean baseline.
+The synthetic shaft fixture was subsequently found to retain Highway's valid
+per-player camera limits while changing only its copied WRAM limits. Isolating
+that artificial history, covering both WRAM fallback and valid per-player
+limits, and restoring the live history fixes the fixture without changing the
+runtime or relaxing either assertion. The complete independent-view ROM gate
+now passes in both builds (`MegamanXRecomp` commit `6fc091f`).
 
 Super Metroid `00779950c3638d82a7180742bd000dbcc046fcfe` was also regenerated
 with the supported native pipeline (two byte-identical full generations) and
