@@ -90,6 +90,12 @@ static bool stream_valid(const MmxBgStream *s, int32_t wx, int32_t wy) {
    * flicker the margins off for a frame. Two or more = not our scene. */
   if (miss > 1)
     return false;
+  /* BG1 is the terrain stream, including deliberately empty sky during the
+   * rocket ascent. Rejecting its uniform native window exposes old circular
+   * VRAM columns in the gutters. Only BG2 is repurposed as a moving object
+   * layer and needs the diversity safeguard below. */
+  if (s == &kBgStreams[0])
+    return true;
   /* Diversity: a near-uniform native sample proves nothing — some scenes
    * repurpose BG2 as a mostly-transparent OBJECT layer (X-Hunter tower
    * lifts live in the BG2 map and move by scroll). There the provider's
@@ -163,6 +169,15 @@ static bool door_body(int x, int y) {
   unsigned cache = (key * 2654435761u) >> 20;
   if (s_door_keys[cache] == key + 1) return s_door_values[cache];
   bool found = false;
+  /* Every row of the strict door body has horizontally mirrored halves.
+   * Reject ordinary terrain/empty sky before walking all three possible
+   * cap positions. This matters when the valid BG1 stream is mostly sky. */
+  uint16_t left_half=source_tile(&kBgStreams[0],tx*2,ty*2);
+  uint16_t right_half=source_tile(&kBgStreams[0],tx*2+1,ty*2);
+  if (right_half != (uint16_t)(left_half ^ 0x4000)) {
+    s_door_keys[cache]=key+1; s_door_values[cache]=false;
+    return false;
+  }
   for (int row = 0; row < 3 && !found; ++row) {
     int top = (int)ty - row;
     if (top < 0 || top + 2 >= 512) continue;
@@ -210,20 +225,31 @@ void Mmx23ConfigureWsBgMargins(Snes *snes, Ppu *ppu, uint8_t *ram, bool enabled)
     e=getenv("SNESRECOMP_WS_BG_MARGINS_DEBUG"); debug=e && e[0]!='0';
   }
   s_snes=snes; s_ppu=ppu; s_ram=ram;
+  unsigned mode=ppu->bgmode & 0x37;
+  /* Ostrich's heat shimmer switches to mode2 offset-per-tile while keeping
+   * the same two 4bpp streams. The renderer supplies the effective raster/
+   * tile scroll to WsShadowTile; source validation still applies. */
   bool scene = on && enabled && snes && ppu && ram &&
-      (ppu->bgmode & 0x37)==1 && ppu->bgXsc[0]==0x51 && ppu->bgXsc[1]==0x59;
+      (mode==1 || mode==2) && ppu->bgXsc[0]==0x51 && ppu->bgXsc[1]==0x59;
   bool any=false;
   memset(s_tile_keys,0,sizeof(s_tile_keys));
   memset(s_door_keys,0,sizeof(s_door_keys));
   if (scene) for (unsigned layer=0; layer<2; ++layer) {
     const MmxBgStream *stream=&kBgStreams[layer];
     int32_t wx=wram16(stream->worldXAddr), wy=wram16(stream->worldYAddr);
-    int32_t dx=(ppu->hScroll[layer]-wx)&1023, dy=(ppu->vScroll[layer]-wy)&1023;
-    if (dx>=512) dx-=1024;
-    if (dy>=512) dy-=1024;
+    /* These streams use 64x32 maps: hardware scrolls alias every512/256
+     * pixels, not every1024. Signed parallax in the Ostrich arena uses the
+     * equivalent scroll near1024; lifting it in a1024-wide domain selected
+     * a negative source and exposed the previous room's VRAM columns. */
+    int32_t dx=(ppu->hScroll[layer]-wx)&511, dy=(ppu->vScroll[layer]-wy)&255;
+    if (dx>=256) dx-=512;
+    if (dy>=128) dy-=256;
     wx+=dx; wy+=dy;
     if (!stream_valid(stream,wx,wy)) continue;
     WsShadowSetWorld(layer,(uint32_t)wx,(uint32_t)wy);
+    /* World and hardware origins can differ by a whole map wrap. Subsequent
+     * raster deltas must be measured from the actual hardware scroll. */
+    WsShadowSetScroll(layer,ppu->hScroll[layer],ppu->vScroll[layer]);
     WsShadowSetWorldProvider(layer,world_provider,(void *)stream,layer==0);
     WsShadowSetBlankTile(layer,-1);
     WsShadowSetRespectGameWrites(layer,60);

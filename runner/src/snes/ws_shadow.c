@@ -1336,9 +1336,13 @@ uint16_t WsShadowTile(int layerIndex, int screenX, uint32_t wrappedY,
     /* One tile can straddle the native edge under fine scroll. Its native
      * pixels remain authoritative even during an in-flight column upload. */
     if (native && !layer->providerNativeOverrides) return realTile;
-    int32_t dx = (hScroll - layer->scrollX) & 0x3ff;
+    const int32_t map_width = (layer->wide ? 64 : 32) << shift;
+    int32_t dx = (hScroll - layer->scrollX) & (map_width - 1);
+    /* wrappedY includes the output scanline (up to223), so folding this
+     * delta to half a256px map would wrap the bottom half into the prior
+     * world screen. OPT scroll aliases are normalized before adding y. */
     int32_t dy = (wrappedY - layer->scrollY) & 0x3ff;
-    if (dx >= 512) dx -= 1024;
+    if (dx >= map_width / 2) dx -= map_width;
     if (dy >= 512) dy -= 1024;
     worldX += dx;
     worldY = (int32_t)layer->worldY + dy;
