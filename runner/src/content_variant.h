@@ -14,10 +14,8 @@
  *   source   = which ROM image: the title's own launched ROM, or a
  *              user-supplied external ROM declared by a mod package.
  *
- * DEPRECATED: recompiling ROM hacks and selecting their patched images through
- * patch_path is retained for legacy compatibility only. New mods reimplement
- * hack behavior against the supported stock ROM. Title-specific ingestion and
- * import engines are separate; this notice does not deprecate those systems.
+ * ROM images are immutable. Variants can select verified stock images;
+ * ROM patches are forbidden. Use semantic content loaders and mod hooks.
  *
  * Where variants come from:
  *   - the port registers its stock variant with snes_variant_register_builtin
@@ -26,7 +24,7 @@
  *     pushes them here through snes_variant_register_declared) -- a row is
  *     AVAILABLE only when its feature is enabled in the committed plan, its
  *     module is linked into this executable, its source ROM is selected and
- *     hashes as declared, and any patch applies and hashes as declared.
+ *     hashes as declared.
  *
  * Saves: every (variant, profile) pair owns a save root. The stock variant's
  * profile 1 is the title's historical root ("saves") so upgrading changes
@@ -36,7 +34,7 @@
  *
  * Switching (host-driven, see variant_selector.h and the port's session
  * reboot): RtlWriteSram on the old root -> snes_free -> snes_variant_prepare
- * (verify + patch + select module + register frame driver + save root) ->
+ * (verify + select module + register frame driver + save root) ->
  * SnesInit(image) -> RtlReadSram. Nothing here executes guest code.
  */
 
@@ -79,11 +77,6 @@ typedef struct SnesVariantDecl {
     char source_rom_id[SNES_VARIANT_ID_CAP];  /* [[external_rom]] id, "" = the launched ROM */
     uint8_t source_sha256[32];                /* required digest of the source image */
     int has_source_sha256;
-    /* DEPRECATED: legacy patched-ROM recompilation support. New mods should
-     * reimplement hack behavior against the stock ROM instead. */
-    char patch_path[SNES_VARIANT_PATH_CAP];   /* absolute path, "" = none */
-    uint8_t patch_target_sha256[32];          /* required digest of the patched image */
-    int has_patch_target_sha256;
     /* Boot policy handed to the generic frame driver. */
     SnesGenericBootPolicy boot;
 } SnesVariantDecl;

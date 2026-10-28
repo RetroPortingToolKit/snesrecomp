@@ -1,7 +1,7 @@
 # Runtime Localization
 
 SNESrecomp supports a small runtime localization layer for game projects that
-need translation patches without modifying the user's ROM file. The first
+need translations in mutable RAM/VRAM or presentation overlays. The first
 reference title is Gundam Wing Endless Duel; its game-specific workflow lives in
 `GundamWingEndlessDuelSNESRecomp/docs/TRANSLATION_TILEMAP_REFERENCE.md`.
 
@@ -23,8 +23,8 @@ schema = 1
 default_lang = "en"
 fallback_fr = "en"
 
-[[rom_patch]]
-address = 0x017000
+[[ram_patch]]
+address = 0x001700
 source_hex = "..."
 fr_hex = "..."
 ```
@@ -36,8 +36,8 @@ while falling back cleanly for unmapped ones.
 
 ## Patch Kinds
 
-- `[[rom_patch]]` patches the in-memory cartridge image after boot. This is the
-  normal path for IPS-derived script, pointer, tilemap, or graphics bytes.
+- `[[rom_patch]]` is rejected: cartridge ROM is immutable. Move translation
+  data to RAM/VRAM, overlays, or a semantic content loader.
 - `[[ram_patch]]` patches WRAM after verifying the existing bytes.
 - `[[glyph_label]]` is an alias for RAM-backed text labels.
 - `[[vram_patch]]` patches VRAM after the game uploads graphics or tilemaps.

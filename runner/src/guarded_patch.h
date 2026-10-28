@@ -1,7 +1,7 @@
 /* Byte-match-guarded patches for trusted, statically linked mods.
  *
  * A guarded patch replaces a small run of bytes in a host-owned buffer (the
- * loaded cartridge ROM image, WRAM, coprocessor RAM, CGRAM ...) only when the
+ * WRAM, coprocessor RAM, CGRAM ...) only when the
  * bytes currently there equal the expected original. It remembers what it
  * replaced, can verify the patched bytes are still intact, and can revert.
  * A registry lets a host suspend every applied patch around a window where
@@ -11,6 +11,8 @@
  * CGRAM and Super FX RAM in Star Fox); the module makes the discipline
  * reusable and loud: every mismatch is reported through the status enum and
  * counted, never silently skipped.
+ * ROM targets, including partial overlaps, are rejected at initialization
+ * and again before writing. ROM patching is forbidden.
  */
 #pragma once
 

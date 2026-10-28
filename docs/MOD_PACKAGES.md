@@ -175,10 +175,11 @@ rival's plugin. A saved state that still has two claimants enabled is reported
 as a conflict on Play. `tests/mod_resources/exclusive_plugin_test.cpp` covers
 this through the real launcher provider.
 
-The initial operation vocabulary is intentionally narrow: trusted activation
-plugins only. Future guarded ROM writes, asset overlays, or interpreter hooks
-must retain the same pre-boot validation and no-arbitrary-code model rather than
-turning package order into an implicit patch priority.
+ROM patching is forbidden, including IPS/BPS application, recompiling patched
+ROMs, and runtime writes into the loaded cartridge image. Trusted plugins
+change behavior through declared `mod_hook` / `mod_operand` sites, input
+transforms and overlays. Content loaders consume validated semantic resources.
+Guarded writes are for mutable RAM buffers only.
 
 ## Titles with built-in Mods
 
@@ -208,16 +209,14 @@ network start never silently falls back to offline play. Netplay cold boots
 without local SRAM/autosaves and blocks state-changing emulator shortcuts;
 the synchronized game's own pause controls remain available.
 
-## Deprecated patched-ROM recompilation path
+## ROM images are immutable
 
 Do not recompile ROM hacks or use the legacy `[[patch]]` plus recompiled
 content-variant path for new mods. Reimplement the hack's intended behavior
 and data through a `.snesmod` against the supported stock ROM. See
 [the authoring guide](MOD_AUTHORING.md#reimplement-an-existing-rom-hack).
 
-The engine retains legacy manifest parsing for compatibility and reports a
-deprecation warning when a package declares `[[patch]]`. This is not an
-authoring recommendation. The remaining program-module and selector internals
-are described in [Content Variants](CONTENT_VARIANTS.md) for maintainers.
-Title-specific ingestion/import engines, including Super Mario World's and
-F-Zero Forever's, are separate work and are not deprecated by this notice.
+Legacy `[[patch]]` sections and variant `patch` fields are rejected, not
+accepted with a warning. No replacement is required before patcher removal
+ships. Program modules and stock-image selectors remain available for retail
+programs; see [Content Variants](CONTENT_VARIANTS.md).

@@ -249,7 +249,6 @@ set(SNESRECOMP_RUNNER_SOURCES
     ${SNESRECOMP_RUNNER_ROOT}/src/snes_rewind.c
     ${SNESRECOMP_RUNNER_ROOT}/src/cpu_state.c
     ${SNESRECOMP_RUNNER_ROOT}/src/program_module.c
-    ${SNESRECOMP_RUNNER_ROOT}/src/rom_patch.c
     ${SNESRECOMP_RUNNER_ROOT}/src/generic_frame_driver.c
     ${SNESRECOMP_RUNNER_ROOT}/src/beam_frame_driver.c
     ${SNESRECOMP_RUNNER_ROOT}/src/content_variant.c

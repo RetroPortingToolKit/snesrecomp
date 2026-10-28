@@ -1,10 +1,10 @@
-# Collection catalog and guarded patch imports (experimental)
+# Collection catalog (experimental)
 
 For runtime folder/ZIP installation use [DATA_PACKS.md](DATA_PACKS.md). The
 INI format below is the lower-level reviewed donor/import format used by
 F-Zero tooling; it is not a second runtime ZIP envelope.
 
-`runner/src/content_pack.h` is a host-neutral catalog and guarded IPS/BPS loader.
+`runner/src/content_pack.h` is a host-neutral collection catalog.
 It deliberately does not merge cartridge address spaces or infer which changed
 bytes belong to a course. A pack is one independently supplied resource with a
 game-specific adapter, named collections (cups), and named entries (tracks).
@@ -19,7 +19,7 @@ F-Zero's prototype is the first consumer.
 - A cup may describe one track or many. There is no five-track assumption in
   the framework. Track IDs are unique within their pack; every cup must have
   at least one track and every track must refer to a cup in its pack.
-- Availability is a host concern: a supplied patch, build capability, enabled
+- Availability is a host concern: supplied data, build capability, enabled
   flag, and game-adapter support determine which collections enter a menu.
 - A missing persistent key fails resolution. Do not replace it with the entry
   now occupying its former array index.
@@ -61,34 +61,14 @@ order on the host's display order. Built-in entries may be registered through
 own their data until `cp_catalog_free`. Failed parsing/addition leaves existing
 objects intact.
 
-## Patch execution
+## Resource loading
 
-`cp_patch_apply` detects format from magic, supports IPS literals/RLE/EOF size
-extensions and all four BPS commands (including overlapping TargetCopy), and
-checks all three BPS CRCs. It rejects truncated streams, bad ranges and images
-larger than 16 MiB. Source bytes and output parameters remain unchanged on
-failure; successful output belongs to the caller (`free`).
+ROM patching is forbidden. `cp_patch_apply`, `cp_pack_apply`, and the IPS/BPS
+implementation have been removed. This module only owns the stable collection
+catalog. A title adapter must load and validate semantic resources against the
+stock program; a donor image cannot supply replacement code.
 
-Use `cp_pack_apply` at the trust boundary. It additionally checks the source
-and complete output SHA-256 against the manifest. IPS has no source identity,
-so its file extension or apparent successful application is insufficient.
-Different encodings of the same output, including IPS versus BPS, are accepted.
-Apply every pack to its declared immutable base, never to a previous pack's
-patched image.
-
-Additive resource consumers should decode and validate typed resources, discard
-the donor image and keep their canonical engine and shared hooks. F-Zero's
-course library follows this model. The framework does not infer resource
-ownership from changed ROM bytes.
-
-Before executing code-changing content without a matching native module,
-`cpu_select_interpreted_program()` installs an intentionally empty dispatch
-table. `cpu_select_program(NULL, ...)` means **restore stock**, not disable AOT.
-Game-specific native hooks also need to be disabled or separately qualified.
-Program selection remains a launch-time operation, never a mid-frame switch.
-
-Link `content_pack.c`, `content_patch.c`, and the existing `sha256.c`. These
-modules do not depend on SDL, the mod runtime, ROMs, or a generated program.
+Link `content_pack.c`; it has no SDL or generated-program dependency.
 
 ## Validation
 
@@ -99,7 +79,6 @@ ctest --test-dir build-content-packs --output-on-failure
 ```
 
 The standalone suite covers sparse collections, stable keys after reordering,
-duplicate rejection, transactional malformed manifests, IPS expansion/RLE/
-truncation, BPS relative copies/overlap, and byte-by-byte CRC corruption.
+duplicate rejection and transactional malformed manifests.
 `tests/runtime_dispatch/known_lle_entry_test.c` separately checks the empty
 program's isolation from both stock and alternate compiled dispatch tables.

@@ -1,5 +1,4 @@
 #include "content_pack.h"
-#include "sha256.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -145,33 +144,4 @@ const CpCup *cp_catalog_cup(const CpCatalog *c, const char *key, const CpPack **
         return &p->cups[i];
     }
     return NULL;
-}
-int cp_pack_apply(const CpPack *p, const uint8_t *source, size_t size,
-                  const char *path, uint8_t **out, size_t *out_size, char *error, size_t cap) {
-    if (!source || !size || size > CP_ROM_LIMIT) return fail(error, cap, "Invalid source ROM size");
-    uint8_t hash[32]; sha256_compute(source, size, hash);
-    if (memcmp(hash, p->source_hash, 32)) return fail(error, cap, "Patch requires a different source ROM");
-    FILE *f = fopen(path, "rb");
-    if (!f) return fail(error, cap, "Selected patch is missing; locate it in Track Packs");
-    uint8_t *patch = NULL, *target = NULL; size_t target_size = 0; int ok = 0;
-    if (fseek(f, 0, SEEK_END)) goto done;
-    long length = ftell(f);
-    if (length < 8 || length > CP_ROM_LIMIT * 2 || fseek(f, 0, SEEK_SET)) goto done;
-    patch = malloc((size_t)length);
-    if (!patch || fread(patch, 1, (size_t)length, f) != (size_t)length) goto done;
-    if (!cp_patch_apply(source, size, patch, (size_t)length, &target, &target_size, error, cap)) {
-        free(patch); fclose(f); return 0;
-    }
-    sha256_compute(target, target_size, hash);
-    int matches = !memcmp(hash, p->target_hash, 32);
-    for (unsigned i = 0; i < p->alternate_target_count && i < 8; ++i)
-        matches |= !memcmp(hash, p->alternate_target_hash[i], 32);
-    if (!matches) {
-        free(target); free(patch); fclose(f);
-        return fail(error, cap, "Patch output does not match this pack/revision; nothing activated");
-    }
-    *out = target; *out_size = target_size; ok = 1;
-done:
-    free(patch); fclose(f);
-    return ok ? 1 : fail(error, cap, "Cannot read bounded patch input");
 }

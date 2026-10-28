@@ -1,8 +1,11 @@
 /* Unit tests for runner/src/guarded_patch.{c,h}. */
 #include "guarded_patch.h"
+#include "snes/snes.h"
 
 #include <stdio.h>
 #include <string.h>
+
+Snes *g_snes;
 
 static int g_failures = 0;
 #define CHECK(cond)                                                            \
@@ -19,6 +22,23 @@ int main(void) {
   const uint8_t expected[4] = {10, 11, 12, 13};
   const uint8_t replacement[4] = {0xa1, 0xac, 0, 0};
   GuardedPatch p;
+  /* This region is cartridge ROM; the rest of the buffer represents RAM.
+   * No whole or partial overlap may be initialized or applied. */
+  Cart cart = {0};
+  Snes snes = {0};
+  cart.rom = rom + 16;
+  cart.romSize = 16;
+  snes.cart = &cart;
+  g_snes = &snes;
+  CHECK(guarded_patch_init(&p, "rom", rom + 16, 4, expected, replacement) == kGuardedPatch_Invalid);
+  CHECK(guarded_patch_init(&p, "overlap-start", rom + 15, 2, expected, replacement) == kGuardedPatch_Invalid);
+  CHECK(guarded_patch_init(&p, "overlap-end", rom + 31, 2, expected, replacement) == kGuardedPatch_Invalid);
+  CHECK(guarded_patch_init(&p, "ram", rom + 10, 4, expected, replacement) == kGuardedPatch_Ok);
+  /* A forged descriptor or changed cartridge must not bypass the guard. */
+  p.target = rom + 16;
+  CHECK(guarded_patch_apply(&p) == kGuardedPatch_Invalid);
+  CHECK(rom[16] == 16);
+  g_snes = NULL;
   CHECK(guarded_patch_init(&p, "ship", rom + 10, 4, expected, replacement) ==
         kGuardedPatch_Ok);
   CHECK(guarded_patch_init(&p, "bad", NULL, 4, expected, replacement) ==

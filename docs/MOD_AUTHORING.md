@@ -307,6 +307,11 @@ bundled source packages belong under
 
 ## Reimplement an existing ROM hack
 
+ROM patching is forbidden: do not apply IPS/BPS, recompile patched ROMs, or
+write into the loaded cartridge image. Legacy package `[[patch]]` sections
+are rejected. Use declared mod hooks/operands, input transforms, presentation
+overlays and validated semantic content loaders.
+
 **Do not recompile ROM hacks.** The recommended approach is to understand the
 hack's changes and implement them as a `.snesmod` using the supported stock
 ROM and the game's mod integration. Players keep using their stock ROM.

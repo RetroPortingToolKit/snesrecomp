@@ -51,14 +51,11 @@ struct State {
     std::map<std::string, std::string> language_fallbacks;
     std::string error;
     std::vector<Glyph> glyphs;
-    std::vector<Patch> rom_patches;
     std::vector<Patch> ram_patches;
     std::vector<Patch> vram_patches;
     bool initialized = false;
-    bool rom_dirty = true;
     bool vram_dirty = true;
     uint64_t ram_applies = 0;
-    uint64_t rom_applies = 0;
     uint64_t vram_applies = 0;
 };
 
@@ -272,14 +269,6 @@ const std::vector<uint8_t>* patch_native_target(const Patch& patch,
     return nullptr;
 }
 
-std::vector<uint8_t> patch_target(const Patch& patch,
-                                  const std::string& language) {
-    std::vector<uint8_t> scratch;
-    const std::vector<uint8_t>* native =
-        patch_native_target(patch, language, scratch);
-    return native ? *native : patch.source;
-}
-
 bool patch_matches_any_target(const Patch& patch, const uint8_t* data,
                               size_t size) {
     if (size == patch.source.size() &&
@@ -345,26 +334,6 @@ void apply_ram_patch(const Patch& patch) {
     }
 }
 
-void apply_rom_patch(const Patch& patch) {
-    if (!g_snes || !g_snes->cart || !g_snes->cart->rom ||
-        patch.source.empty())
-        return;
-    if (patch.address + patch.source.size() > g_snes->cart->romSize)
-        return;
-    const std::vector<uint8_t> target =
-        patch_target(patch, state().language.empty()
-                     ? state().default_lang : state().language);
-    if (target.size() != patch.source.size())
-        return;
-    uint8_t* base = g_snes->cart->rom + patch.address;
-    if (!patch_matches_any_target(patch, base, patch.source.size()))
-        return;
-    if (!std::equal(target.begin(), target.end(), base)) {
-        std::copy(target.begin(), target.end(), base);
-        state().rom_applies++;
-    }
-}
-
 void apply_vram_patch(const Patch& patch) {
     if (!g_ppu || patch.source.empty())
         return;
@@ -410,10 +379,6 @@ void apply_vram_patch(const Patch& patch) {
 }
 
 Patch* current_patch(const std::string& section) {
-    if (section == "rom_patch") {
-        if (state().rom_patches.empty()) return nullptr;
-        return &state().rom_patches.back();
-    }
     if (section == "entry" || section == "ram_patch" ||
         section == "glyph_label") {
         if (state().ram_patches.empty()) return nullptr;
@@ -448,8 +413,8 @@ bool parse_table(const fs::path& path, std::string* error) {
             if (section == "glyph") {
                 state().glyphs.emplace_back();
             } else if (section == "rom_patch") {
-                state().rom_patches.emplace_back();
-                state().rom_patches.back().kind = section;
+                if (error) *error = "ROM patching is forbidden; use RAM/VRAM translations or a content loader";
+                return false;
             } else if (section == "entry" || section == "ram_patch" ||
                        section == "glyph_label") {
                 state().ram_patches.emplace_back();
@@ -574,7 +539,6 @@ extern "C" void snes_text_xlate_identity_c(char* out, int cap) {
 
 extern "C" void snes_text_xlate_set_language_c(const char* language) {
     state().language = language && language[0] ? language : "off";
-    state().rom_dirty = true;
     state().vram_dirty = true;
 }
 
@@ -586,11 +550,6 @@ extern "C" void snes_text_xlate_shutdown_c(void) {
 extern "C" void snes_text_xlate_on_frame_c(void) {
     if (!state().initialized)
         return;
-    if (state().rom_dirty) {
-        for (const Patch& patch : state().rom_patches)
-            apply_rom_patch(patch);
-        state().rom_dirty = false;
-    }
     for (const Patch& patch : state().ram_patches)
         apply_ram_patch(patch);
     if (state().vram_dirty) {
@@ -624,14 +583,13 @@ extern "C" int snes_text_xlate_debug_json_c(const char* subcmd,
     return std::snprintf(out, static_cast<size_t>(cap),
         "{\"ok\":true,\"language\":\"%s\",\"effective_language\":\"%s\","
         "\"table\":\"%s\","
-        "\"rom_patches\":%zu,\"ram_patches\":%zu,\"vram_patches\":%zu,"
+        "\"ram_patches\":%zu,\"vram_patches\":%zu,"
         "\"glyphs\":%zu,\"language_fallbacks\":%zu,"
-        "\"rom_applies\":%llu,\"ram_applies\":%llu,\"vram_applies\":%llu}",
+        "\"ram_applies\":%llu,\"vram_applies\":%llu}",
         language.c_str(), effective.c_str(), table_path.c_str(),
-        state().rom_patches.size(), state().ram_patches.size(),
+        state().ram_patches.size(),
         state().vram_patches.size(),
         state().glyphs.size(), state().language_fallbacks.size(),
-        static_cast<unsigned long long>(state().rom_applies),
         static_cast<unsigned long long>(state().ram_applies),
         static_cast<unsigned long long>(state().vram_applies));
 }

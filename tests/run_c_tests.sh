@@ -489,6 +489,16 @@ echo "=== mod runtime: input transforms ==="
     -o "$OUT/mod_input_transform_test"
 (cd "$OUT" && ./mod_input_transform_test)
 
+echo "=== ROM patches rejected; stock variants and RAM translations work ==="
+"${CXX:-g++}" -std=c++17 -Wall -Wextra -O1 \
+    -I "$ROOT/runner/src" \
+    "$ROOT/tests/mod_resources/no_rom_patch_test.cpp" \
+    "$ROOT/runner/src/snes_text_xlate.cpp" \
+    -x c++ "$ROOT/runner/src/sha256.c" "$ROOT/runner/src/snes/tier2_capture.c" \
+    "$ROOT/runner/src/crc32.c" "$ROOT/runner/src/rom_identity.c" \
+    "$ROOT/runner/src/sha1.c" -o "$OUT/no_rom_patch_test"
+"$OUT/no_rom_patch_test" "$OUT/no_rom_patch_fixture"
+
 echo "=== mod providers: a title's built-in Mods compose with the package catalog ==="
 # The provider type is recomp-ui's. Point RECOMP_UI_ROOT at a checkout (a
 # game's recomp-ui submodule); skipped without one, like the SDL-gated tests.
@@ -572,15 +582,6 @@ echo "=== program module registry ==="
     -o "$OUT/program_module_test"
 "$OUT/program_module_test"
 
-echo "=== ROM patch (IPS/BPS) ==="
-"$CC" -std=c11 -Wall -Wextra -Werror -O1 \
-    -I "$ROOT/runner/src" \
-    "$ROOT/tests/rom_patch/rom_patch_test.c" \
-    "$ROOT/runner/src/rom_patch.c" \
-    "$ROOT/runner/src/crc32.c" \
-    -o "$OUT/rom_patch_test"
-"$OUT/rom_patch_test"
-
 echo "=== content variants + selector ==="
 "$CC" -std=c11 -Wall -Wextra -Werror -O1 \
     -I "$ROOT/runner/src" -I "$ROOT/runner/src/snes" -I "$ROOT/third_party" \
@@ -589,7 +590,6 @@ echo "=== content variants + selector ==="
     "$ROOT/runner/src/content_variant.c" \
     "$ROOT/runner/src/variant_selector.c" \
     "$ROOT/runner/src/program_module.c" \
-    "$ROOT/runner/src/rom_patch.c" \
     "$ROOT/runner/src/crc32.c" \
     "$ROOT/runner/src/sha256.c" \
     "$ROOT/runner/src/snes_overlay_draw.c" \

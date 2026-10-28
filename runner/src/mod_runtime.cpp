@@ -149,20 +149,8 @@ struct VariantRow {
     uint32_t selector_wram_addr = 0;
     uint8_t selector_wram_value = 0;
     std::string source_rom;          // [[external_rom]] id, "" = launched ROM
-    std::string patch;               // [[patch]] id, "" = none
     std::vector<std::pair<uint32_t, uint8_t>> boot_pokes;
     uint32_t boot_entry = 0;
-};
-
-/* DEPRECATED: legacy patched-ROM recompilation compatibility only.
- * New mods reimplement hack behavior against the stock ROM through trusted
- * plugins and supported package data, rather than recompiling patched ROMs.
- * Title-specific ingestion/import engines are a separate integration path. */
-struct PatchRow {
-    std::string feature_id;
-    std::string id;
-    std::string file;                // relative to the package version dir
-    std::string target_sha256;       // digest of the patched image
 };
 
 struct Package {
@@ -180,7 +168,6 @@ struct Package {
     std::vector<Option> options;
     std::vector<Resource> resources;
     std::vector<VariantRow> variants;
-    std::vector<PatchRow> patches;
 };
 
 struct FeatureSelection {
@@ -549,11 +536,9 @@ bool read_manifest(const fs::path& path, Package& out, std::string* error) {
         Plugin,
         Resource,
         Variant,
-        Patch,
     };
     Section section = Section::Package;
     VariantRow* variant = nullptr;
-    PatchRow* patch = nullptr;
     Target* target = nullptr;
     Feature* feature = nullptr;
     Option* option = nullptr;
@@ -598,7 +583,6 @@ bool read_manifest(const fs::path& path, Package& out, std::string* error) {
             choice = nullptr;
             resource = nullptr;
             variant = nullptr;
-            patch = nullptr;
             if (name == "target") {
                 section = Section::Target;
                 out.targets.emplace_back();
@@ -631,9 +615,8 @@ bool read_manifest(const fs::path& path, Package& out, std::string* error) {
                 out.variants.emplace_back();
                 variant = &out.variants.back();
             } else if (name == "patch") {
-                section = Section::Patch;
-                out.patches.emplace_back();
-                patch = &out.patches.back();
+                set_error(error, "ROM patching is forbidden; use mod hooks or semantic content packs");
+                return false;
             } else {
                 set_error(error, "unsupported manifest section [[" + name + "]]");
                 return false;
@@ -792,7 +775,10 @@ bool read_manifest(const fs::path& path, Package& out, std::string* error) {
                                                   variant->selector_wram_value);
                     if (parsed) variant->has_selector_screen = true;
                 } else if (key == "source_rom") parsed = string_field(variant->source_rom);
-                else if (key == "patch") parsed = string_field(variant->patch);
+                else if (key == "patch") {
+                    set_error(error, "ROM patching is forbidden; remove the variant patch field");
+                    return false;
+                }
                 else if (key == "boot_pokes") {
                     parsed = parse_string(value, string_value) &&
                              parse_boot_pokes(string_value, variant->boot_pokes);
@@ -800,15 +786,6 @@ bool read_manifest(const fs::path& path, Package& out, std::string* error) {
                     parsed = parse_hex_u32(value, variant->boot_entry) &&
                              variant->boot_entry <= 0xFFFFFFu;
                 } else known = false;
-                break;
-            case Section::Patch:
-                patch = out.patches.empty() ? nullptr : &out.patches.back();
-                if (!patch) parsed = false;
-                else if (key == "feature") parsed = string_field(patch->feature_id);
-                else if (key == "id") parsed = string_field(patch->id);
-                else if (key == "file") parsed = string_field(patch->file);
-                else if (key == "target_sha256") parsed = string_field(patch->target_sha256);
-                else known = false;
                 break;
         }
         if (!known || !parsed) {
@@ -892,22 +869,6 @@ bool read_manifest(const fs::path& path, Package& out, std::string* error) {
         if (item.file_description.empty() && !resource_is_directory(item))
             item.file_description = "Owner resource";
     }
-    std::set<std::pair<std::string, std::string>> patch_ids;
-    for (const PatchRow& item : out.patches) {
-        const bool escapes = item.file.empty() ||
-                             item.file.find("..") != std::string::npos ||
-                             item.file[0] == '/' || item.file[0] == '\\' ||
-                             item.file.find(':') != std::string::npos;
-        if (!find_feature(out, item.feature_id) || !valid_id(item.id) || escapes ||
-            !patch_ids.insert({item.feature_id, item.id}).second) {
-            set_error(error, "manifest has an invalid patch");
-            return false;
-        }
-        if (!item.target_sha256.empty() && !valid_sha256(item.target_sha256)) {
-            set_error(error, "manifest has an invalid patch target_sha256");
-            return false;
-        }
-    }
     std::set<std::string> variant_ids;
     for (VariantRow& item : out.variants) {
         if (!find_feature(out, item.feature_id) || !valid_id(item.id) ||
@@ -924,23 +885,6 @@ bool read_manifest(const fs::path& path, Package& out, std::string* error) {
                              "of its feature");
             return false;
         }
-        if (!item.patch.empty() &&
-            std::none_of(out.patches.begin(), out.patches.end(),
-                         [&](const PatchRow& p) {
-                             return p.feature_id == item.feature_id &&
-                                    p.id == item.patch;
-                         })) {
-            set_error(error, "variant '" + item.id +
-                             "' names a patch that is not declared by its feature");
-            return false;
-        }
-    }
-    if (!out.patches.empty()) {
-        std::fprintf(stderr,
-            "snesrecomp: package '%s': [[patch]] patched-ROM recompilation "
-            "is deprecated; reimplement ROM-hack behavior as stock-ROM mods. "
-            "Legacy manifest accepted for compatibility.\n",
-            out.id.c_str());
     }
     return true;
 }
@@ -2968,7 +2912,7 @@ void copy_c(char* dst, size_t cap, const std::string& src) {
 }
 
 /* Hand every package-declared [[variant]] to the content-variant registry.
- * Availability (feature enabled, ROM selected and hashing right, patch
+ * Availability (feature enabled, ROM selected and hashing right, module
  * applying) is the registry's job at refresh time; this only declares. */
 void publish_variants(Runtime& runtime) {
     snes_variant_clear_declared();
@@ -2995,16 +2939,6 @@ void publish_variants(Runtime& runtime) {
                 if (res && !res->sha256.empty() &&
                     hex_to_bytes(res->sha256, decl.source_sha256, 32))
                     decl.has_source_sha256 = 1;
-            }
-            if (!row.patch.empty()) {
-                for (const PatchRow& patch : package->patches) {
-                    if (patch.feature_id != row.feature_id || patch.id != row.patch) continue;
-                    const fs::path path = package->root / patch.file;
-                    copy_c(decl.patch_path, sizeof(decl.patch_path), path.string());
-                    if (!patch.target_sha256.empty() &&
-                        hex_to_bytes(patch.target_sha256, decl.patch_target_sha256, 32))
-                        decl.has_patch_target_sha256 = 1;
-                }
             }
             decl.boot.poke_count = 0;
             for (const auto& [addr, value] : row.boot_pokes) {

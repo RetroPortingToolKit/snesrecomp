@@ -14,7 +14,6 @@
 #include "common_cpu_infra.h"
 #include "common_rtl.h"
 #include "generic_frame_driver.h"
-#include "rom_patch.h"
 #include "sha256.h"
 #include "util.h"
 
@@ -22,7 +21,6 @@
 #include "mod_runtime.h"
 #endif
 
-#define VARIANT_MAX_IMAGE (16u * 1024u * 1024u)
 
 static SnesContentVariant s_variants[SNES_VARIANT_MAX];
 static unsigned s_count;
@@ -232,41 +230,14 @@ static uint8_t *resolve_image(const SnesVariantDecl *d,
         return NULL;
     }
 
-    uint8_t *image = NULL;
-    size_t image_size = 0;
-    if (d->patch_path[0]) {
-        size_t patch_size = 0;
-        uint8_t *patch = ReadWholeFile(d->patch_path, &patch_size);
-        if (!patch) {
-            snprintf(reason, reason_cap, "patch file missing");
-            free(owned_source);
-            return NULL;
-        }
-        RomPatchStatus st = snes_rom_patch_apply(source, source_size, patch, patch_size,
-                                            VARIANT_MAX_IMAGE, &image, &image_size);
-        free(patch);
-        if (st != kRomPatch_Ok) {
-            snprintf(reason, reason_cap, "%s", snes_rom_patch_status_text(st));
-            free(owned_source);
-            return NULL;
-        }
-        if (d->has_patch_target_sha256 &&
-            !digest_matches(image, image_size, d->patch_target_sha256)) {
-            snprintf(reason, reason_cap, "patched ROM does not match its declared digest");
-            free(image);
-            free(owned_source);
-            return NULL;
-        }
-    } else {
-        image = malloc(source_size);
-        if (!image) {
-            snprintf(reason, reason_cap, "out of memory");
-            free(owned_source);
-            return NULL;
-        }
-        memcpy(image, source, source_size);
-        image_size = source_size;
+    uint8_t *image = malloc(source_size);
+    if (!image) {
+        snprintf(reason, reason_cap, "out of memory");
+        free(owned_source);
+        return NULL;
     }
+    memcpy(image, source, source_size);
+    size_t image_size = source_size;
     free(owned_source);
     *out_size = image_size;
     reason[0] = '\0';

@@ -3,16 +3,10 @@
 This is a maintainer reference for the existing module registry, selector,
 and save namespaces. For mod authoring, use [`MOD_AUTHORING.md`](MOD_AUTHORING.md).
 
-**Recompiling ROM hacks is deprecated.** Do not build new mods by recompiling
-a patched ROM and selecting it through the legacy package patch/variant
-mechanism. Reimplement the hack's behavior and supported data as a `.snesmod`
-against the stock ROM. Legacy patch declarations remain readable with a
-deprecation warning for compatibility; their authoring example has been
-removed.
-
-Super Mario World's ingestion project and F-Zero Forever's import engine are
-separate title-specific work. This notice does not deprecate those systems or
-prescribe their implementation.
+**ROM patching is forbidden.** IPS/BPS application, recompilation of patched
+ROMs and runtime writes into the cartridge image are unsupported. Legacy
+`[[patch]]` sections and variant `patch` fields are rejected. Use trusted mod
+hooks and semantic content loaders against stock code instead.
 
 A **content variant** identifies a program selection inside an executable.
 Its **program module** supplies the compiled dispatch tables and image
@@ -149,6 +143,6 @@ without it.
 ## Tests
 
 - `tests/test_program_module_emit.py` -- descriptor, namespace, identity rules.
-- `tests/program_module/`, `tests/rom_patch/`, `tests/content_variant/` -- C
+- `tests/program_module/`, `tests/content_variant/` -- C
   unit tests (registry, IPS/BPS with every checksum, save roots + selector
   state machine), all in `tests/run_c_tests.sh` and each with a `run.ps1`.

@@ -1,7 +1,21 @@
 /* See guarded_patch.h. */
 #include "guarded_patch.h"
+#include "snes/snes.h"
 
 #include <string.h>
+
+extern Snes *g_snes;
+
+/* Compare integer addresses: unrelated C objects cannot be pointer-compared.
+ * Check overlap, including a buffer beginning before the ROM allocation. */
+static int overlaps_rom(const uint8_t *target, size_t size) {
+  if (!g_snes || !g_snes->cart || !g_snes->cart->rom ||
+      g_snes->cart->romSize <= 0 || !size) return 0;
+  uintptr_t begin = (uintptr_t)target;
+  uintptr_t rom = (uintptr_t)g_snes->cart->rom;
+  size_t rom_size = (size_t)g_snes->cart->romSize;
+  return begin >= rom ? begin - rom < rom_size : rom - begin < size;
+}
 
 static GuardedPatch *s_registry[GUARDED_PATCH_MAX_REGISTERED];
 static uint32_t s_registered;
@@ -14,7 +28,7 @@ GuardedPatchStatus guarded_patch_init(GuardedPatch *patch, const char *name,
   if (!patch) return kGuardedPatch_Invalid;
   memset(patch, 0, sizeof(*patch));
   if (!target || size == 0 || size > GUARDED_PATCH_MAX_BYTES || !expected ||
-      !replacement) {
+      !replacement || overlaps_rom(target, size)) {
     patch->last_status = kGuardedPatch_Invalid;
     return kGuardedPatch_Invalid;
   }
@@ -29,7 +43,8 @@ GuardedPatchStatus guarded_patch_init(GuardedPatch *patch, const char *name,
 
 static int valid(const GuardedPatch *patch) {
   return patch && patch->target && patch->size > 0 &&
-         patch->size <= GUARDED_PATCH_MAX_BYTES;
+         patch->size <= GUARDED_PATCH_MAX_BYTES &&
+         !overlaps_rom(patch->target, patch->size);
 }
 
 GuardedPatchStatus guarded_patch_apply(GuardedPatch *patch) {
@@ -109,7 +124,7 @@ void guarded_patch_suspend_all(void) {
   if (s_suspend_depth++ != 0) return;
   for (uint32_t i = 0; i < s_registered; i++) {
     GuardedPatch *p = s_registry[i];
-    if (!p->applied || p->suspended) continue;
+    if (!valid(p) || !p->applied || p->suspended) continue;
     if (memcmp(p->target, p->replacement, p->size) != 0) {
       p->mismatch_count++;
       p->last_status = kGuardedPatch_PatchMismatch;
@@ -124,7 +139,7 @@ void guarded_patch_resume_all(void) {
   if (--s_suspend_depth != 0) return;
   for (uint32_t i = 0; i < s_registered; i++) {
     GuardedPatch *p = s_registry[i];
-    if (!p->applied || !p->suspended) continue;
+    if (!valid(p) || !p->applied || !p->suspended) continue;
     if (memcmp(p->target, p->expected, p->size) != 0) {
       /* The guest changed the original bytes while suspended; leave them
        * and drop the patch so we never clobber live guest state. */

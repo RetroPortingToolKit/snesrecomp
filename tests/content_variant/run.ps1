@@ -11,7 +11,6 @@ $args = @(
     "$root\runner\src\content_variant.c",
     "$root\runner\src\variant_selector.c",
     "$root\runner\src\program_module.c",
-    "$root\runner\src\rom_patch.c",
     "$root\runner\src\crc32.c",
     "$root\runner\src\sha256.c",
     "$root\runner\src\snes_overlay_draw.c",
