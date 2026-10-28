@@ -15,6 +15,15 @@
 #include <stdlib.h>
 #include <string.h>
 
+#ifdef _WIN32
+static int test_setenv(const char *key, const char *value, int overwrite) {
+    return !overwrite && getenv(key) ? 0 : _putenv_s(key, value);
+}
+static int test_unsetenv(const char *key) { return _putenv_s(key, ""); }
+#define setenv test_setenv
+#define unsetenv test_unsetenv
+#endif
+
 /* Found through -I lib/recomp-net/src (run_c_tests.sh). */
 #include "lobby/rnet_lobby_client.c"
 #include "../../runner/src/lobby/snes_lobby_client.c"

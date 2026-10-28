@@ -8,11 +8,12 @@ CC="${CC:-gcc}"
 mkdir -p "$OUT"
 
 LAUNCHER_LIBS=""
+NETWORK_LIBS=""
 GC_SECTIONS_LINKER="-Wl,--gc-sections"
 FIBER_PLATFORM_FLAGS=""
 case "$(uname -s)" in
     Darwin) GC_SECTIONS_LINKER="-Wl,-dead_strip"; FIBER_PLATFORM_FLAGS="-Wno-error=deprecated-declarations" ;;
-    MINGW*|MSYS*) LAUNCHER_LIBS="-lcomdlg32" ;;
+    MINGW*|MSYS*) LAUNCHER_LIBS="-lcomdlg32"; NETWORK_LIBS="-lws2_32 -liphlpapi -lbcrypt -lshell32" ;;
 esac
 
 echo "=== launcher ==="
@@ -389,7 +390,7 @@ echo "=== SNES lobby caps (widescreen keys over recomp-net's client) ==="
     "$ROOT/lib/recomp-net/src/nat/rnet_host_ice.c" \
     "$ROOT/lib/recomp-net/src/nat/rnet_sig_hold.c" \
     "$ROOT/lib/recomp-net/src/lobby/rnet_ice_rtt.c" \
-    -o "$OUT/snes_lobby_caps_test"
+    $NETWORK_LIBS -o "$OUT/snes_lobby_caps_test"
 "$OUT/snes_lobby_caps_test"
 
 echo "=== keybinds: the runner-layout keyboard word ==="
@@ -399,7 +400,7 @@ KB_SDL_CFLAGS=""; KB_SDL_LIBS=""; KB_SDL_DEF=""
 if pkg-config --exists sdl3 2>/dev/null; then
     KB_SDL_CFLAGS="$(pkg-config --cflags sdl3)"
     KB_SDL_LIBS="$(pkg-config --libs sdl3)"
-    KB_SDL_DEF="-DSNESRECOMP_SDL3=1"
+    KB_SDL_DEF="-DSNESRECOMP_SDL3=1 -DSDL_MAIN_HANDLED"
 elif pkg-config --exists sdl2 2>/dev/null; then
     KB_SDL_CFLAGS="$(pkg-config --cflags sdl2)"
     KB_SDL_LIBS="$(pkg-config --libs sdl2)"
@@ -523,7 +524,7 @@ OSD_SDL_BACKEND=""
 if pkg-config --exists sdl3 2>/dev/null; then
     OSD_SDL_CFLAGS="$(pkg-config --cflags sdl3)"
     OSD_SDL_LIBS="$(pkg-config --libs sdl3)"
-    OSD_SDL_BACKEND="-DSNESRECOMP_SDL3=1"
+    OSD_SDL_BACKEND="-DSNESRECOMP_SDL3=1 -DSDL_MAIN_HANDLED"
 elif pkg-config --exists sdl2 2>/dev/null; then
     OSD_SDL_CFLAGS="$(pkg-config --cflags sdl2)"
     OSD_SDL_LIBS="$(pkg-config --libs sdl2)"
@@ -543,6 +544,11 @@ else
 fi
 
 echo "=== account secret path (rebuild must not sign you out) ==="
+case "$(uname -s)" in
+MINGW*|MSYS*)
+    echo "  (skipped: POSIX mkdtemp/mkdir/subprocess fixture; run on Linux)"
+    ;;
+*)
 # _GNU_SOURCE: rnet_auth.c uses getaddrinfo, and the test uses mkdtemp.
 "$CC" -std=gnu11 -Wall -Wextra -O1 -D_GNU_SOURCE \
     -I "$ROOT/lib/recomp-net/include" -I "$ROOT/lib/recomp-net/src" \
@@ -553,6 +559,8 @@ echo "=== account secret path (rebuild must not sign you out) ==="
     "$ROOT/lib/recomp-net/src/platform/rnet_platform.c" \
     -lpthread -o "$OUT/secret_path_test"
 "$OUT/secret_path_test"
+    ;;
+esac
 
 echo "=== rewind ring (ordering, clamping, what commit discards) ==="
 # The snapshot API is stubbed, so this tests the ring rather than re-testing
@@ -607,7 +615,7 @@ echo "=== Super FX PC hooks ==="
 # Both include common_rtl.c whole; -fwhole-program drops the host entry
 # points they do not exercise instead of linking the full runtime. Its
 # desktop config header needs SDL headers, not the library.
-RTL_UNIT_FLAGS="$(pkg-config --cflags sdl2) -std=c11 -O2 -flto -fwhole-program -ffunction-sections -fdata-sections -DSNESRECOMP_TRACE=0 -D_POSIX_C_SOURCE=200809L -I $ROOT/runner/src/desktop -I $ROOT/runner/src"
+RTL_UNIT_FLAGS="$(pkg-config --cflags sdl2) -Umain -std=c11 -O2 -flto -fwhole-program -ffunction-sections -fdata-sections -DSDL_MAIN_HANDLED -DSNESRECOMP_TRACE=0 -D_POSIX_C_SOURCE=200809L -I $ROOT/runner/src/desktop -I $ROOT/runner/src"
 
 echo "=== audio delivery + console reset ==="
 "$CC" $RTL_UNIT_FLAGS "$ROOT/tests/audio_delivery_test.c" \

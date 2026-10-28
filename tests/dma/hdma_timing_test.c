@@ -72,6 +72,8 @@ Apu *apu_init(void) { return NULL; }
 void apu_free(Apu *apu) { (void)apu; }
 void apu_reset(Apu *apu) { (void)apu; }
 void apu_cycle(Apu *apu) { (void)apu; }
+/* APU execution is outside this HDMA-only fixture, like apu_cycle above. */
+void apu_runCycles(Apu *apu, uint32_t clocks) { (void)apu; (void)clocks; }
 void apu_saveload(Apu *apu, SaveLoadInfo *sli) { (void)apu; (void)sli; }
 
 Ppu *ppu_init(void) { return NULL; }

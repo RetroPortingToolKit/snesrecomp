@@ -60,8 +60,13 @@ static void advance(int frames) {
 }
 
 int main(void) {
+#ifdef _WIN32
+    _putenv_s("SNESRECOMP_REWIND_DEPTH", "8");
+    _putenv_s("SNESRECOMP_REWIND_INTERVAL", "1");
+#else
     setenv("SNESRECOMP_REWIND_DEPTH", "8", 1);
     setenv("SNESRECOMP_REWIND_INTERVAL", "1", 1);
+#endif
     snes_rewind_configure();
     check(snes_rewind_enabled(), "the ring configures and is enabled");
 
