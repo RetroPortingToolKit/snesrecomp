@@ -1,10 +1,28 @@
 # SNES optimization burndown
 
-Assessment: 2026-10-27. Owning roadmap: `beads-49cy`, under the snesrecomp
+Assessment: 2026-10-27; scope revised by the owner on 2026-10-28.
+Owning roadmap: `beads-49cy`, under the snesrecomp
 framework epic. Coordinating campaign: `beads-2wy8.1` (`optimization campaign`),
 label `campaign:optimization-campaign`. Search and reuse owning issues before
 starting work; claim the selected issue and record findings there and in the
 campaign. Work solo unless the owner explicitly authorizes delegation.
+
+## Shared-engine priority
+
+Future optimization work belongs in game-agnostic shared engine mechanisms.
+Every measured game must be neutral or better; equal gains are not required.
+If a custom renderer duplicates a useful operation, reuse or elevate the shared
+mechanism and validate actual consumers. Preserve title scene/asset/camera
+policy in adapters. Do not describe a title adapter's measured gain as an
+engine-wide gain, and do not add abstractions without demonstrated consumers.
+
+The owner explicitly authorized finishing the existing MMX and Super Metroid
+candidates. Their new optimization switches remain OFF by default; automated
+qualification does not promote defaults. Briefly assess whether X2/X3 can
+reuse the work directly. Substantial new title adapters, pin adoption and
+other discretionary title-only work go after the shared-engine burndown or
+are deferred. Existing renderer selections and the functioning LLE floor stay
+available.
 
 ## Landed baseline
 
@@ -27,10 +45,12 @@ campaign. Work solo unless the owner explicitly authorizes delegation.
 
 ## Remaining opportunities
 
-These are ranked opportunities, not promised gains or a requirement to implement
-every hypothesis. Start with R1, then R2. Profile R3 before committing to a
-replacement. R4 may join a coherent renderer package when attribution supports
-it. Preserve individual passed, failed and unverified results.
+These are opportunities, not promised gains or a requirement to implement every
+hypothesis. Keep the IDs stable. Close out the already-authorized R1/R2 and R4
+Metroid candidate, then prioritize shared work R5, R8 and R9. R3's measured SMW
+hypothesis is deferred. Move R6/R7 title-only adoption checks and substantial
+X2/X3 work to the final adoption queue. Preserve individual passed, failed and
+unverified results.
 
 | ID | Opportunity and scope | Next task and evidence required |
 | --- | --- | --- |
@@ -41,14 +61,45 @@ it. Preserve individual passed, failed and unverified results.
 | R5 | **Batch remaining large-tile, offset-per-tile and mosaic paths.** Shared PPU, targeted games outside MMX. | Select a real hot workload first. Large-tile rendering remains per pixel; offset-per-tile selects authentic segments but still refetches tile/plane data inside each pixel. Test negative margins, flips, 16x16 midpoint changes, windows, mosaic and shadow/capture consumers. Ordinary 2/4bpp and opt-in 8bpp span implementations already exist. |
 | R6 | **Audit and finish Doom's existing 8bpp adoption.** Reuse `beads-8wg.2.115` and merged PR 151. | Confirm the current delivered build's effective selection first. Windows gameplay/performance and owner qualification already exist; the shared selector remains LLE, and the inspected title CMake/tools/workflow sources had no explicit HLE selection. Complete integration only if missing; close as already done if delivery enables it. Do not count old gains again. |
 | R7 | **Finish Super Mario Kart DSP-1 qualification.** Existing issue `beads-qhnd`; framework PR 150 is already merged. | Complete lap/finish/results/next-race checks, listening and clean-host performance measurement. Contracts and paired driving runs already exist. Previous noisy timings do not establish final acceptance or justify a broader default promotion. |
-| R8 | **Select further whole-subsystem replacements from a demonstrated bottleneck.** Conditional, title-specific investigation. | Coprocessor jobs, idle waits, music-driver transactions and GPU rendering are legitimate boundaries. Choose one only when a useful workload demonstrates dominant cost; reuse existing issues/implementations. Define outputs, status/IRQ/readback, PCM and guest-continuation contracts. Assess software batching before a GPU rewrite; worker pools are not presumed useful on a single-core Xbox. |
+| R8 | **Select further shared whole-subsystem replacements from a demonstrated bottleneck.** Game-agnostic engine work, validated in actual titles. | Coprocessor jobs, idle waits, music-driver transactions and GPU rendering are legitimate boundaries. Choose one only when a useful workload demonstrates dominant cost; reuse existing issues/implementations. Elevate reusable operations from custom renderers where justified, retaining title policy in adapters. Define outputs, status/IRQ/readback, PCM and guest-continuation contracts. Assess software batching before a GPU rewrite; worker pools are not presumed useful on a single-core Xbox. |
 | R9 | **Establish the original Xbox/32-bit budget.** Platform qualification, separate from desktop results. | Measure resident/peak memory, row-stack use, code/cache pressure and audio/render costs on the supported target. Account for assets, caches and rewind; reduce the largest demonstrated stores first. Actual Xbox qualification remains unverified. |
+
+## Current dispositions (2026-10-28)
+
+| ID | Status and evidence |
+| --- | --- |
+| R1 | MMX title adapter automated-qualified, runtime `ef821a32`, documentation head `90916f7`, draft MMX PR 149; owner combined playtest and merge remain. New `MMX_NATIVE_BG_SPANS` default OFF. Five paired i5-4670 samples/profile: median CPU reduction 12.81% at 16:9, 34.69% at 32:9; custom 4:3 and stock neutral/inconclusive. All four Magic Carpet gates pass. This is a title result, not a new shared-engine implementation. |
+| R2 | Super Metroid adoption of the existing shared row planner automated-qualified, runtime `aa66ec96`, documentation head `bf73de9`, draft Metroid PR 38; owner combined playtest, interactive rewind and merge remain. New `SM_NATIVE_ROW_PLAN` default OFF. Five paired i5-4670 samples/profile: median CPU reduction 8.86% custom 4:3, 5.56% at 16:9; stock/32:9 neutral/inconclusive. |
+| R3 | Investigation complete; implementation deferred for measured SMW workload. Both stock/wide routes had zero same-line main/sub background-layer overlap. Reopen for a demonstrated hot overlapping consumer, not merely two draw calls. Owning issue `beads-8wg.2.164`. |
+| R4 | Existing Metroid native-center reuse adapter automated-qualified, measured runtime `914d518`; combined owner playtest/interactive rewind and merge remain. New `SM_NATIVE_CENTER_REUSE` default OFF. Five paired i5-4670 samples/profile against R2: median CPU reduction 16.28% custom 4:3, 12.36% at 16:9, 7.95% at 32:9, all pairs positive. These require trusted matching NewRenderer/NoSpriteLimits=1 input at discrete alpha; interpolation and unsupported cases keep the full custom route. NoSpriteLimits=0 fallback and stock are neutral/inconclusive. Do not add these percentages to R2's different NoSpriteLimits=0 package. Windows/Linux fixtures, live effects/extra presentations, production same/fresh-process restore and matched run-ahead pass. Shared owner `beads-8wg.2.165`, title owner `beads-8wg.6.36`. This closes the grandfathered title experiment, not all future shared R4 possibilities. |
+| R5, R8, R9 | Shared-engine queue, not yet dispositioned. R9 has measured leads: large full-Ppu render temporaries and multi-megabyte diagnostic stores; removal requires an actual lifecycle/consumer audit. |
+| R6, R7 | Final title-adoption/qualification queue; reuse existing work and do not count historical gains again. |
+
+### Final adoption queue
+
+After shared-engine opportunities are dispositioned, audit Doom's effective
+8bpp selection (R6), finish the existing Mario Kart DSP-1 title qualification
+(R7), and consider substantial X2/X3 adoption only if the brief assessment
+shows it needs new work. No speculative new title renderer rewrites belong
+ahead of shared work. Record deferred items with a concrete reopening trigger.
+
+The brief X2/X3 assessment is complete: current X2 master `9c3b374c` and X3
+master `e88e5aab` both use the shared live PPU plus a shared Mmx23 margin
+provider, rather than MMX's custom renderer. The X1 span build flag is not a
+drop-in adoption. It embeds X1 scene/WRAM/private-CHR/palette rules. Defer a
+substantial port until a measured hot shared provider justifies a reusable
+span interface; optimize that mechanism in the engine and keep title policies
+in adapters. Their existing correctness work and differing engine pins are
+untouched. No new X2/X3 gain is claimed. Source hashes/extracts and disposition
+are in `native-center-reuse-20261028/evidence/x2-x3-adoption-assessment.json`.
 
 ## Acceptance and stopping rules
 
-1. Keep the shared framework correct and broadly usable; place game-specific
-   scene, asset and camera policies in title adapters. Share pure mechanisms
-   when they have real consumers rather than moving the whole MMX renderer.
+1. Keep the shared framework correct and broadly usable. Future optimization
+   mechanisms must be game-agnostic and shared; place game-specific scene,
+   asset and camera policies in title adapters. Share pure mechanisms with
+   validated consumers rather than moving the whole MMX renderer. Finish only
+   the explicitly grandfathered title candidates before the shared queue.
 2. Maintain a functioning build-selected LLE/reference implementation under the
    shared [HLE policy](https://github.com/mstan/recomp-ai-rules/blob/main/HLE.md).
    Replace internal algorithms and subsystem boundaries freely within the
@@ -107,5 +158,13 @@ Retained local evidence is under
 `evidence/remaining-burndown.json`. The post-row profile is coarse main-thread
 IP sampling of a 4,200-frame actual Highway route, not exclusive CPU accounting
 or throughput measurement. Build caches were cleaned; exact measured binaries,
-source worktrees and the isolated owner profile remain. No new implementation
-experiment was started when this document was saved.
+source worktrees and the isolated owner profile remain. That directory records
+the landed baseline, not the subsequent candidates.
+
+Subsequent candidate evidence: `background-spans-20261027/campaign-results.json`
+(R1), `sm-row-plan-20261028/campaign-results.json` (R2),
+`shared-screen-decode-20261028/campaign-results.json` (R3), and
+`native-center-reuse-20261028/campaign-results.json` (R4), beneath the same
+task parent. Package percentages are not additive. No Xbox or cross-build
+netplay claim is implied. Raw paired measurements and exact source/binary/
+runtime identities are retained for the eventual campaign visualizations.
