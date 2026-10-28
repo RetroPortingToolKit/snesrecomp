@@ -300,15 +300,15 @@ struct Ppu {
   uint8_t wsAnchorRightStart[kPpuWsAnchorBands][4];
   // Skip offscreen staging columns before sampling a layer's side margins.
   uint8_t wsMarginGapL[4], wsMarginGapR[4];
-  // Authored-world spans, in tilemap pixels, for the world-mirror bands (see
-  // PpuSetWidescreenLayerWorldMirrorBand). y1<=y0 or right<=left = off.
-  uint8_t wsWorldY0[kPpuWsWorldBands][4], wsWorldY1[kPpuWsWorldBands][4];
-  uint16_t wsWorldLeft[kPpuWsWorldBands][4];
-  uint16_t wsWorldRight[kPpuWsWorldBands][4];
+  // Authored-world spans in tilemap pixels. BG0..3 can mirror/repeat/clip;
+  // guest OAM4 can only clip. y1<=y0 or right<=left = off.
+  uint8_t wsWorldY0[kPpuWsWorldBands][5], wsWorldY1[kPpuWsWorldBands][5];
+  uint16_t wsWorldLeft[kPpuWsWorldBands][5];
+  uint16_t wsWorldRight[kPpuWsWorldBands][5];
   uint8_t wsWorldClip[kPpuWsWorldBands]; /* layer bits: clip instead of reflect */
-  uint16_t wsWorldRepeat[kPpuWsWorldBands][4]; /* 0=reflect, otherwise edge strip */
+  uint16_t wsWorldRepeat[kPpuWsWorldBands][5]; /* 0=reflect, otherwise edge strip */
   /* 0 keeps the layer's own phase; 1..4 selects BG1..BG4 as the reference. */
-  uint8_t wsWorldReference[kPpuWsWorldBands][4];
+  uint8_t wsWorldReference[kPpuWsWorldBands][5];
   // Piecewise horizontal remaps for the elastic anchor bands (see
   // PpuSetWidescreenLayerElasticBand). nseg == 0 or y1 <= y0 = slot off.
   uint8_t wsElasticY0[kPpuWsElasticBands][4];
@@ -529,7 +529,7 @@ static inline int PpuWidescreenLayerExtra(
   return (ppu->wsBg3WidenY && y >= ppu->wsBg3WidenY) ? extra : 0;
 }
 
-// Which world-mirror band, if any, governs BG(layer+1) on scanline y.
+// Which world band, if any, governs BG0..3 or guest OAM4 on scanline y.
 // Returns the band slot, or -1 for natural (unreflected) tilemap rendering.
 // Deliberately inert unless a side margin is actually live, and every other
 // per-line policy wins over this one: on a line the layer does not widen
@@ -538,7 +538,7 @@ static inline int PpuWidescreenLayerExtra(
 // a raster-split status bar pinned to hScroll 0 is the usual case.
 static inline int PpuWidescreenLayerWorldBandAt(
     const Ppu *ppu, unsigned int layer, int y) {
-  if (layer >= 4 || !(ppu->extraLeftCur | ppu->extraRightCur))
+  if (layer >= 5 || !(ppu->extraLeftCur | ppu->extraRightCur))
     return -1;
   int widest = ppu->extraLeftCur > ppu->extraRightCur ? ppu->extraLeftCur
                                                       : ppu->extraRightCur;
@@ -1017,7 +1017,10 @@ void PpuSetWidescreenLayerWorldMirrorBandSlot(
 // room. Only margin pixels outside [left,right), measured using the reference
 // layer's actual PPU scroll on this line, are omitted. Native256 columns and
 // genuine in-room margin art remain untouched. No canvas pixels are reflected.
-// Reference/layer indices are0..3. Invalid inputs disable the slot. This is
+// Reference indices are0..3. Layer4 additionally clips guest OAM, except
+// explicitly selected HUD slots; it does not affect host extra objects or
+// native OBJ range/fetch quotas. OAM uses the reference scroll in every mode.
+// Invalid inputs disable the slot. This is
 // frame-local, outside save-state spans, and reset by PpuSetExtraSpace*.
 void PpuSetWidescreenLayerWorldClipBand(
     Ppu *ppu, uint8_t layer, uint8_t y0, uint8_t y1, uint8_t reference_layer,

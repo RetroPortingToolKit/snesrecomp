@@ -881,6 +881,63 @@ color_math_clamped_done:
                         "frame policy reset disables full-coordinate decoding");
     }
 
+
+    /* Bounded travel rooms clip world OAM at each raster's reference scroll,
+     * retaining native pixels, HUD relocation and the original OBJ quotas. */
+    for (unsigned flags=0; flags<=1; ++flags) {
+        const int extras[]={0,43,272};
+        const int positions[]={-32,-24,-8,0,248,256,272,280,288};
+        for (unsigned e=0;e<sizeof extras/sizeof extras[0];++e) {
+            const int extra=extras[e],width=256+2*extra;
+            uint32_t pixels[800*3];
+            for (unsigned policy=0;policy<5;++policy) {
+                ppu_reset(ppu);setup_one_sprite_line(ppu,8);
+                PpuBeginDrawing(ppu,(uint8_t *)pixels,width*4,flags);
+                PpuSetExtraSpace(ppu,extra);
+                PpuSetWsHudOamBand(ppu,224,48,208);
+                PpuSetWsHudOamShiftRange(ppu,0,1);
+                for (unsigned n=0;n<sizeof positions/sizeof positions[0];++n) {
+                    setup_solid_obj(ppu,n+1,positions[n]&511,0);
+                    PpuWsSetOamFullX(ppu,n+1,positions[n]);
+                }
+                PpuWsEnableOamFullX(ppu,true);
+                PpuSetWidescreenLayerWorldClipBandSlot(ppu,1,4,1,8,0,620,920);
+                if (policy==1) /* invalid reference replaces a live policy */
+                    PpuSetWidescreenLayerWorldClipBandSlot(ppu,1,4,1,8,4,620,920);
+                if (policy==2) /* per-frame policy reset */
+                    PpuSetExtraSpace(ppu,extra);
+                PpuWsEnableOamFullX(ppu,true); /* independently restored producer policy */
+                if (policy==3) /* invalid span replaces a live policy */
+                    PpuSetWidescreenLayerWorldClipBandSlot(ppu,1,4,1,8,0,920,620);
+                if (policy==4) /* clipping is independent of BG mode */
+                    ppu->bgmode=7;
+                ppu_runLine(ppu,0);
+                for (int y=0;y<3;++y) {
+                    const int scroll=y==2?649:640;
+                    ppu->hScroll[0]=scroll;
+                    ppu_runLine(ppu,y+1);
+                    for (int col=0;col<width;++col) {
+                        const int x=col-extra;
+                        bool lit=x>=8-extra && x<16-extra;
+                        for (unsigned n=0;n<sizeof positions/sizeof positions[0];++n) {
+                            bool in_room=policy==1 || policy==2 || policy==3 ||
+                                !extra || y==0 ||
+                                ((x>=620-scroll || x>=0) &&
+                                 (x<920-scroll || x<256));
+                            lit|=x>=positions[n] && x<positions[n]+8 && in_room;
+                        }
+                        if ((pixels[y*width+col]&0xffffff)!=(lit?0xffffffu:0)) {
+                            fprintf(stderr,"world clip flags%u extra%d policy%u y%d x%d actual%x expected%d\n",
+                                    flags,extra,policy,y,x,pixels[y*width+col]&0xffffff,lit);
+                            failures++;break;
+                        }
+                    }
+                }
+                failures+=check(!ppu->rangeOver && !ppu->timeOver,
+                    "world OAM presentation does not change native overflow flags");
+            }
+        }
+    }
     ppu_free(ppu);
     if (failures) return 1;
     puts("ppu_sprite_limit_test: PASS");

@@ -577,12 +577,12 @@ void PpuSetWidescreenLayerWorldMirrorBand(Ppu *ppu, uint8_t layer, uint8_t y0,
                                            world_left_px, world_right_px);
 }
 
-void PpuSetWidescreenLayerWorldMirrorBandSlot(
+static void PpuSetWidescreenWorldBandSlot(
     Ppu *ppu, uint8_t slot, uint8_t layer, uint8_t y0, uint8_t y1,
     uint16_t world_left_px, uint16_t world_right_px) {
   // See ppu.h. An empty band or an empty/inverted world span disables the
   // slot outright rather than leaving half-configured state behind.
-  if (slot >= kPpuWsWorldBands || layer >= 4)
+  if (slot >= kPpuWsWorldBands || layer >= 5)
     return;
   if (y1 <= y0 || world_right_px <= world_left_px) {
     y0 = y1 = 0;
@@ -597,6 +597,14 @@ void PpuSetWidescreenLayerWorldMirrorBandSlot(
   ppu->wsWorldReference[slot][layer] = 0;
 }
 
+void PpuSetWidescreenLayerWorldMirrorBandSlot(
+    Ppu *ppu, uint8_t slot, uint8_t layer, uint8_t y0, uint8_t y1,
+    uint16_t world_left_px, uint16_t world_right_px) {
+  if (layer < 4)
+    PpuSetWidescreenWorldBandSlot(ppu, slot, layer, y0, y1,
+                                  world_left_px, world_right_px);
+}
+
 void PpuSetWidescreenLayerWorldClipBand(
     Ppu *ppu, uint8_t layer, uint8_t y0, uint8_t y1, uint8_t reference_layer,
     uint16_t world_left_px, uint16_t world_right_px) {
@@ -609,9 +617,9 @@ void PpuSetWidescreenLayerWorldClipBandSlot(
     Ppu *ppu, uint8_t slot, uint8_t layer, uint8_t y0, uint8_t y1,
     uint8_t reference_layer, uint16_t world_left_px, uint16_t world_right_px) {
   if (reference_layer >= 4) y0 = y1 = 0;
-  PpuSetWidescreenLayerWorldMirrorBandSlot(ppu, slot, layer, y0, y1,
-                                         world_left_px, world_right_px);
-  if (slot < kPpuWsWorldBands && layer < 4 &&
+  PpuSetWidescreenWorldBandSlot(ppu, slot, layer, y0, y1,
+                                world_left_px, world_right_px);
+  if (slot < kPpuWsWorldBands && layer < 5 &&
       ppu->wsWorldY1[slot][layer] > ppu->wsWorldY0[slot][layer]) {
     ppu->wsWorldClip[slot] |= (uint8_t)(1u << layer);
     ppu->wsWorldReference[slot][layer] = (uint8_t)(reference_layer + 1);
@@ -997,16 +1005,16 @@ static unsigned PpuWorldReferenceLayer(const Ppu *ppu, int band, uint layer) {
 // Keep the isolated compositor for disjoint rooms, mosaic and source anchors.
 static bool PpuWorldClipBounds(const Ppu *ppu, uint layer, int y,
                                 int *left, int *right) {
-  if (layer >= 4 ||
+  if (layer >= 5 ||
       !((ppu->wsWorldClip[0] | ppu->wsWorldClip[1]) & (1u << layer)) ||
-      PPU_mode(ppu) != 1 ||
-      (PPU_mosaicEnabled(ppu, layer) && PPU_mosaicSize(ppu) > 1))
+      (layer < 4 && (PPU_mode(ppu) != 1 ||
+       (PPU_mosaicEnabled(ppu, layer) && PPU_mosaicSize(ppu) > 1))))
     return false;
   int band = PpuWidescreenLayerWorldBandAt(ppu, layer, y);
   if (band < 0 || !(ppu->wsWorldClip[band] & (1u << layer)) ||
       PpuWidescreenLayerElasticBandAt(ppu, layer, y) >= 0)
     return false;
-  for (uint slot = 0; slot < kPpuWsAnchorBands; ++slot) {
+  for (uint slot = 0; layer < 4 && slot < kPpuWsAnchorBands; ++slot) {
     if (y >= ppu->wsAnchorY0[slot][layer] &&
         y < ppu->wsAnchorY1[slot][layer] &&
         ppu->wsAnchorLeftEnd[slot][layer] &&
@@ -3128,6 +3136,9 @@ static bool ppu_evaluateSprites(Ppu* ppu, int line) {
   int nativeSpritesFound = 0;
   int nativeTilesFound = 0;
   const bool extra_view = ppu->extraLeftRight != 0;
+  int world_clip_left, world_clip_right;
+  const bool world_clip = PpuWorldClipBounds(
+      ppu, 4, line, &world_clip_left, &world_clip_right);
   uint8_t foundSprites[128];
 
   // Range evaluation walks OAM forward, but tile fetching walks the accepted
@@ -3172,9 +3183,9 @@ static bool ppu_evaluateSprites(Ppu* ppu, int line) {
     int x = PpuDecodeOamX(ppu, index);
     const int native_x = x;
     const uint8_t sprite_y = ppu->oam[index] >> 8;
+    const bool hud_slot = PpuWidescreenHudOamSlot(ppu, index, sprite_y);
     const bool full_budget_hud =
-        PpuWidescreenHudOamSlot(ppu, index, sprite_y) &&
-        (ppu->wsHudSplitHeight & 0x80);
+        hud_slot && (ppu->wsHudSplitHeight & 0x80);
     const int left_extra =
         full_budget_hud ? ppu->extraFrameLeft : ppu->extraLeftCur;
     const int right_extra =
@@ -3211,6 +3222,11 @@ static bool ppu_evaluateSprites(Ppu* ppu, int line) {
             uint32 plane = addr[0] | addr[8] << 16;
             int px_left = IntMax(-(col + x + kPpuLineBorder), 0);
             int px_right = IntMin(256 + kPpuLineBorder - (col + x), 8);
+            if (world_clip && !hud_slot) {
+              px_left = IntMax(px_left, world_clip_left - col - x);
+              px_right = IntMin(px_right, world_clip_right - col - x);
+              if (px_left >= px_right) continue;
+            }
             PpuZbufType *dst = ppu->objBuffer.data + col + x + px_left + kPpuLineBorder;
             int slot = index >> 1;
              /* Clip an unhinted sprite at the SCREEN EDGE, per pixel.

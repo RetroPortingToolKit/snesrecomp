@@ -114,6 +114,15 @@ floor pit or entrance from being duplicated outside the room. Width0 disables
 the band; larger widths are bounded by the authored span. As with reflection,
 the source strip must be in the rendered line.
 
+For bounded travel rooms, obtain the outer canvas bounds from the loaded
+layout, retaining transparent cells inside that span. Split the policy when
+the visible frame crosses source rows with different bounds. Layer4 of
+`PpuSetWidescreenLayerWorldClipBand[Slot]` clips guest OAM outside the same
+room using the reference BG's actual per-line scroll. Native256 pixels,
+configured HUD slots and authentic OBJ quotas remain intact; host extra
+objects are independent. Use this with wall-edge continuation so projectiles
+cannot appear beyond a closed room. The policy expires each frame.
+
 Finite object canvases need a different source rule from scenery. X3's Maoh
 paints its BG2 body over a reused circular map: neighboring map entries still
 contain old level tiles. A complete map is not necessarily a complete authored
