@@ -117,6 +117,7 @@
 #include "snes_netplay_identity.h"
 #if defined(SNESRECOMP_NET_ROLLBACK)
 #include "netplay/snes_netplay_rb.h"
+#include "recomp_net/modset.h"
 #endif
 #endif
 
@@ -3848,7 +3849,7 @@ error_reading:;
      * the match may start; two peers on different sets cannot stay in
      * sync, so the netcode refuses with a reason instead of desyncing. */
     if (g_mods_ready) {
-      static char s_modset[2048];
+      static char s_modset[RNET_MODSET_TEXT_MAX];
       int need = snes_mod_runtime_effective_set_c(s_modset, sizeof(s_modset));
       if (need >= 0 && need < (int)sizeof(s_modset))
         snes_netplay_rb_set_modset(s_modset, &snes_mod_runtime_check_set_c,

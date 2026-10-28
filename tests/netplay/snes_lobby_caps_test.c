@@ -163,6 +163,16 @@ static void case_conversion_is_lossless(void)
     snes_lobby_caps_to_rnet(&a, &mid);
     snes_lobby_caps_from_rnet(&mid, &b);
     ck(memcmp(&a, &b, sizeof(a)) == 0, "SNES -> RNet -> SNES is the identity");
+    memset(a.mod_set,'m',2526);a.mod_set[2526]=0;
+    snes_lobby_caps_to_rnet(&a,&mid);snes_lobby_caps_from_rnet(&mid,&b);
+    ck(memcmp(&a,&b,sizeof(a))==0,"large settings survive the SNES bridge without prefixes");
+    {
+        char json[5120],obj[5120];RNetLobbyMatchCaps back;
+        ck(append_match_caps_json(json,sizeof(json),&mid)>0,"large SNES settings encode");
+        ck(json_extract_object(json,"match_caps",obj,sizeof(obj))!=0,"large SNES caps extract");
+        parse_match_caps_object(obj,&back);snes_lobby_caps_from_rnet(&back,&b);
+        ck(!strcmp(a.mod_set,b.mod_set),"large SNES settings survive native codec round trip");
+    }
 }
 
 static void case_snes_env_alias(void)

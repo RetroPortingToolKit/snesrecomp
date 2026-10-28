@@ -106,7 +106,7 @@ typedef struct SnesLobbyMatchCaps {
     int  input_prediction;
     int  mod_count;
     SnesLobbyModPkg mods[SNES_LOBBY_MAX_MODS];
-    char mod_set[512];
+    char mod_set[RNET_MODSET_TEXT_MAX];
     char mod_cosmetic_allow[512];
 } SnesLobbyMatchCaps;
 
