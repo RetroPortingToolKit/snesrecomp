@@ -478,6 +478,24 @@ echo "=== mod runtime: exceptions stay inside the C boundary ==="
     -o "$OUT/mod_c_boundary_test"
 (cd "$OUT" && ./mod_c_boundary_test)
 
+echo "=== mod runtime: feature requirements enable and drop together ==="
+# The launcher provider needs recomp-ui's header, which a game checkout
+# carries beside this one (or RECOMP_UI_DIR names).
+RECOMP_UI_SRC="${RECOMP_UI_DIR:-$ROOT/../recomp-ui}/src"
+if [ -f "$RECOMP_UI_SRC/recomp_launcher.h" ]; then
+    "${CXX:-g++}" -std=c++17 -Wall -Wextra -O1 -DRECOMP_LAUNCHER \
+        -I "$ROOT/runner/src" -I "$RECOMP_UI_SRC" \
+        "$ROOT/tests/mod_resources/feature_requires_test.cpp" \
+        -x c++ "$ROOT/runner/src/mod_runtime.cpp" \
+        "$ROOT/runner/src/sha256.c" "$ROOT/runner/src/snes/tier2_capture.c" \
+        "$ROOT/runner/src/crc32.c" \
+        "$ROOT/runner/src/rom_identity.c" "$ROOT/runner/src/sha1.c" \
+        -o "$OUT/mod_feature_requires_test"
+    "$OUT/mod_feature_requires_test" "$OUT/mod_feature_requires_fixture"
+else
+    echo "  (skipped: no recomp-ui; set RECOMP_UI_DIR)"
+fi
+
 echo "=== host OSD (FPS readout / turbo / toasts) ==="
 # Needs SDL for its clock only (no window; SDL_INIT_TIMER). Skipped rather than
 # failed where SDL headers are absent, so this stays a ROM-free harness that
