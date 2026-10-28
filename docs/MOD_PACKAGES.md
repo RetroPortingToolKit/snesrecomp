@@ -100,6 +100,24 @@ feature = "widescreen"
 id = "example.widescreen"
 ```
 
+A feature that only works on top of another declares it with `requires`, a
+comma-separated list of `package-id/feature-id`:
+
+```toml
+[[feature]]
+id = "learner"
+name = "Learner Mode"
+requires = "example.coop/coop"
+```
+
+Enabling the feature enables everything it requires (transitively, each one
+settling its own plugin rivals). Turning a requirement off, or deselecting it
+because a rival claimed the same plugin, turns its dependents off too. The
+launcher appends "Requires <name>." to the feature's description. A
+requirement that is not installed, or a saved state that holds a dependent
+without its requirement, is a validation error, so the plan is refused rather
+than run partly.
+
 Options use the same feature-oriented concepts exposed by recomp-ui:
 
 ```toml

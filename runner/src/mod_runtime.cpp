@@ -109,6 +109,9 @@ struct Feature {
      * wanted rather than merely tolerated. */
     bool presentation_only = false;
     std::vector<std::string> plugins;
+    /* requires = "package/feature[, ...]": features this one cannot run
+     * without. Enabling it enables them; losing one disables it. */
+    std::vector<std::string> requirements;
 };
 
 struct Target {
@@ -469,6 +472,27 @@ bool resource_is_directory(const Resource& resource) {
     return resource.format == "directory" || resource.format == "folder";
 }
 
+/* "a.pkg/feature, b.pkg/other": each entry names one package feature. */
+bool parse_requirements(const std::string& text, std::vector<std::string>& out) {
+    out.clear();
+    size_t start = 0;
+    while (start <= text.size()) {
+        size_t end = text.find(',', start);
+        if (end == std::string::npos) end = text.size();
+        std::string item = text.substr(start, end - start);
+        const size_t first = item.find_first_not_of(" \t");
+        const size_t last = item.find_last_not_of(" \t");
+        item = first == std::string::npos ? std::string() : item.substr(first, last - first + 1);
+        const size_t slash = item.find('/');
+        if (slash == std::string::npos || !slash || slash + 1 >= item.size() ||
+            item.find('/', slash + 1) != std::string::npos)
+            return false;
+        out.push_back(item);
+        start = end + 1;
+    }
+    return !out.empty();
+}
+
 bool parse_hex_u32(const std::string& text, uint32_t& out) {
     std::string t = trim(text);
     if (t.size() >= 2 && (t[0] == '"' || t[0] == '\'')) {
@@ -694,6 +718,9 @@ bool read_manifest(const fs::path& path, Package& out, std::string* error) {
                 } else if (key == "presentation_only") {
                     parsed = parse_bool(value, bool_value);
                     if (parsed) feature->presentation_only = bool_value;
+                } else if (key == "requires") {
+                    parsed = parse_string(value, string_value) &&
+                             parse_requirements(string_value, feature->requirements);
                 } else known = false;
                 break;
             case Section::Option:
@@ -999,6 +1026,81 @@ void deselect_plugin_rivals(Runtime& runtime, const Package& package,
             selection.enabled = false;
             selection.has_enabled = true;
             if (other->builtin_diagnostic) tier2_capture_set_selection(0);
+        }
+    }
+}
+
+struct RequiredFeature {
+    const Package* package = nullptr;
+    const Feature* feature = nullptr;
+};
+
+RequiredFeature find_requirement(const Runtime& runtime,
+                                 const std::string& requirement) {
+    const size_t slash = requirement.find('/');
+    RequiredFeature found;
+    found.package = selected_package(runtime, requirement.substr(0, slash));
+    if (found.package)
+        found.feature = find_feature(*found.package, requirement.substr(slash + 1));
+    if (!found.feature) found.package = nullptr;
+    return found;
+}
+
+/* The name a player knows a requirement by in the Mods list. */
+std::string requirement_label(const Runtime& runtime,
+                              const std::string& requirement) {
+    const RequiredFeature found = find_requirement(runtime, requirement);
+    if (!found.feature) return requirement;
+    if (found.package->name.empty()) return found.feature->name;
+    if (found.package->features.size() == 1) return found.package->name;
+    return found.package->name + " (" + found.feature->name + ")";
+}
+
+/* Select a feature and, transitively, everything it requires. Each newly
+ * enabled feature settles its own plugin rivals. */
+void enable_with_requirements(Runtime& runtime, const Package& package,
+                              const Feature& feature, unsigned depth = 0) {
+    FeatureSelection& selection =
+        package_selection(runtime, package).features[feature.id];
+    selection.enabled = true;
+    selection.has_enabled = true;
+    if (package.builtin_diagnostic) tier2_capture_set_selection(1);
+    deselect_plugin_rivals(runtime, package, feature);
+    if (depth > 16) return; /* A requirement cycle is already enabled. */
+    for (const std::string& requirement : feature.requirements) {
+        const RequiredFeature found = find_requirement(runtime, requirement);
+        if (found.feature && !feature_enabled(runtime, *found.package, *found.feature))
+            enable_with_requirements(runtime, *found.package, *found.feature, depth + 1);
+    }
+}
+
+/* A selection never keeps a feature whose requirement was turned off, or
+ * deselected as another feature's plugin rival: drop such dependents until
+ * the set is closed. A requirement that is not installed stays a validation
+ * error rather than a silent deselection. */
+void drop_orphaned_dependents(Runtime& runtime) {
+    for (bool changed = true; changed;) {
+        changed = false;
+        for (const auto& [id, versions] : runtime.packages) {
+            (void)versions;
+            const Package* package = selected_package(runtime, id);
+            if (!package) continue;
+            for (const Feature& feature : package->features) {
+                if (!feature_enabled(runtime, *package, feature)) continue;
+                for (const std::string& requirement : feature.requirements) {
+                    const RequiredFeature found = find_requirement(runtime, requirement);
+                    if (!found.feature ||
+                        feature_enabled(runtime, *found.package, *found.feature))
+                        continue;
+                    FeatureSelection& selection =
+                        package_selection(runtime, *package).features[feature.id];
+                    selection.enabled = false;
+                    selection.has_enabled = true;
+                    if (package->builtin_diagnostic) tier2_capture_set_selection(0);
+                    changed = true;
+                    break;
+                }
+            }
         }
     }
 }
@@ -1404,6 +1506,23 @@ Validation validate(Runtime& runtime) {
                     "This feature does not support the selected stock ROM."
                 });
                 continue;
+            }
+            for (const std::string& requirement : feature.requirements) {
+                const RequiredFeature found = find_requirement(runtime, requirement);
+                if (found.feature &&
+                    feature_enabled(runtime, *found.package, *found.feature))
+                    continue;
+                result.ok = false;
+                result.diagnostics.push_back({
+                    package->id, feature.id,
+                    found.feature ? found.package->id : std::string(),
+                    found.feature ? found.feature->id : std::string(),
+                    "requires:" + requirement,
+                    found.feature
+                        ? "Requires " + requirement_label(runtime, requirement) +
+                              ", which is turned off."
+                        : "Requires " + requirement + ", which is not installed."
+                });
             }
             for (const Resource& resource : package->resources) {
                 if (resource.feature_id != feature.id) continue;
@@ -2600,12 +2719,16 @@ int provider_enable(void*, const char* package_id, int enabled) {
     const Package* package = selected_package(state(), package_id);
     if (!package) return 0;
     for (const Feature& feature : package->features) {
+        if (enabled) {
+            enable_with_requirements(state(), *package, feature);
+            continue;
+        }
         FeatureSelection& selection =
             package_selection(state(), *package).features[feature.id];
-        selection.enabled = enabled != 0;
+        selection.enabled = false;
         selection.has_enabled = true;
-        if (enabled) deselect_plugin_rivals(state(), *package, feature);
     }
+    drop_orphaned_dependents(state());
     refresh_validation();
     state().error.clear();
     return 1;
@@ -2677,7 +2800,11 @@ int provider_feature_get(void*, int index,
     copy_text(out->package_name, package.name);
     copy_text(out->name, feature.name);
     copy_text(out->author, package.author);
-    copy_text(out->description, feature.description);
+    std::string description = feature.description;
+    for (const std::string& requirement : feature.requirements)
+        description += (description.empty() ? "Requires " : " Requires ") +
+                       requirement_label(state(), requirement) + ".";
+    copy_text(out->description, description);
     copy_text(out->group, feature.group);
     out->enabled = feature_enabled(state(), package, feature);
     if (package.builtin_diagnostic) {
@@ -2769,12 +2896,16 @@ int provider_feature_enable(void*, const char* package_id,
     const Package* package = selected_package(state(), package_id);
     const Feature* feature = package ? find_feature(*package, feature_id) : nullptr;
     if (!feature) return 0;
-    FeatureSelection& selection =
-        package_selection(state(), *package).features[feature_id];
-    selection.enabled = enabled != 0;
-    selection.has_enabled = true;
-    if (package->builtin_diagnostic) tier2_capture_set_selection(enabled);
-    if (enabled) deselect_plugin_rivals(state(), *package, *feature);
+    if (enabled) {
+        enable_with_requirements(state(), *package, *feature);
+    } else {
+        FeatureSelection& selection =
+            package_selection(state(), *package).features[feature_id];
+        selection.enabled = false;
+        selection.has_enabled = true;
+        if (package->builtin_diagnostic) tier2_capture_set_selection(0);
+    }
+    drop_orphaned_dependents(state());
     refresh_validation();
     state().error.clear();
     return 1;
