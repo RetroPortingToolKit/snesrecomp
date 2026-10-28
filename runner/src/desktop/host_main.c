@@ -724,7 +724,7 @@ static void PreparePpuFrame(void) {
   if (g_ws_active) flags |= kPpuRenderFlags_NewRenderer;
   PpuBeginDrawing(g_ppu, g_my_pixels,
                   (g_game->native_widescreen ? fw : 256) * 4, flags);
-  PpuSetExtraSpace(g_ppu, (uint8)g_ws_extra);
+  PpuSetExtraSpace(g_ppu, (uint16_t)g_ws_extra);
 }
 
 // --- Scripted input ---

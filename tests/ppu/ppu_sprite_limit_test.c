@@ -805,6 +805,45 @@ color_math_clamped_done:
         ;
     }
 
+    /* Original producer coordinates survive the nine-bit OAM wrap. Verify
+     * actual pixels with both renderers, at either full-width view anchor. */
+    for (unsigned flags=0; flags<=1; flags++) {
+        const int positions[]={-900,-530,-300,-16,0,255,512,700,790,900};
+        for (unsigned side=0; side<2; side++) {
+            for (unsigned i=0; i<sizeof positions/sizeof positions[0]; i++) {
+                uint32_t wide[800];
+                const int x=positions[i], origin=side?0:544;
+                ppu_reset(ppu);
+                setup_one_sprite_line(ppu,x&511);
+                PpuBeginDrawing(ppu,(uint8_t *)wide,sizeof wide,flags);
+                PpuSetExtraSpace(ppu,272);
+                PpuSetWidescreenViewAnchor(ppu,true);
+                PpuSetExtraSideSpace(ppu,origin,544-origin,0);
+                PpuWsSetOamFullX(ppu,0,(int16_t)x);
+                PpuWsEnableOamFullX(ppu,true);
+                render_one_line(ppu);
+                for (int col=0;col<800;col++) {
+                    bool lit=col>=x+origin && col<x+origin+8;
+                    failures+=check((wide[col]&0xffffff)==(lit?0xffffffu:0),
+                                    "full signed OAM X renders only at its true position");
+                }
+                failures+=check((ppu->oam[0]&255)==(x&255),
+                                "full X preserves guest OAM");
+            }
+        }
+        ppu_reset(ppu);
+        setup_one_sprite_line(ppu,700&511);
+        PpuWsSetOamFullX(ppu,0,700);
+        ppu_write(ppu,2,0);ppu_write(ppu,3,0);
+        ppu_write(ppu,4,120);ppu_write(ppu,4,0);
+        failures+=check(!(ppu->wsOamFullXValid[0]&1),
+                        "an ordinary XY write invalidates the previous full X");
+        PpuWsEnableOamFullX(ppu,true);
+        PpuSetExtraSpace(ppu,43);
+        failures+=check(!ppu->wsOamFullXOn,
+                        "frame policy reset disables full-coordinate decoding");
+    }
+
     ppu_free(ppu);
     if (failures) return 1;
     puts("ppu_sprite_limit_test: PASS");

@@ -5516,6 +5516,31 @@ static void cmd_cx4_state(const char *args) {
     send(s_client_sock, "]}\n", 3, 0);
 }
 
+/* dump_cx4 [CPU_address_hex] [length_decimal]: inspect the live CX4 RAM/IO
+ * window without clocking or writing the device. Useful when OAM DMA is
+ * sourced from the coprocessor rather than WRAM. */
+static void cmd_dump_cx4(const char *args) {
+    if (!g_snes || !g_snes->cart || !g_snes->cart->cx4) {
+        send_fmt("{\"error\":\"cx4 not available\"}"); return;
+    }
+    unsigned int addr = 0x6000, len = 0xc00;
+    sscanf(args, "%x %u", &addr, &len);
+    if (addr < 0x6000 || addr >= 0x8000 || len > 0x2000 ||
+        (uint64_t)addr + len > 0x8000) {
+        send_fmt("{\"error\":\"out of range\"}"); return;
+    }
+    if (s_client_sock == SOCKET_INVALID) return;
+    uint8_t bytes[0x2000];
+    for (unsigned int i = 0; i < len; i++)
+        bytes[i] = cx4_read(g_snes->cart->cx4, (uint16_t)(addr + i));
+    char hdr[96];
+    int count = snprintf(hdr, sizeof(hdr),
+                         "{\"addr\":\"0x%x\",\"len\":%u,\"hex\":\"", addr, len);
+    send(s_client_sock, hdr, count, 0);
+    send_hex_blob(bytes, len);
+    send_line("\"}");
+}
+
 static void cmd_get_superfx_state(const char *args) {
     if (!g_snes || !g_snes->cart || !g_snes->cart->superfx) {
         send_fmt("{\"error\":\"superfx not available\"}");
@@ -8628,6 +8653,7 @@ static const CmdEntry s_commands[] = {
     {"get_v2_cpu",    cmd_get_v2_cpu},
     {"get_superfx_state", cmd_get_superfx_state},
     {"cx4_state",      cmd_cx4_state},
+    {"dump_cx4",       cmd_dump_cx4},
     {"trace_dump",     cmd_trace_dump},
     {"trace_dbpb",     cmd_trace_dbpb},
     {"trace_clear",    cmd_trace_clear},

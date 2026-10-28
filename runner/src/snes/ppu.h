@@ -344,6 +344,12 @@ struct Ppu {
   // Games publish per NMI via PpuWsSetOamRightHints. 1 bit per OAM slot.
   uint8_t wsOamRightHintStrict;
   uint8_t wsOamRightHint[16];
+  /* Coordinates retained from a title's original sprite producer, tied to
+   * actual XY uploads. Ordinary XY writes invalidate the corresponding slot.
+   * Host policy opts into decoding; guest OAM always remains nine bits. */
+  uint8_t wsOamFullXOn;
+  int16_t wsOamFullX[128];
+  uint8_t wsOamFullXValid[16];
   /* Host-only temporal classifier for unhinted left-margin OBJ. It lets a
    * game-authored sprite keep moving through the widened margin, then parks it
    * again after its X stops changing for a few frames. */
@@ -826,10 +832,9 @@ void PpuSetExtraSideSpace(Ppu *ppu, int left, int right, int bottom);
 //    sprite to be placeable anywhere in the frame. Anchoring can put the whole
 //    2*budget allowance on one side, so that total is 2*budget: a budget above
 //    128 px per side (an internal width above 512) leaves a far-margin sliver
-//    no sprite can reach. Backgrounds are unaffected, nothing is MIS-placed,
-//    and every shipping budget (43 px MMX, 71 px SMW 16:9) is far inside it,
-//    so this is documented rather than clamped -- clamping would throw away
-//    real background columns to spare a sprite artefact.
+//    no ordinary nine-bit sprite can reach. Titles retaining coordinates from
+//    their original sprite producer may use PpuWsSetOamFullX to resolve this
+//    ambiguity without changing guest OAM or restricting background columns.
 //  - The output budget is capped at kPpuMaxFrameExtra, while the priority
 //    buffers carry twice that many columns per side. Every supported frame
 //    can therefore put its full expansion on either side without padding.
@@ -893,6 +898,12 @@ void PpuWsSetOamLeftHints(Ppu *ppu, const uint8_t *hints);
 // Games that stage OAM CPU-side should call this each NMI, after the staging
 // buffer is final and before the frame is presented.
 void PpuWsSetOamRightHints(Ppu *ppu, const uint8_t *hints);
+
+/* Publish after the corresponding XY word upload. A title using this API
+ * must include fullX/valid in its title save-state extension, which is also
+ * part of rollback snapshots. Enabling is a per-frame layer policy. */
+void PpuWsSetOamFullX(Ppu *ppu, unsigned slot, int16_t x);
+void PpuWsEnableOamFullX(Ppu *ppu, bool enabled);
 
 // Let BG3 (layer 2) render into the widescreen side margins on scanlines
 // >= from_y, instead of being clamped to the authentic 256-wide region. Pass

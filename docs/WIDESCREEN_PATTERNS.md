@@ -302,6 +302,20 @@ uint16 WsOamXReject(uint16 x_plus_16, uint16 widened_limit) {
 
 The PPU's 9-bit OAM X path already renders negative and 256+ coordinates.
 
+For anchored views wider than512 columns, nine bits cannot identify every
+screen coordinate. X3 retains the full X computed by its original HG51B
+microcode through `cx4_set_ram_write_observer`, then attaches it to the actual
+OAM XY upload through `dma_set_oam_xy_notify_hook` and `PpuWsSetOamFullX`.
+The PPU uses it only when explicitly enabled and its low nine bits still
+match guest OAM. Ordinary XY writes invalidate it. Titles must serialize both
+pending producer coordinates and uploaded coordinates in their state extension,
+which also participates in rollback. This observes original execution; it does
+not replace the sprite builder or change guest OAM, camera or sequence state.
+
+Keep the viewport budget at least16 bits through the host-to-PPU call. A
+272-column budget cast to eight bits became16 and collapsed800px output to288.
+The built X3 regression checks actual684/800px images, not just buffer sizes.
+
 **Check:** an enemy must remain drawn while straddling both margin edges, not just
 the right one.
 

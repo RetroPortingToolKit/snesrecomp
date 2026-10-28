@@ -310,6 +310,7 @@ static inline void PpuResetLayerPolicies(Ppu *ppu) {
   ppu->wsWindowExpandLayers = 0;
   ppu->wsWindowExpandWindows = 0;
   ppu->wsViewAnchor = 0;
+  ppu->wsOamFullXOn = 0;
 }
 
 int PpuWsExtraOverride(void) {
@@ -2954,12 +2955,27 @@ static int PpuAdjustWidescreenHudOamX(Ppu *ppu, uint8_t index, uint8_t y,
 /* OAM X is 9 bits, so the reachable span is 512 columns: raw >= 256 +
  * extraRightCur decodes negative, which puts the deepest reachable left column
  * at -(256 - extraRightCur). A frame whose LIVE margins total more than 256
- * therefore has a far-side sliver no sprite can be placed in -- nothing is
- * mis-decoded, it is simply unaddressable. Only view anchoring can produce
- * that, and only above a 128 px budget; see PpuSetWidescreenViewAnchor. */
+ * therefore needs producer-retained full coordinates for its far-side span.
+ * Full coordinates are used only when explicitly enabled and still agree
+ * with the guest's current nine-bit position; otherwise decode normally. */
+void PpuWsSetOamFullX(Ppu *ppu, unsigned slot, int16_t x) {
+  if (!ppu || slot >= 128) return;
+  ppu->wsOamFullX[slot] = x;
+  ppu->wsOamFullXValid[slot >> 3] |= 1u << (slot & 7);
+}
+
+void PpuWsEnableOamFullX(Ppu *ppu, bool enabled) {
+  if (ppu) ppu->wsOamFullXOn = enabled ? 1 : 0;
+}
+
 static int PpuDecodeOamX(Ppu *ppu, uint8_t index) {
   int x = ppu->oam[index] & 0xff;
   x |= ((ppu->highOam[index >> 3] >> (index & 7)) & 1) << 8;
+  unsigned slot = index >> 1;
+  if (ppu->wsOamFullXOn &&
+      (ppu->wsOamFullXValid[slot >> 3] & (1u << (slot & 7))) &&
+      (ppu->wsOamFullX[slot] & 511) == x)
+    return ppu->wsOamFullX[slot];
   if (x >= 256 + ppu->extraRightCur) {
     x -= 512;
   } else if (x >= 256 && ppu->wsOamRightHintStrict) {
@@ -3719,6 +3735,10 @@ void ppu_write(Ppu* ppu, uint8_t adr, uint8_t val) {
         } else {
           uint16_t widx = ppu->oamAdr;
           uint16_t word = (uint16_t)((val << 8) | ppu->oamBuffer);
+          if (!(widx & 1)) {
+            unsigned slot = widx >> 1;
+            ppu->wsOamFullXValid[slot >> 3] &= ~(1u << (slot & 7));
+          }
           ppu->oam[ppu->oamAdr++] = word;
           ppu->oamWriteCount++;
           debug_server_on_oam_write(0, widx, word);
