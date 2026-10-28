@@ -72,7 +72,9 @@ unverified results.
 | R2 | Super Metroid adoption of the existing shared row planner automated-qualified, runtime `aa66ec96`, documentation head `bf73de9`, draft Metroid PR 38; owner combined playtest, interactive rewind and merge remain. New `SM_NATIVE_ROW_PLAN` default OFF. Five paired i5-4670 samples/profile: median CPU reduction 8.86% custom 4:3, 5.56% at 16:9; stock/32:9 neutral/inconclusive. |
 | R3 | Investigation complete; implementation deferred for measured SMW workload. Both stock/wide routes had zero same-line main/sub background-layer overlap. Reopen for a demonstrated hot overlapping consumer, not merely two draw calls. Owning issue `beads-8wg.2.164`. |
 | R4 | Existing Metroid native-center reuse adapter automated-qualified, measured runtime `914d518`; combined owner playtest/interactive rewind and merge remain. New `SM_NATIVE_CENTER_REUSE` default OFF. Five paired i5-4670 samples/profile against R2: median CPU reduction 16.28% custom 4:3, 12.36% at 16:9, 7.95% at 32:9, all pairs positive. These require trusted matching NewRenderer/NoSpriteLimits=1 input at discrete alpha; interpolation and unsupported cases keep the full custom route. NoSpriteLimits=0 fallback and stock are neutral/inconclusive. Do not add these percentages to R2's different NoSpriteLimits=0 package. Windows/Linux fixtures, live effects/extra presentations, production same/fresh-process restore and matched run-ahead pass. Shared owner `beads-8wg.2.165`, title owner `beads-8wg.6.36`. This closes the grandfathered title experiment, not all future shared R4 possibilities. |
-| R5, R8, R9 | Shared-engine queue, not yet dispositioned. R9 has measured leads: large full-Ppu render temporaries and multi-megabyte diagnostic stores; removal requires an actual lifecycle/consumer audit. |
+| R5 | Source screen complete; implementation deferred under `beads-8wg.2.166`. Nineteen retained real Metroid captures contain 4,256 nonblank rows and 11,868 enabled background-layer rows, with zero enabled large-tile/OPT/mosaic rows. This is selected-scene evidence, not a time-weighted profile or an all-game conclusion. Reopen for a measured hot built-game workload; the known Metal Warriors source consumer has no local ROM/build and does not justify a new title port here. |
+| R8 | Shared subsystem replacement remains conditional on a demonstrated dominant cost. Reuse post-optimization built evidence before selecting another boundary. |
+| R9 | Shared compact captured-register interface implemented and fixture-qualified under `beads-8wg.2.167`; matched SM/MMX/SMW built-game qualification remains. [Interface and compiler costs](RASTER_REGISTERS.md): Metroid EndFrame stack 412,352 -> 1,456 bytes, Draw 214,432 -> 13,040, renderer BSS -205,440 bytes. No runtime CPU/FPS or Xbox claim yet. Diagnostic-store lifecycle audit and actual target budget remain separate leads. |
 | R6, R7 | Final title-adoption/qualification queue; reuse existing work and do not count historical gains again. |
 
 ### Final adoption queue
@@ -168,3 +170,9 @@ Subsequent candidate evidence: `background-spans-20261027/campaign-results.json`
 task parent. Package percentages are not additive. No Xbox or cross-build
 netplay claim is implied. Raw paired measurements and exact source/binary/
 runtime identities are retained for the eventual campaign visualizations.
+
+Shared R5 screening and R9 compact register work are retained under
+`shared-render-registers-20261028/evidence/`, including
+`r5-source-screen.json`, `stack-compare.json`, `campaign-milestone.json` and
+the matched baseline/candidate source and binary records as qualification
+progresses. Compiler cost results do not substitute for built-game acceptance.
