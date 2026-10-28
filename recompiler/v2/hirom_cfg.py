@@ -51,7 +51,7 @@ def expand_hirom_cfgs(parsed):
                 for pc, value in getattr(cfg, name).items():
                     if aliases(pc):
                         getattr(dst, name).setdefault(pc, deepcopy(value))
-            for name in ('terminal_jsr', 'noreturn_jsr', 'live_operand', 'brk_rti'):
+            for name in ('terminal_jsr', 'noreturn_jsr', 'mod_operand', 'brk_rti'):
                 getattr(dst, name).update(pc for pc in getattr(cfg, name) if aliases(pc))
             for name in ('exclude_ranges', 'authority_data'):
                 for start, end in getattr(cfg, name):

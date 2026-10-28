@@ -87,7 +87,7 @@ pub fn expand(cfgs: Vec<BankCfg>) -> Vec<BankCfg> {
             }
             inherit_set!(terminal_jsr);
             inherit_set!(noreturn_jsr);
-            inherit_set!(live_operand);
+            inherit_set!(mod_operand);
             inherit_set!(brk_rti);
             inherit_set!(inline_dispatch_loops);
             for &pc in &src.hle_spc_upload {

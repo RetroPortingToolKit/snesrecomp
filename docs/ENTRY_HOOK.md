@@ -114,22 +114,23 @@ The directive is emission-only. It changes no decode width, control-flow edge
 or analysis fact, so the native analyzer ignores it and the manifest is the
 same with or without hooks.
 
-## Observers alongside live ROM patches
+## Observers alongside mod-owned operands
 
-Use `live_operand` for a mutable immediate and `entry_hook` to observe its
-execution. For example, a port that patches a compare limit in the loaded
-ROM can declare:
+Use `mod_operand` for a mod-owned immediate and `entry_hook` to observe its
+execution. For example, a port that offers a configurable compare limit can
+declare:
 
 ```
 # bank03.cfg; the instruction at $03:8B27 is CMP #limit
-live_operand 8B27
+mod_operand 8B27
 entry_hook 8B27 HostSawLimitCompare
 ```
 
 The observer sees the state before the compare, and the compiled compare
-fetches the current operand bytes from the program bank at the decoded M
-width. `LDX`/`LDY`/`CPX`/`CPY` use the decoded X width. DB does not select the
-operand bank. Patch operand bytes between executions; changing the opcode,
+uses `snes_mod_operand(pc24, stock)` at the decoded M width.
+`LDX`/`LDY`/`CPX`/`CPY` use the decoded X width. Set the value with
+`snes_mod_operand_set(pc24, value)`; the loaded ROM is unchanged. DB does not
+select the operand. Changing the opcode,
 instruction size, or decoded M/X state requires regeneration or LLE.
 
 Ports using custom `runtime_immediate` or `opcode_hook` directives should
@@ -147,7 +148,7 @@ back-edge, two calls, recursion, and a fall-through from another body. A
 program-level emission checks the routine's own body, a covering body and the
 `$80` mirror body.
 
-`tests/v2/test_live_operand.py` also executes observers together with patched
-immediates in banks `$03` and `$83`, at both M/X widths with DB pointing to
-WRAM. Program-emission tests add and remove both directives in one output
+`tests/v2/test_mod_operand.py` executes mod-owned immediates in compiled and
+interpreted code, with aliases, both M/X widths and DB pointing to WRAM.
+Program-emission tests add and remove operands and observers in one output
 directory to check configuration changes invalidate cached bank sources.

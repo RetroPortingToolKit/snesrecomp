@@ -239,9 +239,9 @@ pub struct DecodeEnv<'a> {
     pub callee_inline_skip: Option<&'a HashMap<u32, i32>>,
     pub inline_dispatch_loop_pcs: Option<&'a std::collections::BTreeSet<u32>>,
     pub terminal_jsr_sites: Option<&'a std::collections::BTreeSet<u32>>,
-    /// cfg `live_operand` sites (24-bit): immediates read from the ROM image
+    /// cfg `mod_operand` sites (24-bit): immediates a mod may replace at run time
     /// at run time, so the constant-Z fold must not use their decoded bytes.
-    pub live_operand_sites: Option<&'a std::collections::BTreeSet<u32>>,
+    pub mod_operand_sites: Option<&'a std::collections::BTreeSet<u32>>,
     /// cfg `mod_hook` sites (24-bit, mirrors included): a mutating host
     /// callback may run before the instruction, so no value fact crosses it.
     pub mod_hook_sites: Option<&'a std::collections::BTreeSet<u32>>,
@@ -2009,7 +2009,7 @@ pub fn decode_function(
     dedupe_by_pcmx(&mut graph);
     apply_constant_z_fold(
         &mut graph,
-        env.live_operand_sites,
+        env.mod_operand_sites,
         env.mod_hook_sites,
         env.mod_hook_target_sites,
     );
@@ -2083,7 +2083,7 @@ fn dedupe_by_pcmx(graph: &mut FunctionDecodeGraph) {
 /// Constant-Z branch fold + reachability prune. Port of `_apply_constant_z_fold`.
 fn apply_constant_z_fold(
     graph: &mut FunctionDecodeGraph,
-    live_operand_sites: Option<&std::collections::BTreeSet<u32>>,
+    mod_operand_sites: Option<&std::collections::BTreeSet<u32>>,
     mod_hook_sites: Option<&std::collections::BTreeSet<u32>>,
     mod_hook_target_sites: Option<&std::collections::BTreeSet<u32>>,
 ) {
@@ -2132,9 +2132,9 @@ fn apply_constant_z_fold(
         if pred_insn.mode != Mode::Imm {
             continue;
         }
-        // A `live_operand` immediate is read from the ROM image at run time:
+        // A `mod_operand` immediate may be replaced by a mod at run time:
         // the decoded bytes say nothing about Z when the branch executes.
-        if live_operand_sites.is_some_and(|s| s.contains(&(pred_insn.addr & 0xFFFFFF))) {
+        if mod_operand_sites.is_some_and(|s| s.contains(&(pred_insn.addr & 0xFFFFFF))) {
             continue;
         }
         if pred_di.successors.len() != 1 || pred_di.successors[0] != k {
@@ -4863,8 +4863,8 @@ mod tests {
     }
 
     #[test]
-    fn const_z_fold_skips_a_live_operand() {
-        // The same LDA #$00 ; BEQ, but the immediate is a cfg live_operand: the
+    fn const_z_fold_skips_a_mod_operand() {
+        // The same LDA #$00 ; BEQ, but the immediate is a cfg mod_operand: the
         // host may edit it in the loaded image, so both paths must survive.
         let mut bytes = vec![0u8; 7];
         bytes[0] = 0xA9;
@@ -4876,7 +4876,7 @@ mod tests {
         let rom = rom_at_8000(&bytes);
         let live = std::collections::BTreeSet::from([0x008000u32]);
         let env = DecodeEnv {
-            live_operand_sites: Some(&live),
+            mod_operand_sites: Some(&live),
             ..DecodeEnv::default()
         };
         let g = decode_function(&rom, 0, 0x8000, 1, 1, None, &env);

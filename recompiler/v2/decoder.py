@@ -1943,7 +1943,7 @@ def decode_function(rom: bytes, bank: int, start: int,
                      brk_rti_sites: Optional[set] = None,
                      stop_on_unknown_callee_exit: bool = False,
                      hle_entry_pcs: Optional[set] = None,
-                     live_operand_sites: Optional[set] = None,
+                     mod_operand_sites: Optional[set] = None,
                      mod_hook_sites: Optional[set] = None,
                      mod_hook_target_sites: Optional[set] = None,
                     ) -> "FunctionDecodeGraph":
@@ -1973,7 +1973,7 @@ def decode_function(rom: bytes, bank: int, start: int,
             brk_rti_sites=brk_rti_sites,
             stop_on_unknown_callee_exit=stop_on_unknown_callee_exit,
             hle_entry_pcs=hle_entry_pcs,
-            live_operand_sites=live_operand_sites,
+            mod_operand_sites=mod_operand_sites,
             mod_hook_sites=mod_hook_sites,
             mod_hook_target_sites=mod_hook_target_sites,
         )
@@ -1994,7 +1994,7 @@ def decode_function(rom: bytes, bank: int, start: int,
         _identity(brk_rti_sites),
         bool(stop_on_unknown_callee_exit),
         frozenset(pc & 0xFFFF for pc in (hle_entry_pcs or ())),
-        frozenset(pc & 0xFFFFFF for pc in (live_operand_sites or ())),
+        frozenset(pc & 0xFFFFFF for pc in (mod_operand_sites or ())),
         frozenset(pc & 0xFFFFFF for pc in (mod_hook_sites or ())),
         frozenset(pc & 0xFFFFFF for pc in (mod_hook_target_sites or ())),
     )
@@ -2023,7 +2023,7 @@ def decode_function(rom: bytes, bank: int, start: int,
         brk_rti_sites=brk_rti_sites,
         stop_on_unknown_callee_exit=stop_on_unknown_callee_exit,
         hle_entry_pcs=hle_entry_pcs,
-        live_operand_sites=live_operand_sites,
+        mod_operand_sites=mod_operand_sites,
         mod_hook_sites=mod_hook_sites,
         mod_hook_target_sites=mod_hook_target_sites,
     )
@@ -2049,7 +2049,7 @@ def _decode_function_uncached(rom: bytes, bank: int, start: int,
                      brk_rti_sites: Optional[set] = None,
                      stop_on_unknown_callee_exit: bool = False,
                      hle_entry_pcs: Optional[set] = None,
-                     live_operand_sites: Optional[set] = None,
+                     mod_operand_sites: Optional[set] = None,
                      mod_hook_sites: Optional[set] = None,
                      mod_hook_target_sites: Optional[set] = None,
                     ) -> FunctionDecodeGraph:
@@ -3068,7 +3068,7 @@ def _decode_function_uncached(rom: bytes, bank: int, start: int,
     # worklist drains so predecessor counts are stable. See
     # `_apply_constant_z_fold` for the narrow scope.
     barrier_sites = mod_hook_sites | mod_hook_target_sites
-    _apply_constant_z_fold(graph, live_operand_sites, barrier_sites)
+    _apply_constant_z_fold(graph, mod_operand_sites, barrier_sites)
     graph.mod_hook_barrier = any(
         (k.pc & 0xFFFFFF) in barrier_sites for k in graph.insns)
 
@@ -3681,7 +3681,7 @@ def analyze_function_exit_mx(graph: 'FunctionDecodeGraph',
 
 
 def _apply_constant_z_fold(graph: FunctionDecodeGraph,
-                           live_operand_sites: Optional[set] = None,
+                           mod_operand_sites: Optional[set] = None,
                            barrier_sites: Optional[set] = None) -> None:
     """Decoder post-pass: rewrite BEQ/BNE successors to a single live
     edge when the same-block predecessor is an immediate LDA/LDX/LDY
@@ -3747,10 +3747,10 @@ def _apply_constant_z_fold(graph: FunctionDecodeGraph,
             continue
         if pred_insn.mode != IMM:
             continue
-        # A `live_operand` immediate is read from the ROM image at run time,
+        # A `mod_operand` immediate may be replaced by a mod at run time,
         # so the bytes decoded here say nothing about Z when the branch runs.
-        if (live_operand_sites
-                and (pred_insn.addr & 0xFFFFFF) in live_operand_sites):
+        if (mod_operand_sites
+                and (pred_insn.addr & 0xFFFFFF) in mod_operand_sites):
             continue
         if len(pred_di.successors) != 1 or pred_di.successors[0] != k:
             continue

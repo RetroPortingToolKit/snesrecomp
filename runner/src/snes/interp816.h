@@ -82,6 +82,10 @@ void     interp816_free(Interp816 *cpu);
 void     interp816_reset(Interp816 *cpu);
 void     interp816_set_brk_hook_enabled(Interp816 *cpu, bool enabled);
 int      interp816_runOpcode(Interp816 *cpu);   /* runs one opcode; returns cycles */
+/* cfg `mod_operand`: asked, while an immediate is fetched, whether a mod has
+ * given the instruction at pc24 another operand (runner/src/mod_operand.c). */
+typedef bool (*Interp816OperandOverride)(uint32_t pc24, uint16_t *value);
+void     interp816_set_operand_override(Interp816OperandOverride fn);
 uint8_t  interp816_getFlags(Interp816 *cpu);
 void     interp816_setFlags(Interp816 *cpu, uint8_t val);
 void     interp816_saveload(Interp816 *cpu, SaveLoadInfo *sli);

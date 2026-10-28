@@ -130,11 +130,11 @@ pub struct BankCfg {
     pub inline_dispatch_loops: BTreeSet<u32>,
     pub terminal_jsr: BTreeSet<u32>,
     pub noreturn_jsr: BTreeSet<u32>,
-    /// `live_operand <site_pc16>`: the immediate at this site is read from
-    /// the ROM image at run time. The analyzer keeps the instruction (its
-    /// width and control flow do not depend on the value) but must not fold
-    /// a fact out of the decoded bytes, which the host may since have edited.
-    pub live_operand: BTreeSet<u32>,
+    /// `mod_operand <site_pc16>`: a mod may give the immediate at this site
+    /// another value at run time (runner/src/mod_operand.c). The analyzer
+    /// keeps the instruction (its width and control flow do not depend on the
+    /// value) but must not fold a fact out of the ROM's operand bytes.
+    pub mod_operand: BTreeSet<u32>,
     /// `brk_rti <site_pc16>`: a BRK whose native vector is a bare RTI -- a
     /// two-byte no-op on hardware. Decoded as a fall-through, not poison.
     pub brk_rti: BTreeSet<u32>,
@@ -651,24 +651,31 @@ pub fn parse_bank_cfg(text: &str, path: &str) -> Result<BankCfg, String> {
             }
             continue;
         }
-        // live_operand <site_pc16>
+        // `live_operand` read its immediate from a patched ROM image; ROM
+        // patching is retired (mods use `mod_operand` / `mod_hook`).
         if head == "live_operand" {
+            return Err(format!(
+                "{path}: live_operand is removed (patching the loaded ROM is not                  supported); declare the site with `mod_operand` and give it a value                  with snes_mod_operand_set() (docs/MOD_OPERAND.md)"
+            ));
+        }
+        // mod_operand <site_pc16>
+        if head == "mod_operand" {
             if tokens.len() != 2 {
                 return Err(format!(
-                    "{path}: live_operand needs exactly one <site_pc16>, got: {stripped:?}"
+                    "{path}: mod_operand needs exactly one <site_pc16>, got: {stripped:?}"
                 ));
             }
             let site_pc16 =
-                parse_hex(tokens[1]).map_err(|e| format!("{path}: live_operand {e}"))?;
+                parse_hex(tokens[1]).map_err(|e| format!("{path}: mod_operand {e}"))?;
             if site_pc16 > 0xFFFF {
                 return Err(format!(
-                    "{path}: live_operand needs a 16-bit PC in this cfg's bank, got {:?}",
+                    "{path}: mod_operand needs a 16-bit PC in this cfg's bank, got {:?}",
                     tokens[1]
                 ));
             }
-            if !cfg.live_operand.insert(site_pc16) {
+            if !cfg.mod_operand.insert(site_pc16) {
                 return Err(format!(
-                    "{path}: live_operand duplicate site ${site_pc16:04X}"
+                    "{path}: mod_operand duplicate site ${site_pc16:04X}"
                 ));
             }
             continue;
@@ -1407,15 +1414,20 @@ exit_mx_set 028000 M0X0 M0X1
     }
 
     #[test]
-    fn live_operand_parse() {
-        let cfg = parse_bank_cfg("bank = 00\nlive_operand C236\n", "test.cfg").unwrap();
-        assert_eq!(cfg.live_operand, BTreeSet::from([0xC236]));
+    fn mod_operand_parse() {
+        let cfg = parse_bank_cfg("bank = 00\nmod_operand C236\n", "test.cfg").unwrap();
+        assert_eq!(cfg.mod_operand, BTreeSet::from([0xC236]));
         assert!(parse_bank_cfg(
-            "bank = 00\nlive_operand C236\nlive_operand C236\n",
+            "bank = 00\nmod_operand C236\nmod_operand C236\n",
             "test.cfg"
         )
         .is_err());
-        assert!(parse_bank_cfg("bank = 00\nlive_operand\n", "test.cfg").is_err());
+        assert!(parse_bank_cfg("bank = 00\nmod_operand\n", "test.cfg").is_err());
+        let error = parse_bank_cfg("bank = 00\nlive_operand C236\n", "test.cfg")
+            .err().unwrap();
+        assert!(error.contains("live_operand is removed"));
+        assert!(error.contains("mod_operand"));
+        assert!(parse_bank_cfg("bank = 00\nmod_operand 10000\n", "test.cfg").is_err());
     }
 
     #[test]
@@ -1517,9 +1529,9 @@ mod_hook 9110 A
     }
 
     #[test]
-    fn live_operand_rejects_out_of_bank_addresses() {
+    fn mod_operand_rejects_out_of_bank_addresses() {
         for site in ["10000", "038B27", "838B27"] {
-            let text = format!("bank = 03\nlive_operand {site}\n");
+            let text = format!("bank = 03\nmod_operand {site}\n");
             let result = parse_bank_cfg(&text, "test.cfg");
             assert!(result.is_err(), "accepted out-of-bank site {site}");
             assert!(result.unwrap_err().contains("16-bit"));

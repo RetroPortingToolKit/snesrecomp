@@ -122,7 +122,7 @@ struct Inputs {
     hle_dispatch: HashMap<u32, String>,
     inline_skip: HashMap<u32, i32>,
     terminal_jsr_sites: BTreeSet<u32>,
-    live_operand_sites: BTreeSet<u32>,
+    mod_operand_sites: BTreeSet<u32>,
     /// cfg `mod_hook` sites / `mod_hook_target` PCs (24-bit, mirrors
     /// included): value barriers (docs/MOD_HOOK.md "Analysis").
     mod_hook_sites: BTreeSet<u32>,
@@ -294,7 +294,7 @@ fn load_inputs(cfg_dir: &Path, rom: &mut Vec<u8>, all_cfg_roots: bool) -> Result
     let mut hle_dispatch = HashMap::new();
     let mut inline_skip = HashMap::new();
     let mut terminal_jsr_sites = BTreeSet::new();
-    let mut live_operand_sites = BTreeSet::new();
+    let mut mod_operand_sites = BTreeSet::new();
     let mut mod_hook_sites = BTreeSet::new();
     let mut mod_hook_target_sites = BTreeSet::new();
     let mut brk_rti_sites = BTreeSet::new();
@@ -393,11 +393,11 @@ fn load_inputs(cfg_dir: &Path, rom: &mut Vec<u8>, all_cfg_roots: bool) -> Result
                 terminal_jsr_sites.insert(mirror);
             }
         }
-        for &site_pc16 in &cfg.live_operand {
+        for &site_pc16 in &cfg.mod_operand {
             let site = (bank << 16) | (site_pc16 & 0xFFFF);
-            live_operand_sites.insert(site);
+            mod_operand_sites.insert(site);
             if let Some(mirror) = mirror_pc24(mapping, site) {
-                live_operand_sites.insert(mirror);
+                mod_operand_sites.insert(mirror);
             }
         }
         for &site_pc16 in cfg.mod_hook.keys() {
@@ -566,7 +566,7 @@ fn load_inputs(cfg_dir: &Path, rom: &mut Vec<u8>, all_cfg_roots: bool) -> Result
         hle_dispatch,
         inline_skip,
         terminal_jsr_sites,
-        live_operand_sites,
+        mod_operand_sites,
         mod_hook_barrier: mod_hook_sites
             .union(&mod_hook_target_sites)
             .copied()
@@ -1315,7 +1315,7 @@ fn analyze(
                 callee_inline_skip: Some(&inline_args),
                 inline_dispatch_loop_pcs: inline_loops,
                 terminal_jsr_sites: Some(&inputs.terminal_jsr_sites),
-                live_operand_sites: Some(&inputs.live_operand_sites),
+                mod_operand_sites: Some(&inputs.mod_operand_sites),
                 mod_hook_sites: Some(&inputs.mod_hook_sites),
                 mod_hook_target_sites: Some(&inputs.mod_hook_target_sites),
                 brk_rti_sites: Some(&inputs.brk_rti_sites),

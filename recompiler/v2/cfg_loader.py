@@ -174,13 +174,13 @@ class BankCfg:
     # terminal_jsr, the callee does not consume the call frame as inline data;
     # emission preserves the real frame and hands the exceptional path to LLE.
     noreturn_jsr: set = field(default_factory=set)
-    # `live_operand <site_pc16>` — the immediate operand of the instruction at
-    # this site is read from the ROM image at run time instead of being
-    # folded into the generated C. For an operand the host edits in the
-    # loaded ROM (a cheat raising a limit, a patch toggled live): compiled
-    # code then sees the edit exactly as the interpreter would. Cycle cost
-    # is unchanged -- it comes from the opcode, which is still the IMM form.
-    live_operand: set = field(default_factory=set)
+    # `mod_operand <site_pc16>` — the immediate operand of the instruction at
+    # this site is not folded into the generated C: compiled code asks the mod
+    # runtime for it (runner/src/mod_operand.c), and the interpreter
+    # substitutes the same value, so a mod can change a limit or speed
+    # constant at run time without touching the ROM. Cycle cost is unchanged
+    # -- it comes from the opcode, which is still the IMM form.
+    mod_operand: set = field(default_factory=set)
     # `entry_hook <pc16> <c_function>` — compiled code calls the host's
     # `void c_function(const CpuState *cpu, uint32 pc24)` each time it is
     # about to execute the instruction at <pc16>, in any compiled body: the
@@ -580,28 +580,38 @@ def load_bank_cfg(path: str) -> BankCfg:
                 cfg.noreturn_jsr.add(site_pc16)
                 continue
 
-            # live_operand <site_pc16> — read this site's immediate from ROM
-            # at run time. The emitter validates the opcode against its
-            # supported set (data operands only: never REP/SEP/MVN/MVP).
+            # `live_operand` read its immediate from a patched ROM image.
+            # Patching the ROM is retired for good: mods give operands
+            # through `mod_operand` and change behaviour through `mod_hook`.
             if head == 'live_operand':
+                raise ValueError(
+                    f"{path}: live_operand is removed (patching the loaded "
+                    "ROM is not supported); declare the site with "
+                    "`mod_operand` and give it a value with "
+                    "snes_mod_operand_set() (docs/MOD_OPERAND.md)")
+
+            # mod_operand <site_pc16> — the mod runtime supplies this site's
+            # immediate at run time. The emitter validates the opcode against
+            # its supported set (data operands only: never REP/SEP/MVN/MVP).
+            if head == 'mod_operand':
                 if len(tokens) != 2:
                     raise ValueError(
-                        f"{path}: live_operand needs exactly one <site_pc16>, "
+                        f"{path}: mod_operand needs exactly one <site_pc16>, "
                         f"got: {stripped!r}")
                 try:
                     site_pc16 = _parse_hex(tokens[1])
                 except ValueError as e:
                     raise ValueError(
-                        f"{path}: live_operand bad site {tokens[1]!r}: {e}")
+                        f"{path}: mod_operand bad site {tokens[1]!r}: {e}")
                 if not 0 <= site_pc16 <= 0xFFFF:
                     raise ValueError(
-                        f"{path}: live_operand needs a 16-bit PC in this cfg's bank, "
+                        f"{path}: mod_operand needs a 16-bit PC in this cfg's bank, "
                         f"got {tokens[1]!r}")
-                if site_pc16 in cfg.live_operand:
+                if site_pc16 in cfg.mod_operand:
                     raise ValueError(
-                        f"{path}: live_operand duplicate site "
+                        f"{path}: mod_operand duplicate site "
                         f"${site_pc16:04X}")
-                cfg.live_operand.add(site_pc16)
+                cfg.mod_operand.add(site_pc16)
                 continue
 
             # entry_hook <pc16> <c_function> — call a host function on entry

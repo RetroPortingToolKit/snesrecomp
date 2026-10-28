@@ -169,39 +169,26 @@ tail target should instead model that target directly. A site cannot be both
 `terminal_jsr` and `noreturn_jsr`; both Python and Rust configuration parsers
 reject that contradiction.
 
-## Run-time immediates (`live_operand`)
+## Run-time immediates (`mod_operand`)
 
-`live_operand <site_pc16>` names an immediate-mode instruction whose operand
-the host may edit in the loaded ROM image (a cheat raising a limit, a patch
-toggled while running). Emission replaces the folded constant with a read of
-`PB:(pc+1)` at the instruction's own width, so compiled code sees the edit
-exactly as the interpreter does. The opcode, and with it the cycle charge,
-stays the IMM form.
+`mod_operand <site_pc16>` names an immediate data instruction whose value a
+trusted plugin may override with `snes_mod_operand_set(pc24, value)`. AOT uses
+`snes_mod_operand(pc24, stock)` and the interpreter substitutes the same value
+at the original M/X width. The cartridge image, opcode and cycle charge are
+unchanged. `live_operand` is removed and rejected by both configuration parsers.
+See [MOD_OPERAND.md](MOD_OPERAND.md) for registration and lifetime rules.
 
-Only data operands are supported: `LDA LDX LDY ADC SBC AND ORA EOR CMP CPX
-CPY BIT`. Changing one of those changes a value, never a decode width or a
-control-flow edge, so every structural fact the analyzer proved still holds.
-`REP`/`SEP` (they set the widths every later decode depends on), `MVN`/`MVP`
-(bank operands) and the signature bytes of `BRK`/`COP`/`WDM` are refused by
-name, as is a site that is not an immediate.
+Supported instructions are `LDA LDX LDY ADC SBC AND ORA EOR CMP CPX CPY BIT`.
+REP/SEP and other status/control operands are refused. The site is a local
+hexadecimal 16-bit PC; use `mod_operand 8B27` in bank03.cfg for $03:8B27.
+Execution-bank aliases share a physical-ROM-offset key, independently of DB.
 
-The one value fact derived from an immediate is the constant-Z branch fold
-(`LDA #0` / `BEQ` taken unconditionally). Both the Python decoder and the
-native analyzer skip that fold at a declared site, so the manifest and the
-emitted C keep both successors; the decode cache key includes the declared
-sites. Guarded pointer recovery may still enumerate candidates from the
-decoded bytes: emission compares the pointer actually loaded and keeps the
-interpreter default arm, so an edited value outside the candidates runs on the
-interpreter, never on a wrong target. A duplicate site is a configuration
-error in both parsers.
-
-The site must be a hexadecimal 16-bit local PC in the cfg's bank: to patch
-`$03:8B27`, write `live_operand 8B27` in `bank03.cfg`. Negative and larger
-addresses are errors rather than silently truncated addresses. Emission
-propagates the declaration to the cartridge mapping's ROM mirror and reads
-the operand from the emitted body's program bank, independently of DB.
-For an observational callback at the same instruction, see
-[`entry_hook`](ENTRY_HOOK.md#observers-alongside-live-rom-patches).
+Both analyzers suppress the constant-Z branch fold across a declared operand,
+retaining both successors. The decode cache includes declared sites, and
+configuration changes invalidate emitted bank sources. Pointer recovery keeps
+its guarded interpreter default when the mod value is outside proved targets.
+An observational callback may use
+[`entry_hook`](ENTRY_HOOK.md#observers-alongside-mod-owned-operands).
 
 ## Run-time hooks (`mod_hook`)
 

@@ -16,7 +16,7 @@ from collections import defaultdict
 from dataclasses import dataclass
 from typing import Iterable, Mapping
 
-from snes65816 import vector_table_offset
+from snes65816 import vector_table_offset, rom_offset
 
 from .atomic_output import AtomicOutputDir, write_if_changed
 from .codegen import (
@@ -81,6 +81,24 @@ _MOD_HOOK_GLOBAL_SYMBOLS = (
 MODULE_NAMESPACE_HEADER = "module_namespace.h"
 MODULE_DESCRIPTOR_SOURCE = "module_v2.c"
 MOD_HOOK_SOURCE = "mod_hooks_v2.c"
+MOD_OPERAND_SOURCE = "mod_operands_v2.c"
+
+
+def emit_mod_operand_table(offsets) -> str:
+    """Declare mod-owned immediates without exporting module-global symbols."""
+    values = ", ".join(f"0x{offset:06X}u" for offset in offsets)
+    return '\n'.join([
+        '/* Auto-generated mod-owned operand sites. Do NOT hand-edit. */',
+        '#include <stdlib.h>',
+        '#include "mod_operand.h"',
+        '#include "program_module.h"',
+        f'static const uint32 k_sites[] = {{{values}}};',
+        'SNES_PROGRAM_MODULE_CONSTRUCTOR(snes_mod_operand_register_generated) {',
+        '  if (!snes_mod_operand_register_sites(k_sites,',
+        '          (unsigned)(sizeof(k_sites) / sizeof(k_sites[0])))) abort();',
+        '}',
+        '',
+    ])
 
 
 def validate_module_identity(module_id: str, module_prefix: str | None):
@@ -935,6 +953,17 @@ def emit_program(*, rom: bytes, parsed, manifest: ProgramManifest,
 
     rom_digest = hashlib.sha256(rom).hexdigest()
     mod_hook_decls = collect_mod_hooks(cfg_by_bank)
+    mod_operand_offsets = sorted({
+        rom_offset(bank, site)
+        for bank, cfg in cfg_by_bank.items()
+        for site in getattr(cfg, "mod_operand", ())
+    })
+    for offset in mod_operand_offsets:
+        if offset >= len(rom) or rom[offset] not in {
+                0xA9, 0xA2, 0xA0, 0x69, 0xE9, 0x29,
+                0x09, 0x49, 0xC9, 0xE0, 0xC0, 0x89}:
+            raise ValueError(f"mod_operand ROM offset ${offset:06X} is not "
+                             "a supported immediate data instruction")
     live_cache_path = pathlib.Path(out_dir) / ".snesrecomp-cache.json"
     try:
         old_cache = json.loads(live_cache_path.read_text(encoding="utf-8"))
@@ -1022,11 +1051,11 @@ def emit_program(*, rom: bytes, parsed, manifest: ProgramManifest,
                     (bank << 16) | (site & 0xFFFF)
                     for site in cfg.noreturn_jsr
                 }
-            live_operand_sites = None
-            if cfg is not None and getattr(cfg, "live_operand", None):
-                live_operand_sites = {
+            mod_operand_sites = None
+            if cfg is not None and getattr(cfg, "mod_operand", None):
+                mod_operand_sites = {
                     (bank << 16) | (site & 0xFFFF)
-                    for site in cfg.live_operand
+                    for site in cfg.mod_operand
                 }
             entry_hooks = None
             if cfg is not None and getattr(cfg, "entry_hook", None):
@@ -1066,7 +1095,7 @@ def emit_program(*, rom: bytes, parsed, manifest: ProgramManifest,
                 indirect_dispatch=indirect_dispatch or None,
                 terminal_jsr_sites=terminal_jsr_sites,
                 noreturn_jsr_sites=noreturn_jsr_sites,
-                live_operand_sites=live_operand_sites,
+                mod_operand_sites=mod_operand_sites,
                 entry_hooks=entry_hooks,
                 mod_hooks=mod_hooks,
                 brk_rti_sites=brk_rti_sites,
@@ -1118,6 +1147,8 @@ def emit_program(*, rom: bytes, parsed, manifest: ProgramManifest,
         }
         if mod_hook_decls:
             planned.add(MOD_HOOK_SOURCE)
+        if mod_operand_offsets:
+            planned.add(MOD_OPERAND_SOURCE)
         if module_prefix:
             planned.add(MODULE_NAMESPACE_HEADER)
             # A prefixed module resolves `#include "funcs.h"` to ITS OWN
@@ -1148,6 +1179,9 @@ def emit_program(*, rom: bytes, parsed, manifest: ProgramManifest,
         if mod_hook_decls:
             write_if_changed(staging / MOD_HOOK_SOURCE,
                              emit_mod_hook_table(mod_hook_decls, module_prefix))
+        if mod_operand_offsets:
+            write_if_changed(staging / MOD_OPERAND_SOURCE,
+                             emit_mod_operand_table(mod_operand_offsets))
         write_if_changed(
             staging / "unresolved_stubs_v2.c",
             "/* Manifest-driven generation: unresolved execution remains LLE. */\n")

@@ -48,7 +48,35 @@ def _generated(out_dir):
             for path in sorted(out_dir.glob("*_v2.c"))}
 
 
-def test_live_operand_and_entry_hook_changes_invalidate_emission_cache(tmp_path):
+def test_operand_table_is_declared_deduplicated_and_removed_with_cfg(tmp_path):
+    rom_path, cfg_dir, out_dir = _fixture(tmp_path)
+    rom = bytearray(rom_path.read_bytes())
+    rom[0x10:0x13] = bytes([0xa9, 0x42, 0x60])
+    rom_path.write_bytes(rom)
+    plain = (cfg_dir / 'bank00.cfg').read_text()
+    assert _run(rom_path, cfg_dir, out_dir).returncode == 0
+    before = (out_dir / 'bank00_v2.c').read_bytes()
+    assert not (out_dir / 'mod_operands_v2.c').exists()
+    (cfg_dir / 'bank00.cfg').write_text(plain + 'mod_operand 8010\n')
+    # Both bank aliases declare the same physical instruction.
+    (cfg_dir / 'bank80.cfg').write_text('bank = 80\nmod_operand 8010\n')
+    result = _run(rom_path, cfg_dir, out_dir)
+    assert result.returncode == 0, result.stdout + result.stderr
+    table = (out_dir / 'mod_operands_v2.c').read_text()
+    assert 'static const uint32 k_sites[] = {0x000010u};' in table
+    assert 'snes_mod_operand_register_sites' in table
+    assert 'snes_mod_operand(0x008010u, 0x42)' in (out_dir / 'bank00_v2.c').read_text()
+    first = _generated(out_dir)
+    assert _run(rom_path, cfg_dir, out_dir).returncode == 0
+    assert _generated(out_dir) == first
+    (cfg_dir / 'bank00.cfg').write_text(plain)
+    (cfg_dir / 'bank80.cfg').unlink()
+    assert _run(rom_path, cfg_dir, out_dir).returncode == 0
+    assert not (out_dir / 'mod_operands_v2.c').exists()
+    assert (out_dir / 'bank00_v2.c').read_bytes() == before
+
+
+def test_mod_operand_and_entry_hook_changes_invalidate_emission_cache(tmp_path):
     """Config-only changes must reach C even when the manifest stays unchanged."""
     rom_path, cfg_dir, out_dir = _fixture(tmp_path)
     rom = bytearray(rom_path.read_bytes())
@@ -57,17 +85,29 @@ def test_live_operand_and_entry_hook_changes_invalidate_emission_cache(tmp_path)
     cfg_path = cfg_dir / 'bank00.cfg'
     base = 'bank = 00\nfunc I_RESET 8000 end:8005 entry_mx:1,1\n'
     for live in (False, True, False):
-        cfg_path.write_text(base + ('live_operand 8000\nentry_hook 8002 HostSaw\n'
+        cfg_path.write_text(base + ('mod_operand 8000\nentry_hook 8002 HostSaw\n'
                                     if live else ''), encoding='utf-8')
         changed = _run(rom_path, cfg_dir, out_dir)
         assert changed.returncode == 0, changed.stdout + changed.stderr
         assert '1 bank(s) emitted, 0 reused' in changed.stdout
         source = (out_dir / 'bank00_v2.c').read_text(encoding='utf-8')
         assert ('HostSaw(cpu, 0x008002u);' in source) is live
-        assert ('cpu_read8(cpu, 0x00, (uint16)(0x8001))' in source) is live
+        assert ('snes_mod_operand(0x008000u, 0x1)' in source) is live
         cached = _run(rom_path, cfg_dir, out_dir)
         assert cached.returncode == 0, cached.stdout + cached.stderr
         assert '0 bank(s) emitted, 1 reused' in cached.stdout
+
+
+def test_unreachable_status_operand_is_refused_before_registration(tmp_path):
+    rom_path, cfg_dir, out_dir = _fixture(tmp_path)
+    rom = bytearray(rom_path.read_bytes())
+    rom[0x100:0x103] = bytes.fromhex('e2 20 60')
+    rom_path.write_bytes(rom)
+    with (cfg_dir / 'bank00.cfg').open('a') as cfg:
+        cfg.write('mod_operand 8100\n')
+    result = _run(rom_path, cfg_dir, out_dir)
+    assert result.returncode != 0
+    assert 'not a supported immediate data instruction' in result.stdout + result.stderr
 
 
 def test_rom_change_regenerates_banks_in_place(tmp_path):

@@ -483,7 +483,7 @@ from v2 import widths  # noqa: E402
 from v2 import emitter_helpers  # noqa: E402
 from v2.ir import (  # noqa: E402
     IROp, IRBlock,
-    Read, Write, ReadReg, WriteReg, ConstI,
+    Read, Write, ReadReg, WriteReg, ConstI, ModOperand,
     Alu, AluOp, Shift, ShiftOp, IncReg, IncMem,
     BitTest, BitSetMem, BitClearMem,
     SetFlag, SetNZ, RepFlags, SepFlags, XCE,
@@ -692,6 +692,13 @@ def _emit_writereg(op: WriteReg) -> List[str]:
 
 def _emit_consti(op: ConstI) -> List[str]:
     return [f"{_ctype(op.width)} {_v(op.out)} = {op.value:#x};"]
+
+
+def _emit_mod_operand(op: ModOperand) -> List[str]:
+    value = f"snes_mod_operand(0x{op.pc24 & 0xFFFFFF:06X}u, {op.stock:#x})"
+    if op.width == 1:
+        value = f"(uint8){value}"
+    return [f"{_ctype(op.width)} {_v(op.out)} = {value};"]
 
 
 def _emit_addsub(tname, lhs_m, rhs_m, out_v, width, is_sub) -> List[str]:
@@ -2767,7 +2774,7 @@ def _emit_pull(op: Pull) -> List[str]:
 _DISPATCH = {
     Read: _emit_read, Write: _emit_write,
     ReadReg: _emit_readreg, WriteReg: _emit_writereg,
-    ConstI: _emit_consti,
+    ConstI: _emit_consti, ModOperand: _emit_mod_operand,
     Alu: _emit_alu, Shift: _emit_shift, IncReg: _emit_increg, IncMem: _emit_incmem,
     BitTest: _emit_bittest, BitSetMem: _emit_bitsetmem, BitClearMem: _emit_bitclearmem,
     SetFlag: _emit_setflag, SetNZ: _emit_setnz,
