@@ -696,6 +696,23 @@ uint32_t g_interp_wlog_pc24 = 0;
 static uint32_t s_lle_bounce_exclusions[16];
 static size_t   s_lle_bounce_exclusion_count;
 
+bool interp_bridge_guest_scope_idle(void) {
+    return !s_interp_bridge_depth && !s_lle_sched_depth &&
+           !s_interp_bounce_owner_depth && !s_lle_unwind_active;
+}
+void interp_bridge_guest_scope_unwind(void) {
+    s_interp_bridge_depth = s_lle_sched_depth = 0;
+    s_interp_bounce_owner_depth = 0;
+    s_interp_bounce_recomp_base = -1;
+    s_interp_owner_exit_s = 0;
+    s_interp_owner_exit_valid = s_interp_owner_is_scheduler = 0;
+    s_sched_yield_pc = s_sched_yield_flag_addr = s_sched_yield_flag_value = 0;
+    s_lle_unwind_active = s_lle_unwind_owner_depth = 0;
+    s_lle_unwind_pc24 = 0;
+    s_lle_unwind_is_deadline = s_lle_next_unwind_is_deadline = 0;
+    g_interp_wlog_pc24 = 0;
+}
+
 /* Debug lever (SNESRECOMP_LLE_INTERP_TARGET_FILE): a file of hex PC24s, one per
  * line, each forced to the byte interpreter instead of its AOT body. Unbounded
  * (unlike the 16-slot programmatic list) so a whole seeded root set can be
@@ -1695,6 +1712,7 @@ static int _interp_run_core(CpuState *cpu, uint32_t entry_pc24,
         s_poll_gate = (_e && _e[0] && _e[0] != '0') ? 0 : 1;
     }
     for (; steps < step_cap; steps++) {
+        RtlGuestScopeCheckpoint();
         const uint32_t pc_before = ((uint32_t)in.k << 16) | in.pc;
 #ifdef SNESRECOMP_INTERP_PROFILE
         g_interp_total_steps++;

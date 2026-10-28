@@ -602,6 +602,9 @@ void ppu_set_vram_write_log_hook(PpuVramWriteLogHook hook);
  * register write with the beam line. A host arms it with ppu_rasterBegin and
  * brackets its render loop with RenderBegin / ApplyLine per line / RenderEnd. */
 void ppu_rasterBegin(Ppu *ppu);
+/* Isolated native loaders may change registers/beam time on a scratch
+ * timeline. Keep those writes out of the live field replay and write log. */
+void ppu_setGuestScope(bool active);
 void ppu_rasterRenderBegin(Ppu *ppu);
 void ppu_rasterRenderEnd(Ppu *ppu);
 int  ppu_rasterTakeHdmaen(uint8_t *out);

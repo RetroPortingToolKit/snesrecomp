@@ -84,6 +84,7 @@ struct Feature {
     std::string description;
     std::string group = "General";
     bool default_enabled = false;
+    bool experimental = false;
     /* This feature changes only what the local machine DRAWS, never what it
      * simulates -- so it is left out of the effective set two netplay peers
      * compare, and the two of them may differ on it freely.
@@ -694,6 +695,9 @@ bool read_manifest(const fs::path& path, Package& out, std::string* error) {
                 } else if (key == "presentation_only") {
                     parsed = parse_bool(value, bool_value);
                     if (parsed) feature->presentation_only = bool_value;
+                } else if (key == "experimental") {
+                    parsed = parse_bool(value, bool_value);
+                    if (parsed) feature->experimental = bool_value;
                 } else known = false;
                 break;
             case Section::Option:
@@ -2680,6 +2684,8 @@ int provider_feature_get(void*, int index,
     copy_text(out->description, feature.description);
     copy_text(out->group, feature.group);
     out->enabled = feature_enabled(state(), package, feature);
+    out->channel = feature.experimental ? RECOMP_MOD_CHANNEL_EXPERIMENTAL
+                                        : RECOMP_MOD_CHANNEL_STABLE;
     if (package.builtin_diagnostic) {
         out->hidden = !tier2_capture_exposed();
     }

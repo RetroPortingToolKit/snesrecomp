@@ -168,6 +168,10 @@ callbacks make the package state authoritative over old config files: disabling
 widescreen restores native 4:3 on the next launch even if a legacy config once
 stored `Widescreen = 1`.
 
+An optional `experimental = true` in a `[[feature]]` marks it with the
+launcher's Experimental channel badge. Omitted or false remains Stable;
+this metadata does not change activation, defaults or network identity.
+
 Features that claim the same plugin ID are alternatives. Enabling one, by
 feature or by package, deselects every other enabled feature claiming any of
 its plugins, so a package can declare mutual exclusion by also claiming its

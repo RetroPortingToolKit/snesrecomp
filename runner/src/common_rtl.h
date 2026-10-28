@@ -372,6 +372,24 @@ bool RtlLoadSnapshotFromMemory(const void *data, size_t size);
  * save-state load still ends the old presentation timeline. */
 bool RtlIsRollbackLoad(void);
 
+/* Run bounded native guest work without committing it to the live machine.
+ * Main simulation thread only; no nested scopes. The callback may read/write
+ * guest memory and render into its OWN buffers, but must not run a host frame,
+ * save files, register plugins, allocate guest devices or change host globals.
+ * CPU, bus, SRAM, PPU (including presentation policy), DMA, APU/output ring,
+ * bridge and timing residue are restored on success, refusal and budget abort.
+ * APU/MSU output and external port observers are suppressed within the scope.
+ * Title state callbacks and timeline invalidation are deliberately not invoked.
+ * budget counts compiled blocks/interpreter instructions, not wall time.
+ * Return 1 only if the callback returned true; 0 includes budget exhaustion.
+ * Callback-owned allocations must be made outside the scope (abort unwinds C).
+ */
+typedef bool (*RtlGuestScopeCallback)(void *context);
+bool RtlGuestScopeRun(RtlGuestScopeCallback callback, void *context,
+                      uint32_t budget);
+bool RtlGuestScopeActive(void);
+void RtlGuestScopeCheckpoint(void);
+
 /*
  * Rollback snapshots (netplay ROLLBACK mode).
  *
@@ -408,6 +426,11 @@ size_t RtlNetplaySnapshotHashedBytes(size_t size);
 bool RtlSaveSnapshotRingBlanked(const char *filename);
 /* Upper bound for one rollback snapshot; sizes the ring's allocations. */
 size_t RtlRollbackSnapshotBound(void);
+/* Optional bound for a title's state_*_extra chunk beyond the core's 1 MiB
+ * allowance. Register after RtlRegisterGame; zero/NULL keeps ordinary titles
+ * unchanged. A dynamic world must report its maximum, not only today's cache. */
+typedef size_t RtlStateExtraBoundCallback(void);
+void RtlSetStateExtraBound(RtlStateExtraBoundCallback *callback);
 
 /* Read / rewind the DSP output-ring producer cursor, so a resim can discard
  * the audio it re-produced for ticks the player has already heard. */
