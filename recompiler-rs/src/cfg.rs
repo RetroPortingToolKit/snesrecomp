@@ -135,6 +135,7 @@ pub struct BankCfg {
     /// width and control flow do not depend on the value) but must not fold
     /// a fact out of the decoded bytes, which the host may since have edited.
     pub live_operand: BTreeSet<u32>,
+    pub mod_operand: BTreeSet<u32>,
     /// `brk_rti <site_pc16>`: a BRK whose native vector is a bare RTI -- a
     /// two-byte no-op on hardware. Decoded as a fall-through, not poison.
     pub brk_rti: BTreeSet<u32>,
@@ -669,6 +670,28 @@ pub fn parse_bank_cfg(text: &str, path: &str) -> Result<BankCfg, String> {
             if !cfg.live_operand.insert(site_pc16) {
                 return Err(format!(
                     "{path}: live_operand duplicate site ${site_pc16:04X}"
+                ));
+            }
+            continue;
+        }
+        // mod_operand <site_pc16>
+        if head == "mod_operand" {
+            if tokens.len() != 2 {
+                return Err(format!(
+                    "{path}: mod_operand needs exactly one <site_pc16>, got: {stripped:?}"
+                ));
+            }
+            let site_pc16 =
+                parse_hex(tokens[1]).map_err(|e| format!("{path}: mod_operand {e}"))?;
+            if site_pc16 > 0xFFFF {
+                return Err(format!(
+                    "{path}: mod_operand needs a 16-bit PC in this cfg's bank, got {:?}",
+                    tokens[1]
+                ));
+            }
+            if !cfg.mod_operand.insert(site_pc16) {
+                return Err(format!(
+                    "{path}: mod_operand duplicate site ${site_pc16:04X}"
                 ));
             }
             continue;

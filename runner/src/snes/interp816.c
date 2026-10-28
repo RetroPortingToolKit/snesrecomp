@@ -63,7 +63,21 @@ static void interp816_doOpcode(Interp816* cpu, uint8_t opcode);
 
 // addressing modes and opcode functions not declared, only used after defintions
 
+/* cfg `mod_operand`: the operand bytes of the current immediate, when a mod
+ * has replaced them. Set by interp816_adrImm, dropped at the next opcode. */
+static Interp816OperandOverride s_operand_override;
+static struct { Interp816 *cpu; uint32_t lo, hi; uint16_t value; } s_imm;
+
+void interp816_set_operand_override(Interp816OperandOverride fn) {
+  s_operand_override = fn;
+  s_imm.cpu = NULL;
+}
+
 static uint8_t interp816_read(Interp816* cpu, uint32_t adr) {
+  if(s_imm.cpu == cpu) {
+    if(adr == s_imm.lo) return (uint8_t)s_imm.value;
+    if(adr == s_imm.hi) return (uint8_t)(s_imm.value >> 8);
+  }
   return cpu->read(cpu->mem, adr);
 }
 
@@ -86,6 +100,7 @@ void interp816_free(Interp816* cpu) {
 }
 
 void interp816_reset(Interp816* cpu) {
+  if(s_imm.cpu == cpu) s_imm.cpu = NULL;
   cpu->a = 0;
   cpu->x = 0;
   cpu->y = 0;
@@ -287,6 +302,7 @@ void interp816_opcode_hist_dump(void) {
 }
 
 int interp816_runOpcode(Interp816* cpu) {
+  s_imm.cpu = NULL;
   cpu->cyclesUsed = 0;
   s_interp816_opcodes_run++;
   /* getenv() walks the whole environment block on MSVC (~us) - cache it so
@@ -440,6 +456,8 @@ static void interp816_pushWord(Interp816* cpu, uint16_t value) {
 }
 
 static uint16_t interp816_readWord(Interp816* cpu, uint32_t adrl, uint32_t adrh) {
+  if(s_imm.cpu == cpu && adrl == s_imm.lo && adrh == s_imm.hi)
+    return s_imm.value;
   if(cpu->read_word) {
     uint16_t v;
     if(cpu->read_word(cpu->mem, adrl, adrh, &v)) return v;
@@ -478,14 +496,23 @@ static void interp816_doInterrupt(Interp816* cpu, bool irq) {
 
 // addressing modes
 
-static uint32_t interp816_adrImm(Interp816* cpu, uint32_t* low, bool xFlag) {
-  if((xFlag && cpu->xf) || (!xFlag && cpu->mf)) {
-    *low = (cpu->k << 16) | cpu->pc++;
-    return 0;
-  } else {
-    *low = (cpu->k << 16) | cpu->pc++;
-    return (cpu->k << 16) | cpu->pc++;
+/* An immediate operand at low (and high, 0 for one byte) is about to be read:
+ * substitute a mod's operand for the instruction that owns it, if any. */
+static void interp816_noteImm(Interp816* cpu, uint32_t low, uint32_t high) {
+  uint16_t value;
+  if(s_operand_override && s_operand_override((low & 0xff0000) | ((low - 1) & 0xffff), &value)) {
+    s_imm.cpu = cpu; s_imm.lo = low; s_imm.hi = high ? high : 0xffffffffu;
+    s_imm.value = value;
   }
+}
+
+static uint32_t interp816_adrImm(Interp816* cpu, uint32_t* low, bool xFlag) {
+  uint32_t high = 0;
+  *low = (cpu->k << 16) | cpu->pc++;
+  if(!((xFlag && cpu->xf) || (!xFlag && cpu->mf)))
+    high = (cpu->k << 16) | cpu->pc++;
+  interp816_noteImm(cpu, *low, high);
+  return high;
 }
 
 static uint32_t interp816_adrDp(Interp816* cpu, uint32_t* low) {
@@ -1874,6 +1901,8 @@ static void interp816_doOpcode(Interp816* cpu, uint8_t opcode) {
       break;
     }
     case 0x89: { // biti imm(m)
+      interp816_noteImm(cpu, (cpu->k << 16) | cpu->pc,
+                        cpu->mf ? 0 : (cpu->k << 16) | (uint16_t)(cpu->pc + 1));
       if(cpu->mf) {
         uint8_t result = (cpu->a & 0xff) & interp816_readOpcode(cpu);
         cpu->z = result == 0;

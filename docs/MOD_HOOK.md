@@ -14,7 +14,7 @@ Related tools, and when not to use them:
 |---|---|
 | Watch a routine without changing it | [`entry_hook`](ENTRY_HOOK.md) |
 | Replace a whole routine with C, always | [`hle_func`](HLE_FUNC.md) |
-| Patch an immediate operand in the loaded ROM | [`live_operand`](LLE_FIRST_ANALYSIS.md#run-time-immediates-live_operand) |
+| Give a declared immediate a mod-owned value | [`mod_operand`](MOD_OPERAND.md) |
 | Change behaviour at one PC, switchable at run time | `mod_hook` |
 
 ## Declaring a hook

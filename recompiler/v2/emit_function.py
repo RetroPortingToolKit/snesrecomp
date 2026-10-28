@@ -50,7 +50,7 @@ from v2.ir import (  # noqa: E402
     IROp, IRBlock, Value,
     CondBranch, Goto, IndirectGoto, Call, Return,
     PullReg, PushReg, Pull, Push, PushEffectiveAddress, Reg,
-    ConstI, Read, SegRef, SegKind,
+    ConstI, ModOperand, Read, SegRef, SegKind,
 )
 
 
@@ -152,6 +152,38 @@ LIVE_OPERAND_MNEMONICS = frozenset({
     'LDA', 'LDX', 'LDY', 'ADC', 'SBC', 'AND', 'ORA', 'EOR',
     'CMP', 'CPX', 'CPY', 'BIT',
 })
+
+
+MOD_OPERAND_MNEMONICS = LIVE_OPERAND_MNEMONICS
+
+def _mod_operand(insn, ops: List[IROp]) -> List[IROp]:
+    """`mod_operand`: ask the mod runtime for the immediate at run time.
+
+    The folded constant becomes snes_mod_operand(pc24, stock): the ROM's own
+    operand unless a mod has given the site a value. The loaded ROM is never
+    read or written for it. Only the constant changes; the opcode, and with
+    it the cycle charge, stays the IMM form.
+    """
+    pc = insn.addr & 0xFFFFFF
+    if insn.mode != _MODE_IMM:
+        raise ValueError(
+            f"mod_operand at ${pc:06X}: {insn.mnem} is not "
+            f"an immediate-mode instruction")
+    if insn.mnem not in MOD_OPERAND_MNEMONICS:
+        what = ("a status operand: it changes the widths decoded after it"
+                if insn.mnem in ('REP', 'SEP') else
+                "not a data operand")
+        raise ValueError(
+            f"mod_operand at ${pc:06X}: {insn.mnem} #imm is {what}; only "
+            f"{', '.join(sorted(MOD_OPERAND_MNEMONICS))} are supported")
+    # Every supported mnemonic lowers its IMM operand as the first op.
+    first = ops[0] if ops else None
+    if not (isinstance(first, ConstI) and first.value == insn.operand):
+        raise ValueError(
+            f"mod_operand at ${pc:06X}: {insn.mnem} lowers without a leading "
+            f"constant operand to replace")
+    return [ModOperand(pc24=pc, stock=first.value, width=first.width,
+                       out=first.out)] + list(ops[1:])
 
 
 def _live_operand(insn, ops: List[IROp]) -> List[IROp]:
@@ -599,6 +631,7 @@ def emit_function(rom: bytes, bank: int, start: int,
                   terminal_jsr_sites=None,
                   noreturn_jsr_sites=None,
                   live_operand_sites=None,
+                  mod_operand_sites=None,
                   entry_hooks=None,
                   brk_rti_sites=None,
                   instruction_blocks: bool = False,
@@ -744,7 +777,7 @@ def emit_function(rom: bytes, bank: int, start: int,
                             brk_rti_sites=brk_rti_sites,
                             hle_entry_pcs=(set(hle_func or ()) |
                                            set(hle_spc_upload or ())),
-                            live_operand_sites=live_operand_sites,
+                            live_operand_sites=(set(live_operand_sites or ()) | set(mod_operand_sites or ())) or None,
                             mod_hook_sites=set(mod_by_pc24) or None,
                             mod_hook_target_sites=mod_target_pc24s or None)
     # Forward any suppressed indirect calls upward so emit_bank can
@@ -996,7 +1029,9 @@ def emit_function(rom: bytes, bank: int, start: int,
         flat: List[IROp] = []
         for di in cfg.blocks[key].insns:
             ops = lower(di.insn, value_factory=vf)
-            if (live_operand_sites
+            if mod_operand_sites and (di.insn.addr & 0xFFFFFF) in mod_operand_sites:
+                ops = _mod_operand(di.insn, ops)
+            elif (live_operand_sites
                     and (di.insn.addr & 0xFFFFFF) in live_operand_sites):
                 ops = _live_operand(di.insn, ops)
             pairs.append((di.insn, ops))
@@ -2434,7 +2469,7 @@ def emit_function(rom: bytes, bank: int, start: int,
             if len(_pairs) == 1:
                 _insn = _pairs[0][0]
                 _paced_plan = plan(_insn, block_lines[key], _cyc_const,
-                                   live_operand=bool(live_operand_sites and block_pc24 in live_operand_sites))
+                                   live_operand=bool(block_pc24 in (set(live_operand_sites or ()) | set(mod_operand_sites or ()))))
             if _paced_plan is None:
                 src.append('    RecompStackPop();')
                 src.append(f'    return interp_tier_dispatch_tail(cpu, {_transfer_target_expr(block_pc24, False)}, '

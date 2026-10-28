@@ -394,7 +394,7 @@ fn load_inputs(cfg_dir: &Path, rom: &mut Vec<u8>, all_cfg_roots: bool) -> Result
                 terminal_jsr_sites.insert(mirror);
             }
         }
-        for &site_pc16 in &cfg.live_operand {
+        for &site_pc16 in cfg.live_operand.union(&cfg.mod_operand) {
             let site = (bank << 16) | (site_pc16 & 0xFFFF);
             live_operand_sites.insert(site);
             if let Some(mirror) = mirror_pc24(mapping, site) {

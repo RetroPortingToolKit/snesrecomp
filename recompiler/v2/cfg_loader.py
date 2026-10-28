@@ -181,6 +181,8 @@ class BankCfg:
     # code then sees the edit exactly as the interpreter would. Cycle cost
     # is unchanged -- it comes from the opcode, which is still the IMM form.
     live_operand: set = field(default_factory=set)
+    # Separate mod-owned values; live cartridge reads remain supported.
+    mod_operand: set = field(default_factory=set)
     # `entry_hook <pc16> <c_function>` — compiled code calls the host's
     # `void c_function(const CpuState *cpu, uint32 pc24)` each time it is
     # about to execute the instruction at <pc16>, in any compiled body: the
@@ -597,11 +599,35 @@ def load_bank_cfg(path: str) -> BankCfg:
                     raise ValueError(
                         f"{path}: live_operand needs a 16-bit PC in this cfg's bank, "
                         f"got {tokens[1]!r}")
-                if site_pc16 in cfg.live_operand:
+                if site_pc16 in cfg.live_operand or site_pc16 in cfg.mod_operand:
                     raise ValueError(
                         f"{path}: live_operand duplicate site "
                         f"${site_pc16:04X}")
                 cfg.live_operand.add(site_pc16)
+                continue
+
+            # mod_operand <site_pc16> — read this site's immediate from ROM
+            # at run time. The emitter validates the opcode against its
+            # supported set (data operands only: never REP/SEP/MVN/MVP).
+            if head == 'mod_operand':
+                if len(tokens) != 2:
+                    raise ValueError(
+                        f"{path}: mod_operand needs exactly one <site_pc16>, "
+                        f"got: {stripped!r}")
+                try:
+                    site_pc16 = _parse_hex(tokens[1])
+                except ValueError as e:
+                    raise ValueError(
+                        f"{path}: mod_operand bad site {tokens[1]!r}: {e}")
+                if not 0 <= site_pc16 <= 0xFFFF:
+                    raise ValueError(
+                        f"{path}: mod_operand needs a 16-bit PC in this cfg's bank, "
+                        f"got {tokens[1]!r}")
+                if site_pc16 in cfg.mod_operand or site_pc16 in cfg.live_operand:
+                    raise ValueError(
+                        f"{path}: mod_operand duplicate site "
+                        f"${site_pc16:04X}")
+                cfg.mod_operand.add(site_pc16)
                 continue
 
             # entry_hook <pc16> <c_function> — call a host function on entry
