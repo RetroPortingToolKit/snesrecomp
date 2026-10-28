@@ -302,6 +302,17 @@ uint16 WsOamXReject(uint16 x_plus_16, uint16 widened_limit) {
 
 The PPU's 9-bit OAM X path already renders negative and 256+ coordinates.
 
+Margin-only objects and slivers must not consume the native32-object and
+34-sliver budgets. Account in the original screen coordinates before HUD
+relocation, then render additional margin work in OAM order. Genuine native
+overflow and the explicit NoSpriteLimits option retain their behavior; native
+views also retain their early exit. Otherwise adding margin residency can
+erase native sprite pixels and set guest-visible overflow flags. X3's busy
+final corridor exposed this: three native OBJ pixels disappeared and both
+overflow flags were raised solely because the wider margins were active.
+The synthetic margin-quota cases fail on the old evaluator in both renderers;
+the fixed evaluator matches a zero-extra replay of12 captured corridor inputs.
+
 For anchored views wider than512 columns, nine bits cannot identify every
 screen coordinate. X3 retains the full X computed by its original HG51B
 microcode through `cx4_set_ram_write_observer`, then attaches it to the actual

@@ -805,6 +805,43 @@ color_math_clamped_done:
         ;
     }
 
+    /* Extra margin work must not consume the authentic32/34 OBJ quotas.
+     * Both renderers share the evaluator, and genuine native overflow stays. */
+    for (unsigned flags=0;flags<=1;flags++) {
+        uint32_t wide[512];
+        ppu_reset(ppu);setup_one_sprite_line(ppu,0);
+        for (unsigned slot=0;slot<32;slot++)setup_solid_obj(ppu,slot,-32,0);
+        setup_solid_obj(ppu,32,64,0);
+        PpuBeginDrawing(ppu,(uint8_t *)wide,342*4,flags);
+        PpuSetExtraSpace(ppu,43);render_one_line(ppu);
+        failures+=check((wide[43+64]&0xffffff)==0xffffff,
+                        "32 margin sprites cannot discard a native sprite");
+        failures+=check((wide[43-32]&0xffffff)==0xffffff,
+                        "margin sprites still render without consuming native range quota");
+        failures+=check(!ppu->rangeOver,"margin range does not assert native overflow");
+
+        ppu_reset(ppu);setup_one_sprite_line(ppu,0);ppu->obsel=2<<5;
+        for (unsigned slot=1;slot<=5;slot++) {
+            setup_solid_obj(ppu,slot,-96,0);
+            ppu->highOam[slot>>2]|=1u<<((slot&3)*2+1);
+        }
+        PpuBeginDrawing(ppu,(uint8_t *)wide,sizeof wide,flags);
+        PpuSetExtraSpace(ppu,128);render_one_line(ppu);
+        failures+=check((wide[128]&0xffffff)==0xffffff,
+                        "40 margin slivers cannot discard a native sliver");
+        failures+=check((wide[128-96]&0xffffff)==0xffffff,
+                        "margin slivers remain visible with native limits enabled");
+        failures+=check(!ppu->timeOver,"margin fetch does not assert native overflow");
+
+        ppu_reset(ppu);setup_one_sprite_line(ppu,64);
+        for (unsigned slot=0;slot<32;slot++)setup_solid_obj(ppu,slot,64,0);
+        setup_solid_obj(ppu,32,0,0);
+        PpuBeginDrawing(ppu,(uint8_t *)wide,342*4,flags);
+        PpuSetExtraSpace(ppu,43);render_one_line(ppu);
+        failures+=check((wide[43]&0xffffff)==0 && ppu->rangeOver,
+                        "genuine32-native-sprite overflow remains enforced");
+    }
+
     /* Original producer coordinates survive the nine-bit OAM wrap. Verify
      * actual pixels with both renderers, at either full-width view anchor. */
     for (unsigned flags=0; flags<=1; flags++) {

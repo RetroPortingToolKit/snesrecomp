@@ -3125,6 +3125,9 @@ static bool ppu_evaluateSprites(Ppu* ppu, int line) {
   unsigned first_slot=index>>1;
   int spritesFound = 0;
   int tilesFound = 0;
+  int nativeSpritesFound = 0;
+  int nativeTilesFound = 0;
+  const bool extra_view = ppu->extraLeftRight != 0;
   uint8_t foundSprites[128];
 
   // Range evaluation walks OAM forward, but tile fetching walks the accepted
@@ -3136,6 +3139,7 @@ static bool ppu_evaluateSprites(Ppu* ppu, int line) {
     int spriteHeight = PPU_objInterlace(ppu) ? spriteSize / 2 : spriteSize;
     if(row < spriteHeight) {
       int x = PpuDecodeOamX(ppu, index);
+      const bool native_sprite = x + spriteSize > 0 && x < 256;
       const int left_extra =
           PpuWidescreenHudOamSlot(ppu, index, y) &&
                   (ppu->wsHudSplitHeight & 0x80)
@@ -3145,14 +3149,16 @@ static bool ppu_evaluateSprites(Ppu* ppu, int line) {
                                           left_extra)) {
         x = PpuAdjustWidescreenHudOamX(ppu, index, y, x);
         if(x + spriteSize > -left_extra) {
-          spritesFound++;
-          if(spritesFound > 32 &&
+          /* Margin residency must not evict an authentic native sprite or
+           * leak widened range-over flags into the guest. Count before HUD
+           * relocation so moving the HUD does not free its native quota. */
+          if(native_sprite && ++nativeSpritesFound > 32 &&
              !(ppu->renderFlags & kPpuRenderFlags_NoSpriteLimits)) {
             ppu->rangeOver = true;
-            spritesFound = 32;
-            break;
+            if (!extra_view) break;
+          } else {
+            foundSprites[spritesFound++] = index;
           }
-          foundSprites[spritesFound - 1] = index;
         }
       }
     }
@@ -3164,6 +3170,7 @@ static bool ppu_evaluateSprites(Ppu* ppu, int line) {
     uint8_t row = line - (ppu->oam[index] >> 8);
     int spriteSize = spriteSizes[PPU_objSize(ppu)][(ppu->highOam[index >> 3] >> ((index & 7) + 1)) & 1];
     int x = PpuDecodeOamX(ppu, index);
+    const int native_x = x;
     const uint8_t sprite_y = ppu->oam[index] >> 8;
     const bool full_budget_hud =
         PpuWidescreenHudOamSlot(ppu, index, sprite_y) &&
@@ -3185,12 +3192,18 @@ static bool ppu_evaluateSprites(Ppu* ppu, int line) {
       if(col + x <= -8 - left_extra ||
          col + x >= 256 + right_extra)
         continue;
-            tilesFound++;
-            if(tilesFound > 34 &&
+            /* The original 34-sliver fetch budget covers the native view.
+             * Additional margin columns render in OAM order without taking
+             * that budget from native columns. Genuine native overflow still
+             * drops later native fetches, including within a large sprite. */
+            const bool native_tile = col + native_x > -8 && col + native_x < 256;
+            if(native_tile && ++nativeTilesFound > 34 &&
                !(ppu->renderFlags & kPpuRenderFlags_NoSpriteLimits)) {
               ppu->timeOver = true;
-              break;
+              if (!extra_view) break;
+              continue;
             }
+            tilesFound++;
             int usedCol = oam1 & 0x4000 ? spriteSize - 1 - col : col;
       int usedTile = ((((oam1 & 0xff) >> 4) + (row >> 3)) << 4) |
                      (((oam1 & 0xf) + (usedCol >> 3)) & 0xf);
@@ -3269,8 +3282,8 @@ static bool ppu_evaluateSprites(Ppu* ppu, int line) {
                   ppu->objectOrder[dst-ppu->objBuffer.data]=(uint64_t)((slot-first_slot)&127)<<32;
             }
         }
-        if(tilesFound > 34 &&
-           !(ppu->renderFlags & kPpuRenderFlags_NoSpriteLimits))
+    if (!extra_view && nativeTilesFound > 34 &&
+        !(ppu->renderFlags & kPpuRenderFlags_NoSpriteLimits))
       break;
   }
   bool extra=ppu->extraObjectCount && PpuComposeExtraObjects(
