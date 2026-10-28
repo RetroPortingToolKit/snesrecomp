@@ -39,6 +39,18 @@ void cp_hash_format(const uint8_t hash[32], char hex[65]);
 const CpCup *cp_catalog_cup(const CpCatalog *catalog, const char *key,
                             const CpPack **pack);
 
+/* Decode a donor into a newly allocated, disposable resource image. Never
+ * install this output as a playable cartridge or select a donor program.
+ * These import helpers preserve source and outputs on failure.
+ * IPS and BPS are sniffed by magic, not extension. BPS verifies all CRCs.
+ * cp_pack_apply additionally verifies BOTH manifest SHA-256 identities. */
+int cp_patch_apply(const uint8_t *source, size_t source_size,
+                   const uint8_t *patch, size_t patch_size,
+                   uint8_t **target, size_t *target_size, char *error, size_t cap);
+int cp_pack_apply(const CpPack *pack, const uint8_t *source, size_t source_size,
+                  const char *patch_path, uint8_t **target, size_t *target_size,
+                  char *error, size_t cap);
+
 #ifdef __cplusplus
 }
 #endif

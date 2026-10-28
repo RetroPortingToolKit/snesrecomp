@@ -63,12 +63,16 @@ objects intact.
 
 ## Resource loading
 
-ROM patching is forbidden. `cp_patch_apply`, `cp_pack_apply`, and the IPS/BPS
-implementation have been removed. This module only owns the stable collection
-catalog. A title adapter must load and validate semantic resources against the
-stock program; a donor image cannot supply replacement code.
+The generic playable-ROM patch workflow is removed. `cp_patch_apply` and
+`cp_pack_apply` remain for reviewed donor-resource imports used by F-Zero's
+graphics and vehicle loaders. They create a separate disposable image and
+leave the original source unchanged. Decode and validate typed resources,
+then discard that image; do not install it as a playable cartridge or use it
+to select a donor program. Existing BS content and native music integrations
+remain game-owned features rather than arbitrary ROM-patch launcher inputs.
 
-Link `content_pack.c`; it has no SDL or generated-program dependency.
+Link `content_pack.c`, `content_patch.c` and `sha256.c`; these have no SDL or
+generated-program dependency.
 
 ## Validation
 
@@ -79,6 +83,7 @@ ctest --test-dir build-content-packs --output-on-failure
 ```
 
 The standalone suite covers sparse collections, stable keys after reordering,
-duplicate rejection and transactional malformed manifests.
+duplicate rejection, transactional malformed manifests, IPS expansion/RLE/
+truncation, BPS relative copies/overlap and checksum corruption.
 `tests/runtime_dispatch/known_lle_entry_test.c` separately checks the empty
 program's isolation from both stock and alternate compiled dispatch tables.
