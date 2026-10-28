@@ -22,7 +22,7 @@ This is a BSS/reservation reduction, not a claim that every unused page was
 resident. A full snapshot still needs its scratch memory while exporting.
 Neither guest state nor renderer/feature defaults change.
 
-## Qualification in progress, 2026-10-28
+## Automated qualification, 2026-10-28
 
 Owner `beads-8wg.2.168`, campaign `beads-2wy8.1`, shared R9 follow-up. Windows
 and Linux contracts pass using the real retained audio ring: empty export,
@@ -31,6 +31,11 @@ failure classes, cleanup and propagation through the public scene-dump API.
 Production code has no test interposition or new runtime selector.
 
 This change stacks on [compact raster registers](RASTER_REGISTERS.md). The
-combined candidate still requires matched built-game correctness/performance
-and owner validation. BSS, resident/peak memory and CPU costs must be reported
-separately. No original Xbox qualification is implied.
+combined built candidate `8323d781` passes matched MMX/Metroid/SMW correctness
+checks and six five-pair stock/wide CPU/memory profiles. All CPU profiles are
+neutral/inconclusive; actual game BSS/peak-commit costs decrease. Production
+Metroid scene export also preserves its complete port-event TSV exactly in
+the paired run, alongside the controlled real-ring fixture.
+
+Owner validation and merge remain. BSS, resident/peak memory and CPU costs
+are reported separately. No original Xbox qualification is implied.

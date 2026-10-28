@@ -42,7 +42,7 @@ pure jobs. Existing device consumers need no migration. A register-only
 consumer can migrate mechanically without changing render algorithms, features
 or product defaults.
 
-## Qualification in progress, 2026-10-28
+## Automated qualification, 2026-10-28
 
 Issue `beads-8wg.2.167`, campaign `beads-2wy8.1`, tracks shared R9 work. MMX and
 Super Metroid provide real consumers; unchanged SMW is the device-path control.
@@ -60,10 +60,29 @@ Matched Windows x64 GCC O3 production Metroid renderer compilation gives:
 | `power_bomb_windows` | 206,032 | 512 |
 
 The renderer object's BSS decreases by 205,440 bytes and text by 640 bytes.
-Compiler stack frames are not process peak memory measurements. No runtime
-CPU/FPS gain is established yet. Matched built-game correctness/performance
-and combined owner validation remain before merge. The MMX/Metroid elective
-optimization switches remain OFF by default.
+Compiler stack frames are not process peak memory measurements. The combined
+candidate also includes [bounded scene-export scratch](SCENE_EXPORT_MEMORY.md).
+Matched built-game qualification against engine main `a1c478d1` uses candidate
+`8323d781`: MMX consumer `4fe87d3`, Metroid consumer `64ca06d`, and unchanged
+SMW `324dfc8`.
+
+All four ROM-backed MMX Magic Carpet cases, current/fresh restore and rollback,
+captured images, Metroid live effects/interpolation/current/fresh restore,
+production scene export and run-ahead pass. SMW's natural route has matching
+gameplay pixels/WRAM/VRAM/CGRAM/PPU; its current-build fresh-process load also
+passes without pausing. The unchanged, previously qualified boss-spawn logic
+uses its existing 180-case evidence rather than repeating that unrelated sweep.
+
+Five balanced pairs per stock/wide profile run through the shared capacity
+pool. Every profile stays on one Windows host/configuration. All six profiles
+have small mixed CPU deltas and are **neutral/inconclusive**, not demonstrated
+CPU wins. Candidate image BSS decreases by 1,572,864 bytes in MMX and SMW and
+1,778,304 bytes in Metroid. Per-profile median paired peak-commit reductions
+are about 1.51-2.04 MiB; resident working set is a separate metric.
+
+Combined owner gameplay/interactive rewind validation and merge remain. The
+MMX/Metroid elective optimization switches remain OFF by default. These are
+Windows x64 results, not original Xbox or linked 32-bit game qualification.
 
 Commands, source hashes, raw stack reports, sections and fixture results are
 retained under
