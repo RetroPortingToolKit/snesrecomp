@@ -34,14 +34,19 @@ typedef struct BgLayer {
 
 enum {
   kPpuXPixels = 256,
-  // Maximum widescreen expansion *per side*, baked into the priority-buffer
-  // capacity. This is a compile-time ceiling only; the actual extra columns
-  // rendered each frame are the runtime ppu->extraLeftCur/extraRightCur, which
-  // default to 0 (authentic 256-wide output). 272 per side allows up to an
-  // 800-pixel internal width for opt-in 32:9 presentation.
-  kPpuExtraLeftRight = 272,
-  // Full internal width of the priority buffers (logical 256 + both borders).
-  kPpuBufWidth = kPpuXPixels + kPpuExtraLeftRight * 2,
+  // Output budget: 272 columns per side permits an 800-pixel frame. Anchoring
+  // may put both sides' allowance on one side of the native viewport, so the
+  // priority buffers need twice that reach without raising the output limit.
+  kPpuMaxFrameExtra = 272,
+  kPpuMaxFrameWidth = kPpuXPixels + kPpuMaxFrameExtra * 2,
+  // Signed native-column reach and origin in the priority buffers. This is
+  // storage capacity, not the symmetric expansion accepted by the setters.
+  kPpuLineBorder = kPpuMaxFrameExtra * 2,
+  // Existing line enhancers use this name to index native pixel x in data[].
+  // Retain it as an origin alias; use MaxFrameExtra for an output budget.
+  kPpuExtraLeftRight = kPpuLineBorder,
+  // Full priority-buffer width; a presented frame is at most MaxFrameWidth.
+  kPpuBufWidth = kPpuXPixels + kPpuLineBorder * 2,
   // Split-screen games can assign distinct anchor layouts to each viewport.
   kPpuWsAnchorBands = 2,
   // Number of stopped frames tolerated after a moving unhinted OBJ reaches the
@@ -96,7 +101,7 @@ typedef struct PpuExtraObject {
 typedef PPU_ALIGN8_PRE struct PpuPixelPrioBufs {
   // This holds the prio in the upper 8 bits and the color in the lower 8 bits.
   // Sized for the widescreen border; logical screen x maps to
-  // data[x + kPpuExtraLeftRight].
+  // data[x + kPpuLineBorder].
   //
   // 8-aligned because ClearBackdrop fills this through a uint64 pointer.
   // The array itself only needs 2, so any member landing on a 4-mod-8
@@ -242,6 +247,16 @@ struct Ppu {
 
   uint16_t extraLeftCur, extraRightCur, extraLeftRight;
   uint8_t extraBottomCur;
+  // Widescreen view anchoring (see PpuSetWidescreenViewAnchor). 0 = off, and
+  // off is what every existing consumer renders with.
+  uint8_t wsViewAnchor;
+  // Columns between native x=0 and the PHYSICAL left/right framebuffer edges,
+  // i.e. the frame column of native x is x + extraFrameLeft. They always sum
+  // to 2*extraLeftRight -- the frame is the same width either way, only its
+  // origin moves. With anchoring off both are extraLeftRight (the fixed
+  // centre origin); with it on they slide as the live margins reach the
+  // authored bounds. Host presentation only, like the margins themselves.
+  uint16_t extraFrameLeft, extraFrameRight;
   // Widescreen BG3 HUD split (see PpuSetWidescreenHudSplit). 0 height = off.
   uint8_t wsHudSplitHeight, wsHudLeftEnd, wsHudRightStart;
   // Widescreen HUD OAM anchor (see PpuSetWsHudOamShiftRange): an OAM slot
@@ -285,11 +300,15 @@ struct Ppu {
   uint8_t wsAnchorRightStart[kPpuWsAnchorBands][4];
   // Skip offscreen staging columns before sampling a layer's side margins.
   uint8_t wsMarginGapL[4], wsMarginGapR[4];
-  // Authored-world spans, in tilemap pixels, for the world-mirror bands (see
-  // PpuSetWidescreenLayerWorldMirrorBand). y1<=y0 or right<=left = off.
-  uint8_t wsWorldY0[kPpuWsWorldBands][4], wsWorldY1[kPpuWsWorldBands][4];
-  uint16_t wsWorldLeft[kPpuWsWorldBands][4];
-  uint16_t wsWorldRight[kPpuWsWorldBands][4];
+  // Authored-world spans in tilemap pixels. BG0..3 can mirror/repeat/clip;
+  // guest OAM4 can only clip. y1<=y0 or right<=left = off.
+  uint8_t wsWorldY0[kPpuWsWorldBands][5], wsWorldY1[kPpuWsWorldBands][5];
+  uint16_t wsWorldLeft[kPpuWsWorldBands][5];
+  uint16_t wsWorldRight[kPpuWsWorldBands][5];
+  uint8_t wsWorldClip[kPpuWsWorldBands]; /* layer bits: clip instead of reflect */
+  uint16_t wsWorldRepeat[kPpuWsWorldBands][5]; /* 0=reflect, otherwise edge strip */
+  /* 0 keeps the layer's own phase; 1..4 selects BG1..BG4 as the reference. */
+  uint8_t wsWorldReference[kPpuWsWorldBands][5];
   // Piecewise horizontal remaps for the elastic anchor bands (see
   // PpuSetWidescreenLayerElasticBand). nseg == 0 or y1 <= y0 = slot off.
   uint8_t wsElasticY0[kPpuWsElasticBands][4];
@@ -325,6 +344,12 @@ struct Ppu {
   // Games publish per NMI via PpuWsSetOamRightHints. 1 bit per OAM slot.
   uint8_t wsOamRightHintStrict;
   uint8_t wsOamRightHint[16];
+  /* Coordinates retained from a title's original sprite producer, tied to
+   * actual XY uploads. Ordinary XY writes invalidate the corresponding slot.
+   * Host policy opts into decoding; guest OAM always remains nine bits. */
+  uint8_t wsOamFullXOn;
+  int16_t wsOamFullX[128];
+  uint8_t wsOamFullXValid[16];
   /* Host-only temporal classifier for unhinted left-margin OBJ. It lets a
    * game-authored sprite keep moving through the widened margin, then parks it
    * again after its X stops changing for a few frames. */
@@ -504,7 +529,7 @@ static inline int PpuWidescreenLayerExtra(
   return (ppu->wsBg3WidenY && y >= ppu->wsBg3WidenY) ? extra : 0;
 }
 
-// Which world-mirror band, if any, governs BG(layer+1) on scanline y.
+// Which world band, if any, governs BG0..3 or guest OAM4 on scanline y.
 // Returns the band slot, or -1 for natural (unreflected) tilemap rendering.
 // Deliberately inert unless a side margin is actually live, and every other
 // per-line policy wins over this one: on a line the layer does not widen
@@ -513,7 +538,7 @@ static inline int PpuWidescreenLayerExtra(
 // a raster-split status bar pinned to hScroll 0 is the usual case.
 static inline int PpuWidescreenLayerWorldBandAt(
     const Ppu *ppu, unsigned int layer, int y) {
-  if (layer >= 4 || !(ppu->extraLeftCur | ppu->extraRightCur))
+  if (layer >= 5 || !(ppu->extraLeftCur | ppu->extraRightCur))
     return -1;
   int widest = ppu->extraLeftCur > ppu->extraRightCur ? ppu->extraLeftCur
                                                       : ppu->extraRightCur;
@@ -706,6 +731,12 @@ void ppu_rb_residue_set(Ppu *ppu, const PpuRollbackResidue *in);
 // Replace stale BG1 tilemap pixels in widened side margins before final
 // composition. The callback is host-only and runs independently for main and
 // subscreen buffers.
+// The callback writes PRIORITY-BUFFER columns (native x at
+// data[x + kPpuLineBorder]), not framebuffer columns, so the widened span
+// it should fill is the LIVE margin -- extraLeftCur/extraRightCur -- and never
+// the budget. An enhancer written that way needs no change under view
+// anchoring; one that reads extraLeftRight as "how far the margin reaches"
+// would under- or over-fill as soon as a game opts in.
 void PpuSetWidescreenLineEnhancer(Ppu *ppu,
                                   PpuWidescreenLineEnhancer *enhancer,
                                   void *context);
@@ -740,7 +771,7 @@ bool PpuSetOverlayCapture(Ppu *ppu, PpuOverlaySource source,
 bool PpuSetOverlayOamRange(Ppu *ppu, uint8_t first, uint8_t count);
 
 // Set the symmetric widescreen border, in pixels per side (clamped to
-// kPpuExtraLeftRight). 0 restores authentic 256-wide rendering. The internal
+// kPpuMaxFrameExtra). 0 restores authentic 256-wide rendering. The internal
 // render width becomes 256 + 2*extra. Drives the dormant extraLeftCur/
 // extraRightCur/extraLeftRight machinery used by the line renderer.
 void PpuSetExtraSpace(Ppu *ppu, uint16_t extra);
@@ -761,6 +792,53 @@ void PpuSetExtraSpaceCentered(Ppu *ppu, uint16_t budget);
 // scroll/room-bounds state drives the visible margin dynamically (Zelda),
 // versus PpuSetExtraSpace's fixed symmetric border (SMW).
 void PpuSetExtraSideSpace(Ppu *ppu, int left, int right, int bottom);
+
+// VIEW ANCHORING (opt-in, off by default) -- let the presentation viewport
+// SLIDE inside the authored bounds instead of pillarboxing at them.
+//
+// Without it the frame origin is fixed: native x=0 always lands at framebuffer
+// column extraLeftRight, and PpuSetExtraSideSpace clamps each margin to that
+// same budget. A game that clamps its margins to the level bounds (SMW, Zelda)
+// therefore gets a black bar on the bounded side while the other side still
+// shows only `budget` columns of world -- half the widescreen it paid for, and
+// the half it lost is the half it could actually have filled.
+//
+// With anchoring on, the two margins share ONE allowance of 2*extraLeftRight
+// columns and the origin follows them:
+//   at the level's left edge   left=0, right=2*budget -- native x=0 sits at
+//                              frame column 0 and the whole extra span is
+//                              world on the right;
+//   at the right edge          the mirror image;
+//   a level narrower than the  the live span is centred and the leftover is
+//   frame                      padded equally either side (an odd remainder
+//                              goes to the right, since extraFrameLeft takes
+//                              the floor);
+//   mid-level                  left=right=budget, i.e. exactly the fixed
+//                              centre origin, so nothing moves where nothing
+//                              needs to.
+// The guest camera is never touched: this moves only where the rendered
+// columns are placed in the framebuffer, and which of them are live.
+//
+// Constraints:
+//  - Publish it AFTER PpuSetExtraSpace/PpuSetExtraSpaceCentered (those reset
+//    the widescreen policies) and it takes effect on the next
+//    PpuSetExtraSideSpace; toggling it re-derives the origin from the margins
+//    already published, so the two calls may come in either order per frame.
+//  - OBJ positions are 9 bits, so the reachable span is 512 columns wide: a
+//    sprite at native x is written raw x+512 when negative, and ppu.c decodes
+//    raw >= 256 + extraRightCur as negative. The left margin is therefore only
+//    reachable by sprites down to native x = -(256 - extraRightCur), which
+//    means the LIVE TOTAL extraLeftCur + extraRightCur must stay <= 256 for a
+//    sprite to be placeable anywhere in the frame. Anchoring can put the whole
+//    2*budget allowance on one side, so that total is 2*budget: a budget above
+//    128 px per side (an internal width above 512) leaves a far-margin sliver
+//    no ordinary nine-bit sprite can reach. Titles retaining coordinates from
+//    their original sprite producer may use PpuWsSetOamFullX to resolve this
+//    ambiguity without changing guest OAM or restricting background columns.
+//  - The output budget is capped at kPpuMaxFrameExtra, while the priority
+//    buffers carry twice that many columns per side. Every supported frame
+//    can therefore put its full expansion on either side without padding.
+void PpuSetWidescreenViewAnchor(Ppu *ppu, bool enabled);
 
 // Widescreen HUD split (opt-in, configured by the game frontend): for
 // scanlines < height, BG3 (layer 2) is drawn as three chunks — source
@@ -793,7 +871,7 @@ void PpuSetWsHudOamBand(Ppu *ppu, uint8_t height, uint8_t left_end,
  * pins the per-side margin regardless of window size (0 forces 4:3; unset
  * returns -1 = follow the window). Games consult this when computing their
  * widescreen frame width so measured margins never silently depend on
- * window-manager geometry. Clamped to kPpuExtraLeftRight. */
+ * window-manager geometry. Clamped to kPpuMaxFrameExtra. */
 int PpuWsExtraOverride(void);
 
 void PpuSetWsHudOamShift(Ppu *ppu, uint8_t nslots);
@@ -820,6 +898,12 @@ void PpuWsSetOamLeftHints(Ppu *ppu, const uint8_t *hints);
 // Games that stage OAM CPU-side should call this each NMI, after the staging
 // buffer is final and before the frame is presented.
 void PpuWsSetOamRightHints(Ppu *ppu, const uint8_t *hints);
+
+/* Publish after the corresponding XY word upload. A title using this API
+ * must include fullX/valid in its title save-state extension, which is also
+ * part of rollback snapshots. Enabling is a per-frame layer policy. */
+void PpuWsSetOamFullX(Ppu *ppu, unsigned slot, int16_t x);
+void PpuWsEnableOamFullX(Ppu *ppu, bool enabled);
 
 // Let BG3 (layer 2) render into the widescreen side margins on scanlines
 // >= from_y, instead of being clamped to the authentic 256-wide region. Pass
@@ -928,6 +1012,34 @@ void PpuSetWidescreenLayerWorldMirrorBand(Ppu *ppu, uint8_t layer, uint8_t y0,
 void PpuSetWidescreenLayerWorldMirrorBandSlot(
     Ppu *ppu, uint8_t slot, uint8_t layer, uint8_t y0, uint8_t y1,
     uint16_t world_left_px, uint16_t world_right_px);
+
+// Contain a Mode-1 object canvas within another scrolling plane's authored
+// room. Only margin pixels outside [left,right), measured using the reference
+// layer's actual PPU scroll on this line, are omitted. Native256 columns and
+// genuine in-room margin art remain untouched. No canvas pixels are reflected.
+// Reference indices are0..3. Layer4 additionally clips guest OAM, except
+// explicitly selected HUD slots; it does not affect host extra objects or
+// native OBJ range/fetch quotas. OAM uses the reference scroll in every mode.
+// Invalid inputs disable the slot. This is
+// frame-local, outside save-state spans, and reset by PpuSetExtraSpace*.
+void PpuSetWidescreenLayerWorldClipBand(
+    Ppu *ppu, uint8_t layer, uint8_t y0, uint8_t y1, uint8_t reference_layer,
+    uint16_t world_left_px, uint16_t world_right_px);
+void PpuSetWidescreenLayerWorldClipBandSlot(
+    Ppu *ppu, uint8_t slot, uint8_t layer, uint8_t y0, uint8_t y1,
+    uint8_t reference_layer, uint16_t world_left_px, uint16_t world_right_px);
+
+// Preserve the authored world/native view and repeat only a short strip at
+// either world edge into overflow margins. Useful when reflecting the room
+// would duplicate dynamic damage or an entrance. Width is clamped to the
+// world span; zero/invalid input disables the slot. Own per-line PPU phase.
+// Frame-local, outside save-state spans, same precedence as a world mirror.
+void PpuSetWidescreenLayerWorldRepeatBand(
+    Ppu *ppu, uint8_t layer, uint8_t y0, uint8_t y1,
+    uint16_t world_left_px, uint16_t world_right_px, uint16_t strip_width);
+void PpuSetWidescreenLayerWorldRepeatBandSlot(
+    Ppu *ppu, uint8_t slot, uint8_t layer, uint8_t y0, uint8_t y1,
+    uint16_t world_left_px, uint16_t world_right_px, uint16_t strip_width);
 
 // ELASTIC ANCHOR BANDS -- anchor a raster status bar's chrome to the widened
 // viewport edges and bridge the gap that opens by stretching only the

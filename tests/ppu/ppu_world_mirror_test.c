@@ -219,6 +219,220 @@ static void check_camera(Ppu *ppu, int hscroll, const char *label,
     free(out);
 }
 
+/* An independent-scrolling BG2/BG3 canvas must follow the physical room's
+ * BG1 phase for containment, while keeping all genuine canvas pixels. */
+static void render_clipped_canvas_windows(Ppu *ppu, uint32_t *out, int layer,
+                                  bool big, bool mosaic, int reference_scroll,
+                                  int policy, int extra, uint8_t windows,
+                                  int window_op) {
+    memset(out, 0, sizeof(uint32_t) * kWide);
+    ppu_reset(ppu);
+    PpuBeginDrawing(ppu, (uint8_t *)out, sizeof(uint32_t) * kWide,
+                    kPpuRenderFlags_NewRenderer);
+    setup_arena_bg1(ppu);
+    ppu->screenEnabled[0] = (uint8_t)(1u << layer);
+    if (windows) {
+        ppu->screenWindowed[0] = (uint8_t)(1u << layer);
+        ppu->windowsel = (uint32_t)windows << (layer * 4);
+        ppu->window1left = 0;
+        ppu->window1right = 80;
+        ppu->window2left = 160;
+        ppu->window2right = 255;
+        ppu->wbgobjlog = (uint16_t)(window_op << (layer * 2));
+    }
+    ppu->bgXsc[layer] = ppu->bgXsc[0];
+    ppu->bgTileAdr = (uint16_t)(1u << (layer * 4));
+    if (big) ppu->bgmode |= (uint8_t)(0x10u << layer);
+    if (mosaic) ppu->mosaic = (uint8_t)(0x30u | (1u << layer));
+    PpuSetExtraSpace(ppu, (uint16_t)extra);
+    ppu->hScroll[0] = 128; /* Change after configuring: use live PPU phase. */
+    if (policy) {
+        PpuSetWidescreenLayerWorldClipBand(ppu, (uint8_t)layer, 0, 225,
+                                          policy == 5 ? 4 : 0,
+                                          kWorldLeft, kWorldRight);
+        if (policy == 3)
+            PpuSetWidescreenLayerWorldMirrorBand(ppu, (uint8_t)layer, 0, 225,
+                                                 kWorldLeft, kWorldRight);
+        if (policy == 4) PpuSetExtraSpace(ppu, (uint16_t)extra);
+        if (policy == 6) {
+            PpuSetWidescreenLayerWorldMirrorBand(ppu, (uint8_t)layer,
+                                                 0, 0, 0, 0);
+            PpuSetWidescreenLayerWorldClipBandSlot(ppu, 1, (uint8_t)layer,
+                                                  0, 225, 0,
+                                                  kWorldLeft, kWorldRight);
+        }
+    }
+    if (layer == 2) PpuSetWidescreenBg3Widen(ppu, 1);
+    ppu->hScroll[0] = (uint16_t)reference_scroll;
+    ppu->hScroll[layer] = big ? 256 : 128;
+    ppu_runLine(ppu, 0);
+    ppu->hScroll[0] = (uint16_t)reference_scroll;
+    ppu->hScroll[layer] = big ? 256 : 128;
+    ppu_runLine(ppu, kLine);
+}
+
+static void render_clipped_canvas(Ppu *ppu, uint32_t *out, int layer,
+                                  bool big, bool mosaic, int reference_scroll,
+                                  int policy, int extra) {
+    render_clipped_canvas_windows(ppu, out, layer, big, mosaic,
+                                  reference_scroll, policy, extra, 0, 0);
+}
+
+static void check_world_clip(Ppu *ppu) {
+    uint32_t raw[kWide], clipped[kWide];
+    const int scrolls[] = {64, 128, 192, 61, 195, 512};
+    for (int layer = 1; layer <= 2; ++layer) {
+        for (int big = 0; big <= 1; ++big) {
+            for (int mosaic = 0; mosaic <= 1; ++mosaic) {
+                for (unsigned s = 0; s < sizeof(scrolls)/sizeof(scrolls[0]); ++s) {
+                    int scroll = scrolls[s], outside = 0;
+                    int kept_bad = 0, clipped_bad = 0;
+                    char message[160];
+                    render_clipped_canvas(ppu, raw, layer, big, mosaic,
+                                          scroll, 0, kExtra);
+                    render_clipped_canvas(ppu, clipped, layer, big, mosaic,
+                                          scroll, 1, kExtra);
+                    for (int x = -kExtra; x < 256 + kExtra; ++x) {
+                        int world = scroll + x, index = x + kExtra;
+                        if ((x >= 0 && x < 256) ||
+                            (world >= kWorldLeft && world < kWorldRight)) {
+                            kept_bad += raw[index] != clipped[index];
+                        } else {
+                            clipped_bad += clipped[index] != 0;
+                            outside += raw[index] != 0;
+                        }
+                    }
+                    snprintf(message, sizeof message,
+                             "clip layer%d big%d mosaic%d ref%d preserves native/in-room art",
+                             layer, big, mosaic, scroll);
+                    check(kept_bad == 0, message);
+                    snprintf(message, sizeof message,
+                             "clip layer%d big%d mosaic%d ref%d hides out-of-room copies",
+                             layer, big, mosaic, scroll);
+                    check(clipped_bad == 0, message);
+                    if (scroll != 128) {
+                        snprintf(message, sizeof message,
+                                 "clip layer%d big%d mosaic%d ref%d exercises nonblank overflow",
+                                 layer, big, mosaic, scroll);
+                        check(outside > 0, message);
+                    }
+                }
+            }
+        }
+        render_clipped_canvas(ppu, raw, layer, false, false, 61, 0, 0);
+        render_clipped_canvas(ppu, clipped, layer, false, false, 61, 1, 0);
+        check(memcmp(raw, clipped, sizeof raw) == 0,
+              "world clip is inert at native width, including camera shake");
+        render_clipped_canvas(ppu, raw, layer, false, false, 64, 1, kExtra);
+        render_clipped_canvas(ppu, clipped, layer, false, false, 64, 6, kExtra);
+        check(memcmp(raw, clipped, sizeof raw) == 0,
+              "world clip second slot has the same rendered contract");
+        render_clipped_canvas(ppu, raw, layer, false, false, 64, 0, kExtra);
+        for (int policy = 3; policy <= 5; ++policy) {
+            render_clipped_canvas(ppu, clipped, layer, false, false, 64,
+                                  policy, kExtra);
+            check(memcmp(raw, clipped, sizeof raw) == 0,
+                  policy == 3 ? "mirror setter clears previous canvas clip/reference" :
+                  policy == 4 ? "per-frame reset removes canvas clip" :
+                                "invalid reference disables canvas clip");
+        }
+        const uint8_t window_flags[] = {2, 3, 8, 10, 15};
+        for (unsigned w = 0; w < sizeof(window_flags); ++w) {
+            for (int op = 0; op < 4; ++op) {
+                for (int scroll = 61; scroll <= 195; scroll += 134) {
+                    render_clipped_canvas_windows(ppu, raw, layer, false,
+                        false, scroll, 0, kExtra, window_flags[w], op);
+                    render_clipped_canvas_windows(ppu, clipped, layer, false,
+                        false, scroll, 1, kExtra, window_flags[w], op);
+                    int kept_bad = 0, clipped_bad = 0;
+                    for (int x = -kExtra; x < 256 + kExtra; ++x) {
+                        int world = scroll + x, index = x + kExtra;
+                        if ((x >= 0 && x < 256) ||
+                            (world >= kWorldLeft && world < kWorldRight))
+                            kept_bad += raw[index] != clipped[index];
+                        else
+                            clipped_bad += clipped[index] != 0;
+                    }
+                    check(kept_bad == 0 && clipped_bad == 0,
+                          "world clip preserves hardware windows, inverse masks and pinned edges");
+                }
+            }
+        }
+    }
+}
+
+static void render_world_repeat(Ppu *ppu, uint32_t *out, int layer,
+                                bool big, bool mosaic, int scroll,
+                                int policy, int extra, int strip) {
+    const int width=256+extra*2;
+    memset(out,0,sizeof(uint32_t)*(size_t)width);
+    ppu_reset(ppu);
+    PpuBeginDrawing(ppu,(uint8_t *)out,sizeof(uint32_t)*(size_t)width,
+                    kPpuRenderFlags_NewRenderer);
+    setup_arena_bg1(ppu);
+    /* A destroyed interior section must remain real, never copied outside
+     * the room when repeating its undamaged edge strips. */
+    for (int y=0;y<32;++y)
+        for (int x=24;x<28;++x) ppu->vram[y*32+x]=0;
+    ppu->screenEnabled[0]=(uint8_t)(1u<<layer);
+    ppu->bgXsc[layer]=ppu->bgXsc[0];
+    ppu->bgTileAdr=(uint16_t)(1u<<(layer*4));
+    if (big) ppu->bgmode|=(uint8_t)(0x10u<<layer);
+    if (mosaic) ppu->mosaic=(uint8_t)(0x30u|(1u<<layer));
+    PpuSetExtraSpace(ppu,(uint16_t)extra);
+    if (policy) {
+        PpuSetWidescreenLayerWorldRepeatBandSlot(ppu,policy==2?1:0,
+            (uint8_t)layer,0,225,kWorldLeft,kWorldRight,(uint16_t)strip);
+        if (policy==3) PpuSetExtraSpace(ppu,(uint16_t)extra);
+        if (policy==4) PpuSetWidescreenLayerWorldMirrorBand(ppu,(uint8_t)layer,0,0,0,0);
+        if (policy==5) PpuSetWidescreenLayerWorldClipBand(ppu,(uint8_t)layer,0,0,0,0,0);
+        if (policy==6) PpuSetWidescreenLayerWorldRepeatBand(ppu,(uint8_t)layer,0,225,kWorldRight,kWorldLeft,32);
+        if (policy==7) PpuSetWidescreenLayerWorldRepeatBand(ppu,(uint8_t)layer,0,225,kWorldLeft,kWorldRight,0);
+    }
+    if (layer==2) PpuSetWidescreenBg3Widen(ppu,1);
+    ppu->hScroll[layer]=(uint16_t)scroll;ppu_runLine(ppu,0);
+    ppu->hScroll[layer]=(uint16_t)scroll;ppu_runLine(ppu,kLine);
+}
+
+static void check_world_repeat(Ppu *ppu) {
+    enum { extra=214,width=256+extra*2 };
+    uint32_t raw[width],repeated[width],slot1[width];
+    const int scrolls[]={64,128,192,61,195,512};
+    const int strips[]={1,8,32,999};
+    for (int layer=0;layer<=2;++layer) {
+        for (int big=0;big<=1;++big) for (int mosaic=0;mosaic<=1;++mosaic)
+            for (unsigned s=0;s<sizeof scrolls/sizeof scrolls[0];++s)
+                for (unsigned w=0;w<sizeof strips/sizeof strips[0];++w) {
+                    int scroll=scrolls[s],a=kWorldLeft-scroll,b=kWorldRight-scroll;
+                    int strip=strips[w]<b-a?strips[w]:b-a;
+                    render_world_repeat(ppu,raw,layer,big,mosaic,scroll,0,extra,strips[w]);
+                    render_world_repeat(ppu,repeated,layer,big,mosaic,scroll,1,extra,strips[w]);
+                    int bad=0;
+                    for (int x=-extra;x<256+extra;++x) {
+                        int sx=x;
+                        if (x<0||x>=256) {
+                            if (x<a) sx=a+strip-1-((a-x-1)%strip);
+                            else if (x>=b) sx=b-strip+((x-b)%strip);
+                        }
+                        uint32_t expected=sx < -extra || sx>=256+extra?0:raw[sx+extra];
+                        bad+=repeated[x+extra]!=expected;
+                    }
+                    check(!bad,"world repeat preserves native/in-room damage and repeats only edge strips (4bpp/2bpp/big/mosaic/shake)");
+                }
+        render_world_repeat(ppu,repeated,layer,false,false,64,1,extra,32);
+        render_world_repeat(ppu,slot1,layer,false,false,64,2,extra,32);
+        check(!memcmp(repeated,slot1,sizeof repeated),"world repeat second slot equivalence");
+        render_world_repeat(ppu,raw,layer,false,false,61,0,extra,32);
+        for (int policy=3;policy<=7;++policy) {
+            render_world_repeat(ppu,repeated,layer,false,false,61,policy,extra,32);
+            check(!memcmp(raw,repeated,sizeof raw),"world repeat reset/replacement/invalid input clears mode");
+        }
+        render_world_repeat(ppu,raw,layer,false,false,61,0,0,32);
+        render_world_repeat(ppu,repeated,layer,false,false,61,1,0,32);
+        check(!memcmp(raw,repeated,256*sizeof(uint32_t)),"world repeat native width/quake is inert");
+    }
+}
+
 int main(void) {
     Ppu *ppu = ppu_init();
     if (!ppu) return 2;
@@ -302,6 +516,8 @@ int main(void) {
               "slot 1 is independently addressable");
     }
 
+    check_world_clip(ppu);
+    check_world_repeat(ppu);
     ppu_free(ppu);
     printf("ppu_world_mirror_test: %s\n", failures ? "FAIL" : "PASS");
     return failures ? 1 : 0;

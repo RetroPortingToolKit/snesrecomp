@@ -106,6 +106,35 @@ and must equal the reflected source column; mid-scroll the margin must equal
 what the tilemap authors there (i.e. must be byte-identical to the natural
 render), which is the assertion that catches a viewport-space fold.
 
+Reflection also copies dynamic changes. If an arena can destroy its interior
+floor, use `PpuSetWidescreenLayerWorldRepeatBand` to repeat a short undamaged
+strip at each world edge instead. All authored room columns, including real
+offscreen damage, and every native column remain unchanged. This keeps a
+floor pit or entrance from being duplicated outside the room. Width0 disables
+the band; larger widths are bounded by the authored span. As with reflection,
+the source strip must be in the rendered line.
+
+For bounded travel rooms, obtain the outer canvas bounds from the loaded
+layout, retaining transparent cells inside that span. Split the policy when
+the visible frame crosses source rows with different bounds. Layer4 of
+`PpuSetWidescreenLayerWorldClipBand[Slot]` clips guest OAM outside the same
+room using the reference BG's actual per-line scroll. Native256 pixels,
+configured HUD slots and authentic OBJ quotas remain intact; host extra
+objects are independent. Use this with wall-edge continuation so projectiles
+cannot appear beyond a closed room. The policy expires each frame.
+
+Finite object canvases need a different source rule from scenery. X3's Maoh
+paints its BG2 body over a reused circular map: neighboring map entries still
+contain old level tiles. A complete map is not necessarily a complete authored
+canvas. `WsShadowUseFilteredVram(layer, ppu, filter, context)`, registered after
+`WsShadowFrame`, lets a title retain the renderer's current object entries and
+omit known unrelated entries in the margins. It reads the exact live tile and
+map address, bypasses terrain history, and leaves native and edge-straddling
+chunks untouched. Registration expires next frame. Combine it with a world
+clip if wrapping the map could repeat the object; supply skyline and terrain
+from their own layers. Qualify the character range from the actual game data,
+including moving/destroyed pieces, rather than guessing from a screenshot.
+
 ### P2c. A continuous status bar anchors its rigid groups and stretches only elastic material
 
 **Defect:** `PpuSetWidescreenLayerAnchorBand` moves a raster status bar's left
@@ -192,6 +221,30 @@ destination run; and the gauge sweep -- every `k` from 0 to `n`, both gauges,
 within 1px of `round(k*dw/n)` of each other and of the ideal.
 `tests/ppu/ppu_elastic_band_test.c`.
 
+### P2d. A view can slide inside room bounds without moving the guest camera
+
+`PpuSetWidescreenViewAnchor` and `PpuSetExtraSideSpace` let a consumer
+allocate its total horizontal expansion to the open side of a room. The
+physical frame origin follows the live margins. Native background and OBJ
+coordinates stay unchanged; HUD groups keep their screen positions. Clear
+padding when a room cannot fill the requested span. The policy resets each
+frame and stays outside guest save-state spans.
+
+This mechanism reuses the accepted, parked X1 experiment `c3dc50a` with its
+physical-centre HUD correction. The parked X1 worktrees remain untouched.
+Consumers must validate their own camera bounds, streaming and spawn envelope;
+this engine change does not enable anchoring for any title automatically.
+`ppu_view_anchor_test` checks actual image placement, both edges, narrow rooms,
+HUD, native/default-off output, reset and storage boundaries. Priority buffers
+reserve the entire maximum expansion on either side: `kPpuMaxFrameExtra` caps
+the symmetric output budget at 272 and `kPpuLineBorder` is the signed-column
+storage origin. The old `kPpuExtraLeftRight` name remains an origin alias so
+existing line enhancers keep indexing the same native columns. Presented
+frames remain capped at 800 pixels. The 684/800 tests use independent 256px
+renders as their oracle, including both extremes and physical HUD placement.
+Ordinary 9-bit OBJ coordinates still require title-owned positioning/hints;
+larger background buffers alone do not establish ultra-wide sprite coverage.
+
 ### P3. Periodic layers fold; world-anchored layers use history
 
 **Defect:** treating a horizontally periodic layer (sky, repeating city glow) as
@@ -257,6 +310,31 @@ uint16 WsOamXReject(uint16 x_plus_16, uint16 widened_limit) {
 ```
 
 The PPU's 9-bit OAM X path already renders negative and 256+ coordinates.
+
+Margin-only objects and slivers must not consume the native32-object and
+34-sliver budgets. Account in the original screen coordinates before HUD
+relocation, then render additional margin work in OAM order. Genuine native
+overflow and the explicit NoSpriteLimits option retain their behavior; native
+views also retain their early exit. Otherwise adding margin residency can
+erase native sprite pixels and set guest-visible overflow flags. X3's busy
+final corridor exposed this: three native OBJ pixels disappeared and both
+overflow flags were raised solely because the wider margins were active.
+The synthetic margin-quota cases fail on the old evaluator in both renderers;
+the fixed evaluator matches a zero-extra replay of12 captured corridor inputs.
+
+For anchored views wider than512 columns, nine bits cannot identify every
+screen coordinate. X3 retains the full X computed by its original HG51B
+microcode through `cx4_set_ram_write_observer`, then attaches it to the actual
+OAM XY upload through `dma_set_oam_xy_notify_hook` and `PpuWsSetOamFullX`.
+The PPU uses it only when explicitly enabled and its low nine bits still
+match guest OAM. Ordinary XY writes invalidate it. Titles must serialize both
+pending producer coordinates and uploaded coordinates in their state extension,
+which also participates in rollback. This observes original execution; it does
+not replace the sprite builder or change guest OAM, camera or sequence state.
+
+Keep the viewport budget at least16 bits through the host-to-PPU call. A
+272-column budget cast to eight bits became16 and collapsed800px output to288.
+The built X3 regression checks actual684/800px images, not just buffer sizes.
 
 **Check:** an enemy must remain drawn while straddling both margin edges, not just
 the right one.

@@ -111,6 +111,10 @@ struct Cx4 {
   uint32_t frac;          /* master->Cx4 rate-conversion remainder */
   int in_dsp;             /* re-entrancy guard: we are inside cx4_run */
 
+  Cx4RamWriteObserver ram_observer;
+  void *ram_observer_context;
+  uint32_t observer_instruction;
+
   /* ── observability ────────────────────────────────────────────────── */
   Cx4RunEvent run_ring[kCx4RunRingEntries];
   uint32_t run_seq;
@@ -449,6 +453,8 @@ static void cx4_execute_opcode(Cx4 *c, uint16_t opcode);
 static void cx4_execute(Cx4 *c) {
   if (!cx4_cache(c)) { cx4_halt(c); return; }
   const uint16_t opcode = c->programRAM[c->io.cache.page][c->r.pc];
+  if (c->ram_observer)
+    c->observer_instruction = c->io.cache.address[c->io.cache.page] + c->r.pc * 2u;
   cx4_advance(c);
   cx4_step(c, 1);
   c->insns++;
@@ -503,6 +509,9 @@ static void insn_wrram(Cx4 *c, unsigned byte, uint32_t addr) {
   uint32_t address = addr & M12;
   if (address >= 0xc00) address -= 0x400;
   c->dataRAM[address] = (uint8_t)((c->r.ram >> (byte * 8u)) & M8);
+  if (c->ram_observer)
+    c->ram_observer(c->ram_observer_context, c->observer_instruction,
+                    (uint16_t)address, byte, c->r.ram);
 }
 
 static void insn_rdrom(Cx4 *c, uint32_t index) {
@@ -777,6 +786,9 @@ static void cx4_dram_write(Cx4 *c, uint32_t address, uint8_t data) {
   address &= 0xfff;
   if (address >= 0xc00) return;
   c->dataRAM[address] = data;
+  if (c->ram_observer)
+    c->ram_observer(c->ram_observer_context, UINT32_MAX,
+                    (uint16_t)address, 0, data);
 }
 
 /* The bus the DSP itself reads/writes through. */
@@ -959,6 +971,13 @@ Cx4 *cx4_create(const uint8_t *rom, uint32_t rom_size,
 }
 
 void cx4_destroy(Cx4 *c) { free(c); }
+
+void cx4_set_ram_write_observer(Cx4 *c, Cx4RamWriteObserver observer,
+                                void *context) {
+  if (!c) return;
+  c->ram_observer = observer;
+  c->ram_observer_context = context;
+}
 
 void cx4_reset(Cx4 *c) {
   if (!c) return;

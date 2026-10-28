@@ -130,7 +130,9 @@ static void ppu_render_pixel(Ppu *ppu, int x, int y) {
     }
   }
   int row = y - 1;
-  uint8 *pixelBuffer = (uint8 *)&ppu->renderBuffer[row * ppu->renderPitch + (x + ppu->extraLeftRight) * 4];
+  // Frame column of native x is x + extraFrameLeft (the budget, unless view
+  // anchoring slid the origin).
+  uint8 *pixelBuffer = (uint8 *)&ppu->renderBuffer[row * ppu->renderPitch + (x + ppu->extraFrameLeft) * 4];
   pixelBuffer[0] = ((b << 3) | (b >> 2)) * PPU_brightness(ppu) / 15;
   pixelBuffer[1] = ((g << 3) | (g >> 2)) * PPU_brightness(ppu) / 15;
   pixelBuffer[2] = ((r << 3) | (r >> 2)) * PPU_brightness(ppu) / 15;
@@ -186,8 +188,8 @@ static int ppu_resolve_pixel(Ppu *ppu, int x, int y, bool sub,
       } else {
         // get a pixel from the sprite buffer
         pixel = 0;
-        if ((ppu->objBuffer.data[x + kPpuExtraLeftRight] >> 12) == SPRITE_PRIO_TO_PRIO_HI(curPriority))
-          pixel = ppu->objBuffer.data[x + kPpuExtraLeftRight] & 0xff;
+        if ((ppu->objBuffer.data[x + kPpuLineBorder] >> 12) == SPRITE_PRIO_TO_PRIO_HI(curPriority))
+          pixel = ppu->objBuffer.data[x + kPpuLineBorder] & 0xff;
       }
     }
     if (pixel > 0) {
@@ -202,7 +204,7 @@ static int ppu_resolve_pixel(Ppu *ppu, int x, int y, bool sub,
     *b = ((pixel & 0xc0) >> 3) | ((pixel & 0x400) >> 8);
   } else {
     uint16_t color = layer==4
-        ? PpuPixelColor(ppu,ppu->objBuffer.data[x+kPpuExtraLeftRight],x+kPpuExtraLeftRight)
+        ? PpuPixelColor(ppu,ppu->objBuffer.data[x+kPpuLineBorder],x+kPpuLineBorder)
         : ppu->cgram[pixel & 0xff];
     *r = color & 0x1f;
     *g = (color >> 5) & 0x1f;

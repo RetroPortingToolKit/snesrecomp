@@ -88,6 +88,14 @@ echo "=== PPU widescreen elastic anchor band ==="
 "$CC" -std=c11 -Wall -Wextra -O1     -DSNESRECOMP_REVERSE_DEBUG=0     -I "$ROOT/runner/src" -I "$ROOT/runner/src/snes"     "$ROOT/tests/ppu/ppu_elastic_band_test.c"     "$ROOT/runner/src/snes/ppu.c"     "$ROOT/runner/src/snes/ppu_legacy.c"     -lm -o "$OUT/ppu_elastic_band_test"
 "$OUT/ppu_elastic_band_test"
 
+echo "=== PPU bounded view anchoring ==="
+"$CC" -std=c11 -Wall -Wextra -O1 -DSNESRECOMP_REVERSE_DEBUG=0 \
+    -I "$ROOT/runner/src" -I "$ROOT/runner/src/snes" \
+    "$ROOT/tests/ppu/ppu_view_anchor_test.c" \
+    "$ROOT/runner/src/snes/ppu.c" "$ROOT/runner/src/snes/ppu_legacy.c" \
+    -lm -o "$OUT/ppu_view_anchor_test"
+"$OUT/ppu_view_anchor_test"
+
 echo "=== HD Mode 7 sampling and composition ==="
 "$CC" -std=c11 -Wall -Wextra -O1 \
     -DSNESRECOMP_REVERSE_DEBUG=0 \

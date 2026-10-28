@@ -1550,8 +1550,12 @@ static char s_frange_dir[400];
 typedef struct DebugPpuHostState {
     uint8_t *render_buffer;
     uint32_t render_pitch, render_flags;
-    uint8_t extra_left_cur, extra_right_cur, extra_left_right;
+    /* uint16_t, like the PPU's own fields: a uint8_t here silently truncated
+     * any budget past 255 px when an observer restored the host state. */
+    uint16_t extra_left_cur, extra_right_cur, extra_left_right;
     uint8_t extra_bottom_cur;
+    uint8_t ws_view_anchor;
+    uint16_t extra_frame_left, extra_frame_right;
     PpuWidescreenLineEnhancer *enhancer;
     void *enhancer_context;
 } DebugPpuHostState;
@@ -1564,6 +1568,9 @@ static void DebugPpuSaveHostState(Ppu *ppu, DebugPpuHostState *state) {
     state->extra_right_cur = ppu->extraRightCur;
     state->extra_left_right = ppu->extraLeftRight;
     state->extra_bottom_cur = ppu->extraBottomCur;
+    state->ws_view_anchor = ppu->wsViewAnchor;
+    state->extra_frame_left = ppu->extraFrameLeft;
+    state->extra_frame_right = ppu->extraFrameRight;
     state->enhancer = ppu->widescreenLineEnhancer;
     state->enhancer_context = ppu->widescreenLineEnhancerContext;
 }
@@ -1577,6 +1584,9 @@ static void DebugPpuRestoreHostState(Ppu *ppu,
     ppu->extraRightCur = state->extra_right_cur;
     ppu->extraLeftRight = state->extra_left_right;
     ppu->extraBottomCur = state->extra_bottom_cur;
+    ppu->wsViewAnchor = state->ws_view_anchor;
+    ppu->extraFrameLeft = state->extra_frame_left;
+    ppu->extraFrameRight = state->extra_frame_right;
     PpuSetWidescreenLineEnhancer(ppu, state->enhancer,
                                  state->enhancer_context);
 }
@@ -5045,13 +5055,13 @@ static void cmd_ppu_lines(const char *args) {
 /* The last frame a title-owned presenter composed. See the declaration in
  * debug_server.h: without it every capture of an enhanced render path shows
  * the authentic 256-column raster instead of what the player is looking at. */
-static uint8_t s_composed_pixels[kPpuBufWidth * 4 * 240];
+static uint8_t s_composed_pixels[kPpuMaxFrameWidth * 4 * 240];
 static int s_composed_width, s_composed_height;
 static int s_composed_valid;
 
 void debug_server_note_composed_frame(const void *argb, unsigned pitch,
                                       int width, int height) {
-    if (!argb || width <= 0 || width > kPpuBufWidth || height <= 0 ||
+    if (!argb || width <= 0 || width > kPpuMaxFrameWidth || height <= 0 ||
         height > 240 || pitch < (unsigned)width * 4) {
         s_composed_valid = 0;
         return;
@@ -5070,7 +5080,7 @@ static void cmd_screenshot(const char *args) {
     // Copy the most recently presented buffer. Re-rendering here loses
     // presentation-only layers (including widescreen coprocessor pixels) and
     // can observe forced blank after the frame has already been drawn.
-    static uint8_t scr_pixels[kPpuBufWidth * 4 * 240];
+    static uint8_t scr_pixels[kPpuMaxFrameWidth * 4 * 240];
     int w, h;
     const char *source;
     if (s_composed_valid) {
@@ -5126,7 +5136,7 @@ static void cmd_screenshot(const char *args) {
     fwrite(hdr, 1, 54, f);
 
     // Write pixels (BGRA -> BGR, top to bottom)
-    uint8_t row_buf[kPpuBufWidth * 3 + 4];
+    uint8_t row_buf[kPpuMaxFrameWidth * 3 + 4];
     memset(row_buf, 0, sizeof(row_buf));
     for (int y = 0; y < h; y++) {
         const uint8_t *src = scr_pixels + y * w * 4;
@@ -5357,14 +5367,17 @@ static void cmd_get_ppu_state(const char *args) {
              "\"cgramPointer\":\"0x%02x\","
              "\"window1left\":%d,\"window1right\":%d,\"window2left\":%d,\"window2right\":%d,"
              "\"widescreen\":{\"budget\":%u,\"left\":%u,\"right\":%u,\"bottom\":%u,"
+             "\"viewAnchor\":%u,\"frameLeft\":%u,\"frameRight\":%u,"
              "\"layerWiden\":\"0x%02x\",\"layerClamp\":\"0x%02x\","
              "\"layerMirror\":\"0x%02x\",\"layerRepeat\":\"0x%02x\","
              "\"windowExpandLayers\":\"0x%02x\",\"windowExpandWindows\":\"0x%02x\","
              "\"worldBands\":["
                "{\"slot\":0,\"y0\":[%u,%u,%u,%u],\"y1\":[%u,%u,%u,%u],"
-                 "\"left\":[%u,%u,%u,%u],\"right\":[%u,%u,%u,%u]},"
+                 "\"left\":[%u,%u,%u,%u],\"right\":[%u,%u,%u,%u],"
+                 "\"clipMask\":%u,\"repeatWidth\":[%u,%u,%u,%u],\"reference\":[%u,%u,%u,%u]},"
                "{\"slot\":1,\"y0\":[%u,%u,%u,%u],\"y1\":[%u,%u,%u,%u],"
-                 "\"left\":[%u,%u,%u,%u],\"right\":[%u,%u,%u,%u]}],"
+                 "\"left\":[%u,%u,%u,%u],\"right\":[%u,%u,%u,%u],"
+                 "\"clipMask\":%u,\"repeatWidth\":[%u,%u,%u,%u],\"reference\":[%u,%u,%u,%u]}],"
              "\"elasticBands\":%s},"
              "\"evenFrame\":%s}",
              p->inidisp, p->bgmode & 7, p->mosaic, p->obsel,
@@ -5381,12 +5394,14 @@ static void cmd_get_ppu_state(const char *args) {
              p->cgramPointer,
              p->window1left, p->window1right, p->window2left, p->window2right,
              p->extraLeftRight, p->extraLeftCur, p->extraRightCur,
-             p->extraBottomCur, p->wsLayerWidenMask, p->wsLayerClamp,
+             p->extraBottomCur,
+             p->wsViewAnchor, p->extraFrameLeft, p->extraFrameRight,
+             p->wsLayerWidenMask, p->wsLayerClamp,
              p->wsLayerMirror, p->wsLayerRepeat,
              p->wsWindowExpandLayers, p->wsWindowExpandWindows,
-             /* worldBands: per-layer authored-world spans for the
-              * world-mirror policy (PpuSetWidescreenLayerWorldMirrorBand).
-              * y1<=y0 or right<=left on a layer means that slot is off. */
+             /* worldBands: authored-world mirror/clip spans. reference=0
+              * means own scroll; 1..4 selects BG1..BG4. y1<=y0 or
+              * right<=left on a layer means that slot is off. */
              p->wsWorldY0[0][0], p->wsWorldY0[0][1], p->wsWorldY0[0][2],
              p->wsWorldY0[0][3],
              p->wsWorldY1[0][0], p->wsWorldY1[0][1], p->wsWorldY1[0][2],
@@ -5395,6 +5410,10 @@ static void cmd_get_ppu_state(const char *args) {
              p->wsWorldLeft[0][2], p->wsWorldLeft[0][3],
              p->wsWorldRight[0][0], p->wsWorldRight[0][1],
              p->wsWorldRight[0][2], p->wsWorldRight[0][3],
+             p->wsWorldClip[0], p->wsWorldRepeat[0][0], p->wsWorldRepeat[0][1],
+             p->wsWorldRepeat[0][2], p->wsWorldRepeat[0][3], p->wsWorldReference[0][0],
+             p->wsWorldReference[0][1], p->wsWorldReference[0][2],
+             p->wsWorldReference[0][3],
              p->wsWorldY0[1][0], p->wsWorldY0[1][1], p->wsWorldY0[1][2],
              p->wsWorldY0[1][3],
              p->wsWorldY1[1][0], p->wsWorldY1[1][1], p->wsWorldY1[1][2],
@@ -5403,6 +5422,10 @@ static void cmd_get_ppu_state(const char *args) {
              p->wsWorldLeft[1][2], p->wsWorldLeft[1][3],
              p->wsWorldRight[1][0], p->wsWorldRight[1][1],
              p->wsWorldRight[1][2], p->wsWorldRight[1][3],
+             p->wsWorldClip[1], p->wsWorldRepeat[1][0], p->wsWorldRepeat[1][1],
+             p->wsWorldRepeat[1][2], p->wsWorldRepeat[1][3], p->wsWorldReference[1][0],
+             p->wsWorldReference[1][1], p->wsWorldReference[1][2],
+             p->wsWorldReference[1][3],
              eb,
              p->evenFrame ? "true" : "false");
 }
@@ -5491,6 +5514,31 @@ static void cmd_cx4_state(const char *args) {
         send(s_client_sock, buf, pos, 0);
     }
     send(s_client_sock, "]}\n", 3, 0);
+}
+
+/* dump_cx4 [CPU_address_hex] [length_decimal]: inspect the live CX4 RAM/IO
+ * window without clocking or writing the device. Useful when OAM DMA is
+ * sourced from the coprocessor rather than WRAM. */
+static void cmd_dump_cx4(const char *args) {
+    if (!g_snes || !g_snes->cart || !g_snes->cart->cx4) {
+        send_fmt("{\"error\":\"cx4 not available\"}"); return;
+    }
+    unsigned int addr = 0x6000, len = 0xc00;
+    sscanf(args, "%x %u", &addr, &len);
+    if (addr < 0x6000 || addr >= 0x8000 || len > 0x2000 ||
+        (uint64_t)addr + len > 0x8000) {
+        send_fmt("{\"error\":\"out of range\"}"); return;
+    }
+    if (s_client_sock == SOCKET_INVALID) return;
+    uint8_t bytes[0x2000];
+    for (unsigned int i = 0; i < len; i++)
+        bytes[i] = cx4_read(g_snes->cart->cx4, (uint16_t)(addr + i));
+    char hdr[96];
+    int count = snprintf(hdr, sizeof(hdr),
+                         "{\"addr\":\"0x%x\",\"len\":%u,\"hex\":\"", addr, len);
+    send(s_client_sock, hdr, count, 0);
+    send_hex_blob(bytes, len);
+    send_line("\"}");
 }
 
 static void cmd_get_superfx_state(const char *args) {
@@ -8605,6 +8653,7 @@ static const CmdEntry s_commands[] = {
     {"get_v2_cpu",    cmd_get_v2_cpu},
     {"get_superfx_state", cmd_get_superfx_state},
     {"cx4_state",      cmd_cx4_state},
+    {"dump_cx4",       cmd_dump_cx4},
     {"trace_dump",     cmd_trace_dump},
     {"trace_dbpb",     cmd_trace_dbpb},
     {"trace_clear",    cmd_trace_clear},

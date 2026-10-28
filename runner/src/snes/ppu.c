@@ -249,9 +249,9 @@ bool PpuSetOverlayCapture(Ppu *ppu, PpuOverlaySource source,
     return false;
   int64_t requested_x1 = (int64_t)x + width;
   int64_t requested_y1 = (int64_t)y + height;
-  int x0 = IntMax(x, -kPpuExtraLeftRight);
-  int x1 = requested_x1 < kPpuXPixels + kPpuExtraLeftRight
-      ? (int)requested_x1 : kPpuXPixels + kPpuExtraLeftRight;
+  int x0 = IntMax(x, -kPpuLineBorder);
+  int x1 = requested_x1 < kPpuXPixels + kPpuLineBorder
+      ? (int)requested_x1 : kPpuXPixels + kPpuLineBorder;
   int y0 = IntMax(y, 0);
   int y1 = requested_y1 < 240 ? (int)requested_y1 : 240;
   if (x1 <= x0 || y1 <= y0)
@@ -298,6 +298,9 @@ static inline void PpuResetLayerPolicies(Ppu *ppu) {
   memset(ppu->wsWorldY1, 0, sizeof(ppu->wsWorldY1));
   memset(ppu->wsWorldLeft, 0, sizeof(ppu->wsWorldLeft));
   memset(ppu->wsWorldRight, 0, sizeof(ppu->wsWorldRight));
+  memset(ppu->wsWorldClip, 0, sizeof(ppu->wsWorldClip));
+  memset(ppu->wsWorldRepeat, 0, sizeof(ppu->wsWorldRepeat));
+  memset(ppu->wsWorldReference, 0, sizeof(ppu->wsWorldReference));
   memset(ppu->wsElasticY0, 0, sizeof(ppu->wsElasticY0));
   memset(ppu->wsElasticY1, 0, sizeof(ppu->wsElasticY1));
   memset(ppu->wsElasticNSeg, 0, sizeof(ppu->wsElasticNSeg));
@@ -306,6 +309,8 @@ static inline void PpuResetLayerPolicies(Ppu *ppu) {
   memset(ppu->wsViewportInsetR, 0, sizeof(ppu->wsViewportInsetR));
   ppu->wsWindowExpandLayers = 0;
   ppu->wsWindowExpandWindows = 0;
+  ppu->wsViewAnchor = 0;
+  ppu->wsOamFullXOn = 0;
 }
 
 int PpuWsExtraOverride(void) {
@@ -313,27 +318,29 @@ int PpuWsExtraOverride(void) {
   if (s_ov == -2) {
     const char *e = getenv("SNESRECOMP_WS_EXTRA");
     s_ov = (e && e[0]) ? atoi(e) : -1;
-    if (s_ov > kPpuExtraLeftRight)
-      s_ov = kPpuExtraLeftRight;
+    if (s_ov > kPpuMaxFrameExtra)
+      s_ov = kPpuMaxFrameExtra;
   }
   return s_ov;
 }
 
 void PpuSetExtraSpace(Ppu *ppu, uint16_t extra) {
-  if (extra > kPpuExtraLeftRight)
-    extra = kPpuExtraLeftRight;
+  if (extra > kPpuMaxFrameExtra)
+    extra = kPpuMaxFrameExtra;
   // Symmetric border: equal columns added on each side. extraLeftRight is the
   // centering budget; extraLeftCur/extraRightCur are the per-side columns the
   // window/sprite/composite paths actually render.
   ppu->extraLeftRight = extra;
   ppu->extraLeftCur = extra;
   ppu->extraRightCur = extra;
+  ppu->extraFrameLeft = extra;
+  ppu->extraFrameRight = extra;
   PpuResetLayerPolicies(ppu);
 }
 
 void PpuSetExtraSpaceCentered(Ppu *ppu, uint16_t budget) {
-  if (budget > kPpuExtraLeftRight)
-    budget = kPpuExtraLeftRight;
+  if (budget > kPpuMaxFrameExtra)
+    budget = kPpuMaxFrameExtra;
   // Render only the authentic 256 columns but keep the centering budget so the
   // composite places them in the middle of the wider framebuffer (the caller
   // clears the side margins to black -> letterbox/pillarbox). Used for bounded
@@ -341,6 +348,8 @@ void PpuSetExtraSpaceCentered(Ppu *ppu, uint16_t budget) {
   ppu->extraLeftRight = budget;
   ppu->extraLeftCur = 0;
   ppu->extraRightCur = 0;
+  ppu->extraFrameLeft = budget;
+  ppu->extraFrameRight = budget;
   PpuResetLayerPolicies(ppu);
 }
 
@@ -350,9 +359,44 @@ void PpuSetExtraSideSpace(Ppu *ppu, int left, int right, int bottom) {
   // the line renderer's window edges stay inside the priority buffers, bottom
   // clamps to the 16px overscan band. See ppu.h for the symmetric-vs-dynamic
   // distinction.
-  ppu->extraLeftCur = (uint16_t)IntMin(IntMax(left, 0), ppu->extraLeftRight);
-  ppu->extraRightCur = (uint16_t)IntMin(IntMax(right, 0), ppu->extraLeftRight);
+  const int budget = ppu->extraLeftRight;
+  if (ppu->wsViewAnchor) {
+    // Anchored (PpuSetWidescreenViewAnchor): the margins share ONE allowance
+    // of 2*budget columns rather than getting budget each, and the frame
+    // origin slides with them so a margin the game clamped to 0 becomes
+    // picture on the other side instead of a black bar on this one.
+    const int span = budget * 2;
+    const int cap = IntMin(span, kPpuLineBorder);
+    left = IntMin(IntMax(left, 0), cap);
+    right = IntMin(IntMax(right, 0), cap);
+    if (right > span - left)
+      right = span - left;
+    // Whatever the two margins leave unclaimed is padding, split evenly; the
+    // odd column goes right, because the origin takes the floor.
+    int frame_left = left + (span - left - right) / 2;
+    // Buffers reserve the whole maximum allowance on either side, so this
+    // clamp is defensive: every supported output budget can slide fully.
+    frame_left = IntMin(IntMax(frame_left, span - kPpuLineBorder),
+                        kPpuLineBorder);
+    ppu->extraLeftCur = (uint16_t)left;
+    ppu->extraRightCur = (uint16_t)right;
+    ppu->extraFrameLeft = (uint16_t)frame_left;
+    ppu->extraFrameRight = (uint16_t)(span - frame_left);
+  } else {
+    ppu->extraLeftCur = (uint16_t)IntMin(IntMax(left, 0), budget);
+    ppu->extraRightCur = (uint16_t)IntMin(IntMax(right, 0), budget);
+    ppu->extraFrameLeft = (uint16_t)budget;
+    ppu->extraFrameRight = (uint16_t)budget;
+  }
   ppu->extraBottomCur = (uint8_t)IntMin(IntMax(bottom, 0), 16);
+}
+
+void PpuSetWidescreenViewAnchor(Ppu *ppu, bool enabled) {
+  ppu->wsViewAnchor = enabled ? 1 : 0;
+  // Re-derive the origin from the margins already published this frame, so a
+  // game may publish the anchor and the margins in either order.
+  PpuSetExtraSideSpace(ppu, ppu->extraLeftCur, ppu->extraRightCur,
+                       ppu->extraBottomCur);
 }
 
 void PpuSetWidescreenHudSplit(Ppu *ppu, uint8_t height, uint8_t left_end,
@@ -533,12 +577,12 @@ void PpuSetWidescreenLayerWorldMirrorBand(Ppu *ppu, uint8_t layer, uint8_t y0,
                                            world_left_px, world_right_px);
 }
 
-void PpuSetWidescreenLayerWorldMirrorBandSlot(
+static void PpuSetWidescreenWorldBandSlot(
     Ppu *ppu, uint8_t slot, uint8_t layer, uint8_t y0, uint8_t y1,
     uint16_t world_left_px, uint16_t world_right_px) {
   // See ppu.h. An empty band or an empty/inverted world span disables the
   // slot outright rather than leaving half-configured state behind.
-  if (slot >= kPpuWsWorldBands || layer >= 4)
+  if (slot >= kPpuWsWorldBands || layer >= 5)
     return;
   if (y1 <= y0 || world_right_px <= world_left_px) {
     y0 = y1 = 0;
@@ -548,6 +592,57 @@ void PpuSetWidescreenLayerWorldMirrorBandSlot(
   ppu->wsWorldY1[slot][layer] = y1;
   ppu->wsWorldLeft[slot][layer] = world_left_px;
   ppu->wsWorldRight[slot][layer] = world_right_px;
+  ppu->wsWorldClip[slot] &= (uint8_t)~(1u << layer);
+  ppu->wsWorldRepeat[slot][layer] = 0;
+  ppu->wsWorldReference[slot][layer] = 0;
+}
+
+void PpuSetWidescreenLayerWorldMirrorBandSlot(
+    Ppu *ppu, uint8_t slot, uint8_t layer, uint8_t y0, uint8_t y1,
+    uint16_t world_left_px, uint16_t world_right_px) {
+  if (layer < 4)
+    PpuSetWidescreenWorldBandSlot(ppu, slot, layer, y0, y1,
+                                  world_left_px, world_right_px);
+}
+
+void PpuSetWidescreenLayerWorldClipBand(
+    Ppu *ppu, uint8_t layer, uint8_t y0, uint8_t y1, uint8_t reference_layer,
+    uint16_t world_left_px, uint16_t world_right_px) {
+  PpuSetWidescreenLayerWorldClipBandSlot(ppu, 0, layer, y0, y1,
+                                       reference_layer, world_left_px,
+                                       world_right_px);
+}
+
+void PpuSetWidescreenLayerWorldClipBandSlot(
+    Ppu *ppu, uint8_t slot, uint8_t layer, uint8_t y0, uint8_t y1,
+    uint8_t reference_layer, uint16_t world_left_px, uint16_t world_right_px) {
+  if (reference_layer >= 4) y0 = y1 = 0;
+  PpuSetWidescreenWorldBandSlot(ppu, slot, layer, y0, y1,
+                                world_left_px, world_right_px);
+  if (slot < kPpuWsWorldBands && layer < 5 &&
+      ppu->wsWorldY1[slot][layer] > ppu->wsWorldY0[slot][layer]) {
+    ppu->wsWorldClip[slot] |= (uint8_t)(1u << layer);
+    ppu->wsWorldReference[slot][layer] = (uint8_t)(reference_layer + 1);
+  }
+}
+
+void PpuSetWidescreenLayerWorldRepeatBand(
+    Ppu *ppu, uint8_t layer, uint8_t y0, uint8_t y1,
+    uint16_t world_left_px, uint16_t world_right_px, uint16_t strip_width) {
+  PpuSetWidescreenLayerWorldRepeatBandSlot(ppu,0,layer,y0,y1,
+                                         world_left_px,world_right_px,strip_width);
+}
+
+void PpuSetWidescreenLayerWorldRepeatBandSlot(
+    Ppu *ppu, uint8_t slot, uint8_t layer, uint8_t y0, uint8_t y1,
+    uint16_t world_left_px, uint16_t world_right_px, uint16_t strip_width) {
+  if (!strip_width) y0 = y1 = 0;
+  PpuSetWidescreenLayerWorldMirrorBandSlot(ppu,slot,layer,y0,y1,
+                                         world_left_px,world_right_px);
+  if (slot < kPpuWsWorldBands && layer < 4 &&
+      ppu->wsWorldY1[slot][layer] > ppu->wsWorldY0[slot][layer])
+    ppu->wsWorldRepeat[slot][layer] = (uint16_t)IntMin(
+        strip_width,world_right_px-world_left_px);
 }
 
 static void PpuClearElasticBandSlot(Ppu *ppu, uint8_t slot, uint8_t layer) {
@@ -666,19 +761,24 @@ void ppu_handleVblank(Ppu* ppu) {
 }
 
 // The columns anything can reach this frame: the 256 hardware ones plus the
-// per-side budget the host asked for. Every read of a priority buffer is
-// bounded by a window edge, and PpuWidescreenLayerExtra never hands out more
-// than extraLeftRight, so nothing outside this span is ever looked at.
+// columns between native x=0 and each physical frame edge. Every read of a
+// priority buffer is bounded by a window edge, and PpuWidescreenLayerExtra
+// never hands out more than the live margin, so nothing outside this span is
+// ever looked at. extraFrameLeft/extraFrameRight are the budget either side
+// unless view anchoring slid the origin, in which case they are what the slide
+// made them -- and they are never smaller than the live margins.
 //
 // Rounded out to whole uint64 stores, because that is how ClearBackdrop
 // writes.
 static inline void PpuActiveSpan(const Ppu *ppu, size_t *begin,
                                  size_t *end) {
-  size_t extra = ppu->extraLeftRight;
-  if (extra > kPpuExtraLeftRight)
-    extra = kPpuExtraLeftRight;
-  size_t b = ((size_t)kPpuExtraLeftRight - extra) & ~(size_t)3;
-  size_t e = ((size_t)kPpuExtraLeftRight + kPpuXPixels + extra + 3) &
+  size_t left = ppu->extraFrameLeft, right = ppu->extraFrameRight;
+  if (left > kPpuLineBorder)
+    left = kPpuLineBorder;
+  if (right > kPpuLineBorder)
+    right = kPpuLineBorder;
+  size_t b = ((size_t)kPpuLineBorder - left) & ~(size_t)3;
+  size_t e = ((size_t)kPpuLineBorder + kPpuXPixels + right + 3) &
              ~(size_t)3;
   if (e > kPpuBufWidth)
     e = kPpuBufWidth;
@@ -895,6 +995,65 @@ typedef struct PpuWindows {
   uint8 bits;
 } PpuWindows;
 
+static unsigned PpuWorldReferenceLayer(const Ppu *ppu, int band, uint layer) {
+  unsigned reference = ppu->wsWorldReference[band][layer];
+  return reference >= 1 && reference <= 4 ? reference - 1 : layer;
+}
+
+// A clip does not resample pixels. When the room and native view touch, their
+// union is one interval which the ordinary windowed draw can render directly.
+// Keep the isolated compositor for disjoint rooms, mosaic and source anchors.
+static bool PpuWorldClipBounds(const Ppu *ppu, uint layer, int y,
+                                int *left, int *right) {
+  if (layer >= 5 ||
+      !((ppu->wsWorldClip[0] | ppu->wsWorldClip[1]) & (1u << layer)) ||
+      (layer < 4 && (PPU_mode(ppu) != 1 ||
+       (PPU_mosaicEnabled(ppu, layer) && PPU_mosaicSize(ppu) > 1))))
+    return false;
+  int band = PpuWidescreenLayerWorldBandAt(ppu, layer, y);
+  if (band < 0 || !(ppu->wsWorldClip[band] & (1u << layer)) ||
+      PpuWidescreenLayerElasticBandAt(ppu, layer, y) >= 0)
+    return false;
+  for (uint slot = 0; layer < 4 && slot < kPpuWsAnchorBands; ++slot) {
+    if (y >= ppu->wsAnchorY0[slot][layer] &&
+        y < ppu->wsAnchorY1[slot][layer] &&
+        ppu->wsAnchorLeftEnd[slot][layer] &&
+        ppu->wsAnchorLeftEnd[slot][layer] < ppu->wsAnchorRightStart[slot][layer])
+      return false;
+  }
+  int scroll = ppu->hScroll[PpuWorldReferenceLayer(ppu, band, layer)];
+  int a = ppu->wsWorldLeft[band][layer] - scroll;
+  int b = ppu->wsWorldRight[band][layer] - scroll;
+  if (a > kPpuXPixels || b < 0)
+    return false;
+  *left = IntMin(a, 0);
+  *right = IntMax(b, kPpuXPixels);
+  return true;
+}
+
+static void PpuWindows_ClipWorld(PpuWindows *win, const Ppu *ppu,
+                                 uint layer, int y) {
+  int left, right;
+  if (!PpuWorldClipBounds(ppu, layer, y, &left, &right))
+    return;
+  // Crop after evaluating hardware windows so pinned edges and inverse masks
+  // retain their original meaning. Removing outer spans never adds an edge.
+  uint nr = 0;
+  uint8 bits = 0;
+  for (uint i = 0; i < win->nr; ++i) {
+    int a = IntMax(win->edges[i], left);
+    int b = IntMin(win->edges[i + 1], right);
+    if (a >= b)
+      continue;
+    win->edges[nr] = (int16)a;
+    win->edges[nr + 1] = (int16)b;
+    bits |= (uint8)(((win->bits >> i) & 1u) << nr);
+    ++nr;
+  }
+  win->nr = (uint8)nr;
+  win->bits = bits;
+}
+
 // Per-layer widescreen side margin. BG3 (layer 2) carries the HUD and is
 // clamped to the authentic 256-wide region so a BG3 status bar never tiles into
 // the margins -- EXCEPT on scanlines >= wsBg3WidenY, where the game renders
@@ -1047,9 +1206,9 @@ static bool PpuApplyLayerAnchorBand(Ppu *ppu, uint layer, uint y,
   const bool full_budget =
       (ppu->wsHudSplitHeight & 0x80) && ppu->extraLeftRight;
   const int left_extra =
-      full_budget ? ppu->extraLeftRight : ppu->extraLeftCur;
+      full_budget ? ppu->extraFrameLeft : ppu->extraLeftCur;
   const int right_extra =
-      full_budget ? ppu->extraLeftRight : ppu->extraRightCur;
+      full_budget ? ppu->extraFrameRight : ppu->extraRightCur;
   if (!(left_extra | right_extra))
     return false;
   win->nr = 5;
@@ -1115,8 +1274,8 @@ static void PpuDrawBackground_4bpp(Ppu *ppu, PpuPixelPrioBufs *dstbuf,
                                    PpuZbufType zhi, PpuZbufType zlo) {
 #define VIEWPORT_ALLOWED(i) \
   PpuViewportAllows(ppu, layer, \
-      (int)(dstz + (i) - dstbuf->data - kPpuExtraLeftRight), \
-      (int)(dstz + (i) - dstbuf->data - kPpuExtraLeftRight) + \
+      (int)(dstz + (i) - dstbuf->data - kPpuLineBorder), \
+      (int)(dstz + (i) - dstbuf->data - kPpuLineBorder) + \
           ws_bias[windex])
 #define DO_PIXEL(i) do { \
   pixel = (bits >> i) & 1 | (bits >> (7 + i)) & 2 | (bits >> (14 + i)) & 4 | (bits >> (21 + i)) & 8; \
@@ -1130,6 +1289,7 @@ static void PpuDrawBackground_4bpp(Ppu *ppu, PpuPixelPrioBufs *dstbuf,
     return;  // layer is completely hidden
   PpuWindows win;
   IS_SCREEN_WINDOWED(ppu, sub, layer) ? PpuWindows_Calc(&win, ppu, layer, y) : PpuWindows_Clear(&win, ppu, layer, y);
+  PpuWindows_ClipWorld(&win, ppu, layer, (int)y);
   int16 ws_bias[8] = { 0 };
   if (!PpuApplyLayerAnchorBand(ppu, layer, y, &win, ws_bias))
     PpuApplyMarginGap(ppu, layer, &win, ws_bias);
@@ -1152,7 +1312,7 @@ static void PpuDrawBackground_4bpp(Ppu *ppu, PpuPixelPrioBufs *dstbuf,
     uint x = win.edges[windex] + ppu->hScroll[layer] + ws_bias[windex];
     uint w = win.edges[windex + 1] - win.edges[windex];
     int ws_sx = win.edges[windex];
-    PpuZbufType *dstz = dstbuf->data + win.edges[windex] + kPpuExtraLeftRight;
+    PpuZbufType *dstz = dstbuf->data + win.edges[windex] + kPpuLineBorder;
     const uint16 *tp = tps[x >> 8 & 1] + ((x >> 3) & 0x1f);
     const uint16 *tp_last = tps[x >> 8 & 1] + 31;
     const uint16 *tp_next = tps[(x >> 8 & 1) ^ 1];
@@ -1252,7 +1412,7 @@ static void PpuDrawBackground_8bpp(Ppu *ppu, uint y, bool sub, uint layer,
       continue;
     const int left = win.edges[windex];
     const int right = win.edges[windex + 1];
-    PpuZbufType *dstz = ppu->bgBuffers[sub].data + left + kPpuExtraLeftRight;
+    PpuZbufType *dstz = ppu->bgBuffers[sub].data + left + kPpuLineBorder;
 
     for (int screen_x = left; screen_x < right;) {
       const int sx = screen_x + ppu->hScroll[layer];
@@ -1328,6 +1488,7 @@ static void PpuDrawBackgroundBig(Ppu *ppu, PpuPixelPrioBufs *dstbuf, uint y,
   PpuWindows win;
   IS_SCREEN_WINDOWED(ppu, sub, layer) ? PpuWindows_Calc(&win, ppu, layer, y)
                                       : PpuWindows_Clear(&win, ppu, layer, y);
+  PpuWindows_ClipWorld(&win, ppu, layer, (int)y);
   const int sy = (int)(mosaic ? ppu->mosaicModulo[y] : y) + ppu->vScroll[layer];
   const int tileadr = PPU_bgTileAdr(ppu, layer);
   const int words = (bpp == 4) ? 16 : 8;          /* vram words per 8x8 char */
@@ -1342,7 +1503,7 @@ static void PpuDrawBackgroundBig(Ppu *ppu, PpuPixelPrioBufs *dstbuf, uint y,
       continue;
     const int left = win.edges[windex];
     const int right = win.edges[windex + 1];
-    PpuZbufType *dstz = dstbuf->data + left + kPpuExtraLeftRight;
+    PpuZbufType *dstz = dstbuf->data + left + kPpuLineBorder;
     const bool ws_shadow = WsShadowLayerActive((int)layer);
     for (int screen_x = left; screen_x < right; screen_x++, dstz++) {
       const int mx = mosaic ? PpuMosaicAt(ppu, screen_x) : screen_x;
@@ -1390,13 +1551,17 @@ static void PpuDrawBackgroundBig(Ppu *ppu, PpuPixelPrioBufs *dstbuf, uint y,
   }
 }
 
-static uint16 PpuReadTilemapEntry(Ppu *ppu, uint layer, int tx, int ty) {
+static uint16 PpuTilemapWordAddress(Ppu *ppu, uint layer, int tx, int ty) {
   int addr = PPU_bgTilemapAdr(ppu, layer) + ((ty & 31) << 5) + (tx & 31);
   if (((ty >> 5) & 1) && PPU_bgTilemapHigher(ppu, layer))
     addr += PPU_bgTilemapWider(ppu, layer) ? 0x800 : 0x400;
   if (((tx >> 5) & 1) && PPU_bgTilemapWider(ppu, layer))
     addr += 0x400;
-  return PpuRenderVram(ppu)[addr & 0x7fff];
+  return (uint16)(addr & 0x7fff);
+}
+
+static uint16 PpuReadTilemapEntry(Ppu *ppu, uint layer, int tx, int ty) {
+  return PpuRenderVram(ppu)[PpuTilemapWordAddress(ppu, layer, tx, ty)];
 }
 
 /* Capture a native-width Mode 1 4bpp layer independently of the compositor.
@@ -1508,6 +1673,7 @@ static void PpuDrawBackground_4bpp_opt(Ppu *ppu, uint y, bool sub, uint layer,
   const int opt_hrow = (opt_vscroll & opt_coord_mask) >> opt_shift;
   const int opt_vrow = ((opt_vscroll + 8) & opt_coord_mask) >> opt_shift;
   const uint16 enable = (uint16)(0x2000u << layer);
+  const bool ws_shadow = WsShadowLayerActive((int)layer);
 
   for (size_t windex = 0; windex < win.nr; windex++) {
     if (win.bits & (1 << windex))
@@ -1516,7 +1682,7 @@ static void PpuDrawBackground_4bpp_opt(Ppu *ppu, uint y, bool sub, uint layer,
     const int right = win.edges[windex + 1];
     const int sample_bias = ws_bias[windex];
     PpuZbufType *dstz =
-        ppu->bgBuffers[sub].data + left + kPpuExtraLeftRight;
+        ppu->bgBuffers[sub].data + left + kPpuLineBorder;
     /* OPT values apply to a rendered segment, not independently to every
      * screen pixel.  The selected horizontal offset determines where the
      * next eight-pixel source-tile boundary lies; only there does the PPU
@@ -1546,10 +1712,33 @@ static void PpuDrawBackground_4bpp_opt(Ppu *ppu, uint y, bool sub, uint layer,
       if (width > (unsigned)(right - screen_x))
         width = right - screen_x;
 
+      const uint16 map_word = PpuTilemapWordAddress(
+          ppu, layer, sx >> tile_shift, sy >> tile_shift);
+      const uint16 real_tile = PpuRenderVram(ppu)[map_word];
+      uint16 shadow_tile = real_tile;
+      if (ws_shadow) {
+        /* Preserve the native segment. Resolve its continuation with the
+         * effective OPT offsets, not the unmodified global scroll. The
+         * segment ends at the next source-tile boundary, so one lookup also
+         * serves a straddling native/margin segment without changing native
+         * pixels or doing a world lookup for every output pixel. */
+        const int margin_x = screen_x < 0 ? screen_x :
+                             screen_x >= 256 ? screen_x : 256;
+        if (screen_x < 0 || screen_x + (int)width > 256) {
+          const unsigned map_height =
+              (PPU_bgTilemapHigher(ppu, layer) ? 64u : 32u) << tile_shift;
+          int vdelta = (voffset - vscroll) & (map_height - 1);
+          if (vdelta >= (int)map_height / 2) vdelta -= map_height;
+          shadow_tile = WsShadowTile(
+              (int)layer, margin_x + sample_bias, vscroll + vdelta + y,
+              (uint16_t)hoffset, map_word, real_tile);
+        }
+      }
+
       for (unsigned i = 0; i < width; i++, dstz++) {
         unsigned source_x = (sx + i) & coord_mask;
-        uint16 tile = PpuReadTilemapEntry(
-            ppu, layer, source_x >> tile_shift, sy >> tile_shift);
+        const int output_x = screen_x + (int)i;
+        uint16 tile = output_x < 0 || output_x >= 256 ? shadow_tile : real_tile;
         unsigned px = source_x & tile_mask;
         unsigned py = sy & tile_mask;
         if (tile & 0x4000)
@@ -1603,10 +1792,13 @@ static void PpuDrawBackground_2bpp(Ppu *ppu, PpuPixelPrioBufs *dstbuf, uint y, b
     return;  // layer is completely hidden
   PpuWindows win;
   IS_SCREEN_WINDOWED(ppu, sub, layer) ? PpuWindows_Calc(&win, ppu, layer, y) : PpuWindows_Clear(&win, ppu, layer, y);
+  PpuWindows_ClipWorld(&win, ppu, layer, (int)y);
   // Widescreen HUD split (PpuSetWidescreenHudSplit): on HUD scanlines,
   // replace the single span with five — left chunk re-anchored to the left
   // border edge, a transparent gap, the centered chunk, a gap, and the
-  // right chunk re-anchored to the right border edge. ws_bias shifts each
+  // right chunk re-anchored to the right border edge. Those edges are the
+  // PHYSICAL frame edges (extraFrameLeft/Right), which equal the budget
+  // unless view anchoring slid the origin. ws_bias shifts each
   // drawn span's source x so the chunks keep sampling their authentic
   // tilemap columns. Normally applied only when the computed window set is
   // one full drawn span: games (SMW) often enable screen-level window masking
@@ -1622,14 +1814,16 @@ static void PpuDrawBackground_2bpp(Ppu *ppu, PpuPixelPrioBufs *dstbuf, uint y, b
       (hud_always_visible || (win.nr == 1 && win.bits == 0))) {
     win.nr = 5;
     win.bits = 0x0A;  // spans 1 and 3 are the gaps
-    win.edges[0] = -ppu->extraLeftRight;
-    win.edges[1] = ppu->wsHudLeftEnd - ppu->extraLeftRight;
-    win.edges[2] = ppu->wsHudLeftEnd;
-    win.edges[3] = ppu->wsHudRightStart;
-    win.edges[4] = ppu->wsHudRightStart + ppu->extraLeftRight;
-    win.edges[5] = 256 + ppu->extraLeftRight;
-    ws_bias[0] = ppu->extraLeftRight;
-    ws_bias[4] = -(int16)ppu->extraLeftRight;
+    win.edges[0] = -(int16)ppu->extraFrameLeft;
+    win.edges[1] = (int16)(ppu->wsHudLeftEnd - ppu->extraFrameLeft);
+    const int center_shift = (int)ppu->extraLeftRight - ppu->extraFrameLeft;
+    win.edges[2] = (int16)(ppu->wsHudLeftEnd + center_shift);
+    win.edges[3] = (int16)(ppu->wsHudRightStart + center_shift);
+    win.edges[4] = (int16)(ppu->wsHudRightStart + ppu->extraFrameRight);
+    win.edges[5] = (int16)(256 + ppu->extraFrameRight);
+    ws_bias[0] = (int16)ppu->extraFrameLeft;
+    ws_bias[2] = (int16)-center_shift;
+    ws_bias[4] = -(int16)ppu->extraFrameRight;
   } else {
     PpuApplyMarginGap(ppu, layer, &win, ws_bias);
   }
@@ -1650,7 +1844,7 @@ static void PpuDrawBackground_2bpp(Ppu *ppu, PpuPixelPrioBufs *dstbuf, uint y, b
       continue;  // layer is disabled for this window part
     uint x = win.edges[windex] + ppu->hScroll[layer] + ws_bias[windex];
     uint w = win.edges[windex + 1] - win.edges[windex];
-    PpuZbufType *dstz = dstbuf->data + win.edges[windex] + kPpuExtraLeftRight;
+    PpuZbufType *dstz = dstbuf->data + win.edges[windex] + kPpuLineBorder;
     const uint16 *tp = tps[x >> 8 & 1] + ((x >> 3) & 0x1f);
     const uint16 *tp_last = tps[x >> 8 & 1] + 31;
     const uint16 *tp_next = tps[(x >> 8 & 1) ^ 1];
@@ -1727,8 +1921,8 @@ static void PpuDrawBackground_4bpp_mosaic(Ppu *ppu,
                                           PpuZbufType zhi, PpuZbufType zlo) {
 #define VIEWPORT_ALLOWED(i) \
   PpuViewportAllows(ppu, layer, \
-      (int)(dstz + (i) - dstbuf->data - kPpuExtraLeftRight), \
-      (int)(dstz + (i) - dstbuf->data - kPpuExtraLeftRight))
+      (int)(dstz + (i) - dstbuf->data - kPpuLineBorder), \
+      (int)(dstz + (i) - dstbuf->data - kPpuLineBorder))
 #define GET_PIXEL() pixel = (bits) & 1 | (bits >> 7) & 2 | (bits >> 14) & 4 | (bits >> 21) & 8
 #define GET_PIXEL_HFLIP() pixel = (bits >> 7) & 1 | (bits >> 14) & 2 | (bits >> 21) & 4 | (bits >> 28) & 8
 #define READ_BITS(ta, tile) (addr = &PpuRenderVram(ppu)[((ta) + (tile) * 16) & 0x7fff], addr[0] | addr[8] << 16)
@@ -1755,8 +1949,8 @@ static void PpuDrawBackground_4bpp_mosaic(Ppu *ppu,
       continue;  // layer is disabled for this window part
     int sx = win.edges[windex];
     int ws_sx = sx;
-    PpuZbufType *dstz = dstbuf->data + sx + kPpuExtraLeftRight;
-    PpuZbufType *dstz_end = dstbuf->data + win.edges[windex + 1] + kPpuExtraLeftRight;
+    PpuZbufType *dstz = dstbuf->data + sx + kPpuLineBorder;
+    PpuZbufType *dstz_end = dstbuf->data + win.edges[windex + 1] + kPpuLineBorder;
     uint x = sx + ppu->hScroll[layer];
     const uint16 *tp = tps[x >> 8 & 1] + ((x >> 3) & 0x1f);
     const uint16 *tp_last = tps[x >> 8 & 1] + 31, *tp_next = tps[(x >> 8 & 1) ^ 1];
@@ -1799,37 +1993,35 @@ static void PpuMergePaddedBackground(Ppu *ppu, PpuPixelPrioBufs *dstbuf,
                                      bool repeat, bool full_budget) {
   PpuZbufType *dst = dstbuf->data;
   const PpuZbufType *src = layerbuf->data;
-  int left_extra = full_budget ? ppu->extraLeftRight : ppu->extraLeftCur;
-  int right_extra = full_budget ? ppu->extraLeftRight : ppu->extraRightCur;
+  int left_extra = full_budget ? ppu->extraFrameLeft : ppu->extraLeftCur;
+  int right_extra = full_budget ? ppu->extraFrameRight : ppu->extraRightCur;
   for (int x = 0; x < kPpuXPixels; x++) {
-    int i = x + kPpuExtraLeftRight;
+    int i = x + kPpuLineBorder;
     if (src[i] > dst[i]) dst[i] = src[i];
   }
   for (int x = -left_extra; x < 0; x++) {
-    int di = x + kPpuExtraLeftRight;
+    int di = x + kPpuLineBorder;
     int sx = repeat ? kPpuXPixels + x : -x;
-    int si = sx + kPpuExtraLeftRight;
+    int si = sx + kPpuLineBorder;
     if (src[si] > dst[di]) dst[di] = src[si];
   }
   for (int x = kPpuXPixels;
        x < kPpuXPixels + right_extra; x++) {
-    int di = x + kPpuExtraLeftRight;
+    int di = x + kPpuLineBorder;
     int sx = repeat ? x - kPpuXPixels : kPpuXPixels * 2 - 2 - x;
-    int si = sx + kPpuExtraLeftRight;
+    int si = sx + kPpuLineBorder;
     if (src[si] > dst[di]) dst[di] = src[si];
   }
 }
 
-// Merge one isolated layer into the live priority buffer, reflecting columns
-// that fall outside the layer's AUTHORED WORLD back inside it. Unlike
-// PpuMergePaddedBackground this keeps every column the tilemap really
-// authors -- including margin columns -- and only synthesizes where the world
-// runs out. See PpuSetWidescreenLayerWorldMirrorBand.
-static void PpuMergeWorldMirroredBackground(Ppu *ppu,
+// Preserve authored room columns, including genuine margin art. Outside the
+// room, either reflect the layer's own art or omit a bounded object canvas.
+// A canvas can follow another plane's PPU phase without sharing its scroll.
+static void PpuMergeWorldBoundedBackground(Ppu *ppu,
                                             PpuPixelPrioBufs *dstbuf,
                                             const PpuPixelPrioBufs *layerbuf,
                                             int world_left, int world_right,
-                                            int hscroll) {
+                                            int hscroll, bool clip, int strip) {
   PpuZbufType *dst = dstbuf->data;
   const PpuZbufType *src = layerbuf->data;
   const int left_extra = ppu->extraLeftCur;
@@ -1840,15 +2032,28 @@ static void PpuMergeWorldMirroredBackground(Ppu *ppu,
   const int b = world_right - hscroll;
   for (int x = -left_extra; x < kPpuXPixels + right_extra; x++) {
     int sx = x;
-    if (x < a)
-      sx = 2 * a - 1 - x;
-    else if (x >= b)
-      sx = 2 * b - 1 - x;
-    if (sx < a || sx >= b)
-      continue;  // the reflection lands outside the world as well
+    if (clip) {
+      // The game may expose a few native edge pixels during a camera shake.
+      // Keep its authentic picture even then; contain only synthetic margins.
+      if ((x < 0 || x >= kPpuXPixels) && (x < a || x >= b))
+        continue;
+    } else if (strip) {
+      // Never change authentic columns, even during an out-of-bounds shake.
+      if (x < 0 || x >= kPpuXPixels) {
+        if (x < a) sx = a + strip - 1 - ((a - x - 1) % strip);
+        else if (x >= b) sx = b - strip + ((x - b) % strip);
+      }
+    } else {
+      if (x < a)
+        sx = 2 * a - 1 - x;
+      else if (x >= b)
+        sx = 2 * b - 1 - x;
+      if (sx < a || sx >= b)
+        continue;  // the reflection lands outside the world as well
+    }
     if (sx < -left_extra || sx >= kPpuXPixels + right_extra)
       continue;  // that source column was never rendered this line
-    int di = x + kPpuExtraLeftRight, si = sx + kPpuExtraLeftRight;
+    int di = x + kPpuLineBorder, si = sx + kPpuLineBorder;
     if (src[si] > dst[di])
       dst[di] = src[si];
   }
@@ -1886,7 +2091,7 @@ static void PpuMergeElasticBackground(Ppu *ppu, PpuPixelPrioBufs *dstbuf,
       int sx = src0 + ((2 * (x - dst0) + 1) * sw) / (2 * dw);
       if (sx < 0 || sx >= kPpuXPixels)
         continue;
-      int di = x + kPpuExtraLeftRight, si = sx + kPpuExtraLeftRight;
+      int di = x + kPpuLineBorder, si = sx + kPpuLineBorder;
       if (src[si] > dst[di])
         dst[di] = src[si];
     }
@@ -1897,18 +2102,18 @@ static void PpuMergeStretchedBackground(Ppu *ppu, PpuPixelPrioBufs *dstbuf,
                                         const PpuPixelPrioBufs *layerbuf) {
   PpuZbufType *dst = dstbuf->data;
   const PpuZbufType *src = layerbuf->data;
-  const int left_extra = ppu->extraLeftRight;
-  const int right_extra = ppu->extraLeftRight;
+  const int left_extra = ppu->extraFrameLeft;
+  const int right_extra = ppu->extraFrameRight;
   const int out_width = kPpuXPixels + left_extra + right_extra;
   if (out_width <= 0)
     return;
 
   for (int x = -left_extra; x < kPpuXPixels + right_extra; x++) {
-    int di = x + kPpuExtraLeftRight;
+    int di = x + kPpuLineBorder;
     int sx = ((x + left_extra) * kPpuXPixels) / out_width;
     if (sx < 0) sx = 0;
     if (sx >= kPpuXPixels) sx = kPpuXPixels - 1;
-    int si = sx + kPpuExtraLeftRight;
+    int si = sx + kPpuLineBorder;
     if (src[si] > dst[di]) dst[di] = src[si];
   }
 }
@@ -1922,8 +2127,10 @@ static void PpuDrawBackground_4bpp_policy(Ppu *ppu, PpuPixelPrioBufs *dstbuf,
   bool stretch_band = PpuWidescreenLayerStretchBandActive(ppu, layer, y);
   int world_band = PpuWidescreenLayerWorldBandAt(ppu, layer, (int)y);
   int elastic_band = PpuWidescreenLayerElasticBandAt(ppu, layer, (int)y);
+  int clip_left, clip_right;
   if (!(padding & (1u << layer)) && !repeat_band && !stretch_band &&
-      world_band < 0 && elastic_band < 0) {
+      ((world_band < 0 && elastic_band < 0) ||
+       PpuWorldClipBounds(ppu, layer, (int)y, &clip_left, &clip_right))) {
     if (PPU_bigTiles(ppu, layer))
       PpuDrawBackgroundBig(ppu, dstbuf, y, sub, layer, 4, zhi, zlo, mosaic);
     else if (mosaic)
@@ -1953,10 +2160,12 @@ static void PpuDrawBackground_4bpp_policy(Ppu *ppu, PpuPixelPrioBufs *dstbuf,
   } else if (world_band >= 0) {
     // A live world band implies the layer widens on this line, so no clamp,
     // mirror, repeat or stretch policy can be in force at the same time.
-    PpuMergeWorldMirroredBackground(ppu, dstbuf, &layerbuf,
+    PpuMergeWorldBoundedBackground(ppu, dstbuf, &layerbuf,
                                     ppu->wsWorldLeft[world_band][layer],
                                     ppu->wsWorldRight[world_band][layer],
-                                    ppu->hScroll[layer]);
+                                    ppu->hScroll[PpuWorldReferenceLayer(ppu,world_band,layer)],
+                                    (ppu->wsWorldClip[world_band] & (1u << layer)) != 0,
+                                    ppu->wsWorldRepeat[world_band][layer]);
   } else if (stretch_band) {
     PpuMergeStretchedBackground(ppu, dstbuf, &layerbuf);
   } else {
@@ -1980,8 +2189,10 @@ static void PpuDrawBackground_2bpp_policy(Ppu *ppu, PpuPixelPrioBufs *dstbuf,
   bool stretch_band = PpuWidescreenLayerStretchBandActive(ppu, layer, y);
   int world_band = PpuWidescreenLayerWorldBandAt(ppu, layer, (int)y);
   int elastic_band = PpuWidescreenLayerElasticBandAt(ppu, layer, (int)y);
+  int clip_left, clip_right;
   if (!(padding & (1u << layer)) && !repeat_band && !stretch_band &&
-      world_band < 0 && elastic_band < 0) {
+      ((world_band < 0 && elastic_band < 0) ||
+       PpuWorldClipBounds(ppu, layer, (int)y, &clip_left, &clip_right))) {
     if (PPU_bigTiles(ppu, layer))
       PpuDrawBackgroundBig(ppu, dstbuf, y, sub, layer, 2, zhi, zlo, mosaic);
     else if (mosaic)
@@ -2009,10 +2220,12 @@ static void PpuDrawBackground_2bpp_policy(Ppu *ppu, PpuPixelPrioBufs *dstbuf,
   } else if (world_band >= 0) {
     // A live world band implies the layer widens on this line, so no clamp,
     // mirror, repeat or stretch policy can be in force at the same time.
-    PpuMergeWorldMirroredBackground(ppu, dstbuf, &layerbuf,
+    PpuMergeWorldBoundedBackground(ppu, dstbuf, &layerbuf,
                                     ppu->wsWorldLeft[world_band][layer],
                                     ppu->wsWorldRight[world_band][layer],
-                                    ppu->hScroll[layer]);
+                                    ppu->hScroll[PpuWorldReferenceLayer(ppu,world_band,layer)],
+                                    (ppu->wsWorldClip[world_band] & (1u << layer)) != 0,
+                                    ppu->wsWorldRepeat[world_band][layer]);
   } else if (stretch_band) {
     PpuMergeStretchedBackground(ppu, dstbuf, &layerbuf);
   } else {
@@ -2048,8 +2261,8 @@ static void PpuDrawBackground_2bpp_mosaic(Ppu *ppu, PpuPixelPrioBufs *dstbuf, in
     if (win.bits & (1 << windex))
       continue;  // layer is disabled for this window part
     int sx = win.edges[windex];
-    PpuZbufType *dstz = dstbuf->data + sx + kPpuExtraLeftRight;
-    PpuZbufType *dstz_end = dstbuf->data + win.edges[windex + 1] + kPpuExtraLeftRight;
+    PpuZbufType *dstz = dstbuf->data + sx + kPpuLineBorder;
+    PpuZbufType *dstz_end = dstbuf->data + win.edges[windex + 1] + kPpuLineBorder;
     uint x = sx + ppu->hScroll[layer];
     const uint16 *tp = tps[x >> 8 & 1] + ((x >> 3) & 0x1f);
     const uint16 *tp_last = tps[x >> 8 & 1] + 31, *tp_next = tps[(x >> 8 & 1) ^ 1];
@@ -2112,8 +2325,8 @@ static void PpuDrawBackground_mode7(Ppu *ppu, PpuPixelPrioBufs *dstbuf, uint y, 
     if (win.bits & (1 << windex))
       continue;  // layer is disabled for this window part
     int x = win.edges[windex], x2 = win.edges[windex + 1], tile;
-    PpuZbufType *dstz = dstbuf->data + x + kPpuExtraLeftRight;
-    PpuZbufType *dstz_end = dstbuf->data + x2 + kPpuExtraLeftRight;
+    PpuZbufType *dstz = dstbuf->data + x + kPpuLineBorder;
+    PpuZbufType *dstz_end = dstbuf->data + x2 + kPpuLineBorder;
     uint32 rx = PPU_m7xFlip(ppu) ? 255 - x : x;
     uint32 xpos = m7startX + ppu->m7matrix[0] * rx;
     uint32 ypos = m7startY + ppu->m7matrix[2] * rx;
@@ -2168,16 +2381,16 @@ static void PpuDrawSprites(Ppu *ppu, uint y, uint sub, bool clear_backdrop) {
       (ppu->wsHudOamSlots || ppu->wsHudOamSlots2) &&
       ppu->extraLeftRight;
   if (oam_hud_full_width && win.nr == 1 && win.bits == 0) {
-    win.edges[0] = -(int16_t)ppu->extraLeftRight;
-    win.edges[1] = 256 + ppu->extraLeftRight;
+    win.edges[0] = -(int16_t)ppu->extraFrameLeft;
+    win.edges[1] = (int16_t)(256 + ppu->extraFrameRight);
   }
   for (size_t windex = 0; windex < win.nr; windex++) {
     if (win.bits & (1 << windex))
       continue;  // layer is disabled for this window part
     int left = win.edges[windex];
     int width = win.edges[windex + 1] - left;
-    PpuZbufType *src = ppu->objBuffer.data + left + kPpuExtraLeftRight;
-    PpuZbufType *dst = ppu->bgBuffers[sub].data + left + kPpuExtraLeftRight;
+    PpuZbufType *src = ppu->objBuffer.data + left + kPpuLineBorder;
+    PpuZbufType *dst = ppu->bgBuffers[sub].data + left + kPpuLineBorder;
     if (clear_backdrop) {
       memcpy(dst, src, width * sizeof(uint16));
     } else {
@@ -2237,8 +2450,8 @@ static void PpuWriteOverlayRenderLine(Ppu *ppu, PpuOverlaySource source,
   const PpuOverlayCapture *capture = &ppu->overlayCaptures[source];
   int x0 = IntMax(capture->x0, screen_min);
   int x1 = IntMin(capture->x1, screen_max);
-  if (x1 <= x0 || x0 + kPpuExtraLeftRight < 0 ||
-      x1 + kPpuExtraLeftRight > kPpuBufWidth)
+  if (x1 <= x0 || x0 + kPpuLineBorder < 0 ||
+      x1 + kPpuLineBorder > kPpuBufWidth)
     return;
 
   uint32 *dst = (uint32 *)(ppu->overlayRenderBuffer[source] +
@@ -2246,7 +2459,7 @@ static void PpuWriteOverlayRenderLine(Ppu *ppu, PpuOverlaySource source,
   const PpuZbufType *src = ppu->overlayBuffers[source].data;
   for (int x = x0; x < x1; x++)
     dst[x + texture_extra] =
-        PpuOverlayColor(ppu, src[x + kPpuExtraLeftRight]);
+        PpuOverlayColor(ppu, src[x + kPpuLineBorder]);
 }
 
 // Choose the destination priority buffer for a background layer. When the
@@ -2287,7 +2500,7 @@ static void PpuFinishBackgroundOverlay(Ppu *ppu, uint y, bool sub,
   size_t begin, end;
   PpuActiveSpan(ppu, &begin, &end);
   for (size_t i = begin; i < end; i++) {
-    int x = (int)i - kPpuExtraLeftRight;
+    int x = (int)i - kPpuLineBorder;
     if (remove && x >= capture->x0 && x < capture->x1)
       continue;
     if (src[i] > dst[i])
@@ -2403,6 +2616,8 @@ static NOINLINE void PpuDrawWholeLine(Ppu *ppu, uint y) {
   PpuClearOverlayRenderLine(ppu, y);
   if (PPU_forcedBlank(ppu)) {
     uint8 *dst = &ppu->renderBuffer[(y - 1) * ppu->renderPitch];
+    // The whole row, so the origin does not matter: the frame is
+    // 256 + 2*extraLeftRight wide however view anchoring places native x=0.
     size_t n = sizeof(uint32) * (256 + ppu->extraLeftRight * 2);
     memset(dst, 0, n);
     return;
@@ -2457,17 +2672,17 @@ static NOINLINE void PpuDrawWholeLine(Ppu *ppu, uint y) {
   bool compose_full_budget = false;
   if (any_hud_full_width) {
     PpuWindows_CalcWithExtra(&cwin, ppu, 5, y,
-                             ppu->extraLeftRight, ppu->extraLeftRight);
+                             ppu->extraFrameLeft, ppu->extraFrameRight);
     compose_full_budget = true;
   } else if (hud_height && y < hud_height && ppu->extraLeftRight &&
              cwin.nr == 1 && cwin.bits == 0) {
-    cwin.edges[0] = -(int16_t)ppu->extraLeftRight;
-    cwin.edges[1] = 256 + ppu->extraLeftRight;
+    cwin.edges[0] = -(int16_t)ppu->extraFrameLeft;
+    cwin.edges[1] = (int16_t)(256 + ppu->extraFrameRight);
     compose_full_budget = true;
   } else if (PpuWidescreenLineRepeatBandActive(ppu, y) &&
              ppu->extraLeftRight && cwin.nr == 1 && cwin.bits == 0) {
-    cwin.edges[0] = -(int16_t)ppu->extraLeftRight;
-    cwin.edges[1] = 256 + ppu->extraLeftRight;
+    cwin.edges[0] = -(int16_t)ppu->extraFrameLeft;
+    cwin.edges[1] = (int16_t)(256 + ppu->extraFrameRight);
     compose_full_budget = true;
   }
   static const uint8 kCwBitsMod[8] = {
@@ -2479,14 +2694,16 @@ static NOINLINE void PpuDrawWholeLine(Ppu *ppu, uint y) {
 
   uint32 *dst = (uint32*)&ppu->renderBuffer[(y - 1) * ppu->renderPitch], *dst_org = dst;
 
-  dst += compose_full_budget ? 0 : (ppu->extraLeftRight - ppu->extraLeftCur);
+  // Frame column of native x is x + extraFrameLeft, and this row starts at the
+  // leftmost column the composition windows will actually visit.
+  dst += compose_full_budget ? 0 : (ppu->extraFrameLeft - ppu->extraLeftCur);
 
-  uint32 hud_world_left = kPpuExtraLeftRight - ppu->extraLeftCur;
-  uint32 hud_world_right = kPpuExtraLeftRight + 256 + ppu->extraRightCur;
+  uint32 hud_world_left = kPpuLineBorder - ppu->extraLeftCur;
+  uint32 hud_world_right = kPpuLineBorder + 256 + ppu->extraRightCur;
 
   uint32 windex = 0;
   do {
-    uint32 left = cwin.edges[windex] + kPpuExtraLeftRight, right = cwin.edges[windex + 1] + kPpuExtraLeftRight;
+    uint32 left = cwin.edges[windex] + kPpuLineBorder, right = cwin.edges[windex + 1] + kPpuLineBorder;
     // If clip is set, then zero out the rgb values from the main screen.
     uint32 clip_color_mask = (cw_clip_math & 1) ? 0x1f : 0;
     uint32 math_enabled_cur = PPU_mathEnabled(ppu) & ((cw_clip_math & 0x100) ? -1 : 0);
@@ -2606,7 +2823,7 @@ static void PpuHdMarkWindow(uint8_t visibility[kPpuBufWidth],
     bool inside = (window->bits & (1u << span)) != 0;
     if (inside != mark_inside) continue;
     for (int x = window->edges[span]; x < window->edges[span + 1]; ++x)
-      visibility[x + kPpuExtraLeftRight] |= bit;
+      visibility[x + kPpuLineBorder] |= bit;
   }
 }
 
@@ -2680,7 +2897,7 @@ static void PpuDrawMode7HdLine(Ppu *ppu, unsigned line) {
     int last_x = INT_MIN, last_y = INT_MIN;
     uint8_t index = 0;
     for (int x = -(int)ppu->extraLeftCur; x < 256 + ppu->extraRightCur; ++x) {
-      unsigned i = (unsigned)(x + kPpuExtraLeftRight);
+      unsigned i = (unsigned)(x + kPpuLineBorder);
       uint8_t visible = visibility[i];
       uint16_t object = ppu->objBuffer.data[i];
       for (unsigned sx = 0; sx < scale; ++sx) {
@@ -2724,23 +2941,49 @@ static bool PpuWidescreenHudOamSlot(Ppu *ppu, uint8_t index, uint8_t y) {
 
 static int PpuAdjustWidescreenHudOamX(Ppu *ppu, uint8_t index, uint8_t y,
                                       int x) {
+  // Full-budget HUD sprites ride the PHYSICAL frame edges, so they follow the
+  // sliding origin; the rest ride the live world margin, which at a fully
+  // anchored edge IS the frame edge anyway.
   const bool full_budget = (ppu->wsHudSplitHeight & 0x80) != 0;
   const int left_extra =
-      full_budget ? ppu->extraLeftRight : ppu->extraLeftCur;
+      full_budget ? ppu->extraFrameLeft : ppu->extraLeftCur;
   const int right_extra =
-      full_budget ? ppu->extraLeftRight : ppu->extraRightCur;
+      full_budget ? ppu->extraFrameRight : ppu->extraRightCur;
   if (PpuWidescreenHudOamSlot(ppu, index, y)) {
     if (x >= 0 && x < ppu->wsHudLeftEnd)
       x -= left_extra;
     else if (x >= ppu->wsHudRightStart && x < 256)
       x += right_extra;
+    else if (x >= 0 && x < 256)
+      x += (int)ppu->extraLeftRight - ppu->extraFrameLeft;
   }
   return x;
+}
+
+/* OAM X is 9 bits, so the reachable span is 512 columns: raw >= 256 +
+ * extraRightCur decodes negative, which puts the deepest reachable left column
+ * at -(256 - extraRightCur). A frame whose LIVE margins total more than 256
+ * therefore needs producer-retained full coordinates for its far-side span.
+ * Full coordinates are used only when explicitly enabled and still agree
+ * with the guest's current nine-bit position; otherwise decode normally. */
+void PpuWsSetOamFullX(Ppu *ppu, unsigned slot, int16_t x) {
+  if (!ppu || slot >= 128) return;
+  ppu->wsOamFullX[slot] = x;
+  ppu->wsOamFullXValid[slot >> 3] |= 1u << (slot & 7);
+}
+
+void PpuWsEnableOamFullX(Ppu *ppu, bool enabled) {
+  if (ppu) ppu->wsOamFullXOn = enabled ? 1 : 0;
 }
 
 static int PpuDecodeOamX(Ppu *ppu, uint8_t index) {
   int x = ppu->oam[index] & 0xff;
   x |= ((ppu->highOam[index >> 3] >> (index & 7)) & 1) << 8;
+  unsigned slot = index >> 1;
+  if (ppu->wsOamFullXOn &&
+      (ppu->wsOamFullXValid[slot >> 3] & (1u << (slot & 7))) &&
+      (ppu->wsOamFullX[slot] & 511) == x)
+    return ppu->wsOamFullX[slot];
   if (x >= 256 + ppu->extraRightCur) {
     x -= 512;
   } else if (x >= 256 && ppu->wsOamRightHintStrict) {
@@ -2890,6 +3133,12 @@ static bool ppu_evaluateSprites(Ppu* ppu, int line) {
   unsigned first_slot=index>>1;
   int spritesFound = 0;
   int tilesFound = 0;
+  int nativeSpritesFound = 0;
+  int nativeTilesFound = 0;
+  const bool extra_view = ppu->extraLeftRight != 0;
+  int world_clip_left, world_clip_right;
+  const bool world_clip = PpuWorldClipBounds(
+      ppu, 4, line, &world_clip_left, &world_clip_right);
   uint8_t foundSprites[128];
 
   // Range evaluation walks OAM forward, but tile fetching walks the accepted
@@ -2901,23 +3150,26 @@ static bool ppu_evaluateSprites(Ppu* ppu, int line) {
     int spriteHeight = PPU_objInterlace(ppu) ? spriteSize / 2 : spriteSize;
     if(row < spriteHeight) {
       int x = PpuDecodeOamX(ppu, index);
+      const bool native_sprite = x + spriteSize > 0 && x < 256;
       const int left_extra =
           PpuWidescreenHudOamSlot(ppu, index, y) &&
                   (ppu->wsHudSplitHeight & 0x80)
-              ? ppu->extraLeftRight
+              ? ppu->extraFrameLeft
               : ppu->extraLeftCur;
       if (PpuWidescreenOamLeftHintAllows(ppu, index, x, spriteSize,
                                           left_extra)) {
         x = PpuAdjustWidescreenHudOamX(ppu, index, y, x);
         if(x + spriteSize > -left_extra) {
-          spritesFound++;
-          if(spritesFound > 32 &&
+          /* Margin residency must not evict an authentic native sprite or
+           * leak widened range-over flags into the guest. Count before HUD
+           * relocation so moving the HUD does not free its native quota. */
+          if(native_sprite && ++nativeSpritesFound > 32 &&
              !(ppu->renderFlags & kPpuRenderFlags_NoSpriteLimits)) {
             ppu->rangeOver = true;
-            spritesFound = 32;
-            break;
+            if (!extra_view) break;
+          } else {
+            foundSprites[spritesFound++] = index;
           }
-          foundSprites[spritesFound - 1] = index;
         }
       }
     }
@@ -2929,14 +3181,15 @@ static bool ppu_evaluateSprites(Ppu* ppu, int line) {
     uint8_t row = line - (ppu->oam[index] >> 8);
     int spriteSize = spriteSizes[PPU_objSize(ppu)][(ppu->highOam[index >> 3] >> ((index & 7) + 1)) & 1];
     int x = PpuDecodeOamX(ppu, index);
+    const int native_x = x;
     const uint8_t sprite_y = ppu->oam[index] >> 8;
+    const bool hud_slot = PpuWidescreenHudOamSlot(ppu, index, sprite_y);
     const bool full_budget_hud =
-        PpuWidescreenHudOamSlot(ppu, index, sprite_y) &&
-        (ppu->wsHudSplitHeight & 0x80);
+        hud_slot && (ppu->wsHudSplitHeight & 0x80);
     const int left_extra =
-        full_budget_hud ? ppu->extraLeftRight : ppu->extraLeftCur;
+        full_budget_hud ? ppu->extraFrameLeft : ppu->extraLeftCur;
     const int right_extra =
-        full_budget_hud ? ppu->extraLeftRight : ppu->extraRightCur;
+        full_budget_hud ? ppu->extraFrameRight : ppu->extraRightCur;
     x = PpuAdjustWidescreenHudOamX(ppu, index, sprite_y, x);
         if(PPU_objInterlace(ppu)) row = row * 2 + (ppu->evenFrame ? 0 : 1);
         int oam1 = ppu->oam[index + 1];
@@ -2950,20 +3203,31 @@ static bool ppu_evaluateSprites(Ppu* ppu, int line) {
       if(col + x <= -8 - left_extra ||
          col + x >= 256 + right_extra)
         continue;
-            tilesFound++;
-            if(tilesFound > 34 &&
+            /* The original 34-sliver fetch budget covers the native view.
+             * Additional margin columns render in OAM order without taking
+             * that budget from native columns. Genuine native overflow still
+             * drops later native fetches, including within a large sprite. */
+            const bool native_tile = col + native_x > -8 && col + native_x < 256;
+            if(native_tile && ++nativeTilesFound > 34 &&
                !(ppu->renderFlags & kPpuRenderFlags_NoSpriteLimits)) {
               ppu->timeOver = true;
-              break;
+              if (!extra_view) break;
+              continue;
             }
+            tilesFound++;
             int usedCol = oam1 & 0x4000 ? spriteSize - 1 - col : col;
       int usedTile = ((((oam1 & 0xff) >> 4) + (row >> 3)) << 4) |
                      (((oam1 & 0xf) + (usedCol >> 3)) & 0xf);
             const uint16 *addr = &PpuRenderVram(ppu)[(objAdr + usedTile * 16 + (row & 0x7)) & 0x7fff];
             uint32 plane = addr[0] | addr[8] << 16;
-            int px_left = IntMax(-(col + x + kPpuExtraLeftRight), 0);
-            int px_right = IntMin(256 + kPpuExtraLeftRight - (col + x), 8);
-            PpuZbufType *dst = ppu->objBuffer.data + col + x + px_left + kPpuExtraLeftRight;
+            int px_left = IntMax(-(col + x + kPpuLineBorder), 0);
+            int px_right = IntMin(256 + kPpuLineBorder - (col + x), 8);
+            if (world_clip && !hud_slot) {
+              px_left = IntMax(px_left, world_clip_left - col - x);
+              px_right = IntMin(px_right, world_clip_right - col - x);
+              if (px_left >= px_right) continue;
+            }
+            PpuZbufType *dst = ppu->objBuffer.data + col + x + px_left + kPpuLineBorder;
             int slot = index >> 1;
              /* Clip an unhinted sprite at the SCREEN EDGE, per pixel.
              *
@@ -3034,12 +3298,12 @@ static bool ppu_evaluateSprites(Ppu* ppu, int line) {
                   ppu->objectOrder[dst-ppu->objBuffer.data]=(uint64_t)((slot-first_slot)&127)<<32;
             }
         }
-        if(tilesFound > 34 &&
-           !(ppu->renderFlags & kPpuRenderFlags_NoSpriteLimits))
+    if (!extra_view && nativeTilesFound > 34 &&
+        !(ppu->renderFlags & kPpuRenderFlags_NoSpriteLimits))
       break;
   }
   bool extra=ppu->extraObjectCount && PpuComposeExtraObjects(
-      ppu->extraObjects,ppu->extraObjectCount,line,-kPpuExtraLeftRight,
+      ppu->extraObjects,ppu->extraObjectCount,line,-kPpuLineBorder,
       kPpuBufWidth,first_slot,ppu->objBuffer.data,ppu->objectColors,ppu->objectOrder);
   return tilesFound != 0 || extra;
 }
@@ -3500,6 +3764,10 @@ void ppu_write(Ppu* ppu, uint8_t adr, uint8_t val) {
         } else {
           uint16_t widx = ppu->oamAdr;
           uint16_t word = (uint16_t)((val << 8) | ppu->oamBuffer);
+          if (!(widx & 1)) {
+            unsigned slot = widx >> 1;
+            ppu->wsOamFullXValid[slot >> 3] &= ~(1u << (slot & 7));
+          }
           ppu->oam[ppu->oamAdr++] = word;
           ppu->oamWriteCount++;
           debug_server_on_oam_write(0, widx, word);

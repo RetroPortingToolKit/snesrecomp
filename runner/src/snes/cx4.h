@@ -40,6 +40,16 @@
 typedef struct Cx4 Cx4;
 struct SaveLoadInfo;
 
+/* Presentation observers see the original DSP's untruncated RAM register.
+ * instruction is its cartridge byte address, or UINT32_MAX for bus writes.
+ * Callbacks must not modify the device or guest memory. Host wiring is not
+ * serialized; a title retaining derived metadata must snapshot that metadata. */
+typedef void (*Cx4RamWriteObserver)(void *context, uint32_t instruction,
+                                   uint16_t address, unsigned byte,
+                                   uint32_t value);
+void cx4_set_ram_write_observer(Cx4 *cx4, Cx4RamWriteObserver observer,
+                                void *context);
+
 /* rom/rom_size is the cartridge image in the engine's linear LoROM layout;
  * ram/ram_size is cartridge save RAM (may be NULL/0). Neither is owned. */
 Cx4 *cx4_create(const uint8_t *rom, uint32_t rom_size,
