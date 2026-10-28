@@ -89,14 +89,14 @@ static int test_mode2_world_provider(Ppu *ppu) {
   PpuDrawBackground_4bpp_opt(ppu,1,false,0,0xc000,0x8000);
   test_shadow_active=false;
   if (!test_shadow_calls || test_shadow_hscroll!=0x2023 || test_shadow_y!=0x29 ||
-      ppu->bgBuffers[0].data[kPpuExtraLeftRight+100]!=0x8001 ||
-      ppu->bgBuffers[0].data[kPpuExtraLeftRight-10]!=0x8002 ||
-      ppu->bgBuffers[0].data[kPpuExtraLeftRight+260]!=0x8002) {
+      ppu->bgBuffers[0].data[kPpuLineBorder+100]!=0x8001 ||
+      ppu->bgBuffers[0].data[kPpuLineBorder-10]!=0x8002 ||
+      ppu->bgBuffers[0].data[kPpuLineBorder+260]!=0x8002) {
     fprintf(stderr,"Mode2 world provider: calls=%u h=%x y=%x pixels=%x/%x/%x\n",
             test_shadow_calls,test_shadow_hscroll,test_shadow_y,
-            ppu->bgBuffers[0].data[kPpuExtraLeftRight+100],
-            ppu->bgBuffers[0].data[kPpuExtraLeftRight-10],
-            ppu->bgBuffers[0].data[kPpuExtraLeftRight+260]);
+            ppu->bgBuffers[0].data[kPpuLineBorder+100],
+            ppu->bgBuffers[0].data[kPpuLineBorder-10],
+            ppu->bgBuffers[0].data[kPpuLineBorder+260]);
     return 1;
   }
   return 0;

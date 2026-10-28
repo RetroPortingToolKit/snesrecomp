@@ -34,14 +34,19 @@ typedef struct BgLayer {
 
 enum {
   kPpuXPixels = 256,
-  // Maximum widescreen expansion *per side*, baked into the priority-buffer
-  // capacity. This is a compile-time ceiling only; the actual extra columns
-  // rendered each frame are the runtime ppu->extraLeftCur/extraRightCur, which
-  // default to 0 (authentic 256-wide output). 272 per side allows up to an
-  // 800-pixel internal width for opt-in 32:9 presentation.
-  kPpuExtraLeftRight = 272,
-  // Full internal width of the priority buffers (logical 256 + both borders).
-  kPpuBufWidth = kPpuXPixels + kPpuExtraLeftRight * 2,
+  // Output budget: 272 columns per side permits an 800-pixel frame. Anchoring
+  // may put both sides' allowance on one side of the native viewport, so the
+  // priority buffers need twice that reach without raising the output limit.
+  kPpuMaxFrameExtra = 272,
+  kPpuMaxFrameWidth = kPpuXPixels + kPpuMaxFrameExtra * 2,
+  // Signed native-column reach and origin in the priority buffers. This is
+  // storage capacity, not the symmetric expansion accepted by the setters.
+  kPpuLineBorder = kPpuMaxFrameExtra * 2,
+  // Existing line enhancers use this name to index native pixel x in data[].
+  // Retain it as an origin alias; use MaxFrameExtra for an output budget.
+  kPpuExtraLeftRight = kPpuLineBorder,
+  // Full priority-buffer width; a presented frame is at most MaxFrameWidth.
+  kPpuBufWidth = kPpuXPixels + kPpuLineBorder * 2,
   // Split-screen games can assign distinct anchor layouts to each viewport.
   kPpuWsAnchorBands = 2,
   // Number of stopped frames tolerated after a moving unhinted OBJ reaches the
@@ -96,7 +101,7 @@ typedef struct PpuExtraObject {
 typedef PPU_ALIGN8_PRE struct PpuPixelPrioBufs {
   // This holds the prio in the upper 8 bits and the color in the lower 8 bits.
   // Sized for the widescreen border; logical screen x maps to
-  // data[x + kPpuExtraLeftRight].
+  // data[x + kPpuLineBorder].
   //
   // 8-aligned because ClearBackdrop fills this through a uint64 pointer.
   // The array itself only needs 2, so any member landing on a 4-mod-8
@@ -721,7 +726,7 @@ void ppu_rb_residue_set(Ppu *ppu, const PpuRollbackResidue *in);
 // composition. The callback is host-only and runs independently for main and
 // subscreen buffers.
 // The callback writes PRIORITY-BUFFER columns (native x at
-// data[x + kPpuExtraLeftRight]), not framebuffer columns, so the widened span
+// data[x + kPpuLineBorder]), not framebuffer columns, so the widened span
 // it should fill is the LIVE margin -- extraLeftCur/extraRightCur -- and never
 // the budget. An enhancer written that way needs no change under view
 // anchoring; one that reads extraLeftRight as "how far the margin reaches"
@@ -760,7 +765,7 @@ bool PpuSetOverlayCapture(Ppu *ppu, PpuOverlaySource source,
 bool PpuSetOverlayOamRange(Ppu *ppu, uint8_t first, uint8_t count);
 
 // Set the symmetric widescreen border, in pixels per side (clamped to
-// kPpuExtraLeftRight). 0 restores authentic 256-wide rendering. The internal
+// kPpuMaxFrameExtra). 0 restores authentic 256-wide rendering. The internal
 // render width becomes 256 + 2*extra. Drives the dormant extraLeftCur/
 // extraRightCur/extraLeftRight machinery used by the line renderer.
 void PpuSetExtraSpace(Ppu *ppu, uint16_t extra);
@@ -825,9 +830,9 @@ void PpuSetExtraSideSpace(Ppu *ppu, int left, int right, int bottom);
 //    and every shipping budget (43 px MMX, 71 px SMW 16:9) is far inside it,
 //    so this is documented rather than clamped -- clamping would throw away
 //    real background columns to spare a sprite artefact.
-//  - The priority buffers carry kPpuExtraLeftRight columns per side, so a
-//    budget past half of that cannot slide the whole way; the origin saturates
-//    and the remainder stays pillarboxed.
+//  - The output budget is capped at kPpuMaxFrameExtra, while the priority
+//    buffers carry twice that many columns per side. Every supported frame
+//    can therefore put its full expansion on either side without padding.
 void PpuSetWidescreenViewAnchor(Ppu *ppu, bool enabled);
 
 // Widescreen HUD split (opt-in, configured by the game frontend): for
@@ -861,7 +866,7 @@ void PpuSetWsHudOamBand(Ppu *ppu, uint8_t height, uint8_t left_end,
  * pins the per-side margin regardless of window size (0 forces 4:3; unset
  * returns -1 = follow the window). Games consult this when computing their
  * widescreen frame width so measured margins never silently depend on
- * window-manager geometry. Clamped to kPpuExtraLeftRight. */
+ * window-manager geometry. Clamped to kPpuMaxFrameExtra. */
 int PpuWsExtraOverride(void);
 
 void PpuSetWsHudOamShift(Ppu *ppu, uint8_t nslots);

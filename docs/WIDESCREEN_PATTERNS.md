@@ -226,8 +226,15 @@ physical-centre HUD correction. The parked X1 worktrees remain untouched.
 Consumers must validate their own camera bounds, streaming and spawn envelope;
 this engine change does not enable anchoring for any title automatically.
 `ppu_view_anchor_test` checks actual image placement, both edges, narrow rooms,
-HUD, native/default-off output, reset and storage boundaries. One-sided spans
-remain limited by the existing priority-buffer and ordinary 9-bit OBJ ranges.
+HUD, native/default-off output, reset and storage boundaries. Priority buffers
+reserve the entire maximum expansion on either side: `kPpuMaxFrameExtra` caps
+the symmetric output budget at 272 and `kPpuLineBorder` is the signed-column
+storage origin. The old `kPpuExtraLeftRight` name remains an origin alias so
+existing line enhancers keep indexing the same native columns. Presented
+frames remain capped at 800 pixels. The 684/800 tests use independent 256px
+renders as their oracle, including both extremes and physical HUD placement.
+Ordinary 9-bit OBJ coordinates still require title-owned positioning/hints;
+larger background buffers alone do not establish ultra-wide sprite coverage.
 
 ### P3. Periodic layers fold; world-anchored layers use history
 

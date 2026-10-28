@@ -180,9 +180,9 @@ static void setup_scene(Ppu *ppu, int layers) {
  * at all" (the plain symmetric border); otherwise left/right are published with
  * anchoring in the requested state. Rows are `width + kSlack` columns apart;
  * the renderer must never touch the slack. Returns the rendered row. */
-static uint32_t *render(Ppu *ppu, uint32_t *buf, int width, int budget,
-                        int anchor, int left, int right, int layers,
-                        bool hud_split, int line) {
+static uint32_t *render_at(Ppu *ppu, uint32_t *buf, int width, int budget,
+                           int anchor, int left, int right, int layers,
+                           bool hud_split, int line, int scroll) {
     const size_t stride = (size_t)(width + kSlack);
     memset(buf, 0, sizeof(uint32_t) * stride * kRows);
     ppu_reset(ppu);
@@ -203,11 +203,18 @@ static uint32_t *render(Ppu *ppu, uint32_t *buf, int width, int budget,
          * room-boundary pillarbox and not what this test is about. */
         PpuSetWidescreenHudAlwaysVisible(ppu, true);
     }
-    ppu->hScroll[0] = kScroll;
+    ppu->hScroll[0] = scroll;
     ppu_runLine(ppu, 0);
-    ppu->hScroll[0] = kScroll;
+    ppu->hScroll[0] = scroll;
     ppu_runLine(ppu, line);
     return buf + stride * (size_t)(line - 1);
+}
+
+static uint32_t *render(Ppu *ppu, uint32_t *buf, int width, int budget,
+                        int anchor, int left, int right, int layers,
+                        bool hud_split, int line) {
+    return render_at(ppu, buf, width, budget, anchor, left, right, layers,
+                     hud_split, line, kScroll);
 }
 
 /* Nothing may be written past the frame's last column. */
@@ -263,6 +270,64 @@ static void check_case(Ppu *ppu, uint32_t *buf, const uint32_t *ref, int left,
     check((fl - left) - (kSpan - fl - right) >= -1 &&
           (fl - left) - (kSpan - fl - right) <= 0, msg);
     check_slack(out, kWide, label);
+}
+
+/* The oracle uses ordinary 256px renders at the required world scrolls.
+ * Unlike a larger symmetric oracle, it does not need the new buffer reach
+ * and can expose truncation at the old per-side capacity. */
+static void check_ultrawide(Ppu *ppu, const uint32_t *ref_hud) {
+    enum { max_width = 800, max_budget = (max_width - 256) / 2 };
+    const int budgets[] = {214, max_budget};
+    uint32_t *buf = calloc((max_width + kSlack) * kRows, sizeof(uint32_t));
+    uint32_t *native = calloc((256 + kSlack) * kRows, sizeof(uint32_t));
+    uint32_t expected[max_width];
+    if (!buf || !native) {
+        check(false, "ultrawide: allocation succeeds");
+        free(buf);
+        free(native);
+        return;
+    }
+    for (size_t b = 0; b < sizeof budgets / sizeof *budgets; b++) {
+        const int budget = budgets[b], span = budget * 2, width = 256 + span;
+        const int lefts[] = {0, span / 4, budget, span};
+        for (size_t c = 0; c < sizeof lefts / sizeof *lefts; c++) {
+            const int left = lefts[c], right = span - left;
+            for (int col = 0; col < width; col += 256) {
+                const uint32_t *chunk = render_at(
+                    ppu, native, 256, 0, -1, 0, 0, kBg1, false,
+                    kWorldLine, kScroll + col - left);
+                const int count = width - col < 256 ? width - col : 256;
+                memcpy(expected + col, chunk, (size_t)count * sizeof(uint32_t));
+            }
+            const uint32_t *out = render(ppu, buf, width, budget, 1, left,
+                                         right, kBg1, false, kWorldLine);
+            check(ppu->extraLeftCur == left && ppu->extraRightCur == right &&
+                  ppu->extraFrameLeft == left && ppu->extraFrameRight == right,
+                  "ultrawide: the complete allowance can move to either side");
+            check(memcmp(out, expected, (size_t)width * sizeof(uint32_t)) == 0,
+                  "ultrawide: every column matches independent native renders");
+            check_slack(out, width, "ultrawide world");
+
+            out = render(ppu, buf, width, budget, 1, left, right, kBg3, true,
+                          kHudLine);
+            int bad = 0;
+            for (int x = 0; x < 256; x++) {
+                int dst = x < kHudLeftEnd ? x :
+                          x >= kHudRightStart ? x + span : x + budget;
+                if (out[dst] != ref_hud[x + kRefExtra]) bad++;
+            }
+            check(bad == 0, "ultrawide: HUD chunks retain their screen positions");
+            check_slack(out, width, "ultrawide HUD");
+        }
+    }
+    PpuSetExtraSpace(ppu, UINT16_MAX);
+    check(ppu->extraLeftRight == max_budget,
+          "larger priority buffers do not raise the 800px output limit");
+    PpuSetExtraSpaceCentered(ppu, UINT16_MAX);
+    check(ppu->extraLeftRight == max_budget,
+          "centered output retains the same maximum frame budget");
+    free(buf);
+    free(native);
 }
 
 int main(void) {
@@ -503,6 +568,8 @@ int main(void) {
           offsetof(Ppu, extraFrameRight) + sizeof(uint16_t) <=
               offsetof(Ppu, cgram),
           "view-anchor storage lies outside both PPU savestate spans");
+
+    check_ultrawide(ppu, ref_hud);
 
     free(refbuf);
     free(refbuf_hud);

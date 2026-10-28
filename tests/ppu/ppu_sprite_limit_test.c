@@ -239,14 +239,14 @@ int main(void) {
     ppu_runLine(ppu, 0);
     ppu_runLine(ppu, 1);
     failures += check(ppu->timeOver, "34-sliver overflow is reported");
-    failures += check((ppu->objBuffer.data[kPpuExtraLeftRight] & 0xff) == 0,
+    failures += check((ppu->objBuffer.data[kPpuLineBorder] & 0xff) == 0,
                       "reverse fetch drops low slot after sliver overflow");
 
     PpuBeginDrawing(ppu, pixels, kPitch,
                     kPpuRenderFlags_NewRenderer |
                     kPpuRenderFlags_NoSpriteLimits);
     render_one_line(ppu);
-    failures += check((ppu->objBuffer.data[kPpuExtraLeftRight] & 0xff) != 0,
+    failures += check((ppu->objBuffer.data[kPpuLineBorder] & 0xff) != 0,
                       "disabling sprite limits renders the low slot");
 
     /* Mode 2 OPT must still treat x=0 as the hardware left edge when
@@ -309,7 +309,7 @@ int main(void) {
         ppu_runLine(ppu, 1);
         failures += check(count_argb_pixels(obj_pixels, 8) == 8,
                           "default OBJ capture exports selected pixels");
-        failures += check((ppu->objBuffer.data[kPpuExtraLeftRight] & 0xff) == 0,
+        failures += check((ppu->objBuffer.data[kPpuLineBorder] & 0xff) == 0,
                           "RemoveFromGame drops captured OBJ from frame");
 
         memset(frame_pixels, 0, sizeof frame_pixels);
@@ -334,7 +334,7 @@ int main(void) {
         ppu_runLine(ppu, 1);
         failures += check(count_argb_pixels(obj_pixels, 8) == 0,
                           "narrowed OBJ capture excludes other slots");
-        failures += check((ppu->objBuffer.data[kPpuExtraLeftRight] & 0xff) != 0,
+        failures += check((ppu->objBuffer.data[kPpuLineBorder] & 0xff) != 0,
                           "excluded OBJ remains in frame");
         failures += check(PpuBindOverlaySurface(
                               ppu, kPpuOverlaySource_Obj, NULL, 0),

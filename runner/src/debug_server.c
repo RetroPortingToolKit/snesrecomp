@@ -5055,13 +5055,13 @@ static void cmd_ppu_lines(const char *args) {
 /* The last frame a title-owned presenter composed. See the declaration in
  * debug_server.h: without it every capture of an enhanced render path shows
  * the authentic 256-column raster instead of what the player is looking at. */
-static uint8_t s_composed_pixels[kPpuBufWidth * 4 * 240];
+static uint8_t s_composed_pixels[kPpuMaxFrameWidth * 4 * 240];
 static int s_composed_width, s_composed_height;
 static int s_composed_valid;
 
 void debug_server_note_composed_frame(const void *argb, unsigned pitch,
                                       int width, int height) {
-    if (!argb || width <= 0 || width > kPpuBufWidth || height <= 0 ||
+    if (!argb || width <= 0 || width > kPpuMaxFrameWidth || height <= 0 ||
         height > 240 || pitch < (unsigned)width * 4) {
         s_composed_valid = 0;
         return;
@@ -5080,7 +5080,7 @@ static void cmd_screenshot(const char *args) {
     // Copy the most recently presented buffer. Re-rendering here loses
     // presentation-only layers (including widescreen coprocessor pixels) and
     // can observe forced blank after the frame has already been drawn.
-    static uint8_t scr_pixels[kPpuBufWidth * 4 * 240];
+    static uint8_t scr_pixels[kPpuMaxFrameWidth * 4 * 240];
     int w, h;
     const char *source;
     if (s_composed_valid) {
@@ -5136,7 +5136,7 @@ static void cmd_screenshot(const char *args) {
     fwrite(hdr, 1, 54, f);
 
     // Write pixels (BGRA -> BGR, top to bottom)
-    uint8_t row_buf[kPpuBufWidth * 3 + 4];
+    uint8_t row_buf[kPpuMaxFrameWidth * 3 + 4];
     memset(row_buf, 0, sizeof(row_buf));
     for (int y = 0; y < h; y++) {
         const uint8_t *src = scr_pixels + y * w * 4;
