@@ -81,6 +81,9 @@ struct Option {
 struct Feature {
     std::string id;
     std::string name;
+    std::string author;
+    std::string source_name;
+    std::string source_url;
     std::string description;
     std::string group = "General";
     bool default_enabled = false;
@@ -160,6 +163,8 @@ struct Package {
     std::string version;
     std::string name;
     std::string author;
+    std::string source_name;
+    std::string source_url;
     std::string description;
     std::string license;
     fs::path root;
@@ -641,6 +646,16 @@ bool read_manifest(const fs::path& path, Package& out, std::string* error) {
             field = string_value;
             return true;
         };
+        auto source_url_field = [&](std::string& field) -> bool {
+            if (!string_field(field)) return false;
+            if (field.empty()) return true;
+            const size_t prefix = field.rfind("https://", 0) == 0 ? 8 :
+                                  field.rfind("http://", 0) == 0 ? 7 : 0;
+            return prefix && field.size() > prefix && field.size() < 256 &&
+                   std::none_of(field.begin(), field.end(), [](unsigned char c) {
+                       return c <= 0x20 || c == 0x7f || c == '\\';
+                   });
+        };
 
         bool known = true;
         bool parsed = true;
@@ -654,6 +669,8 @@ bool read_manifest(const fs::path& path, Package& out, std::string* error) {
                 else if (key == "version") parsed = string_field(out.version);
                 else if (key == "name") parsed = string_field(out.name);
                 else if (key == "author") parsed = string_field(out.author);
+                else if (key == "source_name") parsed = string_field(out.source_name);
+                else if (key == "source_url") parsed = source_url_field(out.source_url);
                 else if (key == "description") parsed = string_field(out.description);
                 else if (key == "license") parsed = string_field(out.license);
                 else if (key == "resolver") {
@@ -674,6 +691,9 @@ bool read_manifest(const fs::path& path, Package& out, std::string* error) {
                 if (!feature) parsed = false;
                 else if (key == "id") parsed = string_field(feature->id);
                 else if (key == "name") parsed = string_field(feature->name);
+                else if (key == "author") parsed = string_field(feature->author);
+                else if (key == "source_name") parsed = string_field(feature->source_name);
+                else if (key == "source_url") parsed = source_url_field(feature->source_url);
                 else if (key == "description") parsed = string_field(feature->description);
                 else if (key == "group") parsed = string_field(feature->group);
                 else if (key == "default_enabled") {
@@ -2420,6 +2440,8 @@ int provider_package_get(void*, int index,
     copy_text(out->version, package.version);
     copy_text(out->name, package.name);
     copy_text(out->author, package.author);
+    copy_text(out->source_name, package.source_name);
+    copy_text(out->source_url, package.source_url);
     copy_text(out->description, package.description);
     copy_text(out->license, package.license);
     out->removable = !package.builtin_diagnostic;
@@ -2625,7 +2647,9 @@ int provider_feature_get(void*, int index,
     copy_text(out->package_version, package.version);
     copy_text(out->package_name, package.name);
     copy_text(out->name, feature.name);
-    copy_text(out->author, package.author);
+    copy_text(out->author, feature.author.empty() ? package.author : feature.author);
+    copy_text(out->source_name, feature.source_url.empty() ? package.source_name : feature.source_name);
+    copy_text(out->source_url, feature.source_url.empty() ? package.source_url : feature.source_url);
     copy_text(out->description, feature.description);
     copy_text(out->group, feature.group);
     out->enabled = feature_enabled(state(), package, feature);

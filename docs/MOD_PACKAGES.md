@@ -79,6 +79,8 @@ id = "example.display"
 version = "1.0.0"
 name = "Example Display Enhancements"
 author = "Example Author"
+source_name = "Original project"
+source_url = "https://example.com/original-mod"
 description = "Game-specific presentation features."
 license = "MIT"
 resolver = "declarative"
@@ -91,6 +93,9 @@ rom_sha256 = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
 [[feature]]
 id = "widescreen"
 name = "Widescreen (16:9)"
+author = "Original feature authors; native implementation authors"
+source_name = "Original feature"
+source_url = "https://example.com/original-feature"
 description = "Enables the game's surveyed widescreen implementation."
 group = "Display"
 default_enabled = false
@@ -99,6 +104,13 @@ default_enabled = false
 feature = "widescreen"
 id = "example.widescreen"
 ```
+
+`author`, `source_name` and `source_url` populate the launcher's existing mod
+attribution area. A feature's author overrides the package author; an omitted
+author retains the package credit. A feature source URL and label override the
+package source together. Source URLs must be HTTP(S), without whitespace or
+control characters, and fit the launcher's 256-byte field. Credit original hack
+authors and specific patch contributors separately from the native implementation.
 
 Options use the same feature-oriented concepts exposed by recomp-ui:
 
