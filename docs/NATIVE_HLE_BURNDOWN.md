@@ -91,8 +91,11 @@ After two failed improvement experiments, reassess before further tuning.
   consumed 61.59% of sampled instrumented raster cycles, with overhead and
   old-package limits retained; this is not a whole-game CPU percentage.
   The legacy component source matches current main. A coherent shared legacy
-  Mode 7 line service is now being implemented under `beads-8wg.2.182`;
-  no speedup is qualified yet. The existing optimized renderer's affine
+  Mode 7 line service passed independent review under `beads-8wg.2.182`;
+  [PR 227](https://github.com/RetroPortingToolKit/snesrecomp/pull/227)
+  keeps the reference default. One current-engine SMK pair on SERVER used
+  9.46% less process CPU with exact state, image and PCM output; combined
+  qualification remains pending. The existing optimized renderer's affine
   increments do not establish that this legacy consumer already receives them.
 - R8.2 execution/bus (`beads-8wg.2.174`): immutable-ROM read fusion passed
   independent review; [PR 225](https://github.com/RetroPortingToolKit/snesrecomp/pull/225)
@@ -115,10 +118,15 @@ After two failed improvement experiments, reassess before further tuning.
   inconclusive. The source assessment (`beads-8wg.2.179`) rejected duplicate
   DSP-1/native-math wrappers and universal command IDs for arbitrary cartridge
   programs. It selected two concrete shared mechanisms that remain pending:
-  SA-1 timer event spans (`beads-8wg.2.180`, implementation/SMRPG validation)
-  and Super FX halted-clock draining (`beads-8wg.2.181`, queued). Neither is a
-  measured gain yet; the scheduling result does not establish universal
-  coprocessor exhaustion.
+  SA-1 timer event spans (`beads-8wg.2.180`, [PR 228](https://github.com/RetroPortingToolKit/snesrecomp/pull/228))
+  and Super FX halted-clock draining (`beads-8wg.2.181`, [PR 229](https://github.com/RetroPortingToolKit/snesrecomp/pull/229)).
+  Both passed independent review with their reference implementations still
+  default. One SMRPG pair showed preliminary CPU savings of 4.77%; its shared
+  save/load audio-underrun failure remains separately recorded. Star Fox
+  gameplay was neutral/inconclusive (1.72% lower CPU in one pair); a different
+  title/attract workload showed preliminary savings of 12.77%. The invalid
+  earlier A/A control is excluded. Do not pool unlike workloads or add these
+  percentages to other packages. Combined qualification remains pending.
 
 ## Separate consumer validation and excluded work
 
@@ -128,6 +136,13 @@ After two failed improvement experiments, reassess before further tuning.
   race, results, next-race, listening and current-build save/load checks. The
   assisted-race fixture is not ordinary gameplay acceptance; do not tune it
   again. Retain individual owner results and input/setup failures.
+- **Owner-requested SMK picture in picture (`beads-k5e6.2`, [PR 3](https://github.com/mstan/SuperMarioKartRecompiled/pull/3)):
+  presentation correction in progress.** The first native-X cycle passed
+  automation but its owner handoff failed for bars, HUD size/overlap and an
+  uneven edge. A separate full-window camera/HUD composition and upper-left
+  inset are being validated. This explicit game feature is outside the shared
+  engine optimization package; its changed drawing cost must be labeled
+  separately. The pre-existing P2 recording defect was fixed in its own commit.
 - **Doom title adoption (R6): outside this engine queue.** The 8bpp engine
   optimization and older qualification are retained. Updating the divergent
   game's fork and integration belongs to its existing title issue; it is not
