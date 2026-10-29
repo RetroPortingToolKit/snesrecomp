@@ -3,12 +3,22 @@ on:
   pull_request:
     paths:
       - 'runner/src/snes/raster_plan.h'
+      - 'runner/src/snes/raster_jobs.h'
+      - 'runner/src/snes/raster_register_*.h'
+      - 'runner/src/snes/ppu_register*'
+      - 'runner/src/snes/ppu.h'
+      - 'tests/ppu/ppu_registers_contract_test.c'
       - 'runner/tests/raster_plan/**'
       - '.github/workflows/raster-plan.yml'
   push:
     branches: [main]
     paths:
       - 'runner/src/snes/raster_plan.h'
+      - 'runner/src/snes/raster_jobs.h'
+      - 'runner/src/snes/raster_register_*.h'
+      - 'runner/src/snes/ppu_register*'
+      - 'runner/src/snes/ppu.h'
+      - 'tests/ppu/ppu_registers_contract_test.c'
       - 'runner/tests/raster_plan/**'
       - '.github/workflows/raster-plan.yml'
   workflow_dispatch:

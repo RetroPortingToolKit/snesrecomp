@@ -10,6 +10,7 @@
 #include <stdbool.h>
 
 #include "saveload.h"
+#include "ppu_registers.h"
 
 typedef struct Ppu Ppu;
 typedef struct PpuMode7HdSurface {
@@ -177,30 +178,9 @@ typedef struct WindowLayer {
 struct Ppu {
   // Snes registers. Saved to snapshot. Need to be stable
   // -- START OF SNAPSHOT, 0x40 bytes
-  uint8 inidisp;
-  uint8 obsel;
-  uint8 oamaddl;
-  uint8 oamaddh;
-  uint8 bgmode;
-  uint8 mosaic;
-  uint8 bgXsc[4];
-  uint16 bgTileAdr;
-  uint8 m7sel;
-  uint8 setini;
-  uint16 hScroll[4];
-  uint16 vScroll[4];
-  int16_t m7matrix[8]; // a, b, c, d, x, y, h, v
-  uint16 fixedColor;
-  uint32 windowsel;
-  uint8 window1left;
-  uint8 window1right;
-  uint8 window2left;
-  uint8 window2right;
-  uint16 wbgobjlog;
-  uint8 screenEnabled[2];
-  uint8 screenWindowed[2];
-  uint8 cgadsub;
-  uint8 cgwsel;
+#define SNESRECOMP_PPU_REGISTER(type, name, array) type name array;
+#include "ppu_register_fields.inc"
+#undef SNESRECOMP_PPU_REGISTER
   // -- END OF SNAPSHOT
 
   // vram access
@@ -386,6 +366,21 @@ struct Ppu {
 
 
 };
+
+/* Both C and C++ consumers verify every field and the following device state.
+ * The capture/serializer layout does not change with the compact interface. */
+#ifdef __cplusplus
+#define SNESRECOMP_PPU_LAYOUT_ASSERT(condition, message) static_assert(condition, message)
+#else
+#define SNESRECOMP_PPU_LAYOUT_ASSERT(condition, message) _Static_assert(condition, message)
+#endif
+#define SNESRECOMP_PPU_REGISTER(type, name, array) \
+  SNESRECOMP_PPU_LAYOUT_ASSERT(offsetof(Ppu, name) == offsetof(SnesRenderRegisters, name), "PPU register offset: " #name);
+#include "ppu_register_fields.inc"
+#undef SNESRECOMP_PPU_REGISTER
+SNESRECOMP_PPU_LAYOUT_ASSERT(offsetof(Ppu, vramPointer) == sizeof(SnesRenderRegisters), "PPU register prefix size");
+SNESRECOMP_PPU_LAYOUT_ASSERT(PPU_SAVESTATE_REGS_SIZE == sizeof(SnesRenderRegisters), "serialized PPU register size");
+#undef SNESRECOMP_PPU_LAYOUT_ASSERT
 
 #define SPRITE_PRIO_TO_PRIO(prio, level6) (((prio) * 4 + 2) * 16 + 4 + (level6 ? 2 : 0))
 #define SPRITE_PRIO_TO_PRIO_HI(prio) ((prio) * 4 + 2)

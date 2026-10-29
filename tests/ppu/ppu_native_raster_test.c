@@ -54,7 +54,10 @@ static int render_jobs(Ppu *reference) {
       uint16_t rows[3][332];
       for (unsigned layer=0; layer<3; ++layer) {
         rows[layer][0]=rows[layer][331]=0xa55a;
-        if (!SnesRenderMode1TileRow(reference,reference->vram,layer,-37,(int)line,330,rows[layer]+1) ||
+        SnesRenderRegisters registers=SnesRenderRegistersLoad(reference);
+        bool decoded=sample&1 ? SnesRenderRegistersMode1TileRow(&registers,reference->vram,layer,-37,(int)line,330,rows[layer]+1) :
+            SnesRenderMode1TileRow(reference,reference->vram,layer,-37,(int)line,330,rows[layer]+1);
+        if (!decoded ||
             rows[layer][0]!=0xa55a || rows[layer][331]!=0xa55a) return 1;
       }
       ppu_runLine(reference,(int)line);

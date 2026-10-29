@@ -37,7 +37,10 @@ int main(void) {
     for (unsigned i = 0; i < 4; ++i) edges[i] = (int)(random32() % 1800) - 900;
     if (!(sample % 17)) edges[0] = INT_MIN;
     if (!(sample % 19)) edges[3] = INT_MAX;
-    SnesRenderWindowPlan windows = SnesRenderWindows(&p, edges[0], edges[1], edges[2], edges[3]);
+    SnesRenderRegisters registers = SnesRenderRegistersLoad(&p);
+    SnesRenderWindowPlan windows = sample & 1 ?
+        SnesRenderRegistersWindows(&registers, edges[0], edges[1], edges[2], edges[3]) :
+        SnesRenderWindows(&p, edges[0], edges[1], edges[2], edges[3]);
     SnesRenderInterval color[2];
     unsigned color_count = sample % 3;
     for (unsigned i = 0; i < color_count; ++i) {
@@ -45,7 +48,9 @@ int main(void) {
       color[i].right = (int)(random32() % 1800) - 900;
     }
     SnesRenderComposePlan plan;
-    assert(SnesRenderPlanCompose(&plan, &p, &windows, first, width, color, color_count));
+    assert(sample & 1 ?
+        SnesRenderRegistersPlanCompose(&plan, &registers, &windows, first, width, color, color_count) :
+        SnesRenderPlanCompose(&plan, &p, &windows, first, width, color, color_count));
     assert(plan.count <= 11);
     unsigned cursor = 0;
     for (unsigned i = 0; i < plan.count; ++i) {
