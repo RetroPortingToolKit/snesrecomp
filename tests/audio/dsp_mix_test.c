@@ -45,7 +45,9 @@ int main(void) {
   Dsp *reference = reference_dsp_init(ram[0]);
   Dsp *native = dsp_init(ram[1]);
   reference_dsp_reset(reference); dsp_reset(native);
-  unsigned audible = 0, echo_writes = 0;
+  unsigned audible = 0, echo_writes = 0, nonzero_pcm = 0;
+  unsigned active_nonzero_pcm = 0, ring_wraps = 0;
+  unsigned active_masks[256] = {0}, suspended_masks[256] = {0};
   /* Random live BRR, echo, FIR, KON/KOF, gain/source changes and noise.
    * All voice masks are exercised independently of canonical state. */
   for (unsigned tick = 0; tick < 65536; ++tick) {
@@ -61,9 +63,16 @@ int main(void) {
       uint8_t voices = (uint8_t)(tick >> 8);
       assert(reference_dsp_set_output_voices(reference, voices));
       assert(dsp_set_output_voices(native, voices));
-      reference_dsp_suspend_output_filter(reference, voices & 1);
-      dsp_suspend_output_filter(native, voices & 1);
     }
+    /* Exercise every mask with the presentation mixer active AND suspended. */
+    bool suspended = (tick & 128u) != 0;
+    if (!(tick & 127u)) {
+      reference_dsp_suspend_output_filter(reference, suspended);
+      dsp_suspend_output_filter(native, suspended);
+    }
+    unsigned mask = tick >> 8;
+    if (suspended) suspended_masks[mask]++;
+    else active_masks[mask]++;
     if (!(tick & 63u)) {
       /* Include ring wrap and output suppression without losing synthesis. */
       reference->sampleRead = native->sampleRead = reference->sampleWrite;
@@ -79,7 +88,16 @@ int main(void) {
       a.loading = b.loading = true;
       reference_dsp_saveload(reference, &a.info); dsp_saveload(native, &b.info);
     }
+    uint32_t old_write = native->sampleWrite;
     reference_dsp_cycle(reference); dsp_cycle(native);
+    if (native->sampleWrite != old_write) {
+      unsigned slot = old_write & (DSP_SAMPLE_RING - 1);
+      bool nonzero = native->sampleBuffer[slot * 2] != 0 ||
+                     native->sampleBuffer[slot * 2 + 1] != 0;
+      nonzero_pcm += nonzero;
+      active_nonzero_pcm += nonzero && !suspended && mask != 255;
+      ring_wraps += (native->sampleWrite & (DSP_SAMPLE_RING - 1)) == 0;
+    }
     audible += native->channel[0].sampleOut != 0;
     echo_writes += native->echoWrites;
     assert(!memcmp(ram[0], ram[1], sizeof(ram[0])));
@@ -87,6 +105,15 @@ int main(void) {
                    sizeof(Dsp) - offsetof(Dsp, ram)));
   }
   assert(audible > 100); assert(echo_writes > 100);
+  assert(nonzero_pcm > 100); assert(active_nonzero_pcm > 100);
+  assert(ring_wraps > 0);
+  for (unsigned mask = 0; mask < 256; ++mask) {
+    assert(active_masks[mask] == 128);
+    assert(suspended_masks[mask] == 128);
+  }
+  printf("DSP MIX COVERAGE: masks=256 active_ticks=128 suspended_ticks=128 "
+         "nonzero_pcm=%u active_masked_nonzero_pcm=%u ring_wraps=%u\n",
+         nonzero_pcm, active_nonzero_pcm, ring_wraps);
   reference_dsp_free(reference); dsp_free(native);
   puts("DSP MIX CONTRACT PASSED: PCM, live RAM/BRR, registers, echo, masks, state");
   return 0;
