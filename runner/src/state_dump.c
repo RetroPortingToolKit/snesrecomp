@@ -161,6 +161,38 @@ static void write_dmas(const char *dir, const char *tag, uint32_t frame) {
   free(e);
 }
 
+/* The ring is retained history; this is only the export's scratch copy.
+ * Take one complete snapshot under the existing audio lock, then format it
+ * after releasing that lock. Chunked re-queries could mix different instants. */
+static int write_apu_events(const char *dir, const char *tag) {
+  static const char *const kName[] = {
+    "?", "?", "?", "?", "cpu_wr", "spc_rd", "spc_wr", "cpu_rd", "cpu_ap",
+  };
+  FILE *f = open_out(dir, tag, ".apu.tsv", "w");
+  if (!f) return -1;
+  AudioTracePortEvent *events = (AudioTracePortEvent *)malloc(
+      sizeof(*events) * AUDIO_TRACE_PORT_RING);
+  if (!events) {
+    fprintf(stderr, "state_dump: cannot allocate audio-port snapshot\n");
+    fclose(f);
+    return -1;
+  }
+  uint32_t count = audio_trace_copy_port_events(0, AUDIO_TRACE_PORT_RING,
+                                                events, NULL, NULL);
+  fprintf(f, "# frame\tscanline\thclock\tevent\tport\tvalue\tsample\n");
+  for (uint32_t i = 0; i < count; ++i) {
+    const AudioTracePortEvent *e = &events[i];
+    fprintf(f, "%u\t%u\t%u\t%s\t%u\t%02X\t%llu\n", e->frame,
+            e->vpos, e->hpos,
+            e->type < sizeof(kName) / sizeof(kName[0]) ? kName[e->type] : "?",
+            e->port, e->val, (unsigned long long)e->sample_idx);
+  }
+  free(events);
+  int rc = ferror(f) ? -1 : 0;
+  if (fclose(f) != 0) rc = -1;
+  return rc;
+}
+
 int snes_state_dump(const char *dir, const char *tag, const uint8_t *pixels,
                     int pitch_bytes, int x0, int height, uint32_t frame) {
   int rc = 0;
@@ -199,27 +231,7 @@ int snes_state_dump(const char *dir, const char *tag, const uint8_t *pixels,
     }
   }
 
-  {
-    /* Everything the always-on port ring still holds: the recomp half of
-     * tools/mesen_scene's apu.tsv. */
-    static const char *const kName[] = {
-      "?", "?", "?", "?", "cpu_wr", "spc_rd", "spc_wr", "cpu_rd", "cpu_ap",
-    };
-    static AudioTracePortEvent ev[AUDIO_TRACE_PORT_RING];
-    uint64_t oldest = 0, total = 0;
-    uint32_t n = audio_trace_copy_port_events(0, AUDIO_TRACE_PORT_RING, ev,
-                                              &oldest, &total);
-    FILE *af = open_out(dir, tag, ".apu.tsv", "w");
-    if (af) {
-      fprintf(af, "# frame\tscanline\thclock\tevent\tport\tvalue\tsample\n");
-      for (uint32_t i = 0; i < n; i++)
-        fprintf(af, "%u\t%u\t%u\t%s\t%u\t%02X\t%llu\n", ev[i].frame,
-                ev[i].vpos, ev[i].hpos,
-                ev[i].type < sizeof(kName) / sizeof(kName[0]) ? kName[ev[i].type] : "?",
-                ev[i].port, ev[i].val, (unsigned long long)ev[i].sample_idx);
-      fclose(af);
-    }
-  }
+  rc |= write_apu_events(dir, tag);
 
   FILE *f = open_out(dir, tag, ".info.json", "w");
   if (f) {

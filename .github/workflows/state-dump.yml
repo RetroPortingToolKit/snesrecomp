@@ -1,0 +1,30 @@
+name: Scene export snapshot contract
+on:
+  pull_request:
+    paths:
+      - 'runner/src/state_dump.*'
+      - 'runner/src/audio_trace.*'
+      - 'runner/tests/state_dump/**'
+      - 'tests/state_dump/**'
+      - '.github/workflows/state-dump.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'runner/src/state_dump.*'
+      - 'runner/src/audio_trace.*'
+      - 'runner/tests/state_dump/**'
+      - 'tests/state_dump/**'
+      - '.github/workflows/state-dump.yml'
+  workflow_dispatch:
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - run: cmake -S runner/tests/state_dump -B build-state-dump -DCMAKE_BUILD_TYPE=Release
+      - run: cmake --build build-state-dump --config Release --parallel 1
+      - run: ctest --test-dir build-state-dump -C Release --output-on-failure
