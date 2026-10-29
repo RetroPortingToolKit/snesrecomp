@@ -407,11 +407,14 @@ static uint32_t snes_advance_beam(Snes *snes, uint32_t clocks, bool check_irq) {
   uint32_t consumed = 0;
   while (clocks) {
     uint32_t span = 1364u - h;
-    /* Stop at HBlank so the HDMA transfer occurs at its hardware edge rather
-     * than after the rest of the scanline has already been consumed. */
-    if (check_irq && v < 225u && h < 1024u && span > 1024u - h)
-      span = 1024u - h;
     if (span > clocks) span = clocks;
+    /* Only beam-owned HDMA needs an HBlank boundary. Frame-model hosts walk
+     * those tables themselves, so their beam can cross HBlank in one span.
+     * Keep the original split with an active automatic-read timer: an IRQ
+     * below can consume only part of a span after that timer was charged. */
+    if (check_irq && v < 225u && h < 1024u && span > 1024u - h &&
+        (!snes->hdmaBeamOff || snes->autoJoyTimer))
+      span = 1024u - h;
 
     /* Automatic joypad polling begins at vblank and keeps HVBJOY.0 asserted
      * for roughly 4224 master clocks.  The input registers are already backed
