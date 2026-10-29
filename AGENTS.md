@@ -16,6 +16,8 @@ assessment are complete. Keep their new source optimization choices opt-in.
 Current work is the remaining concrete shared-engine R8 questions and existing
 shared DSP-1 consumer validation in SMK. New title-specific adoption is outside
 this engine queue.
+Owner update 2026-10-29 authorizes up to three concurrent item agents, one item
+per agent, with isolated worktrees/evidence and independent result review.
 See the [full native/HLE burndown](docs/NATIVE_HLE_BURNDOWN.md) for the current
 original-list reconciliation and remaining engine work. The nine-item
 [follow-up register](docs/OPTIMIZATION_BURNDOWN.md) is historical context, not

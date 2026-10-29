@@ -88,7 +88,8 @@ failed and unverified results; a completed screen is not a shipped optimization.
 ### Active queue and scope
 
 R8's remaining shared-engine questions are open in the full native/HLE burndown.
-Use existing evidence first, then test concrete candidates serially. Low old
+Use existing evidence first, then test concrete candidates with up to three
+owner-authorized item agents, keeping each item's work separate. Low old
 sample shares alone do not reject all execution, DMA or audio optimization.
 R7's existing shared DSP-1 consumer checks remain pending: ordinary HLE/LLE
 races through results and the next race, listening, visual/current-build save/load.

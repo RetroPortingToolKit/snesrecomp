@@ -55,7 +55,10 @@ samples screened for a dominant whole-subsystem replacement, not every useful
 shared optimization. Preserve those samples and their limitations; they do not
 establish that remaining engine work is exhausted.
 
-Work serially through these concrete questions, using existing evidence first:
+Owner update on 2026-10-29 permits up to three concurrent item agents, one
+item per agent. Use existing evidence first, keep branches/evidence isolated,
+and independently review each result before integration. Scheduling waits for
+a slot while rendering, execution and audio proceed:
 
 | Task | Question to resolve | Completion evidence |
 | --- | --- | --- |
@@ -106,8 +109,9 @@ No cross-build or cross-host netplay claim follows from a successful build.
 Use the capacity-reserved target pool and retain matched per-game raw samples,
 source/binary/settings/host identities and optimization package labels. Reuse
 cleared owner checks; do not relaunch those games without a new relevant change.
-Owner-authorized validators review one item at a time. Successful work gets a
-PR; rejected work gets its reason/evidence in Beads before proceeding.
+Each owner-authorized validator reviews one item. Keep no more than three
+subagents active, including validators. Successful work gets a PR; rejected
+work gets its reason/evidence in Beads before proceeding to another item.
 
 Commits, PRs and QA builds may accumulate. Publish only at the campaign endpoint
 under the owner's 2026-10-29 direction; no per-item releases or blog publication.
