@@ -105,6 +105,9 @@ void cpu_tailcall_context_restore(const CpuTailcallContextSave *in);
 void cpu_interrupt_context_enter(void);
 void cpu_interrupt_context_leave(void);
 int cpu_interrupt_context_active(void);
+/* Discard host frames after an isolated guest budget abort. Caller must have
+ * entered the scope with no guest/interrupt frames on its own host stack. */
+void cpu_guest_scope_unwind(void);
 #include <setjmp.h>
 extern jmp_buf g_watchdog_jmp;
 extern int g_watchdog_tripped;

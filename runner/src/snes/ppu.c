@@ -2,6 +2,8 @@
 #include "mode7_hd.h"
 
 extern unsigned char g_snesrecomp_last_hdmaen;
+static bool s_guest_scope;
+void ppu_setGuestScope(bool active) {s_guest_scope=active;}
 #include "ppu_legacy.h"
 
 #include <stdio.h>
@@ -719,6 +721,7 @@ static uint32_t s_wlog_line_frame = 0xffffffffu;
 uint8_t g_ppu_wlog_src = kPpuWlogCpu;
 
 void ppu_wlog_note_reg(uint16_t reg, uint8_t val) {
+  if(s_guest_scope)return;
   const uint32_t frame = (uint32_t)snes_frame_counter;
   PpuWlogEntry *e = &s_wlog[s_wlog_head++ & (PPU_WLOG_CAP - 1)];
   e->frame = frame;
@@ -3275,6 +3278,7 @@ static void raster_snapshot(PpuRasterField *f, const Ppu *ppu) {
 }
 
 void ppu_rasterBegin(Ppu *ppu) {
+  if(s_guest_scope)return;
   /* A host that renders has finished with the previous field's replay. */
   s_raster_rendering = 0;
   if (s_raster_armed)
@@ -3286,6 +3290,7 @@ void ppu_rasterBegin(Ppu *ppu) {
 }
 
 void ppu_rasterFieldBoundary(void) {
+  if(s_guest_scope)return;
   Ppu *ppu = raster_machine_ppu();
   if (!s_raster_armed || !ppu)
     return;
@@ -3296,6 +3301,7 @@ void ppu_rasterFieldBoundary(void) {
 }
 
 void ppu_rasterReset(void) {
+  if(s_guest_scope)return;
   s_raster_armed = 0;
   s_raster_have_completed = 0;
   s_raster_rendering = 0;
@@ -3304,6 +3310,7 @@ void ppu_rasterReset(void) {
 }
 
 void ppu_rasterRecord(uint16_t reg, uint16_t line, uint8_t val) {
+  if(s_guest_scope)return;
   PpuRasterField *f;
   if (!s_raster_armed || s_raster_rendering || !raster_reg_journaled(reg))
     return;

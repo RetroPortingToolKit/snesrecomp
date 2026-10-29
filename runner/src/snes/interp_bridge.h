@@ -29,6 +29,7 @@
 #define INTERP_BRIDGE_H
 
 #include <stdint.h>
+#include <stdbool.h>
 #include <stdio.h>
 /* Dump the last n entries of the always-on global interp step ring
  * (pc/op/sp/frame per interpreted opcode) to `out` (NULL = stderr). */
@@ -169,6 +170,12 @@ void interp_bridge_clear_idle_polls(void);
  *   0 = the bridge bailed (iteration cap / contained failure).
  */
 int interp_bridge_run(CpuState *cpu, uint32_t entry_pc24);
+
+/* Only for a main-thread isolated scope entered outside all guest calls.
+ * Discards host call-control left behind by a bounded scope's longjmp.
+ * Simulation residue must separately be restored by the scope owner. */
+bool interp_bridge_guest_scope_idle(void);
+void interp_bridge_guest_scope_unwind(void);
 
 /* Faithful LLE of an infinite cooperative-scheduler loop (e.g. MMX's $8099 task
  * scheduler): run the real ROM scheduler under interp816 from entry_pc24 and

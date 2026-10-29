@@ -15,23 +15,29 @@ extern "C" void snes_variant_clear_declared(void) {}
 extern "C" const SnesContentVariant *snes_variant_register_declared(const SnesVariantDecl *) { return nullptr; }
 static const char *kDigest="0000000000000000000000000000000000000000000000000000000000000000";
 static void package(const fs::path& root,const char *id,const char *feature,
-                    std::initializer_list<const char*> plugins) {
+                    std::initializer_list<const char*> plugins,bool experimental=false) {
   fs::path dir=root/"packages"/id/"1.0.0";fs::create_directories(dir);
   std::ofstream f(dir/"manifest.toml");
   f<<"format_version = 1\nid = \""<<id<<"\"\nversion = \"1.0.0\"\nname = \"Exclusive test\"\n"
      "resolver = \"declarative\"\n[[target]]\ngame_id = \"test\"\nrom_sha256 = \""<<kDigest<<"\"\n"
      "[[feature]]\nid = \""<<feature<<"\"\nname = \""<<feature<<"\"\ndefault_enabled = false\n";
+  if(experimental)f<<"experimental = true\n";
   for(const char *plugin:plugins) f<<"[[plugin]]\nfeature = \""<<feature<<"\"\nid = \""<<plugin<<"\"\n";
 }
 int main(int argc,char **argv) {
   assert(argc==2);fs::path root=fs::absolute(argv[1]);
   fs::remove_all(root);fs::create_directories(root);
   package(root,"test.zero","zero",{"test.plugin.zero"});
-  package(root,"test.coop","coop",{"test.plugin.coop","test.plugin.zero"});
+  package(root,"test.coop","coop",{"test.plugin.coop","test.plugin.zero"},true);
   package(root,"test.other","other",{"test.plugin.other"});
   std::ofstream(root/"state.toml")<<"format_version = 1\n";
   assert(SNESRecomp::mod_runtime_initialize(root,"test",kDigest));
   const auto *p=snes_mod_runtime_launcher_provider_c();assert(p);
+  for(int i=0;i<p->feature_count(p->ctx);++i){
+    RecompLauncherCModFeature f{};assert(p->feature_get(p->ctx,i,&f));
+    if(!std::strcmp(f.package_id,"test.coop"))assert(f.channel==RECOMP_MOD_CHANNEL_EXPERIMENTAL);
+    if(!std::strcmp(f.package_id,"test.zero"))assert(f.channel==RECOMP_MOD_CHANNEL_STABLE);
+  }
   auto enabled=[&](const char *id){
     for(int i=0;i<p->feature_count(p->ctx);++i){
       RecompLauncherCModFeature f{};assert(p->feature_get(p->ctx,i,&f));

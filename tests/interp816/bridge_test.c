@@ -75,6 +75,8 @@ void debug_on_block_enter(uint32_t pc, uint32_t a, uint32_t x, uint32_t y) {
 }
 void RtlApuLock(void) {}
 void RtlApuUnlock(void) {}
+/* This focused bridge harness does not enter isolated guest scopes. */
+void RtlGuestScopeCheckpoint(void) {}
 
 /* Per-frame NMI/IRQ tally (ppu_dma_trace.c in the real runner). */
 void ppudma_note_interrupt(int is_nmi) { (void)is_nmi; }
