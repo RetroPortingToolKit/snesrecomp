@@ -1,5 +1,14 @@
 # Engine acceleration assessment
 
+## Current campaign index (2026-10-29)
+
+Use the [full native/HLE burndown](NATIVE_HLE_BURNDOWN.md) for current scope,
+original-list results and remaining engine questions. The dated assessments
+below retain their original package measurements and historical draft status.
+DSP-1 build selection and 8bpp are already merged; SMK remains a consumer
+validation follow-up. New Doom title-fork adoption is outside this engine queue.
+Xbox/platform and dedicated memory-budget work are explicitly deferred.
+
 ## Current 8bpp status (2026-10-09)
 
 The opt-in 8bpp tile-span renderer now has useful Windows Doom measurements
