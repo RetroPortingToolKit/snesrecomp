@@ -57,8 +57,8 @@ establish that remaining engine work is exhausted.
 
 Owner update on 2026-10-29 permits up to three concurrent item agents, one
 item per agent. Use existing evidence first, keep branches/evidence isolated,
-and independently review each result before integration. A freed validation
-slot now runs scheduling while execution and audio proceed:
+and independently review each result before integration. Compatible survivors
+enter one combined per-game qualification build:
 
 | Task | Question to resolve | Completion evidence |
 | --- | --- | --- |
@@ -81,16 +81,34 @@ After two failed improvement experiments, reassess before further tuning.
   reproduced 8,192 exact-reference cases. Matched built-game CPU samples were
   mixed/inconclusive with a negative trend; they establish neither a gain nor
   a reproducible regression. No default change or PR. The rendering family
-  remains open, including a shared OAM eligibility lead that first needs
-  measured inclusive cost and complete capture/register invalidation coverage.
-- R8.2 execution/bus (`beads-8wg.2.174`): eligible immutable-ROM mapping
-  fusion is being qualified. No accepted gain yet.
+  remains open; this result does not reject Mode 7 or complete presentation work.
+- R8.1 OAM eligibility (`beads-8wg.2.177`): **rejected for adoption in the
+  tested stock-MMX package** after independent review. A content-keyed cache
+  covered captured copies and direct writes; exact outputs passed, but two
+  built-game pairs did not demonstrate a useful gain. Stop further clipping/
+  OAM tuning. The bounded architectural reassessment (`beads-8wg.2.178`) now
+  selects a focused shared Mode 7/presentation cost observation.
+- R8.2 execution/bus (`beads-8wg.2.174`): immutable-ROM read fusion passed
+  independent review; [PR 225](https://github.com/RetroPortingToolKit/snesrecomp/pull/225)
+  retains `REFERENCE` as default and selects `FUSED` with
+  `SNESRECOMP_INTERP_READ_IMPL`. One corrected MMX pair used 6.92% less process
+  CPU and showed 4.22% higher throughput, pending the combined gate. Earlier
+  purported FUSED slowdown samples ran baseline bytes on both sides before
+  the build completed; they are invalid baseline controls, not evidence
+  against fusion. The separate synchronous DMA timer-poll collapse is
+  **rejected** for lacking demonstrated useful value and is excluded.
 - R8.3 audio (`beads-8wg.2.175`): duplicate DSP dry/echo mixing fusion passed
-  focused sample/state checks; built-game measurement and independent review
-  remain in progress. No accepted gain or default change yet.
-- R8.4 scheduling/coprocessors (`beads-8wg.2.176`): the next item agent is
-  selecting a concrete shared candidate. This is not a claim that every
-  coprocessor needs a replacement.
+  independent sample/state/provenance review. A test-only follow-up now runs
+  every voice mask both active and suspended. [PR 224](https://github.com/RetroPortingToolKit/snesrecomp/pull/224)
+  remains draft for the combined per-game gate; initial CPU observations use
+  BG_SPANS OFF and do not qualify the final ON package. No default promotion.
+- R8.4 scheduling (`beads-8wg.2.176`): skipping unobservable frame-owned HDMA
+  HBlank boundaries passed independent review, focused contracts and
+  current-build state checks. [PR 226](https://github.com/RetroPortingToolKit/snesrecomp/pull/226)
+  awaits combined qualification. Runtime measurements remain neutral/
+  inconclusive. The remaining command-level DSP-1/Cx4/Super FX/SA-1 assessment
+  is tracked separately in `beads-8wg.2.179`; this scheduling result does not
+  establish universal coprocessor exhaustion.
 
 ## Separate consumer validation and excluded work
 
