@@ -1,4 +1,8 @@
-# SNES optimization burndown
+# SNES optimization follow-ups
+
+The full current [native/HLE burndown](NATIVE_HLE_BURNDOWN.md) contains the
+original 14-item checklist, the broader engine assessment and remaining engine
+questions. This nine-item follow-up register is not the whole campaign.
 
 Assessment: 2026-10-27; dispositions updated on 2026-10-29.
 Owning roadmap: `beads-49cy`, under the snesrecomp
@@ -20,8 +24,8 @@ The owner explicitly authorized finishing the existing MMX and Super Metroid
 candidates. Their new optimization switches remain OFF by default; automated
 qualification does not promote defaults. Briefly assess whether X2/X3 can
 reuse the work directly. Substantial new title adapters, pin adoption and
-other discretionary title-only work go after the shared-engine burndown or
-are deferred. Existing renderer selections and the functioning LLE floor stay
+other discretionary title-only work are outside the current shared-engine
+queue. Xbox/platform and dedicated memory-budget work are deferred by the owner. Existing renderer selections and the functioning LLE floor stay
 available.
 
 ## Landed baseline
@@ -45,15 +49,15 @@ available.
 
 ## Remaining opportunities
 
-These are opportunity records, not promised gains or a requirement to implement
-every hypothesis. The current dispositions below define what remains. Shared
-opportunities have been screened, qualified or rejected. Eight of nine have an
-implementation or explicit deferral disposition. R7's SMK ordinary/reference
-full-race and listening checks are the remaining active qualification item.
-The original candidate tasks below are retained for context; the current
-dispositions are authoritative. The combined Metroid owner gate is cleared.
-Reopen deferred work only when its documented trigger is met. Keep individual
-passed, failed and unverified results.
+These are the historical nine follow-up candidates, not a count of the full
+native/HLE campaign. R8 is reopened to evaluate remaining concrete shared-engine
+costs; it is not restricted to finding a dominant whole-subsystem rewrite.
+R7 is separate validation of the existing shared DSP-1 implementation using SMK.
+R6 title adoption is outside this engine queue. The owner explicitly defers
+Xbox/platform and dedicated memory work. Concrete R3/R5 proposals that showed
+no value in the inspected workloads are rejected, without an all-game claim.
+The combined Metroid owner check remains cleared. Keep individual passed,
+failed and unverified results; a completed screen is not a shipped optimization.
 
 | ID | Opportunity and scope | Next task and evidence required |
 | --- | --- | --- |
@@ -64,31 +68,33 @@ passed, failed and unverified results.
 | R5 | **Batch remaining large-tile, offset-per-tile and mosaic paths.** Shared PPU, targeted games outside MMX. | Select a real hot workload first. Large-tile rendering remains per pixel; offset-per-tile selects authentic segments but still refetches tile/plane data inside each pixel. Test negative margins, flips, 16x16 midpoint changes, windows, mosaic and shadow/capture consumers. Ordinary 2/4bpp and opt-in 8bpp span implementations already exist. |
 | R6 | **Audit and finish Doom's existing 8bpp adoption.** Reuse `beads-8wg.2.115` and merged PR 151. | Confirm the current delivered build's effective selection first. Windows gameplay/performance and owner qualification already exist; the shared selector remains LLE, and the inspected title CMake/tools/workflow sources had no explicit HLE selection. Complete integration only if missing; close as already done if delivery enables it. Do not count old gains again. |
 | R7 | **Finish Super Mario Kart DSP-1 qualification.** Existing issue `beads-qhnd`; framework PR 150 is already merged. | Complete ordinary HLE/LLE lap/finish/results/next-race and listening checks. Matched capacity-pool performance and prior current-build state contracts already exist; no idle-host requirement or broader default promotion. |
-| R8 | **Select further shared whole-subsystem replacements from a demonstrated bottleneck.** Game-agnostic engine work, validated in actual titles. | Coprocessor jobs, idle waits, music-driver transactions and GPU rendering are legitimate boundaries. Choose one only when a useful workload demonstrates dominant cost; reuse existing issues/implementations. Elevate reusable operations from custom renderers where justified, retaining title policy in adapters. Define outputs, status/IRQ/readback, PCM and guest-continuation contracts. Assess software batching before a GPU rewrite; worker pools are not presumed useful on a single-core Xbox. |
+| R8 | **Evaluate remaining measurable shared native/HLE opportunities.** Reopened engine investigation. | Work serially through shared rendering, execution/bus/DMA, SPC/DSP audio, and scheduling/coprocessor questions in [the full burndown](NATIVE_HLE_BURNDOWN.md#remaining-engine-investigation-r8). Reuse prior results; no dominant-cost or large-rewrite requirement. Accept measured useful shared gains or reject a concrete proposal with its tested reason. |
 | R9 | **Establish the original Xbox/32-bit budget.** Platform qualification, separate from desktop results. | Measure resident/peak memory, row-stack use, code/cache pressure and audio/render costs on the supported target. Account for assets, caches and rewind; reduce the largest demonstrated stores first. Actual Xbox qualification remains unverified. |
 
-## Current dispositions (2026-10-29)
+## Current results (2026-10-29)
 
 | ID | Status and evidence |
 | --- | --- |
 | R1 | Complete: owner cleared, merged and released as X1 v2.3.9, source/tag `77d0cb3a`, current-main merge `9fd75989`. MMX PRs 149/152/153/154 are merged. One verified current ZIP is delivered. New `MMX_NATIVE_BG_SPANS` source default OFF; Windows release explicitly enables it. Five paired i5-4670 samples/profile: median CPU reduction 12.81% at 16:9, 34.69% at 32:9; custom 4:3 and stock neutral/inconclusive. All four Magic Carpet gates pass. This is a title result, not a new shared-engine implementation. |
 | R2 | Complete: existing shared row planner adopted, owner combined gameplay/rewind cleared, integrated by Metroid PR 45 and shipped in stable v0.3.19 (PR 46). PR 38 was merged earlier; superseded integration PRs are closed. New `SM_NATIVE_ROW_PLAN` source default remains OFF. Original isolated runtime `aa66ec96`: five paired i5-4670 samples/profile, median CPU reduction 8.86% custom 4:3, 5.56% at 16:9; stock/32:9 neutral/inconclusive. These remain measurements of that package, not the later CI release executable. |
-| R3 | Investigation complete; implementation deferred for measured SMW workload. Both stock/wide routes had zero same-line main/sub background-layer overlap. Reopen for a demonstrated hot overlapping consumer, not merely two draw calls. Owning issue `beads-8wg.2.164`. |
+| R3 | **Rejected for the tested SMW workloads.** Both stock/wide routes had zero same-line main/sub background-layer overlap, and the custom renderer already decodes once. No useful work for the proposed consolidation was demonstrated. This is not an all-game theorem; do not repeat the same investigation without new evidence. Owning issue `beads-8wg.2.164`. |
 | R4 | Complete: Metroid native-center reuse adapter qualified, owner combined gameplay/rewind cleared, integrated by PR 45 and shipped in stable v0.3.19. New `SM_NATIVE_CENTER_REUSE` source default remains OFF. Original measured runtime `914d518`: five paired i5-4670 samples/profile against R2, median CPU reduction 16.28% custom 4:3, 12.36% at 16:9, 7.95% at 32:9, all pairs positive. These require trusted matching NewRenderer/NoSpriteLimits=1 input at discrete alpha; interpolation and unsupported cases keep the full custom route. NoSpriteLimits=0 fallback and stock are neutral/inconclusive. Do not add these percentages to R2's different NoSpriteLimits=0 package. Windows/Linux fixtures, live effects/extra presentations, production same/fresh-process restore and matched run-ahead pass. Shared owner `beads-8wg.2.165`, title owner `beads-8wg.6.36`. This closes the grandfathered title experiment, not all future shared R4 possibilities. |
-| R5 | Source screen complete; implementation deferred under `beads-8wg.2.166`. Nineteen retained real Metroid captures contain 4,256 nonblank rows and 11,868 enabled background-layer rows, with zero enabled large-tile/OPT/mosaic rows. This is selected-scene evidence, not a time-weighted profile or an all-game conclusion. Reopen for a measured hot built-game workload; the known Metal Warriors source consumer has no local ROM/build and does not justify a new title port here. |
-| R8 | Selection investigation `beads-8wg.2.169` completed with independent validation. Current X1 v2.3.9 stock/wide observations do not establish a dominant broad shared CPU/device replacement; defer implementation until a measured hot shared transaction has a concrete caller contract. These are independent late-route main-thread IP observations with a fixed wall-clock warmup, not frame-matched percentages or throughput. Exact feature/configuration identities are retained. A substantial shared rewind-storage lead moves to separate R9 issue `beads-8wg.2.170`. |
-| R9 | Shared compact registers (`beads-8wg.2.167`, framework PR 221) and bounded scene-export scratch (`beads-8wg.2.168`, PR 222) complete: qualified, owner cleared, merged into engine `31d72e1a` and delivered in X1 v2.3.9, Metroid v0.3.19 and SMW v0.15.3. Original measured package engine `8323d781`, MMX adapter `4fe87d3`, Metroid adapter `64ca06d`, SMW `324dfc8`. All four Magic Carpet cases, affected render/effect/temporal/current-state/rollback gates and unpaused SMW current-build load pass. Five balanced pairs per stock/wide profile through the capacity pool: all six CPU profiles neutral/inconclusive, no demonstrated speedup. Actual BSS -1,572,864 bytes MMX/SMW, -1,778,304 Metroid; median paired peak commit about 1.51-2.04 MiB lower. Metroid EndFrame stack 412,352 -> 1,456 bytes, Draw 214,432 -> 13,040. [Contracts/costs](RASTER_REGISTERS.md); [export lifetime](SCENE_EXPORT_MEMORY.md). Actual Xbox/linked 32-bit target budget and further diagnostic-store contracts remain unverified/separate leads. |
-| R6 | Current-delivery audit complete under existing `beads-8wg.2.115`; adoption deferred. Doom v0.04 tag `37cc1326` (current `23b7a49`, README-only delta) actually pins divergent engine `838eb4c4`, which lacks PR 151's 8bpp implementation/selector. Its release workflow has no override. The title requires input hooks and `superfx_replay_snapshot_with_history` absent from shared main, so a blind pin update breaks supported callers. Reconcile those existing shared-engine contracts before explicit title opt-in and matched current stock/enhanced qualification. Do not make another one-off engine fork, replace current delivery with the old accepted binary, or count October 9 gains again. Exact release archive/EXE identities and caller proofs: `doom-adoption-20261028/evidence/final-disposition.json`. No new runtime PR or performance claim. |
+| R5 | **Rejected for the inspected Metroid workloads** under `beads-8wg.2.166`. Nineteen real captures contain 4,256 nonblank rows and 11,868 enabled BG-layer rows, with zero enabled large-tile/OPT/mosaic rows. These captures do not establish a universal ceiling or justify a new title port. Other shared rendering questions remain explicit in R8.1. |
+| R8 | **Open, with corrected scope:** issue `beads-8wg.2.169` now covers remaining concrete shared native/HLE costs, not only dominant subsystem replacements. Earlier X1 stock/wide samples did not exhaust that question. The full burndown lists four serial cost questions and requires implementation/measurement or evidence-backed rejection of each concrete proposal. Old samples remain independent selection observations, not matched throughput or proof that no gains remain. |
+| R9 | Shared compact registers (`beads-8wg.2.167`, framework PR 221) and bounded scene-export scratch (`beads-8wg.2.168`, PR 222) complete: qualified, owner cleared, merged into engine `31d72e1a` and delivered in X1 v2.3.9, Metroid v0.3.19 and SMW v0.15.3. Original measured package engine `8323d781`, MMX adapter `4fe87d3`, Metroid adapter `64ca06d`, SMW `324dfc8`. All four Magic Carpet cases, affected render/effect/temporal/current-state/rollback gates and unpaused SMW current-build load pass. Five balanced pairs per stock/wide profile through the capacity pool: all six CPU profiles neutral/inconclusive, no demonstrated speedup. Actual BSS -1,572,864 bytes MMX/SMW, -1,778,304 Metroid; median paired peak commit about 1.51-2.04 MiB lower. Metroid EndFrame stack 412,352 -> 1,456 bytes, Draw 214,432 -> 13,040. [Contracts/costs](RASTER_REGISTERS.md); [export lifetime](SCENE_EXPORT_MEMORY.md). The owner explicitly defers further Xbox/linked 32-bit qualification and dedicated memory-budget work. These shipped savings remain a byproduct of useful engine work; compressed rewind remains rejected for CPU regressions. |
+| R6 | **Audit complete; title adoption outside this engine queue.** Existing `beads-8wg.2.115` records that Doom v0.04 pins divergent engine `838eb4c4` without the accepted 8bpp selector. Required input/replay callers prevent a blind pin update. The shared 8bpp optimization and historical qualification remain valid; reconciling the title fork is not a shared-engine completion gate. No new title implementation, runtime PR or gain claim. Evidence: `doom-adoption-20261028/evidence/final-disposition.json`. |
 | R7 | Partial qualification recorded under `beads-qhnd`, which remains open for ordinary/reference full-race and listening checks. Five balanced matched stock5001-frame pairs show existing unchanged HLE median processCPU reduction12.79% (all pairs11.06-14.96%); no new optimization, GPU/presentation or Xbox claim. HLEv2 coordinate-assisted five laps/finish/results/next-race passed with game-owned flags. The same LLEv2 route and one bounded heading-reset v3 did not finish; unresolved fixture/backend interaction, not an established production defect or HLE improvement. Stop fixture tuning; HLEv3 not run. Prior source-identical repeat/state contracts reused. Normal desktop comparators and paired ordinary-route audio clips are staged outside delivery; no runtime PR/default change/release. Raw records, limits and handoff: `smk-dsp1-finish-20261028/evidence/final-disposition.json`. |
 
-### Final adoption queue
+### Active queue and scope
 
-The remaining active item is R7: ordinary HLE and LLE races through results and
-the next race, listening, and the prepared visual/current-build save/load check.
-Reuse the existing isolated builds and observations. Do not tune the failed
-assisted-race fixture again or repeat cleared X1/SMW/Metroid owner checks.
-After R7 has a recorded outcome, finish the SNES campaign closeout. Deferred
-opportunities below are not additional required experiments.
+R8's remaining shared-engine questions are open in the full native/HLE burndown.
+Use existing evidence first, then test concrete candidates serially. Low old
+sample shares alone do not reject all execution, DMA or audio optimization.
+R7's existing shared DSP-1 consumer checks remain pending: ordinary HLE/LLE
+races through results and the next race, listening, visual/current-build save/load.
+Reuse the prepared builds and individual observations; do not tune the failed
+assisted-race fixture or repeat cleared X1/SMW/Metroid owner checks. Completing
+R7 alone does not finish the reopened engine investigation.
 
 Owner direction on 2026-10-29: remaining items produce commits/PRs and QA
 builds; publish only at the campaign endpoint, not after individual items.
@@ -116,22 +122,20 @@ demonstrated memory-limited consumer, a materially different design preserving
 the same contract, and matched per-game CPU neutrality/improvement plus process
 memory savings. The rejected experiment record and raw costs are indexed by owning issue
 `beads-8wg.2.170`; no compressed backend is adopted in this branch.
-Actual Xbox/linked 32-bit qualification remains unavailable, not complete.
+Further Xbox/linked 32-bit and dedicated memory-budget work is deferred by the
+owner; unavailable hardware is not a prerequisite for this campaign.
 
-After shared-engine opportunities are dispositioned, finish the existing
-Mario Kart DSP-1 title qualification (R7). R6's effective-selection audit is
-complete; adoption awaits supported shared-engine reconciliation. Consider
-substantial X2/X3 adoption only if the brief assessment
-shows it needs new work. No speculative new title renderer rewrites belong
-ahead of shared work. Record deferred items with a concrete reopening trigger.
+R6's title audit is complete; new Doom adoption is outside this engine queue.
+SMK is a validation consumer of an existing shared DSP-1 implementation, not a
+new title optimization. Substantial X2/X3 ports are also outside this queue.
+The full native/HLE inventory defines the remaining shared-engine work.
 
 The brief X2/X3 assessment is complete: current X2 master `9c3b374c` and X3
 master `e88e5aab` both use the shared live PPU plus a shared Mmx23 margin
 provider, rather than MMX's custom renderer. The X1 span build flag is not a
-drop-in adoption. It embeds X1 scene/WRAM/private-CHR/palette rules. Defer a
-substantial port until a measured hot shared provider justifies a reusable
-span interface; optimize that mechanism in the engine and keep title policies
-in adapters. Their existing correctness work and differing engine pins are
+drop-in adoption. It embeds X1 scene/WRAM/private-CHR/palette rules. Reject direct flag adoption. A substantial title port is outside this queue;
+any future reusable mechanism must have a measured shared consumer, with title
+policies kept in adapters. Their existing correctness work and differing engine pins are
 untouched. No new X2/X3 gain is claimed. Source hashes/extracts and disposition
 are in `native-center-reuse-20261028/evidence/x2-x3-adoption-assessment.json`.
 
@@ -147,7 +151,7 @@ Metroid owner gameplay/rewind handoff passed on 2026-10-29; PR 45 integrated
 the fix and stable v0.3.19 contains it. PR 44 was closed as superseded. X1 and
 SMW passes remain cleared. Tracking: `beads-8wg.6.25` (closed).
 
-Conditional room-edge camera anchoring is deferred under `beads-8wg.6.39`.
+The tested simple room-edge camera clamps are rejected under `beads-8wg.6.39`.
 Two minimal clamp policies produce discontinuous offsets over an actual native
 door sequence: one moves unchanged terrain on entry, the other moves a stationary
 departing-door edge when the destination camera initializes. These are offline
@@ -226,15 +230,15 @@ cleanup manifests preserved.
    reproducible regression because other games improve. Small mixed results
    within variation are neutral/inconclusive. Identical original/candidate
    failures are shared defects, tracked separately.
-7. After two unsuccessful improvement experiments, reassess and pivot. Defer
-   work whose measured cost cannot repay its complexity. GPU, coprocessor and
+7. After two unsuccessful improvement experiments, reassess and pivot. Reject
+   concrete proposals that do not demonstrate useful value under their contract. GPU, coprocessor and
    driver replacements remain conditional until their workloads justify them.
 8. For new changes requiring human regression coverage, bundle compatible
    candidates and pass automated gates first, then prepare normal-window,
    normal-audio owner checks. Preserve observations and wait for the owner's
    approval before merging that new batch. Do not repeat cleared checks.
 
-## Already completed or deprioritized
+## Prior completed and rejected work
 
 Diagnostic culling, cached frame composition, exact raster snapshot reuse,
 deferred reference pixels, APU event spans, native Mode 1/OAM/window jobs,
@@ -243,9 +247,10 @@ slicing CRC and MMX whole-view row composition are baseline work. The earlier
 
 Two palette/color-cache experiments and the earlier generic composition-helper
 and CPU bus-guard candidates were rejected. Reopen them only with new evidence.
-Blind DMA, additional dispatch/AOT roots and deeper audio HLE are lower priority
-on the inspected workloads. Historical component shares are not current
-post-row ceilings and cannot establish priorities for every SNES title.
+Remaining shared execution/bus/DMA, audio and scheduling/coprocessor questions
+are explicitly open under R8. New title-specific AOT roots or music-driver
+hooks are outside this queue. Historical component shares are not current
+post-row ceilings and cannot establish that no further useful gains remain.
 
 ## Evidence and continuation
 
