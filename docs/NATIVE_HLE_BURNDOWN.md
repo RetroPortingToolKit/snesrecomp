@@ -86,8 +86,14 @@ After two failed improvement experiments, reassess before further tuning.
   tested stock-MMX package** after independent review. A content-keyed cache
   covered captured copies and direct writes; exact outputs passed, but two
   built-game pairs did not demonstrate a useful gain. Stop further clipping/
-  OAM tuning. The bounded architectural reassessment (`beads-8wg.2.178`) now
-  selects a focused shared Mode 7/presentation cost observation.
+  OAM tuning. The bounded architectural reassessment (`beads-8wg.2.178`)
+  reached SMK's actual **legacy** renderer. Its Mode 7 image-line service
+  consumed 61.59% of sampled instrumented raster cycles, with overhead and
+  old-package limits retained; this is not a whole-game CPU percentage.
+  The legacy component source matches current main. A coherent shared legacy
+  Mode 7 line service is now being implemented under `beads-8wg.2.182`;
+  no speedup is qualified yet. The existing optimized renderer's affine
+  increments do not establish that this legacy consumer already receives them.
 - R8.2 execution/bus (`beads-8wg.2.174`): immutable-ROM read fusion passed
   independent review; [PR 225](https://github.com/RetroPortingToolKit/snesrecomp/pull/225)
   retains `REFERENCE` as default and selects `FUSED` with
@@ -106,9 +112,13 @@ After two failed improvement experiments, reassess before further tuning.
   HBlank boundaries passed independent review, focused contracts and
   current-build state checks. [PR 226](https://github.com/RetroPortingToolKit/snesrecomp/pull/226)
   awaits combined qualification. Runtime measurements remain neutral/
-  inconclusive. The remaining command-level DSP-1/Cx4/Super FX/SA-1 assessment
-  is tracked separately in `beads-8wg.2.179`; this scheduling result does not
-  establish universal coprocessor exhaustion.
+  inconclusive. The source assessment (`beads-8wg.2.179`) rejected duplicate
+  DSP-1/native-math wrappers and universal command IDs for arbitrary cartridge
+  programs. It selected two concrete shared mechanisms that remain pending:
+  SA-1 timer event spans (`beads-8wg.2.180`, implementation/SMRPG validation)
+  and Super FX halted-clock draining (`beads-8wg.2.181`, queued). Neither is a
+  measured gain yet; the scheduling result does not establish universal
+  coprocessor exhaustion.
 
 ## Separate consumer validation and excluded work
 
