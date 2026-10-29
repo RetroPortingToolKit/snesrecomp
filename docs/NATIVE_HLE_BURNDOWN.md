@@ -57,8 +57,8 @@ establish that remaining engine work is exhausted.
 
 Owner update on 2026-10-29 permits up to three concurrent item agents, one
 item per agent. Use existing evidence first, keep branches/evidence isolated,
-and independently review each result before integration. Scheduling waits for
-a slot while rendering, execution and audio proceed:
+and independently review each result before integration. A freed validation
+slot now runs scheduling while execution and audio proceed:
 
 | Task | Question to resolve | Completion evidence |
 | --- | --- | --- |
@@ -73,6 +73,24 @@ their measurements and accepted/rejected results. If existing evidence cannot
 answer a question, take the smallest measurement that can. Neither a low old
 sample share nor failure to find a major rewrite closes the question by itself.
 After two failed improvement experiments, reassess before further tuning.
+
+## Current experiment checkpoint (2026-10-29)
+
+- R8.1 ordinary 4bpp viewport span clipping (`beads-8wg.2.173`): **rejected
+  for adoption in the tested stock-MMX package**. Independent validation
+  reproduced 8,192 exact-reference cases. Matched built-game CPU samples were
+  mixed/inconclusive with a negative trend; they establish neither a gain nor
+  a reproducible regression. No default change or PR. The rendering family
+  remains open, including a shared OAM eligibility lead that first needs
+  measured inclusive cost and complete capture/register invalidation coverage.
+- R8.2 execution/bus (`beads-8wg.2.174`): eligible immutable-ROM mapping
+  fusion is being qualified. No accepted gain yet.
+- R8.3 audio (`beads-8wg.2.175`): duplicate DSP dry/echo mixing fusion passed
+  focused sample/state checks; built-game measurement and independent review
+  remain in progress. No accepted gain or default change yet.
+- R8.4 scheduling/coprocessors (`beads-8wg.2.176`): the next item agent is
+  selecting a concrete shared candidate. This is not a claim that every
+  coprocessor needs a replacement.
 
 ## Separate consumer validation and excluded work
 
