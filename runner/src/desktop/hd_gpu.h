@@ -25,7 +25,10 @@ bool SnesHdGpuAdmit(SnesHdGpu *gpu, unsigned native_width,
     unsigned native_height, unsigned scale, size_t target_budget,
     unsigned *width, unsigned *height);
 /* Draw into the caller's current framebuffer. OpenGL state is restored;
- * logical image row0 occupies texture row0. Context ownership stays local. */
+ * logical image row0 occupies texture row0. Context ownership stays local.
+ * A window-sized target evaluates exactly the visible texel centers of the
+ * requested raster, equivalent to a full raster followed by nearest sampling.
+ * Filters/presets that inspect neighboring texels should use the full target. */
 bool SnesHdGpuDraw(SnesHdGpu *gpu, const SnesHdFrame *frame,
     unsigned scale, unsigned output_width, unsigned output_height);
 /* Nonblocking timestamp collection in normal use. wait=true is for bounded

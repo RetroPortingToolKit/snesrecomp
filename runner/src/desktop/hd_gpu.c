@@ -92,7 +92,7 @@ static const char *fragment_source =
   "return word(tile*64+(p.y&7)*8+(p.x&7),layer)>>8;}\n"
   "uint color(uint p,uvec4 object,int y){uint layer=(p>>8)&15u;return layer==4u||layer==6u?object.g:texelFetch(palette_plane,ivec2(int(p&255u),y),0).r;}\n"
   "void rgb(uint c){result=vec4(vec3((c>>16)&255u,(c>>8)&255u,c&255u)/255.0,1.0);}\n"
-  "void main(){ivec2 pixel=ivec2(gl_FragCoord.xy),p=pixel;p=p*(requested/output_size)+p*(requested%output_size)/output_size;"
+  "void main(){ivec2 pixel=ivec2(gl_FragCoord.xy);ivec2 p=ivec2((uvec2(pixel)*2u+1u)*uvec2(requested)/(uvec2(output_size)*2u));"
   "ivec2 n=p/scale;uvec4 object=texelFetch(object_plane,n,0);ivec4 cfg=texelFetch(metadata,ivec2(0,n.y),0);"
   "if(scale==1||cfg.x==1||object.a!=0u){rgb(texelFetch(native_plane,n,0).r);return;}"
   "ivec4 a=texelFetch(metadata,ivec2(1,n.y),0),b=texelFetch(metadata,ivec2(2,n.y),0),c=texelFetch(metadata,ivec2(3,n.y),0);"
@@ -135,7 +135,7 @@ static const char *fragment_source =
 static const char *coordinate_source =
   "uniform usampler2D affine_plane;uniform isampler2D metadata;"
   "uniform int requested_height,output_height,scale;out ivec4 coordinates;"
-  "void main(){ivec2 p=ivec2(gl_FragCoord.xy);int py=p.y*(requested_height/output_height)+p.y*(requested_height%output_height)/output_height;"
+  "void main(){ivec2 p=ivec2(gl_FragCoord.xy);int py=int((uint(p.y)*2u+1u)*uint(requested_height)/(uint(output_height)*2u));"
   "int y=py/scale;ivec4 b=texelFetch(metadata,ivec2(2,y),0);"
   "uvec4 d0=texelFetch(affine_plane,ivec2(0,y),0),d1=texelFetch(affine_plane,ivec2(1,y),0),d2=texelFetch(affine_plane,ivec2(2,y),0),d3=texelFetch(affine_plane,ivec2(3,y),0);"
   "precise double fy=double(py%scale)/double(scale),x=double(b.z+p.x);"

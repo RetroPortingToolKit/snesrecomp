@@ -39,6 +39,17 @@ static void compare_roi(SnesHdGpu *g, const SnesHdFrame *f, unsigned scale,
     }
   (void)g;
 }
+static void compare_visible(SnesHdGpu *g,const SnesHdFrame *f,unsigned scale) {
+  enum { w=137,h=7 };
+  SnesHdView v; CHECK(SnesHdFrameView(f,&v));
+  make_target(w,h);CHECK(SnesHdGpuDraw(g,f,scale,w,h));
+  uint32_t gpu[w*h];glReadPixels(0,0,w,h,GL_BGRA,GL_UNSIGNED_BYTE,gpu);
+  for(unsigned y=0;y<h;++y)for(unsigned x=0;x<w;++x) {
+    unsigned px=(2*x+1)*v.width*scale/(2*w),py=(2*y+1)*v.height*scale/(2*h);
+    uint32_t expected;CHECK(SnesHdFrameRenderRegion(f,scale,px,py,1,1,&expected,4));
+    CHECK((gpu[y*w+x]&0xffffff)==(expected&0xffffff));
+  }
+}
 int main(void) {
   SDL_SetMainReady();
   CHECK(SDL_Init(SDL_INIT_VIDEO));
@@ -76,6 +87,7 @@ int main(void) {
       }
       SnesHdGpuStats stats; CHECK(SnesHdGpuReadStats(g, true, &stats));
       CHECK(stats.gpu_timestamps && stats.draw_gpu_ns);
+      compare_visible(g,f,scale);
     }
     SnesHdFrameDestroy(f);
   }
@@ -110,6 +122,7 @@ int main(void) {
       compare_roi(g, f, scale, 16 * scale, 0, 64, h < 16 ? h : 16);
       compare_roi(g, f, scale, w - 64, h > 8 ? h - 8 : 0, 64, h < 8 ? h : 8);
       comparisons += 2;
+      compare_visible(g,f,scale);
     }
     if (seed == 2) SnesHdGpuReset(g);
     SnesHdFrameDestroy(f);
