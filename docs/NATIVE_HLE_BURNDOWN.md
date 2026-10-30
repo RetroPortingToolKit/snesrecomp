@@ -54,6 +54,24 @@ R8 gains. Metroid's authored-room clipping fix is included; adaptive
 widescreen remains supported. See the [report and raw-sample index](CUMULATIVE_CAMPAIGN_2026-10-29.md)
 for original pre-October-22 source pins, hosts, variation and limits.
 
+The owner-requested Windows builds and GitHub publication are complete under
+`beads-8wg.2.186`: [MMX 2.3.10](https://github.com/mstan/MegaManXSNESRecomp/releases/tag/v2.3.10),
+[Metroid 0.3.20](https://github.com/mstan/SuperMetroidRecomp/releases/tag/v0.3.20),
+[SMW 0.15.4](https://github.com/mstan/SuperMarioWorldRecomp/releases/tag/v0.15.4)
+and [snesrecomp CLI 0.4.3-alpha](https://github.com/RetroPortingToolKit/snesrecomp/releases/tag/v0.4.3-alpha).
+Game PRs 155, 47 and 26 are merged. Final published asset digests match the
+single current delivery ZIPs in `G:\Nextcloud\Games\SNES`; native saves and
+settings are preserved. The CLI's actual release-CI artifact was downloaded,
+checked and independently reviewed after the automatic upload.
+
+SMW's supported stock generation now excludes the legacy-only adapter already
+excluded by its stock CMake target. Final stock output matches all 102 approved
+generated C files exactly. Legacy dispatch and every body also match; only its
+module build identity differs. Both packaged editions retain their scoped
+capture and current-build restore evidence. Lua, Falcon helper/licenses and
+the optional legacy executable remain in one ZIP. This is a Windows release
+refresh, with no new performance, other-platform or multiplayer qualification.
+
 Remaining closeout work:
 
 - Separate SMK game PR3 has committed, independently reviewed Lakitu and
@@ -62,8 +80,11 @@ Remaining closeout work:
 - Existing shared DSP-1 consumer issue `beads-qhnd` still needs the ordinary
   HLE/LLE race/results/next-race and listening checks. Assisted fixtures do
   not satisfy those checks.
-- Publish at the campaign endpoint and clean disposable staging after
-  retaining the campaign evidence. No new per-item release is required.
+- Complete the separate SMK consumer/presentation follow-ups before its
+  publication. The requested shared-engine and three-game Windows releases
+  above are already delivered. Retain private campaign evidence and remove
+  disposable staging; no new per-item release or repeated cleared playcheck
+  is required.
 
 ## Original 14-item checklist
 
