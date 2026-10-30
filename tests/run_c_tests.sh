@@ -237,6 +237,24 @@ echo "=== SA-1 CPU, mapping and peripherals ==="
     -o "$OUT/sa1_test"
 "$OUT/sa1_test"
 
+"$CC" -std=c11 -Wall -Wextra -Werror -O1 \
+    -DSNESRECOMP_SA1_TIMER_NATIVE=1 \
+    -I "$ROOT/runner/src" -I "$ROOT/runner/src/snes" \
+    "$ROOT/tests/sa1/sa1_test.c" \
+    "$ROOT/runner/src/snes/sa1.c" \
+    "$ROOT/runner/src/sha256.c" "$ROOT/runner/src/snes/tier2_capture.c" \
+    "$ROOT/runner/src/snes/interp816.c" \
+    -o "$OUT/sa1_test_native"
+"$OUT/sa1_test_native"
+
+"$CC" -std=c11 -Wall -Wextra -Werror -O1 \
+    -I "$ROOT/runner/src" -I "$ROOT/runner/src/snes" \
+    "$ROOT/tests/sa1/timer_span_test.c" \
+    "$ROOT/runner/src/sha256.c" "$ROOT/runner/src/snes/tier2_capture.c" \
+    "$ROOT/runner/src/snes/interp816.c" \
+    -o "$OUT/sa1_timer_span_test"
+"$OUT/sa1_timer_span_test"
+
 echo "=== manual joypad serial protocol ==="
 "$CC" -std=c11 -Wall -Wextra -Werror -O1 \
     -I "$ROOT/runner/src" -I "$ROOT/runner/src/snes" \
