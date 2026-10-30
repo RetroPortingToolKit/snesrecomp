@@ -11,11 +11,20 @@ facility or elevate the mechanism into the engine with real consumer validation.
 Keep game-specific scene, asset and camera policy in title adapters. Moving
 game-specific code or adding an unused abstraction is not engine consolidation.
 
-Finish the already-authorized MMX and Super Metroid candidates, retaining their
-new optimization options as explicit opt-ins. Briefly assess X2/X3 reuse; any
-substantial new title adoption belongs after the shared-engine burndown or is
-deferred. Further discretionary game-specific work also belongs at the end.
-See [the burndown](docs/OPTIMIZATION_BURNDOWN.md) for scope and evidence.
+The already-authorized MMX/Super Metroid candidates and brief X2/X3 reuse
+assessment are complete. Keep their new source optimization choices opt-in.
+Current work is the remaining concrete shared-engine R8 questions and existing
+shared DSP-1 consumer validation in SMK. New title-specific adoption is outside
+this engine queue.
+Owner update 2026-10-29 authorizes up to three concurrent item agents, one item
+per agent, with isolated worktrees/evidence and independent result review.
+See the [full native/HLE burndown](docs/NATIVE_HLE_BURNDOWN.md) for the current
+original-list reconciliation and remaining engine work. The nine-item
+[follow-up register](docs/OPTIMIZATION_BURNDOWN.md) is historical context, not
+a completion percentage for the full campaign. Owner direction 2026-10-29:
+reject concrete proposals that show no value; explicitly defer further
+Xbox/platform and dedicated memory-budget work. Games remain test consumers;
+new title-specific adoption is outside the engine queue. Publish at the end.
 
 ## HLE/LLE policy
 
