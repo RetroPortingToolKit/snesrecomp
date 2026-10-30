@@ -5,6 +5,7 @@
 extern "C" {
 #endif
 typedef struct SnesHdGpu SnesHdGpu;
+typedef struct SnesHdGpuImage { uint32_t texture; unsigned width, height; bool visible_samples; } SnesHdGpuImage;
 typedef struct SnesHdGpuStats {
   uint64_t frames, uploaded_bytes, upload_gpu_ns, draw_gpu_ns;
   unsigned requested_width, requested_height, output_width, output_height;
@@ -31,6 +32,18 @@ bool SnesHdGpuAdmit(SnesHdGpu *gpu, unsigned native_width,
  * Filters/presets that inspect neighboring texels should use the full target. */
 bool SnesHdGpuDraw(SnesHdGpu *gpu, const SnesHdFrame *frame,
     unsigned scale, unsigned output_width, unsigned output_height);
+/* Optional native/foreground planes belong to this presentation, leaving
+ * the published frame immutable (OSD, volume bar and host UI are local). */
+bool SnesHdGpuDrawLayers(SnesHdGpu *gpu, const SnesHdFrame *frame,
+    unsigned scale, unsigned width, unsigned height,
+    const uint32_t *native, size_t native_pitch,
+    const uint32_t *overlay, size_t overlay_pitch);
+/* Shared bounded offscreen target for desktop presenters. visible_samples
+ * gives the same nearest-filtered result using only window-sized storage. */
+bool SnesHdGpuRender(SnesHdGpu *gpu, const SnesHdFrame *frame, unsigned scale,
+    unsigned display_width, unsigned display_height, bool visible_samples,
+    size_t budget, const uint32_t *native, size_t native_pitch,
+    const uint32_t *overlay, size_t overlay_pitch, SnesHdGpuImage *image);
 /* Nonblocking timestamp collection in normal use. wait=true is for bounded
  * benchmark/QA only, never the interactive presentation loop. */
 bool SnesHdGpuReadStats(SnesHdGpu *gpu, bool wait, SnesHdGpuStats *stats);

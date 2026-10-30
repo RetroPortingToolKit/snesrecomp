@@ -42,6 +42,7 @@
 #include "host_clock.h"
 
 #include "snes/ppu.h"
+#include "snes/hd_jobs.h"
 #include "snes/msu1.h"
 #include "snes/apu.h"
 #include "snes/dsp.h"
@@ -83,6 +84,7 @@
 
 #if defined(RECOMP_LAUNCHER)
 #include "recomp_launcher.h"   /* recomp_launcher_run_window() */
+#include "hd_host_mod.h"
 #include "launcher_video.h"
 #include "launcher_profile.h"  /* launcher_profile_apply("snes", &gi) */
 /* The shared presentation blend is recomp-ui's (src/recomp_frame_blend.h,
@@ -122,6 +124,14 @@
 /* ─────────────────────────────────────────────────────────────────────────── */
 
 static const SnesDesktopHostGame *g_game;
+static SnesHdCapture *g_hd_capture;
+static bool g_custom_frame;
+static bool g_hd_osd_active;
+static uint32_t *g_hd_osd;
+static size_t g_hd_osd_capacity;
+#ifndef __ANDROID__
+void snesrecomp_opengl_set_hd(const SnesHdFrame *, const uint32_t *, size_t);
+#endif
 /* Stay true through transport shutdown, so disconnect cannot turn an online
  * match into an offline autosave or enable local state controls. */
 static bool g_netplay_session;
@@ -674,6 +684,12 @@ static void RendererApply(int choice) {
   else if (!strcmp(id, "software")) g_config.output_method = kOutputMethod_SDLSoftware;
   else {
     g_config.output_method = kOutputMethod_SDL;
+#ifndef __ANDROID__
+    /* Auto selects the shared GPU presenter. Explicit SDL drivers remain
+     * explicit; unavailable desktop GL falls back at initialization. */
+    if (!strcmp(id, "auto") && g_config.mode7.enabled)
+      g_config.output_method = kOutputMethod_OpenGL;
+#endif
     if (strcmp(id, "auto")) {
       SDL_SetHint(SDL_HINT_RENDER_DRIVER, id);
       host_report_breadcrumb("renderer request: %s ([Graphics] Renderer)", id);
@@ -725,6 +741,13 @@ static void PreparePpuFrame(void) {
   PpuBeginDrawing(g_ppu, g_my_pixels,
                   (g_game->native_widescreen ? fw : 256) * 4, flags);
   PpuSetExtraSpace(g_ppu, (uint8)g_ws_extra);
+  if (g_config.mode7.enabled && !g_game->hd_frame &&
+      g_config.output_method == kOutputMethod_OpenGL) {
+    if (!g_hd_capture) g_hd_capture = SnesHdCaptureCreate();
+    SnesHdCaptureBind(g_hd_capture, g_ppu, (unsigned)fh);
+  } else if (g_hd_capture) {
+    SnesHdCaptureBind(g_hd_capture, NULL, 0);
+  }
 }
 
 // --- Scripted input ---
@@ -1338,9 +1361,11 @@ static void NoteStateFrame(void) {
 void RtlDrawPpuFrame(uint8 *pixel_buffer, size_t pitch, uint32 render_flags) {
   (void)render_flags;
   if (!pixel_buffer) return;
+  g_custom_frame = false;
   if (g_game->draw_frame &&
       g_game->draw_frame(pixel_buffer, pitch, g_my_pixels, g_snes_width,
                          g_snes_height, g_present_alpha)) {
+    g_custom_frame = true;
     /* Publish what the title actually composed. The debug surface otherwise
      * captures g_ppu->renderBuffer, which for a game-owned compositor is the
      * authentic 256-column raster it composed FROM -- so a wide frame reads
@@ -1359,18 +1384,36 @@ void RtlDrawPpuFrame(uint8 *pixel_buffer, size_t pitch, uint32 render_flags) {
  * at half size here and the SDL/GL scale brings it back. Window-space chrome
  * is not available through the RendererFuncs contract, which is what the GL
  * presenter speaks. */
+static void HdOsdRect(const uint32_t *src, int sw, int sh, int dx, int dy,
+                      int w, int h, int dw, int dh) {
+  if (!g_hd_osd_active || !src || w <= 0 || h <= 0) return;
+  for (int y = 0; y < h; ++y) for (int x = 0; x < w; ++x) {
+    if (x + dx < 0 || x + dx >= dw || y + dy < 0 || y + dy >= dh) continue;
+    uint32_t s = src[(size_t)(y * sh / h) * sw + x * sw / w];
+    unsigned a = s >> 24, na = 255 - a;
+    uint32_t *d = &g_hd_osd[(size_t)(y + dy) * dw + x + dx];
+    unsigned oa = a + (*d >> 24) * na / 255;
+    uint32_t result = oa << 24;
+    for (unsigned b = 0; b < 24; b += 8)
+      result |= ((((s >> b) & 255) * a + ((*d >> b) & 255) * na) / 255) << b;
+    *d = result;
+  }
+}
 static void ComposeOsd(uint8 *dst, int pitch, int dst_w, int dst_h, int scale_div) {
   const uint32_t *px = NULL;
   int w = 0, h = 0;
-  if (snes_osd_image(&px, &w, &h) && px && w > 0 && h > 0)
+  if (snes_osd_image(&px, &w, &h) && px && w > 0 && h > 0) {
     snes_ovl_blit_panel_rect(dst, pitch, dst_w, dst_h, px, w, h,
                              4 / scale_div, 4 / scale_div, w / scale_div, h / scale_div);
+    HdOsdRect(px, w, h, 4 / scale_div, 4 / scale_div, w / scale_div, h / scale_div, dst_w, dst_h);
+  }
   /* The volume bar sits at the right edge, vertically centred, while the
    * volume was just changed. */
   if (snes_osd_volume_image(&px, &w, &h) && px && w > 0 && h > 0) {
     const int bw = w / scale_div, bh = h / scale_div;
     snes_ovl_blit_panel_rect(dst, pitch, dst_w, dst_h, px, w, h,
                              dst_w - bw - 4 / scale_div, (dst_h - bh) / 2, bw, bh);
+    HdOsdRect(px, w, h, dst_w - bw - 4 / scale_div, (dst_h - bh) / 2, bw, bh, dst_w, dst_h);
   }
   snes_osd_present_done();
 }
@@ -1512,8 +1555,29 @@ static void DrawPpuFrameWithPerf(void) {
       g_frozen_h = rows;
     }
   }
+  const SnesHdFrame *hd = NULL;
+  SnesHdView hd_view;
+  if (g_config.mode7.enabled && !g_config.frame_blend) {
+    hd = g_game->hd_frame ? g_game->hd_frame() :
+         !g_custom_frame ? SnesHdCaptureFrame(g_hd_capture) : NULL;
+  }
+  g_hd_osd_active = hd && SnesHdFrameView(hd, &hd_view) &&
+      hd_view.width == (unsigned)g_snes_width && hd_view.height == (unsigned)g_snes_height;
+  if (g_hd_osd_active && (size_t)hd_view.width * hd_view.height > g_hd_osd_capacity) {
+    size_t count = (size_t)hd_view.width * hd_view.height;
+    uint32_t *resized = realloc(g_hd_osd, count * 4);
+    if (resized) { g_hd_osd = resized; g_hd_osd_capacity = count; }
+    else g_hd_osd_active = false;
+  }
+  if (g_hd_osd_active) for (unsigned y = 0; y < hd_view.height; ++y)
+    memcpy(g_hd_osd + y * hd_view.width, hd_view.lines[y].overlay, hd_view.width * 4);
   ComposeOsd(pixel_buffer, pitch, g_snes_width * render_scale,
              g_snes_height * render_scale, 2);
+#ifndef __ANDROID__
+  if (g_config.output_method == kOutputMethod_OpenGL && g_hd_osd_active)
+    snesrecomp_opengl_set_hd(hd, g_hd_osd, g_snes_width * 4);
+#endif
+  g_hd_osd_active = false;
   /* Use the same completed simulation index as the common WRAM dumper. */
   const uint32 dump_frame = snes_frame_counter ? snes_frame_counter - 1 : 0;
   FrameDump_Present(dump_frame, pixel_buffer, pitch,
@@ -2990,6 +3054,7 @@ static void LauncherSeed(RecompLauncherCSettings *ls, RecompLauncherCGameInfo *g
     gi->mods = snes_mod_runtime_launcher_provider_c();
 #endif
   gi->in_session = in_session;
+  gi->mods = HdHostProvider(gi->mods);
   gi->has_open_launcher_hotkey = game->in_game_launcher ? 1 : 0;
 #if defined(SNES_HAS_LOBBY_CLIENT)
   /* The netplay button is capability-gated: these two fields are what
@@ -3763,6 +3828,9 @@ int snesrecomp_desktop_main(const SnesDesktopHostGame *game, int argc, char **ar
   RendererApply(RendererChoice());
 #ifndef __ANDROID__
   if (g_config.output_method == kOutputMethod_OpenGL) {
+    SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_CORE);
+    SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 3);
+    SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 3);
     g_win_flags |= SDL_WINDOW_OPENGL;
     snesrecomp_opengl_set_vsync(VSyncInterval());
     OpenGLRenderer_Create(&g_renderer_funcs);
@@ -3874,6 +3942,14 @@ error_reading:;
   /* SDL3 dropped the x/y arguments from SDL_CreateWindow. */
   SDL_Window *window = snesrecomp_sdl_create_window(
       g_window_title, window_width, window_height, g_win_flags);
+#ifndef __ANDROID__
+  if (!window && g_config.output_method == kOutputMethod_OpenGL) {
+    g_win_flags &= ~SDL_WINDOW_OPENGL;
+    g_config.output_method = kOutputMethod_SDL;
+    g_renderer_funcs = kSdlRendererFuncs;
+    window = snesrecomp_sdl_create_window(g_window_title, window_width, window_height, g_win_flags);
+  }
+#endif
   if(window == NULL) {
     host_report_breadcrumb("SDL_CreateWindow FAILED: %s", SDL_GetError());
     printf("Failed to create window: %s\n", SDL_GetError());
@@ -3885,9 +3961,24 @@ error_reading:;
                          window_width, window_height, g_win_flags);
 
   if (!g_renderer_funcs.Initialize(window)) {
+#ifndef __ANDROID__
+    if (g_config.output_method == kOutputMethod_OpenGL) {
+      host_report_breadcrumb("desktop GL unavailable; native SDL presentation");
+      SDL_DestroyWindow(window);
+      g_win_flags &= ~SDL_WINDOW_OPENGL;
+      window = snesrecomp_sdl_create_window(g_window_title, window_width, window_height, g_win_flags);
+      g_window = window;
+      g_config.output_method = kOutputMethod_SDL;
+      g_renderer_funcs = kSdlRendererFuncs;
+      if (!window || !g_renderer_funcs.Initialize(window)) return 1;
+      SDL_SetWindowHitTest(window, HitTestCallback, NULL);
+    } else
+#endif
+    {
     host_report_breadcrumb("renderer init FAILED (output_method=%d)",
                            g_config.output_method);
     return 1;
+    }
   }
   host_report_breadcrumb("renderer initialized: %s",
       g_config.output_method == kOutputMethod_OpenGL ? "opengl" :
@@ -4060,6 +4151,7 @@ error_reading:;
       profile_window_start = MonotonicSeconds();
     }
     if (g_state_generation != RtlStateGeneration()) {
+      SnesHdCaptureReset(g_hd_capture);
       ResetAudioTimeline();
       snes_rewind_shutdown();
       snes_rewind_configure();
@@ -4632,6 +4724,8 @@ error_reading:;
   free(g_audiobuffer);
 
   g_renderer_funcs.Destroy();
+  SnesHdCaptureDestroy(g_hd_capture); g_hd_capture = NULL;
+  free(g_hd_osd); g_hd_osd = NULL; g_hd_osd_capacity = 0;
 
   SDL_DestroyWindow(window);
   SDL_Quit();

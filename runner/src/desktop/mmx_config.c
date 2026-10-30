@@ -549,6 +549,10 @@ static bool HandleIniConfig(int section, const char *key, char *value) {
       }
     } else if (StringEqualsNoCase(key, "NewRenderer")) {
       return ParseBool(value, &g_config.new_renderer);
+    } else if (StringEqualsNoCase(key, "Mode7Enabled")) {
+      return ParseBool(value, &g_config.mode7.enabled);
+    } else if (StringEqualsNoCase(key, "Mode7Scale")) {
+      return SnesHdParseScale(value, &g_config.mode7.scale);
     } else if (StringEqualsNoCase(key, "IgnoreAspectRatio")) {
       return ParseBool(value, &g_config.ignore_aspect_ratio);
     } else if (StringEqualsNoCase(key, "DisplayAspect")) {
@@ -654,6 +658,7 @@ static bool ParseOneConfigFile(const char *filename, int depth) {
 }
 
 void ParseConfigFile(const char *filename) {
+  g_config.mode7 = SnesHdDefaultSettings();
   g_config.enable_audio = true;
   g_config.vsync = kSnesVSync_On;
   g_config.coverage_capture = -1;
@@ -882,6 +887,8 @@ void WriteConfigFile(const char *filename) {
     filename = "config.ini";
 
   CfgKV kvs[] = {
+    { "Graphics", "Mode7Enabled" },
+    { "Graphics", "Mode7Scale" },
     { "Graphics", "WindowScale" },
     { "Graphics", "Fullscreen" },
     { "Graphics", "DisplayAspect" },
@@ -918,6 +925,8 @@ void WriteConfigFile(const char *filename) {
     { "KeyMap",     "VolumeDown" },
   };
   const int N = (int)countof(kvs);
+  CfgSet(kvs, N, "Graphics", "Mode7Enabled", "%d", g_config.mode7.enabled);
+  CfgSet(kvs, N, "Graphics", "Mode7Scale", "%u", g_config.mode7.scale);
   CfgSet(kvs, N, "Graphics", "WindowScale", "%d",
          g_config.window_scale ? g_config.window_scale : 3);
   CfgSet(kvs, N, "Graphics", "Fullscreen", "%d", (int)g_config.fullscreen);

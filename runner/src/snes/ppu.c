@@ -85,6 +85,8 @@ static void PpuDrawWholeLine(Ppu *ppu, uint y);
 static void PpuDrawMode7HdLine(Ppu *ppu, unsigned line);
 
 static bool ppu_evaluateSprites(Ppu* ppu, int line);
+static void SnesHdCaptureLine(SnesHdCapture *capture, Ppu *ppu, unsigned line);
+static void SnesHdCaptureDetach(SnesHdCapture *capture, Ppu *ppu);
 static uint16_t ppu_getVramRemap(Ppu* ppu);
 static void PpuUpdateWidescreenOamHistory(Ppu *ppu, int line);
 
@@ -98,6 +100,7 @@ Ppu* ppu_init(void) {
 }
 
 void ppu_free(Ppu* ppu) {
+  if (ppu && ppu->hdCapture) SnesHdCaptureDetach(ppu->hdCapture, ppu);
   free(ppu);
 }
 
@@ -107,6 +110,8 @@ void ppu_reset(Ppu* ppu) {
     uint8_t *renderBuffer = ppu->renderBuffer;
     uint32_t renderFlags = ppu->renderFlags;
     PpuMode7HdSurface mode7Hd = ppu->mode7Hd;
+    SnesHdCapture *hdCapture = ppu->hdCapture;
+    SnesHdCaptureReset(hdCapture);
     uint32_t overlayPitch[kPpuOverlaySource_Count];
     uint8_t *overlayBuffer[kPpuOverlaySource_Count];
     memcpy(overlayPitch, ppu->overlayRenderPitch, sizeof(overlayPitch));
@@ -116,6 +121,7 @@ void ppu_reset(Ppu* ppu) {
     ppu->renderPitch = (uint32_t)pitch;
     ppu->renderFlags = renderFlags;
     ppu->mode7Hd = mode7Hd;
+    ppu->hdCapture = hdCapture;
     memcpy(ppu->overlayRenderPitch, overlayPitch, sizeof(overlayPitch));
     memcpy(ppu->overlayRenderBuffer, overlayBuffer, sizeof(overlayBuffer));
   }
@@ -845,6 +851,8 @@ static void PpuDrawVisibleLine(Ppu *ppu, int line, bool pixels, bool live) {
   if (ppu->hdFrame && !s_detached_line_depth)
     SnesHdFrameCaptureLine(ppu->hdFrame, (unsigned)line - 1, ppu,
                             (unsigned)line, 0, false);
+  if (ppu->hdCapture && live && !s_guest_scope && !s_detached_line_depth)
+    SnesHdCaptureLine(ppu->hdCapture, ppu, (unsigned)line);
 }
 
 void PpuDrawDetachedLine(Ppu *ppu, int line) {
@@ -2608,6 +2616,68 @@ static NOINLINE void PpuDrawWholeLine(Ppu *ppu, uint y) {
   } while (cw_clip_math >>= 1, ++windex < cwin.nr);
 
   PpuWriteOverlayRenderLine(ppu, kPpuOverlaySource_Obj, y);
+}
+
+struct SnesHdCapture {
+  Ppu *owner;
+  SnesHdFrame *pending, *published;
+  unsigned height, width, last_line;
+  bool failed;
+};
+SnesHdCapture *SnesHdCaptureCreate(void) { return calloc(1, sizeof(SnesHdCapture)); }
+void SnesHdCaptureReset(SnesHdCapture *c) {
+  if (!c) return;
+  SnesHdFrameDestroy(c->pending); SnesHdFrameDestroy(c->published);
+  c->pending = c->published = NULL; c->last_line = 0; c->failed = false;
+}
+static void SnesHdCaptureDetach(SnesHdCapture *c, Ppu *p) {
+  if (c && c->owner == p) { SnesHdCaptureReset(c); c->owner = NULL; }
+}
+bool SnesHdCaptureBind(SnesHdCapture *c, Ppu *p, unsigned height) {
+  if (!c) return false;
+  if (!p) {
+    if (c->owner) c->owner->hdCapture = NULL;
+    c->owner = NULL; c->height = 0; SnesHdCaptureReset(c); return true;
+  }
+  if (!height || height > 240 || (p->hdCapture && p->hdCapture != c)) return false;
+  if (c->owner != p || c->height != height) {
+    if (c->owner) c->owner->hdCapture = NULL;
+    SnesHdCaptureReset(c); c->owner = p; c->height = height;
+  }
+  p->hdCapture = c; return true;
+}
+void SnesHdCaptureDestroy(SnesHdCapture *c) {
+  if (!c) return;
+  if (c->owner) c->owner->hdCapture = NULL;
+  SnesHdCaptureReset(c); free(c);
+}
+const SnesHdFrame *SnesHdCaptureFrame(const SnesHdCapture *c) { return c ? c->published : NULL; }
+static void SnesHdCaptureLine(SnesHdCapture *c, Ppu *p, unsigned line) {
+  if (!c || c->owner != p || !line || line > c->height) return;
+  unsigned width = 256u + p->extraLeftRight * 2u;
+  if (line == 1 || line <= c->last_line || width != c->width) {
+    SnesHdFrameDestroy(c->pending); c->pending = NULL;
+    c->failed = false; c->width = width;
+  }
+  c->last_line = line;
+  if (!p->renderBuffer || width > kSnesHdMaxWidth || p->renderPitch < width * 4) c->failed = true;
+  if (!c->failed && !c->pending && (p->bgmode & 7) == 7 && p->renderBuffer) {
+    c->pending = SnesHdFrameCreate(width, c->height);
+    if (!c->pending) c->failed = true;
+    for (unsigned y = 0; c->pending && y + 1 < line; ++y) {
+      SnesHdLine job = {0}; job.kind = kSnesHdNative;
+      memcpy(job.native, p->renderBuffer + (size_t)y * p->renderPitch, width * 4);
+      if (!SnesHdFrameSetLine(c->pending, y, &job)) c->failed = true;
+    }
+  }
+  if (c->pending && !c->failed && !SnesHdFrameCaptureLine(c->pending, line - 1, p, line, 0, false)) c->failed = true;
+  if (line == c->height) {
+    SnesHdFrameDestroy(c->published); c->published = NULL;
+    if (c->pending && !c->failed && c->pending->source_count && SnesHdFrameSeal(c->pending)) {
+      c->published = c->pending; c->pending = NULL;
+    }
+    SnesHdFrameDestroy(c->pending); c->pending = NULL;
+  }
 }
 
 static bool PpuHdWindowCondition(unsigned mode, bool inside) {

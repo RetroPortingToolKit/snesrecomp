@@ -6,11 +6,22 @@
 #ifdef __cplusplus
 extern "C" {
 #endif
-enum { kSnesHdMaxWidth = 1024, kSnesHdMaxHeight = 512, kSnesHdMaxScale = 64,
+enum { kSnesHdDefaultScale = 8, kSnesHdMaxWidth = 1024, kSnesHdMaxHeight = 512, kSnesHdMaxScale = 64,
        kSnesHdMaxTilemaps = 16, kSnesHdMapWidth = 1024, kSnesHdMapHeight = 512 };
 enum { kSnesHdNative = 1, kSnesHdMode7 = 2, kSnesHdAffine = 3 };
 typedef struct SnesHdFrame SnesHdFrame;
+typedef struct SnesHdCapture SnesHdCapture;
+typedef struct SnesHdSettings { bool enabled; unsigned scale; } SnesHdSettings;
+SnesHdSettings SnesHdDefaultSettings(void);
+bool SnesHdParseScale(const char *text, unsigned *scale);
 struct Ppu;
+/* Lazy frame publisher for standard PPU hosts: no packet allocation on frames
+ * without Mode7. Bound only to the live PPU; detached work never publishes. */
+SnesHdCapture *SnesHdCaptureCreate(void);
+bool SnesHdCaptureBind(SnesHdCapture *capture, struct Ppu *ppu, unsigned height);
+void SnesHdCaptureReset(SnesHdCapture *capture);
+void SnesHdCaptureDestroy(SnesHdCapture *capture);
+const SnesHdFrame *SnesHdCaptureFrame(const SnesHdCapture *capture);
 /* All arrays are native-sized. A published frame owns every source byte;
  * neither the GPU nor the portable consumer reads live console memory. */
 typedef struct SnesHdLine {

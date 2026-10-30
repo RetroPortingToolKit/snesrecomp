@@ -127,7 +127,33 @@ int main(void) {
     if (seed == 2) SnesHdGpuReset(g);
     SnesHdFrameDestroy(f);
   }
-  printf("GPU parity: %u ROI comparisons at1/2/3/4/16/32/64x passed\n", comparisons);
+  /* Exercise the shared offscreen presenter, including exact visible centers,
+   * explicit opaque-black foreground and caller GL state restoration. */
+  setup(); PpuSetExtraSpace(&p,16);
+  SnesHdFrame *presented = scene(288);
+  enum { pw = 137, ph = 7 };
+  uint32_t foreground[288 * HEIGHT];
+  for (unsigned y = 0; y < HEIGHT; ++y) for (unsigned x = 0; x < 288; ++x)
+    foreground[y * 288 + x] = x & 1 ? 0xff123456 : 0xff000000;
+  make_target(pw, ph); glViewport(5,6,11,12);
+  GLint saved_fbo, restored_fbo, vp[4]; glGetIntegerv(GL_DRAW_FRAMEBUFFER_BINDING,&saved_fbo);
+  SnesHdGpuImage image;
+  CHECK(!SnesHdGpuAdmit(g,288,HEIGHT,64,1,&target_w,&target_h));
+  CHECK(SnesHdGpuRender(g,presented,64,pw,ph,true,128u*1024u*1024u,
+      NULL,0,foreground,288*4,&image));
+  CHECK(image.visible_samples && image.width==pw && image.height==ph);
+  glGetIntegerv(GL_DRAW_FRAMEBUFFER_BINDING,&restored_fbo);CHECK(saved_fbo==restored_fbo);
+  glGetIntegerv(GL_VIEWPORT,vp);CHECK(vp[0]==5 && vp[1]==6 && vp[2]==11 && vp[3]==12);
+  glBindFramebuffer(GL_FRAMEBUFFER,framebuffer);
+  glFramebufferTexture2D(GL_FRAMEBUFFER,GL_COLOR_ATTACHMENT0,GL_TEXTURE_2D,image.texture,0);
+  uint32_t visible[pw*ph]; glReadPixels(0,0,pw,ph,GL_BGRA,GL_UNSIGNED_BYTE,visible);
+  for (unsigned y=0;y<ph;++y) for (unsigned x=0;x<pw;++x) {
+    unsigned nx=((2*x+1)*288*64/(2*pw))/64;
+    CHECK((visible[y*pw+x]&0xffffff)==(foreground[nx]&0xffffff));
+  }
+  CHECK(SnesHdFrameView(presented,&(SnesHdView){0}));
+  SnesHdFrameDestroy(presented);
+  printf("GPU parity: %u ROI comparisons at1/2/3/4/16/32/64x and shared target/foreground/state checks passed\n", comparisons);
   glDeleteFramebuffers(1, &framebuffer); glDeleteTextures(1, &target);
   SnesHdGpuDestroy(g); SDL_GL_DestroyContext(context); SDL_DestroyWindow(window); SDL_Quit();
   return 0;

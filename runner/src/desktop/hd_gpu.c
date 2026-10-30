@@ -20,6 +20,9 @@ typedef struct HdResident {
 struct SnesHdGpu {
   GLuint program, affine_program, vao, textures[kHdTextures], queries[kQueryFrames][3];
   GLuint coordinate_program, coordinate_fbo;
+  GLuint output_fbo, output_texture;
+  unsigned output_width, output_height, logged_scale;
+  bool logged_visible;
   unsigned coordinate_width, coordinate_height;
   unsigned width, height, texture_width, texture_height, max_texture, max_layers, query_pending;
   bool failed;
@@ -236,6 +239,8 @@ void SnesHdGpuDestroy(SnesHdGpu *g) {
   if (g->affine_program) glDeleteProgram(g->affine_program);
   if (g->coordinate_program) glDeleteProgram(g->coordinate_program);
   if (g->coordinate_fbo) glDeleteFramebuffers(1, &g->coordinate_fbo);
+  if (g->output_fbo) glDeleteFramebuffers(1, &g->output_fbo);
+  if (g->output_texture) glDeleteTextures(1, &g->output_texture);
   if (g->stats.gpu_timestamps) glDeleteQueries(kQueryFrames * 3, &g->queries[0][0]);
   free(g->native_pixels); free(g->overlay); free(g->objects); free(g->palette); free(g->metadata); free(g->affine); free(g);
 }
@@ -246,6 +251,7 @@ bool SnesHdGpuAdmit(SnesHdGpu *g, unsigned w, unsigned h, unsigned scale,
   unsigned rw = w * scale, rh = h * scale, aw = rw, ah = rh;
   while (aw > g->max_texture || ah > g->max_texture ||
       (uint64_t)aw * ah * 4 + (uint64_t)(w + 1) * ah * 16 > budget) {
+    if (aw == 1 && ah == 1) return false;
     aw = aw > 1 ? aw / 2 : 1; ah = ah > 1 ? ah / 2 : 1;
   }
   *out_w = aw; *out_h = ah; return true;
@@ -265,12 +271,15 @@ bool SnesHdGpuReadStats(SnesHdGpu *g, bool wait, SnesHdGpuStats *stats) {
   }
   *stats = g->stats; return true;
 }
-bool SnesHdGpuDraw(SnesHdGpu *g, const SnesHdFrame *frame, unsigned scale,
-                   unsigned width, unsigned height) {
+bool SnesHdGpuDrawLayers(SnesHdGpu *g, const SnesHdFrame *frame, unsigned scale,
+                   unsigned width, unsigned height, const uint32_t *native_override,
+                   size_t native_pitch, const uint32_t *overlay_override, size_t overlay_pitch) {
   SnesHdView v;
   if (!g || g->failed || !SnesHdFrameView(frame, &v) || !scale || scale > 64 ||
       !width || !height || width > g->max_texture || height > g->max_texture ||
       v.source_count > g->max_layers) return false;
+  if ((native_override && native_pitch < v.width * 4) ||
+      (overlay_override && overlay_pitch < v.width * 4)) return false;
   bool affine = false;
   for (unsigned y = 0; y < v.height; ++y) affine |= v.lines[y].kind == kSnesHdAffine;
   if (affine && !g->affine_program) return false;
@@ -327,8 +336,10 @@ bool SnesHdGpuDraw(SnesHdGpu *g, const SnesHdFrame *frame, unsigned scale,
   }
   for (unsigned y = 0; y < v.height; ++y) {
     const SnesHdLine *j = &v.lines[y];
-    memcpy(g->native_pixels + y * v.width, j->native, v.width * 4);
-    memcpy(g->overlay + y * v.width, j->overlay, v.width * 4);
+    memcpy(g->native_pixels + y * v.width, native_override ?
+        (const uint8_t *)native_override + y * native_pitch : (const void *)j->native, v.width * 4);
+    memcpy(g->overlay + y * v.width, overlay_override ?
+        (const uint8_t *)overlay_override + y * overlay_pitch : (const void *)j->overlay, v.width * 4);
     memcpy(g->palette + y * 256, j->palette, 512);
     for (unsigned x = 0; x < v.width; ++x) {
       uint16_t *p = g->objects + (y * v.width + x) * 4;
@@ -439,6 +450,45 @@ bool SnesHdGpuDraw(SnesHdGpu *g, const SnesHdFrame *frame, unsigned scale,
   g->stats.output_width = width; g->stats.output_height = height; g->stats.target_bytes = (size_t)width * height * 4;
   return true;
 }
+bool SnesHdGpuDraw(SnesHdGpu *g,const SnesHdFrame *f,unsigned scale,unsigned w,unsigned h) {
+  return SnesHdGpuDrawLayers(g,f,scale,w,h,NULL,0,NULL,0);
+}
+bool SnesHdGpuRender(SnesHdGpu *g,const SnesHdFrame *f,unsigned scale,
+    unsigned dw,unsigned dh,bool visible,size_t budget,const uint32_t *native,size_t np,
+    const uint32_t *overlay,size_t op,SnesHdGpuImage *image) {
+  SnesHdView v; unsigned w,h;
+  if (!g || !image || !SnesHdFrameView(f,&v) ||
+      !SnesHdGpuAdmit(g,v.width,v.height,scale,budget,&w,&h)) return false;
+  if (visible) {
+    if (!dw || !dh || dw>g->max_texture || dh>g->max_texture ||
+        (uint64_t)dw*dh*4+(uint64_t)(v.width+1)*dh*16>budget) return false;
+    w=dw;h=dh;
+  }
+  HdState saved;hd_save(&saved);
+  if (!g->output_texture) glGenTextures(1,&g->output_texture);
+  if (!g->output_fbo) glGenFramebuffers(1,&g->output_fbo);
+  bool resized=w!=g->output_width || h!=g->output_height;
+  glBindBuffer(GL_PIXEL_UNPACK_BUFFER,0);glActiveTexture(GL_TEXTURE0);
+  glBindTexture(GL_TEXTURE_2D,g->output_texture);
+  if (resized) {
+    glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MIN_FILTER,GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MAG_FILTER,GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_WRAP_S,GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_WRAP_T,GL_CLAMP_TO_EDGE);
+    glTexImage2D(GL_TEXTURE_2D,0,GL_RGBA8,w,h,0,GL_RGBA,GL_UNSIGNED_BYTE,NULL);
+  }
+  glBindFramebuffer(GL_DRAW_FRAMEBUFFER,g->output_fbo);
+  glFramebufferTexture2D(GL_DRAW_FRAMEBUFFER,GL_COLOR_ATTACHMENT0,GL_TEXTURE_2D,g->output_texture,0);
+  bool ok=glCheckFramebufferStatus(GL_DRAW_FRAMEBUFFER)==GL_FRAMEBUFFER_COMPLETE && glGetError()==GL_NO_ERROR;
+  if (ok) ok=SnesHdGpuDrawLayers(g,f,scale,w,h,native,np,overlay,op);
+  hd_restore(&saved);
+  if (!ok) return false;
+  if (resized || scale!=g->logged_scale || visible!=g->logged_visible)
+    fprintf(stderr,"[snes-hd] mode=%s requested=%ux raster=%ux%u target=%ux%u bytes=%llu\n",
+        visible?"visible-samples":"full-target",scale,v.width*scale,v.height*scale,w,h,(unsigned long long)w*h*4);
+  g->output_width=w;g->output_height=h;g->logged_scale=scale;g->logged_visible=visible;
+  *image=(SnesHdGpuImage){g->output_texture,w,h,visible};return true;
+}
 #else
 struct SnesHdGpu { int unused; };
 SnesHdGpu *SnesHdGpuCreate(void) { return NULL; }
@@ -450,6 +500,14 @@ bool SnesHdGpuAdmit(SnesHdGpu *g,unsigned w,unsigned h,unsigned s,size_t b,unsig
 }
 bool SnesHdGpuDraw(SnesHdGpu *g,const SnesHdFrame *f,unsigned s,unsigned w,unsigned h) {
   (void)g;(void)f;(void)s;(void)w;(void)h;return false;
+}
+bool SnesHdGpuDrawLayers(SnesHdGpu *g,const SnesHdFrame *f,unsigned s,unsigned w,unsigned h,
+    const uint32_t *n,size_t np,const uint32_t *o,size_t op) {
+  (void)n;(void)np;(void)o;(void)op;return SnesHdGpuDraw(g,f,s,w,h);
+}
+bool SnesHdGpuRender(SnesHdGpu *g,const SnesHdFrame *f,unsigned s,unsigned w,unsigned h,
+    bool v,size_t b,const uint32_t *n,size_t np,const uint32_t *o,size_t op,SnesHdGpuImage *i) {
+  (void)g;(void)f;(void)s;(void)w;(void)h;(void)v;(void)b;(void)n;(void)np;(void)o;(void)op;(void)i;return false;
 }
 bool SnesHdGpuReadStats(SnesHdGpu *g,bool wait,SnesHdGpuStats *stats) {
   (void)g;(void)wait;(void)stats;return false;

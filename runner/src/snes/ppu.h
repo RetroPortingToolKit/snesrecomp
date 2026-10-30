@@ -334,6 +334,7 @@ struct Ppu {
   /* Optional additional presentation surface; never part of guest state. */
   PpuMode7HdSurface mode7Hd;
   SnesHdFrame *hdFrame; /* Optional presentation builder; never serialized. */
+  SnesHdCapture *hdCapture; /* Optional host-owned lazy publisher. */
   /* Optional host picture memory. Drawing only: CPU ports and save states
    * always use vram. The caller owns 32768 words until unbound. */
   const uint16_t *renderVram;
