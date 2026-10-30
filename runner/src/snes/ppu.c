@@ -1,4 +1,5 @@
 #include "ppu.h"
+#include "hd_jobs_internal.h"
 #include "mode7_hd.h"
 
 extern unsigned char g_snesrecomp_last_hdmaen;
@@ -84,6 +85,8 @@ static void PpuDrawWholeLine(Ppu *ppu, uint y);
 static void PpuDrawMode7HdLine(Ppu *ppu, unsigned line);
 
 static bool ppu_evaluateSprites(Ppu* ppu, int line);
+static void SnesHdCaptureLine(SnesHdCapture *capture, Ppu *ppu, unsigned line);
+static void SnesHdCaptureDetach(SnesHdCapture *capture, Ppu *ppu);
 static uint16_t ppu_getVramRemap(Ppu* ppu);
 static void PpuUpdateWidescreenOamHistory(Ppu *ppu, int line);
 
@@ -97,6 +100,7 @@ Ppu* ppu_init(void) {
 }
 
 void ppu_free(Ppu* ppu) {
+  if (ppu && ppu->hdCapture) SnesHdCaptureDetach(ppu->hdCapture, ppu);
   free(ppu);
 }
 
@@ -106,6 +110,8 @@ void ppu_reset(Ppu* ppu) {
     uint8_t *renderBuffer = ppu->renderBuffer;
     uint32_t renderFlags = ppu->renderFlags;
     PpuMode7HdSurface mode7Hd = ppu->mode7Hd;
+    SnesHdCapture *hdCapture = ppu->hdCapture;
+    SnesHdCaptureReset(hdCapture);
     uint32_t overlayPitch[kPpuOverlaySource_Count];
     uint8_t *overlayBuffer[kPpuOverlaySource_Count];
     memcpy(overlayPitch, ppu->overlayRenderPitch, sizeof(overlayPitch));
@@ -115,6 +121,7 @@ void ppu_reset(Ppu* ppu) {
     ppu->renderPitch = (uint32_t)pitch;
     ppu->renderFlags = renderFlags;
     ppu->mode7Hd = mode7Hd;
+    ppu->hdCapture = hdCapture;
     memcpy(ppu->overlayRenderPitch, overlayPitch, sizeof(overlayPitch));
     memcpy(ppu->overlayRenderBuffer, overlayBuffer, sizeof(overlayBuffer));
   }
@@ -841,6 +848,11 @@ static void PpuDrawVisibleLine(Ppu *ppu, int line, bool pixels, bool live) {
   }
   if (ppu->mode7Hd.pixels)
     PpuDrawMode7HdLine(ppu, (unsigned)line);
+  if (ppu->hdFrame && !s_detached_line_depth)
+    SnesHdFrameCaptureLine(ppu->hdFrame, (unsigned)line - 1, ppu,
+                            (unsigned)line, 0, false);
+  if (ppu->hdCapture && live && !s_guest_scope && !s_detached_line_depth)
+    SnesHdCaptureLine(ppu->hdCapture, ppu, (unsigned)line);
 }
 
 void PpuDrawDetachedLine(Ppu *ppu, int line) {
@@ -2230,7 +2242,7 @@ static void PpuDrawSprites(Ppu *ppu, uint y, uint sub, bool clear_backdrop) {
   }
 }
 
-static bool PpuOverlayActiveOnLine(Ppu *ppu, PpuOverlaySource source,
+static bool PpuOverlayActiveOnLine(const Ppu *ppu, PpuOverlaySource source,
                                    int screen_y) {
   if ((unsigned)source >= kPpuOverlaySource_Count ||
       !ppu->overlayRenderBuffer[source] ||
@@ -2606,10 +2618,76 @@ static NOINLINE void PpuDrawWholeLine(Ppu *ppu, uint y) {
   PpuWriteOverlayRenderLine(ppu, kPpuOverlaySource_Obj, y);
 }
 
+struct SnesHdCapture {
+  Ppu *owner;
+  SnesHdFrame *pending, *published;
+  unsigned height, width, last_line;
+  bool failed;
+};
+SnesHdCapture *SnesHdCaptureCreate(void) { return calloc(1, sizeof(SnesHdCapture)); }
+void SnesHdCaptureReset(SnesHdCapture *c) {
+  if (!c) return;
+  SnesHdFrameDestroy(c->pending); SnesHdFrameDestroy(c->published);
+  c->pending = c->published = NULL; c->last_line = 0; c->failed = false;
+}
+static void SnesHdCaptureDetach(SnesHdCapture *c, Ppu *p) {
+  if (c && c->owner == p) { SnesHdCaptureReset(c); c->owner = NULL; }
+}
+bool SnesHdCaptureBind(SnesHdCapture *c, Ppu *p, unsigned height) {
+  if (!c) return false;
+  if (!p) {
+    if (c->owner) c->owner->hdCapture = NULL;
+    c->owner = NULL; c->height = 0; SnesHdCaptureReset(c); return true;
+  }
+  if (!height || height > 240 || (p->hdCapture && p->hdCapture != c)) return false;
+  if (c->owner != p || c->height != height) {
+    if (c->owner) c->owner->hdCapture = NULL;
+    SnesHdCaptureReset(c); c->owner = p; c->height = height;
+  }
+  p->hdCapture = c; return true;
+}
+void SnesHdCaptureDestroy(SnesHdCapture *c) {
+  if (!c) return;
+  if (c->owner) c->owner->hdCapture = NULL;
+  SnesHdCaptureReset(c); free(c);
+}
+const SnesHdFrame *SnesHdCaptureFrame(const SnesHdCapture *c) { return c ? c->published : NULL; }
+static void SnesHdCaptureLine(SnesHdCapture *c, Ppu *p, unsigned line) {
+  if (!c || c->owner != p || !line || line > c->height) return;
+  unsigned width = 256u + p->extraLeftRight * 2u;
+  if (line == 1 || line <= c->last_line || width != c->width) {
+    SnesHdFrameDestroy(c->pending); c->pending = NULL;
+    c->failed = false; c->width = width;
+  }
+  c->last_line = line;
+  if (!p->renderBuffer || width > kSnesHdMaxWidth || p->renderPitch < width * 4) c->failed = true;
+  if (!c->failed && !c->pending && (p->bgmode & 7) == 7 && p->renderBuffer) {
+    c->pending = SnesHdFrameCreate(width, c->height);
+    if (!c->pending) c->failed = true;
+    for (unsigned y = 0; c->pending && y + 1 < line; ++y) {
+      SnesHdLine job = {0}; job.kind = kSnesHdNative;
+      memcpy(job.native, p->renderBuffer + (size_t)y * p->renderPitch, width * 4);
+      if (!SnesHdFrameSetLine(c->pending, y, &job)) c->failed = true;
+    }
+  }
+  if (c->pending && !c->failed && !SnesHdFrameCaptureLine(c->pending, line - 1, p, line, 0, false)) c->failed = true;
+  if (line == c->height) {
+    SnesHdFrameDestroy(c->published); c->published = NULL;
+    if (c->pending && !c->failed && c->pending->source_count && SnesHdFrameSeal(c->pending)) {
+      c->published = c->pending; c->pending = NULL;
+    }
+    SnesHdFrameDestroy(c->pending); c->pending = NULL;
+  }
+}
+
 static bool PpuHdWindowCondition(unsigned mode, bool inside) {
   return mode == 3 || (mode == 1 && !inside) || (mode == 2 && inside);
 }
 
+bool PpuSetHdFrameCapture(Ppu *p, SnesHdFrame *f) {
+  if (!p || (f && (f->sealed || f->failed))) return false;
+  p->hdFrame = f; return true;
+}
 /* Resolve colour after HD background sampling and native OBJ priority. An
  * opaque native BG pixel cannot serve as a mask: a fractional sample may be
  * transparent and reveal a sprite that the native sample had covered. */
@@ -2652,6 +2730,67 @@ static void PpuHdMarkWindow(uint8_t visibility[kPpuBufWidth],
   }
 }
 
+bool SnesHdFrameCaptureLine(SnesHdFrame *f, unsigned y, const Ppu *p,
+                            unsigned line, unsigned crop, bool overlays) {
+  unsigned native_width = p ? 256u + 2u * p->extraLeftRight : 0;
+  if (!f || f->sealed || f->failed || !p || y >= f->height || !line ||
+      line > 240 || !p->renderBuffer || crop > native_width ||
+      f->width > native_width - crop || p->renderPitch < native_width * 4)
+    return false;
+  SnesHdLine *j = &f->lines[y]; memset(j, 0, sizeof(*j));
+  memcpy(j->native, p->renderBuffer + (line - 1) * p->renderPitch + crop * 4,
+           f->width * 4);
+  j->kind = 1;
+  bool affine = PPU_mode(p) == 7 && !PPU_forcedBlank(p) &&
+      !PPU_m7extBg(p) && !PPU_directColor(p) && !PPU_interlace(p) &&
+      !PPU_pseudoHires(p) &&
+      !(PPU_mosaicEnabled(p, 0) && PPU_mosaicSize(p) > 1) &&
+      !p->widescreenLineEnhancer && !(p->wsHudSplitHeight & 0x80);
+  for (unsigned source = 0; affine && source < kPpuOverlaySource_Count; ++source)
+    if (PpuOverlayActiveOnLine(p, (PpuOverlaySource)source, (int)line - 1) &&
+        !(overlays && (source == kPpuOverlaySource_Bg2 ||
+                       source == kPpuOverlaySource_Obj))) affine = false;
+  if (!affine) return true;
+  uint8_t visibility[kPpuBufWidth] = {0}; PpuWindows window;
+  for (unsigned sub = 0; sub < 2; ++sub) {
+    for (unsigned object = 0; object < 2; ++object) {
+      unsigned layer = object ? 4 : 0;
+      if (!IS_SCREEN_ENABLED(p, sub, layer)) continue;
+      if (IS_SCREEN_WINDOWED(p, sub, layer))
+        PpuWindows_Calc(&window, (Ppu *)p, layer, (int)line);
+      else PpuWindows_Clear(&window, (Ppu *)p, layer, (int)line);
+      PpuHdMarkWindow(visibility, &window,
+                       (uint8_t)(1u << (sub + 2 * object)), false);
+    }
+  }
+  PpuWindows_Calc(&window, (Ppu *)p, 5, (int)line);
+  PpuHdMarkWindow(visibility, &window, 16, true);
+  const uint16_t *vram = PpuRenderVram(p); int source;
+  if (!p->renderVram && f->source_count && f->last_vram == vram &&
+      f->last_generation == p->vramWriteCount) source = (int)f->last_source;
+  else source = SnesHdFrameAddPicture(f, vram);
+  if (source < 0) return false;
+  f->last_vram = vram; f->last_generation = p->vramWriteCount;
+  f->last_source = (unsigned)source;
+  SnesMode7HdTransform t = SnesMode7HdMakeTransform(p->m7matrix, p->m7sel, line);
+  j->origin_x = (int32_t)(t.origin_x * 256); j->origin_y = (int32_t)(t.origin_y * 256);
+  j->step_x = (int32_t)(t.step_x * 256); j->step_y = (int32_t)(t.step_y * 256);
+  j->row_x = (int32_t)(t.row_x * 256); j->row_y = (int32_t)(t.row_y * 256);
+  j->screen_left = (int16_t)((int)crop - p->extraLeftRight);
+  j->active_left = -(int16_t)p->extraLeftCur;
+  j->active_right = 256 + p->extraRightCur;
+  j->control = t.control; j->source = (uint16_t)source;
+  j->fixed_color = p->fixedColor; j->brightness = PPU_brightness(p);
+  j->cgwsel = p->cgwsel; j->cgadsub = p->cgadsub;
+  memcpy(j->palette, p->cgram, sizeof(j->palette));
+  for (unsigned x = 0; x < f->width; ++x) {
+    unsigned i = x + crop + kPpuExtraLeftRight - p->extraLeftRight;
+    j->visibility[x] = visibility[i]; j->object[x] = p->objBuffer.data[i];
+    j->object_color[x] = PpuPixelColor(p, j->object[x], i);
+  }
+  j->kind = 2;
+  return true;
+}
 static void PpuDrawMode7HdLine(Ppu *ppu, unsigned line) {
   const PpuMode7HdSurface *surface = &ppu->mode7Hd;
   if (!line || line > surface->height) return;

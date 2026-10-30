@@ -43,7 +43,7 @@ def main():
         run([args.cc, '-std=c11', '-O3', '-DSNESRECOMP_REVERSE_DEBUG=0', *defs,
              '-I' + str(root / 'runner/src'), '-I' + str(root / 'runner/src/snes'),
              root / 'tests/ppu/ppu_8bpp_contract_test.c',
-             root / 'runner/src/snes/ppu_legacy.c', '-o', exe],
+             root / 'runner/src/snes/ppu_legacy.c', root / 'runner/src/snes/hd_jobs.c', '-lm', '-o', exe],
             creationflags=getattr(subprocess, 'BELOW_NORMAL_PRIORITY_CLASS', 0))
         executables[arm] = exe
         digests[arm] = run([exe])

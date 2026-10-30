@@ -327,6 +327,7 @@ set(SNESRECOMP_RUNNER_SOURCES
     ${SNESRECOMP_RUNNER_ROOT}/src/snes/msu1.c
     ${SNESRECOMP_RUNNER_ROOT}/src/snes/color_lut.c
     ${SNESRECOMP_RUNNER_ROOT}/src/snes/ppu.c
+    ${SNESRECOMP_RUNNER_ROOT}/src/snes/hd_jobs.c
     ${SNESRECOMP_RUNNER_ROOT}/src/snes/ppu_legacy.c
     ${SNESRECOMP_RUNNER_ROOT}/src/snes/sa1.c
     ${SNESRECOMP_RUNNER_ROOT}/src/snes/sdd1.c
@@ -1135,6 +1136,8 @@ endfunction()
 # enabled together.
 function(snesrecomp_target_opengl target)
     snesrecomp_target_glsl_shader(${target})
+    include(${SNESRECOMP_RUNNER_ROOT}/hd_gpu.cmake)
+    snesrecomp_target_hd_gpu(${target} EXTERNAL_GL_LOADER)
     target_sources(${target} PRIVATE
         ${SNESRECOMP_RUNNER_ROOT}/src/desktop/opengl.c
         ${SNESRECOMP_FRAMEWORK_ROOT}/third_party/gl_core/gl_core_3_1.c)
