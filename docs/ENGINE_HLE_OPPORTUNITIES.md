@@ -9,6 +9,13 @@ DSP-1 build selection and 8bpp are already merged; SMK remains a consumer
 validation follow-up. New Doom title-fork adoption is outside this engine queue.
 Xbox/platform and dedicated memory-budget work are explicitly deferred.
 
+The final shared package (PRs 224–230) is merged as `35f923a7` after combined
+automated qualification, independent review and owner MMX/Metroid/SMW play
+approval. Its tree matches qualified `be97ec06` exactly. See the full burndown
+checkpoint for the retained/rejected R8 proposals, scoped per-game performance
+conclusions, cumulative historical measurements now requested, and separate
+SMK consumer checks. The older assessments below retain their original status.
+
 ## Current 8bpp status (2026-10-09)
 
 The opt-in 8bpp tile-span renderer now has useful Windows Doom measurements

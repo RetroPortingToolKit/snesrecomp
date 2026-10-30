@@ -19,6 +19,48 @@ Use **open** for unanswered questions. **Deferred** is reserved here for the
 owner's explicitly postponed Xbox/platform and dedicated memory-budget work.
 Retain already shipped memory improvements and rejected experiments as history.
 
+## Final shared-package checkpoint (2026-10-29)
+
+Shared PRs 224–230 are merged in `35f923a7`. The complete source tree is
+identical to qualified engine `be97ec06`; the actual seven reviewed PR heads
+are ancestors of the merged result. Additive CMake conflicts preserve all
+reference defaults. The six optimization candidates and detached-picture
+helper passed independent component and combined consumer review. MMX,
+Super Metroid and SMW also passed the owner's final combined playcheck;
+do not repeat those manual checks for this source-identical integration.
+
+MMX includes all four Magic Carpet traces and current-build state/rewind/
+rollback evidence. Metroid and SMW include running native/widescreen rendering
+and fresh-process state restoration. Separate SMRPG, Star Fox and legacy SMK
+gates retain their recorded workloads. SMRPG's identical save/load audio
+underrun remains a failed shared-defect gate under `beads-23p`, rather than
+a clean audio pass. Variable per-game costs remain neutral/inconclusive;
+single-pair SMK/SMRPG decreases are preliminary and are not added to older
+packages. No cross-build/host netplay or Xbox qualification is implied.
+
+The R8 questions below now have recorded outcomes: DSP dry/echo fusion,
+immutable ROM read fusion, frame-owned HDMA scheduling, legacy Mode 7 line
+images, SA-1 timer spans and Super FX idle spans were retained; the scoped
+clipping, OAM, DMA and later pre-opcode hook-filter experiments were rejected
+for lacking useful demonstrated value. Reference implementations and elective
+source defaults remain available. Earlier pending-gate wording in the dated
+experiment checkpoint is retained history, superseded by this checkpoint.
+
+Remaining closeout work:
+
+- Owner-requested cumulative MMX/Metroid/SMW before/after measurements
+  (`beads-8wg.2.185`) use original engine/title pairings before the first
+  October 22 changes, not the already-optimized pre-R8 main. Retain matched
+  features, routes, hosts, raw samples and per-game variation.
+- Separate SMK game PR3 has committed, independently reviewed Lakitu and
+  map/PiP edge corrections (`320dbee`); human temporal acceptance remains
+  pending. This is separate from the accepted shared package.
+- Existing shared DSP-1 consumer issue `beads-qhnd` still needs the ordinary
+  HLE/LLE race/results/next-race and listening checks. Assisted fixtures do
+  not satisfy those checks.
+- Publish at the campaign endpoint and clean disposable staging after
+  retaining the campaign evidence. No new per-item release is required.
+
 ## Original 14-item checklist
 
 These names and original assessment are from closed issue `beads-8wg.2.154`.

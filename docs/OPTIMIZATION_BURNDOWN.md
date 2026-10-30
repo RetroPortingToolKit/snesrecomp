@@ -28,6 +28,15 @@ other discretionary title-only work are outside the current shared-engine
 queue. Xbox/platform and dedicated memory-budget work are deferred by the owner. Existing renderer selections and the functioning LLE floor stay
 available.
 
+Final checkpoint: shared PRs 224–230 are merged as `35f923a7`, with a tree
+identical to qualified `be97ec06`. The owner cleared the combined MMX,
+Metroid and SMW builds. R8's specific investigations are complete; retained
+and rejected proposals, per-game measurement limits and remaining SMK
+consumer checks are recorded in the [current checkpoint](NATIVE_HLE_BURNDOWN.md#final-shared-package-checkpoint-2026-10-29).
+The owner additionally requested cumulative before/after measurements from
+the pre-October-22 game/engine pairings (`beads-8wg.2.185`). Publication remains
+at the endpoint. Earlier pending statuses below are dated experiment history.
+
 ## Landed baseline
 
 - [Framework PR 219](https://github.com/RetroPortingToolKit/snesrecomp/pull/219)
