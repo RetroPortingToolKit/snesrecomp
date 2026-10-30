@@ -10,6 +10,7 @@
 #include <stdbool.h>
 
 #include "saveload.h"
+#include "hd_jobs.h"
 #include "ppu_registers.h"
 
 typedef struct Ppu Ppu;
@@ -332,6 +333,7 @@ struct Ppu {
   uint8_t *renderBuffer;
   /* Optional additional presentation surface; never part of guest state. */
   PpuMode7HdSurface mode7Hd;
+  SnesHdFrame *hdFrame; /* Optional presentation builder; never serialized. */
   /* Optional host picture memory. Drawing only: CPU ports and save states
    * always use vram. The caller owns 32768 words until unbound. */
   const uint16_t *renderVram;
