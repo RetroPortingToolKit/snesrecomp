@@ -46,12 +46,16 @@ for lacking useful demonstrated value. Reference implementations and elective
 source defaults remain available. Earlier pending-gate wording in the dated
 experiment checkpoint is retained history, superseded by this checkpoint.
 
+The requested cumulative historical comparison (`beads-8wg.2.185`) is complete
+and independently audited: CPU/frame fell 68.2% in MMX, 59.5% in Metroid and
+18.4% in SMW for the matched workloads. These are complete recent packages,
+including intervening correctness/dependency changes, rather than isolated
+R8 gains. Metroid's authored-room clipping fix is included; adaptive
+widescreen remains supported. See the [report and raw-sample index](CUMULATIVE_CAMPAIGN_2026-10-29.md)
+for original pre-October-22 source pins, hosts, variation and limits.
+
 Remaining closeout work:
 
-- Owner-requested cumulative MMX/Metroid/SMW before/after measurements
-  (`beads-8wg.2.185`) use original engine/title pairings before the first
-  October 22 changes, not the already-optimized pre-R8 main. Retain matched
-  features, routes, hosts, raw samples and per-game variation.
 - Separate SMK game PR3 has committed, independently reviewed Lakitu and
   map/PiP edge corrections (`320dbee`); human temporal acceptance remains
   pending. This is separate from the accepted shared package.

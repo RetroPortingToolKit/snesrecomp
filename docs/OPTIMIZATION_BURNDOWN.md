@@ -33,8 +33,10 @@ identical to qualified `be97ec06`. The owner cleared the combined MMX,
 Metroid and SMW builds. R8's specific investigations are complete; retained
 and rejected proposals, per-game measurement limits and remaining SMK
 consumer checks are recorded in the [current checkpoint](NATIVE_HLE_BURNDOWN.md#final-shared-package-checkpoint-2026-10-29).
-The owner additionally requested cumulative before/after measurements from
-the pre-October-22 game/engine pairings (`beads-8wg.2.185`). Publication remains
+The requested [cumulative comparison](CUMULATIVE_CAMPAIGN_2026-10-29.md) of
+pre-October-22 game/engine pairings is complete and independently audited
+(`beads-8wg.2.185`): MMX 68.2%, Metroid 59.5%, SMW 18.4% less CPU/frame on
+the matched workloads, with package/correctness caveats retained. Publication remains
 at the endpoint. Earlier pending statuses below are dated experiment history.
 
 ## Landed baseline

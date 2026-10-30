@@ -13,7 +13,7 @@ The final shared package (PRs 224–230) is merged as `35f923a7` after combined
 automated qualification, independent review and owner MMX/Metroid/SMW play
 approval. Its tree matches qualified `be97ec06` exactly. See the full burndown
 checkpoint for the retained/rejected R8 proposals, scoped per-game performance
-conclusions, cumulative historical measurements now requested, and separate
+conclusions, the completed [cumulative historical measurements](CUMULATIVE_CAMPAIGN_2026-10-29.md), and separate
 SMK consumer checks. The older assessments below retain their original status.
 
 ## Current 8bpp status (2026-10-09)
