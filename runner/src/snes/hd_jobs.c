@@ -4,20 +4,6 @@
 #include <stdlib.h>
 #include <string.h>
 
-SnesHdSettings SnesHdDefaultSettings(void) {
-  return (SnesHdSettings){true, kSnesHdDefaultScale};
-}
-bool SnesHdParseScale(const char *text, unsigned *scale) {
-  if (!text || !scale || !*text) return false;
-  unsigned value = 0;
-  for (; *text; ++text) {
-    if (*text < '0' || *text > '9') return false;
-    value = value * 10 + (unsigned)(*text - '0');
-    if (value > kSnesHdMaxScale) return false;
-  }
-  if (!value) return false;
-  *scale = value; return true;
-}
 
 static bool SnesHdWindowCondition(unsigned mode, bool inside) {
   return mode == 3 || (mode == 1 && !inside) || (mode == 2 && inside);

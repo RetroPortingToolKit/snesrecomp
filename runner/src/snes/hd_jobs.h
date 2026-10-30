@@ -12,8 +12,21 @@ enum { kSnesHdNative = 1, kSnesHdMode7 = 2, kSnesHdAffine = 3 };
 typedef struct SnesHdFrame SnesHdFrame;
 typedef struct SnesHdCapture SnesHdCapture;
 typedef struct SnesHdSettings { bool enabled; unsigned scale; } SnesHdSettings;
-SnesHdSettings SnesHdDefaultSettings(void);
-bool SnesHdParseScale(const char *text, unsigned *scale);
+static inline SnesHdSettings SnesHdDefaultSettings(void) {
+  SnesHdSettings settings = {true, kSnesHdDefaultScale};
+  return settings;
+}
+static inline bool SnesHdParseScale(const char *text, unsigned *scale) {
+  if (!text || !scale || !*text) return false;
+  unsigned value = 0;
+  for (; *text; ++text) {
+    if (*text < '0' || *text > '9') return false;
+    value = value * 10 + (unsigned)(*text - '0');
+    if (value > kSnesHdMaxScale) return false;
+  }
+  if (!value) return false;
+  *scale = value; return true;
+}
 struct Ppu;
 /* Lazy frame publisher for standard PPU hosts: no packet allocation on frames
  * without Mode7. Bound only to the live PPU; detached work never publishes. */
