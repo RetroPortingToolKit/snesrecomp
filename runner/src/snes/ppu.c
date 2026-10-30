@@ -31,6 +31,15 @@ void ppu_setGuestScope(bool active) {s_guest_scope=active;}
 extern Snes *g_snes;
 extern unsigned char g_snesrecomp_last_hdmaen;
 
+/* Detached pictures share the pixel algorithms, but must not publish live
+ * machine diagnostics or consult callbacks owned by another picture. Keep
+ * this render scope private and per thread; it is not emulated PPU state. */
+#ifdef _MSC_VER
+static __declspec(thread) unsigned s_detached_line_depth;
+#else
+static _Thread_local unsigned s_detached_line_depth;
+#endif
+
 #ifdef SNESRECOMP_INTERP_PROFILE
 static double g_ppu_sec_eval_ms = 0;
 static double g_ppu_sec_line_ms = 0;
@@ -62,9 +71,9 @@ void ppu_sec_read(double *eval, double *line, double *bg, double *spr,
     *compose = 0.0;
   *hdma = g_ppu_sec_hdma_ms;
 }
-#define PPU_T0_DECL uint64_t _ppu_t;
-#define PPU_T0 (_ppu_t = ppu_sec_now())
-#define PPU_ACC(V) do { (V) += 1e-6 * (double)(ppu_sec_now() - _ppu_t); } while (0)
+#define PPU_T0_DECL uint64_t _ppu_t = 0;
+#define PPU_T0 do { if (!s_detached_line_depth) _ppu_t = ppu_sec_now(); } while (0)
+#define PPU_ACC(V) do { if (!s_detached_line_depth) (V) += 1e-6 * (double)(ppu_sec_now() - _ppu_t); } while (0)
 #else
 #define PPU_T0_DECL
 #define PPU_T0 do { } while (0)
@@ -785,8 +794,78 @@ static bool PpuOptimizedRendererHandlesMode(uint mode) {
   return mode <= 3 || mode == 7;
 }
 
-static void PpuRunLineJob(Ppu* ppu, int line, bool pixels, bool live) {
+static void PpuPrepareMosaic(Ppu *ppu) {
+  if (PPU_mosaicSize(ppu) != ppu->lastMosaicModulo) {
+    int mod = PPU_mosaicSize(ppu);
+    ppu->lastMosaicModulo = mod;
+    for (int i = 0, j = 0; i < countof(ppu->mosaicModulo); i++) {
+      ppu->mosaicModulo[i] = i - j;
+      j = (j + 1 == mod ? 0 : j + 1);
+    }
+  }
+  ppu->mosaicStartLine = 1;
+}
+
+static void PpuDrawVisibleLine(Ppu *ppu, int line, bool pixels, bool live) {
   PPU_T0_DECL
+  // Cache the brightness computation.
+  if (PPU_brightness(ppu) != ppu->lastBrightnessMult) {
+    uint8_t ppu_brightness = PPU_brightness(ppu);
+    ppu->lastBrightnessMult = ppu_brightness;
+    for (int i = 0; i < 32; i++)
+      ppu->brightnessMultHalf[i * 2] = ppu->brightnessMultHalf[i * 2 + 1] = ppu->brightnessMult[i] =
+      ((i << 3) | (i >> 2)) * ppu_brightness / 15;
+    memset(&ppu->brightnessMult[32], ppu->brightnessMult[31], 31);
+  }
+
+  ClearBackdrop(ppu, &ppu->objBuffer);
+  if (ppu->overlayRenderBuffer[kPpuOverlaySource_Obj])
+    memset(&ppu->overlayBuffers[kPpuOverlaySource_Obj], 0,
+           sizeof(ppu->overlayBuffers[kPpuOverlaySource_Obj]));
+  ppu->lineHasSprites = !PPU_forcedBlank(ppu) && ppu_evaluateSprites(ppu, line - 1);
+
+  if (!pixels) return;
+
+  if ((ppu->renderFlags & kPpuRenderFlags_NewRenderer) &&
+      PpuOptimizedRendererHandlesMode(PPU_mode(ppu))) {
+    if (live)
+      debug_server_on_ppu_line_drawn(line, 1, ppu->bgmode);
+    PPU_T0; PpuDrawWholeLine(ppu, line); PPU_ACC(g_ppu_sec_line_ms);
+#ifdef SNESRECOMP_INTERP_PROFILE
+    if (!s_detached_line_depth) g_ppu_sec_line_n++;
+#endif
+  } else {
+    if (live)
+      debug_server_on_ppu_line_drawn(line, 0, ppu->bgmode);
+    ppu_draw_whole_line_legacy(ppu, line);
+  }
+  if (ppu->mode7Hd.pixels)
+    PpuDrawMode7HdLine(ppu, (unsigned)line);
+}
+
+void PpuDrawDetachedLine(Ppu *ppu, int line) {
+  if (!ppu || (g_snes && ppu == g_snes->ppu) || line < 0 || line > 240)
+    return;
+  if (line == 0) {
+    PpuPrepareMosaic(ppu);
+    return;
+  }
+  if (!ppu->renderBuffer) return;
+  const bool range_over = ppu->rangeOver, time_over = ppu->timeOver;
+  PpuWidescreenLineEnhancer *enhancer = ppu->widescreenLineEnhancer;
+  void *context = ppu->widescreenLineEnhancerContext;
+  ppu->widescreenLineEnhancer = NULL;
+  ppu->widescreenLineEnhancerContext = NULL;
+  ++s_detached_line_depth;
+  PpuDrawVisibleLine(ppu, line, true, false);
+  --s_detached_line_depth;
+  ppu->widescreenLineEnhancer = enhancer;
+  ppu->widescreenLineEnhancerContext = context;
+  ppu->rangeOver = range_over;
+  ppu->timeOver = time_over;
+}
+
+static void PpuRunLineJob(Ppu* ppu, int line, bool pixels, bool live) {
   /* Writes from here to the next ppu_runLine land on line + 1; no register
    * write happens inside a line's render. */
   if (live) {
@@ -826,56 +905,14 @@ static void PpuRunLineJob(Ppu* ppu, int line, bool pixels, bool live) {
     debug_server_on_oam_render();
   }
   if(line == 0) {
-    if (PPU_mosaicSize(ppu) != ppu->lastMosaicModulo) {
-      int mod = PPU_mosaicSize(ppu);
-      ppu->lastMosaicModulo = mod;
-      for (int i = 0, j = 0; i < countof(ppu->mosaicModulo); i++) {
-        ppu->mosaicModulo[i] = i - j;
-        j = (j + 1 == mod ? 0 : j + 1);
-      }
-    }
-
-
+    PpuPrepareMosaic(ppu);
     // pre-render line
     // TODO: this now happens halfway into the first line
-    ppu->mosaicStartLine = 1;
     ppu->rangeOver = false;
     ppu->timeOver = false;
     ppu->evenFrame = !ppu->evenFrame;
   } else {
-    // Cache the brightness computation
-    if (PPU_brightness(ppu) != ppu->lastBrightnessMult) {
-      uint8_t ppu_brightness = PPU_brightness(ppu);
-      ppu->lastBrightnessMult = ppu_brightness;
-      for (int i = 0; i < 32; i++)
-        ppu->brightnessMultHalf[i * 2] = ppu->brightnessMultHalf[i * 2 + 1] = ppu->brightnessMult[i] =
-        ((i << 3) | (i >> 2)) * ppu_brightness / 15;
-      // Store 31 extra entries to remove the need for clamping to 31.
-      memset(&ppu->brightnessMult[32], ppu->brightnessMult[31], 31);
-    }
-
-    // evaluate sprites
-    ClearBackdrop(ppu, &ppu->objBuffer);
-    if (ppu->overlayRenderBuffer[kPpuOverlaySource_Obj])
-      memset(&ppu->overlayBuffers[kPpuOverlaySource_Obj], 0,
-             sizeof(ppu->overlayBuffers[kPpuOverlaySource_Obj]));
-    ppu->lineHasSprites = !PPU_forcedBlank(ppu) && ppu_evaluateSprites(ppu, line - 1);
-
-    if (!pixels) return;
-
-    if ((ppu->renderFlags & kPpuRenderFlags_NewRenderer) &&
-        PpuOptimizedRendererHandlesMode(PPU_mode(ppu))) {
-      if (live) debug_server_on_ppu_line_drawn(line, 1, ppu->bgmode);
-      PPU_T0; PpuDrawWholeLine(ppu, line); PPU_ACC(g_ppu_sec_line_ms);
-#ifdef SNESRECOMP_INTERP_PROFILE
-      g_ppu_sec_line_n++;
-#endif
-    } else {
-      if (live) debug_server_on_ppu_line_drawn(line, 0, ppu->bgmode);
-      ppu_draw_whole_line_legacy(ppu, line);
-    }
-    if (ppu->mode7Hd.pixels)
-      PpuDrawMode7HdLine(ppu, (unsigned)line);
+    PpuDrawVisibleLine(ppu, line, pixels, live);
   }
 }
 
@@ -1000,7 +1037,8 @@ static void PpuWindows_CalcWithExtra(PpuWindows *win, Ppu *ppu, uint layer,
   } else {
     win->bits = w1_bits | w2_bits;
   }
-  debug_server_on_ppu_window(y, (int)layer, win->edges, win->nr, win->bits);
+  if (!s_detached_line_depth)
+    debug_server_on_ppu_window(y, (int)layer, win->edges, win->nr, win->bits);
 }
 
 static void PpuWindows_Calc(PpuWindows *win, Ppu *ppu, uint layer, int y) {
@@ -1147,7 +1185,7 @@ static void PpuDrawBackground_4bpp(Ppu *ppu, PpuPixelPrioBufs *dstbuf,
   int tileadr = PPU_bgTileAdr(ppu, layer), pixel;
   int tileadr1 = tileadr + 7 - (y & 0x7), tileadr0 = tileadr + (y & 0x7);
   const uint16 *addr;
-  bool ws_shadow = WsShadowLayerActive(layer);
+  bool ws_shadow = !s_detached_line_depth && WsShadowLayerActive(layer);
 #define WS_TILE(t, sx) (ws_shadow ? WsShadowTile(layer, (sx), y, (uint16_t)ppu->hScroll[layer], (uint16_t)(tp - PpuRenderVram(ppu)), (uint16_t)(t)) : (uint32)(t))
   for (size_t windex = 0; windex < win.nr; windex++) {
     if (win.bits & (1 << windex))
@@ -1346,7 +1384,7 @@ static void PpuDrawBackgroundBig(Ppu *ppu, PpuPixelPrioBufs *dstbuf, uint y,
     const int left = win.edges[windex];
     const int right = win.edges[windex + 1];
     PpuZbufType *dstz = dstbuf->data + left + kPpuExtraLeftRight;
-    const bool ws_shadow = WsShadowLayerActive((int)layer);
+    const bool ws_shadow = !s_detached_line_depth && WsShadowLayerActive((int)layer);
     for (int screen_x = left; screen_x < right; screen_x++, dstz++) {
       const int mx = mosaic ? PpuMosaicAt(ppu, screen_x) : screen_x;
       const int sx = mx + ppu->hScroll[layer];
@@ -1751,7 +1789,7 @@ static void PpuDrawBackground_4bpp_mosaic(Ppu *ppu,
   int tileadr = PPU_bgTileAdr(ppu, layer), pixel;
   int tileadr1 = tileadr + 7 - (y & 0x7), tileadr0 = tileadr + (y & 0x7);
   const uint16 *addr;
-  bool ws_shadow = WsShadowLayerActive(layer);
+  bool ws_shadow = !s_detached_line_depth && WsShadowLayerActive(layer);
 #define WS_TILE(t, sx) (ws_shadow ? WsShadowTile(layer, (sx), y, (uint16_t)ppu->hScroll[layer], (uint16_t)(tp - PpuRenderVram(ppu)), (uint16_t)(t)) : (uint32)(t))
   for (size_t windex = 0; windex < win.nr; windex++) {
     if (win.bits & (1 << windex))
@@ -2299,6 +2337,7 @@ static void PpuFinishBackgroundOverlay(Ppu *ppu, uint y, bool sub,
 }
 
 static void PpuDrawBackgrounds(Ppu *ppu, int y, bool sub) {
+  PPU_T0_DECL
   // Top 4 bits contain the prio level, and bottom 4 bits the layer type.
   // SPRITE_PRIO_TO_PRIO can be used to convert from obj prio to this prio.
   //  15: BG3 tiles with priority 1 if bit 3 of $2105 is set

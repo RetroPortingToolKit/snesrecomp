@@ -573,6 +573,16 @@ void ppu_runLineState(Ppu* ppu, int line);
  * hardware line. Used for explicit reference-image/readback requests. */
 void ppu_drawCapturedLine(Ppu* ppu, int line, bool pixels);
 
+/* Render a private picture using the ordinary pixel algorithms, without
+ * publishing live scanout/debug/write-journal/OAM-history or status effects.
+ * line0 prepares mosaic only; lines1..240 write output row(line-1). The caller
+ * owns a detached Ppu and all bound output/overlay/HD storage, which must not
+ * alias the live machine. Existing field parity and OAM motion hints are used
+ * as supplied. Host line-enhancer and global WS-shadow callbacks are omitted.
+ * Invalid lines, NULL and the live machine's Ppu are ignored. This is picture
+ * drawing only: it does not replay register writes or advance the console. */
+void PpuDrawDetachedLine(Ppu *ppu, int line);
+
 /* Bind an additional XRGB8888 frame with 1..4 samples per native pixel in
  * each dimension. Width is 256 + twice the current centering budget; height
  * is 1..240. The caller owns pixels and must unbind before freeing them.
