@@ -327,6 +327,7 @@ set(SNESRECOMP_RUNNER_SOURCES
     ${SNESRECOMP_RUNNER_ROOT}/src/snes/msu1.c
     ${SNESRECOMP_RUNNER_ROOT}/src/snes/color_lut.c
     ${SNESRECOMP_RUNNER_ROOT}/src/snes/ppu.c
+    ${SNESRECOMP_RUNNER_ROOT}/src/snes/hd_jobs.c
     ${SNESRECOMP_RUNNER_ROOT}/src/snes/ppu_legacy.c
     ${SNESRECOMP_RUNNER_ROOT}/src/snes/sa1.c
     ${SNESRECOMP_RUNNER_ROOT}/src/snes/sdd1.c

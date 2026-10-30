@@ -14,6 +14,8 @@ typedef struct SnesHdGpuStats {
 /* Requires a current desktop OpenGL3.3 context. Missing GPU support returns
  * NULL; all platforms retain the portable frame/ROI consumer. */
 SnesHdGpu *SnesHdGpuCreate(void);
+/* Interpolated double-precision camera rows need GL4; register jobs use3.3. */
+bool SnesHdGpuSupportsAffine(const SnesHdGpu *gpu);
 void SnesHdGpuDestroy(SnesHdGpu *gpu);
 void SnesHdGpuReset(SnesHdGpu *gpu);
 /* No full-resolution staging image. Allocation belongs to the host; this

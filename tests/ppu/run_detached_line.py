@@ -19,6 +19,7 @@ def main():
                    '-I' + str(root / 'runner/src/snes'),
                    str(root / 'tests/ppu/ppu_detached_line_test.c'),
                    str(root / 'runner/src/snes/ppu.c'),
+                   str(root / 'runner/src/snes/hd_jobs.c'),
                    str(root / 'runner/src/snes/ppu_legacy.c'),
                    '-o', str(binary)]
         subprocess.run(command, check=True)

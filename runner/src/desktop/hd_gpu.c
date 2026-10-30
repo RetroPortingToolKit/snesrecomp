@@ -11,26 +11,29 @@
 #endif
 typedef void (CODEGEN_FUNCPTR *HdQueryCounter)(GLuint, GLenum);
 typedef void (CODEGEN_FUNCPTR *HdQueryResult64)(GLuint, GLenum, uint64_t *);
-enum { kResidentPictures = 256, kQueryFrames = 4 };
+enum { kResidentPictures = 256, kQueryFrames = 4, kHdTextures = 8 };
 typedef struct HdResident {
   uint64_t hash, seen;
   uint16_t *copy;
 } HdResident;
 struct SnesHdGpu {
-  GLuint program, vao, textures[5], queries[kQueryFrames][3];
+  GLuint program, affine_program, vao, textures[kHdTextures], queries[kQueryFrames][3];
   unsigned width, height, texture_width, texture_height, max_texture, max_layers, query_pending;
   bool failed;
   uint64_t serial;
-  uint32_t *native_pixels;
+  uint32_t *native_pixels, *overlay;
   uint16_t *objects, *palette;
   int32_t *metadata;
+  double *affine;
   HdResident resident[kResidentPictures];
+  SnesHdTilemap *maps[kSnesHdMaxTilemaps];
+  uint64_t map_seen[kSnesHdMaxTilemaps];
   HdQueryCounter query_counter;
   HdQueryResult64 query_result;
   SnesHdGpuStats stats;
 };
 typedef struct HdState {
-  GLint program, vao, active, textures[5][2], viewport[4], scissor[4], unpack, row_length, pbo;
+  GLint program, vao, active, textures[kHdTextures][2], viewport[4], scissor[4], unpack, row_length, pbo;
   GLboolean blend, depth, cull, scissor_on, srgb, color[4];
 } HdState;
 static void hd_save(HdState *s) {
@@ -42,7 +45,7 @@ static void hd_save(HdState *s) {
   s->blend = glIsEnabled(GL_BLEND); s->depth = glIsEnabled(GL_DEPTH_TEST);
   s->cull = glIsEnabled(GL_CULL_FACE); s->scissor_on = glIsEnabled(GL_SCISSOR_TEST);
   s->srgb = glIsEnabled(GL_FRAMEBUFFER_SRGB);
-  for (unsigned i = 0; i < 5; ++i) {
+  for (unsigned i = 0; i < kHdTextures; ++i) {
     glActiveTexture(GL_TEXTURE0 + i);
     glGetIntegerv(GL_TEXTURE_BINDING_2D, &s->textures[i][0]);
     glGetIntegerv(GL_TEXTURE_BINDING_2D_ARRAY, &s->textures[i][1]);
@@ -51,7 +54,7 @@ static void hd_save(HdState *s) {
 static void hd_enable(GLenum flag, GLboolean on) { if (on) glEnable(flag); else glDisable(flag); }
 static void hd_restore(const HdState *s) {
   glUseProgram(s->program); glBindVertexArray(s->vao);
-  for (unsigned i = 0; i < 5; ++i) {
+  for (unsigned i = 0; i < kHdTextures; ++i) {
     glActiveTexture(GL_TEXTURE0 + i); glBindTexture(GL_TEXTURE_2D, s->textures[i][0]);
     glBindTexture(GL_TEXTURE_2D_ARRAY, s->textures[i][1]);
   }
@@ -67,28 +70,37 @@ static const char *vertex_source =
   "#version 330 core\n"
   "void main(){vec2 p=vec2((gl_VertexID<<1)&2,gl_VertexID&2);gl_Position=vec4(p*2.0-1.0,0.0,1.0);}\n";
 static const char *fragment_source =
-  "#version 330 core\n"
   "uniform usampler2D native_plane,object_plane,palette_plane;\n"
-  "uniform isampler2D metadata;uniform usampler2DArray picture;\n"
+  "uniform isampler2D metadata;uniform usampler2DArray picture,tilemaps;\n"
+  "uniform usampler2D affine_plane,overlay_plane;\n"
   "uniform ivec2 requested,output_size;uniform int scale;out vec4 result;\n"
   "int fd(int n,int d){return n>=0?int(uint(n)/uint(d)):-1-int(uint(-(n+1))/uint(d));}\n"
   "int coord(int o,int step,int row,int x,int sx,int sy){int q=o+x*step;int b=fd(q,256);"
   "return b+fd((q-b*256)*scale+sx*step+sy*row,256*scale);}\n"
   "bool cond(int m,bool inside){return m==3||(m==1&&!inside)||(m==2&&inside);}\n"
   "uint word(int address,int layer){return texelFetch(picture,ivec3(address&255,(address>>8)&127,layer),0).r;}\n"
-  "uint fetch_index(ivec2 t,int control,int layer){bool outside=any(lessThan(t,ivec2(0)))||any(greaterThanEqual(t,ivec2(1024)));"
+  "uint fetch_index(ivec2 t,int control,int layer,ivec4 m,ivec4 o){bool outside=any(lessThan(t,ivec2(0)))||any(greaterThanEqual(t,ivec2(1024)));"
   "if(outside&&(control&128)!=0&&(control&64)==0)return 0u;ivec2 p=t&1023;"
   "int tile=outside&&(control&128)!=0?0:int(word((p.y/8)*128+p.x/8,layer)&255u);"
+  "if(m.x>0&&!(outside&&(control&128)!=0)){ivec2 cell=((t+o.xy)>>3)&(m.yz-1);tile=int(texelFetch(tilemaps,ivec3(cell,m.x-1),0).r);}"
   "return word(tile*64+(p.y&7)*8+(p.x&7),layer)>>8;}\n"
   "uint color(uint p,uvec4 object,int y){uint layer=(p>>8)&15u;return layer==4u||layer==6u?object.g:texelFetch(palette_plane,ivec2(int(p&255u),y),0).r;}\n"
   "void rgb(uint c){result=vec4(vec3((c>>16)&255u,(c>>8)&255u,c&255u)/255.0,1.0);}\n"
   "void main(){ivec2 p=ivec2(gl_FragCoord.xy);p=p*(requested/output_size)+p*(requested%output_size)/output_size;"
   "ivec2 n=p/scale;uvec4 object=texelFetch(object_plane,n,0);ivec4 cfg=texelFetch(metadata,ivec2(0,n.y),0);"
-  "if(scale==1||cfg.x!=2||object.a!=0u){rgb(texelFetch(native_plane,n,0).r);return;}"
+  "if(scale==1||cfg.x==1||object.a!=0u){rgb(texelFetch(native_plane,n,0).r);return;}"
   "ivec4 a=texelFetch(metadata,ivec2(1,n.y),0),b=texelFetch(metadata,ivec2(2,n.y),0),c=texelFetch(metadata,ivec2(3,n.y),0);"
   "int x=b.z+n.x;if(x<b.w||x>=c.x){rgb(0u);return;}int sx=p.x%scale,sy=p.y%scale;"
   "uint visible=object.b;uint index=0u;"
-  "if((visible&3u)!=0u){ivec2 t=ivec2(coord(a.x,a.z,b.x,x,sx,sy),coord(a.y,a.w,b.y,x,sx,sy));index=fetch_index(t,cfg.z,cfg.y);}"
+  "if((visible&3u)!=0u){ivec2 t=ivec2(coord(a.x,a.z,b.x,x,sx,sy),coord(a.y,a.w,b.y,x,sx,sy));\n"
+  "#ifdef HD_AFFINE\n"
+  "if(cfg.x==3){uvec4 d0=texelFetch(affine_plane,ivec2(0,n.y),0),d1=texelFetch(affine_plane,ivec2(1,n.y),0),d2=texelFetch(affine_plane,ivec2(2,n.y),0),d3=texelFetch(affine_plane,ivec2(3,n.y),0);"
+  "precise double fy=double(sy)/double(scale),px=double(x)+double(sx)/double(scale);"
+  "precise double ox=packDouble2x32(d0.xy)+packDouble2x32(d2.xy)*fy,oy=packDouble2x32(d0.zw)+packDouble2x32(d2.zw)*fy;"
+  "precise double dx=packDouble2x32(d1.xy)+packDouble2x32(d3.xy)*fy,dy=packDouble2x32(d1.zw)+packDouble2x32(d3.zw)*fy;"
+  "precise double tx=(ox+px*dx)/256.0LF,ty=(oy+px*dy)/256.0LF;t=ivec2(int(floor(tx)),int(floor(ty)));}\n"
+  "#endif\n"
+  "index=fetch_index(t,cfg.z,cfg.y,texelFetch(metadata,ivec2(4,n.y),0),texelFetch(metadata,ivec2(5,n.y),0));}"
   "uint bg=index!=0u?0x5000u|index:0x500u;uint mainp=(visible&1u)!=0u?bg:0x500u,sub=(visible&2u)!=0u?bg:0x500u;"
   "if((visible&4u)!=0u&&object.r>mainp)mainp=object.r;if((visible&8u)!=0u&&object.r>sub)sub=object.r;"
   "bool inside=(visible&16u)!=0u;bool clip=cond((c.z>>6)&3,inside);"
@@ -97,17 +109,35 @@ static const char *fragment_source =
   "if(math&&(c.z&2)!=0){if((sub&255u)!=0u)other=color(sub,object,n.y);else half=false;}"
   "uvec3 outc=uvec3(0);for(int channel=0;channel<3;++channel){int q=clip?0:int((v>>(5*channel))&31u);"
   "if(math){int s=int((other>>(5*channel))&31u);q=max(0,q+((c.w&128)!=0?-s:s));if(half)q/=2;q=min(q,31);}"
-  "outc[channel]=uint(((q<<3)|(q>>2))*cfg.w/15);}result=vec4(vec3(outc)/255.0,1.0);}\n";
-static GLuint hd_shader(GLenum kind, const char *source) {
-  GLuint shader = glCreateShader(kind); glShaderSource(shader, 1, &source, NULL); glCompileShader(shader);
+  "outc[channel]=uint(((q<<3)|(q>>2))*cfg.w/15);}"
+  "uint over=texelFetch(overlay_plane,n,0).r,alpha=over>>24;"
+  "uvec3 fg=uvec3((over>>16)&255u,(over>>8)&255u,over&255u);"
+  "outc=min(uvec3(255),(outc*(255u-alpha)+fg*255u+127u)/255u);"
+  "result=vec4(vec3(outc)/255.0,1.0);}\n";
+static GLuint hd_shader(GLenum kind, const char *source, bool affine) {
+  const char *parts[2] = {affine ? "#version 400 core\n#define HD_AFFINE 1\n" :
+      "#version 330 core\n", source};
+  GLuint shader = glCreateShader(kind);
+  glShaderSource(shader, kind == GL_VERTEX_SHADER ? 1 : 2,
+      kind == GL_VERTEX_SHADER ? &source : parts, NULL); glCompileShader(shader);
   GLint ok = 0; glGetShaderiv(shader, GL_COMPILE_STATUS, &ok);
   if (!ok) { char log[2048]; glGetShaderInfoLog(shader, sizeof(log), NULL, log);
     fprintf(stderr, "SNES HD GPU shader: %s\n", log); glDeleteShader(shader); return 0; }
   return shader;
 }
+static GLuint hd_program(bool affine) {
+  GLuint vs = hd_shader(GL_VERTEX_SHADER, vertex_source, false);
+  GLuint fs = hd_shader(GL_FRAGMENT_SHADER, fragment_source, affine);
+  if (!vs || !fs) { if (vs) glDeleteShader(vs); if (fs) glDeleteShader(fs); return 0; }
+  GLuint program = glCreateProgram(); glAttachShader(program, vs); glAttachShader(program, fs);
+  glLinkProgram(program); glDeleteShader(vs); glDeleteShader(fs);
+  GLint ok = 0; glGetProgramiv(program, GL_LINK_STATUS, &ok);
+  if (!ok) { glDeleteProgram(program); return 0; }
+  return program;
+}
 static void hd_bind(SnesHdGpu *g, unsigned unit) {
   glActiveTexture(GL_TEXTURE0 + unit);
-  glBindTexture(unit == 4 ? GL_TEXTURE_2D_ARRAY : GL_TEXTURE_2D, g->textures[unit]);
+  glBindTexture(unit == 4 || unit == 5 ? GL_TEXTURE_2D_ARRAY : GL_TEXTURE_2D, g->textures[unit]);
 }
 static void hd_image(SnesHdGpu *g, unsigned unit, GLint format, unsigned w,
                      unsigned h, GLenum external, GLenum type, const void *data) {
@@ -123,28 +153,33 @@ SnesHdGpu *SnesHdGpuCreate(void) {
   GLint max_texture = 0, layers = 0, units = 0;
   glGetIntegerv(GL_MAX_TEXTURE_SIZE, &max_texture); glGetIntegerv(GL_MAX_ARRAY_TEXTURE_LAYERS, &layers);
   glGetIntegerv(GL_MAX_TEXTURE_IMAGE_UNITS, &units);
-  if (max_texture < 512 || layers < 1 || units < 5) { free(g); return NULL; }
+  if (max_texture < 1024 || layers < kSnesHdMaxTilemaps || units < kHdTextures) { free(g); return NULL; }
   g->max_texture = (unsigned)max_texture;
   g->max_layers = layers < kResidentPictures ? (unsigned)layers : kResidentPictures;
-  GLuint vs = hd_shader(GL_VERTEX_SHADER, vertex_source), fs = hd_shader(GL_FRAGMENT_SHADER, fragment_source);
-  if (!vs || !fs) { if (vs) glDeleteShader(vs); if (fs) glDeleteShader(fs); free(g); return NULL; }
-  g->program = glCreateProgram(); glAttachShader(g->program, vs); glAttachShader(g->program, fs);
-  glLinkProgram(g->program); glDeleteShader(vs); glDeleteShader(fs);
-  GLint ok = 0; glGetProgramiv(g->program, GL_LINK_STATUS, &ok);
-  if (!ok) { glDeleteProgram(g->program); free(g); return NULL; }
+  g->program = hd_program(false);
+  if (!g->program) { free(g); return NULL; }
+  /* Prepared double-precision camera jobs are optional. Register jobs retain
+   * the GL3.3 integer path; lacking GL4 keeps the portable consumer usable. */
+  if (ogl_IsVersionGEQ(4, 0)) g->affine_program = hd_program(true);
   HdState saved; hd_save(&saved); glBindBuffer(GL_PIXEL_UNPACK_BUFFER, 0);
   glPixelStorei(GL_UNPACK_ALIGNMENT, 1); glPixelStorei(GL_UNPACK_ROW_LENGTH, 0);
-  glGenTextures(5, g->textures); glGenVertexArrays(1, &g->vao); hd_bind(g, 4);
+  glGenTextures(kHdTextures, g->textures); glGenVertexArrays(1, &g->vao); hd_bind(g, 4);
   glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
   glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
   glTexImage3D(GL_TEXTURE_2D_ARRAY, 0, GL_R16UI, 256, 128, g->max_layers, 0,
                 GL_RED_INTEGER, GL_UNSIGNED_SHORT, NULL);
+  hd_bind(g, 5);
+  glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+  glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+  glTexImage3D(GL_TEXTURE_2D_ARRAY, 0, GL_R8UI, kSnesHdMapWidth,
+      kSnesHdMapHeight, kSnesHdMaxTilemaps, 0, GL_RED_INTEGER, GL_UNSIGNED_BYTE, NULL);
   g->query_counter = (HdQueryCounter)SDL_GL_GetProcAddress("glQueryCounter");
   g->query_result = (HdQueryResult64)SDL_GL_GetProcAddress("glGetQueryObjectui64v");
   if (g->query_counter && g->query_result) glGenQueries(kQueryFrames * 3, &g->queries[0][0]);
   g->stats.gpu_timestamps = g->query_counter && g->query_result;
-  g->stats.source_gpu_bytes = (size_t)g->max_layers * 65536;
-  ok = glGetError() == GL_NO_ERROR; hd_restore(&saved);
+  g->stats.source_gpu_bytes = (size_t)g->max_layers * 65536 +
+      (size_t)kSnesHdMapWidth * kSnesHdMapHeight * kSnesHdMaxTilemaps;
+  bool ok = glGetError() == GL_NO_ERROR; hd_restore(&saved);
   if (!ok) { SnesHdGpuDestroy(g); return NULL; }
   fprintf(stderr, "SNES HD GPU available: %s, max texture%u, source layers%u\n",
             glGetString(GL_RENDERER), g->max_texture, g->max_layers);
@@ -155,13 +190,18 @@ void SnesHdGpuReset(SnesHdGpu *g) {
   for (unsigned i = 0; i < g->max_layers; ++i) {
     free(g->resident[i].copy); memset(&g->resident[i], 0, sizeof(g->resident[i]));
   }
+  for (unsigned i = 0; i < kSnesHdMaxTilemaps; ++i) {
+    free(g->maps[i]); g->maps[i] = NULL; g->map_seen[i] = 0;
+  }
 }
+bool SnesHdGpuSupportsAffine(const SnesHdGpu *g) { return g && g->affine_program; }
 void SnesHdGpuDestroy(SnesHdGpu *g) {
   if (!g) return;
-  SnesHdGpuReset(g); glDeleteTextures(5, g->textures); glDeleteVertexArrays(1, &g->vao);
+  SnesHdGpuReset(g); glDeleteTextures(kHdTextures, g->textures); glDeleteVertexArrays(1, &g->vao);
   if (g->program) glDeleteProgram(g->program);
+  if (g->affine_program) glDeleteProgram(g->affine_program);
   if (g->stats.gpu_timestamps) glDeleteQueries(kQueryFrames * 3, &g->queries[0][0]);
-  free(g->native_pixels); free(g->objects); free(g->palette); free(g->metadata); free(g);
+  free(g->native_pixels); free(g->overlay); free(g->objects); free(g->palette); free(g->metadata); free(g->affine); free(g);
 }
 bool SnesHdGpuAdmit(SnesHdGpu *g, unsigned w, unsigned h, unsigned scale,
                     size_t budget, unsigned *out_w, unsigned *out_h) {
@@ -193,16 +233,23 @@ bool SnesHdGpuDraw(SnesHdGpu *g, const SnesHdFrame *frame, unsigned scale,
   if (!g || g->failed || !SnesHdFrameView(frame, &v) || !scale || scale > 64 ||
       !width || !height || width > g->max_texture || height > g->max_texture ||
       v.source_count > g->max_layers) return false;
+  bool affine = false;
+  for (unsigned y = 0; y < v.height; ++y) affine |= v.lines[y].kind == kSnesHdAffine;
+  if (affine && !g->affine_program) return false;
   if (g->width != v.width || g->height != v.height) {
     uint32_t *native = malloc(v.width * v.height * 4);
+    uint32_t *overlay = malloc(v.width * v.height * 4);
     uint16_t *objects = calloc((size_t)v.width * v.height * 4, 2);
     uint16_t *palette = malloc(v.height * 512);
-    int32_t *meta = malloc(v.height * 64);
-    if (!native || !objects || !palette || !meta) {
-      free(native); free(objects); free(palette); free(meta); return false;
+    int32_t *meta = calloc(v.height, 96);
+    double *transforms = malloc(v.height * 64);
+    if (!native || !overlay || !objects || !palette || !meta || !transforms) {
+      free(native); free(overlay); free(objects); free(palette); free(meta); free(transforms); return false;
     }
-    free(g->native_pixels); free(g->objects); free(g->palette); free(g->metadata);
+    free(g->native_pixels); free(g->overlay); free(g->objects); free(g->palette); free(g->metadata); free(g->affine);
     g->native_pixels = native; g->objects = objects; g->palette = palette; g->metadata = meta;
+    g->affine = transforms;
+    g->overlay = overlay;
     g->width = v.width; g->height = v.height;
     /* Texture storage is resized below while preserving the caller's state. */
   }
@@ -223,21 +270,44 @@ bool SnesHdGpuDraw(SnesHdGpu *g, const SnesHdFrame *frame, unsigned scale,
     if (i == g->max_layers) return false;
     source_layers[s] = i; g->resident[i].seen = g->serial;
   }
+  unsigned map_layers[kSnesHdMaxTilemaps];
+  for (unsigned s = 0; s < v.tilemap_count; ++s) {
+    const SnesHdTilemap *m = v.tilemaps[s]; unsigned i;
+    for (i = 0; i < kSnesHdMaxTilemaps; ++i) {
+      const SnesHdTilemap *p = g->maps[i];
+      if (p && p->hash == m->hash && p->width == m->width && p->height == m->height &&
+          !memcmp(p->texels, m->texels, (size_t)m->width * m->height)) break;
+    }
+    map_layers[s] = i;
+    if (i < kSnesHdMaxTilemaps) g->map_seen[i] = g->serial;
+  }
+  for (unsigned s = 0; s < v.tilemap_count; ++s) if (map_layers[s] == kSnesHdMaxTilemaps) {
+    unsigned i;
+    for (i = 0; i < kSnesHdMaxTilemaps; ++i) if (g->map_seen[i] != g->serial) break;
+    if (i == kSnesHdMaxTilemaps) return false;
+    map_layers[s] = i; g->map_seen[i] = g->serial;
+  }
   for (unsigned y = 0; y < v.height; ++y) {
     const SnesHdLine *j = &v.lines[y];
     memcpy(g->native_pixels + y * v.width, j->native, v.width * 4);
+    memcpy(g->overlay + y * v.width, j->overlay, v.width * 4);
     memcpy(g->palette + y * 256, j->palette, 512);
     for (unsigned x = 0; x < v.width; ++x) {
       uint16_t *p = g->objects + (y * v.width + x) * 4;
       p[0] = j->object[x]; p[1] = j->object_color[x];
       p[2] = j->visibility[x]; p[3] = j->native_mask[x];
     }
-    int32_t *m = g->metadata + y * 16;
-    m[0] = j->kind; m[1] = j->kind == 2 ? (int)source_layers[j->source] : 0;
+    int32_t *m = g->metadata + y * 24;
+    m[0] = j->kind; m[1] = j->kind != kSnesHdNative ? (int)source_layers[j->source] : 0;
     m[2] = j->control; m[3] = j->brightness;
     m[4] = j->origin_x; m[5] = j->origin_y; m[6] = j->step_x; m[7] = j->step_y;
     m[8] = j->row_x; m[9] = j->row_y; m[10] = j->screen_left; m[11] = j->active_left;
     m[12] = j->active_right; m[13] = j->fixed_color; m[14] = j->cgwsel; m[15] = j->cgadsub;
+    const SnesHdTilemap *map = j->tilemap ? v.tilemaps[j->tilemap - 1] : NULL;
+    m[16] = map ? (int)map_layers[j->tilemap - 1] + 1 : 0;
+    m[17] = map ? (int)map->width : 0; m[18] = map ? (int)map->height : 0; m[19] = 0;
+    m[20] = j->map_offset_x; m[21] = j->map_offset_y; m[22] = m[23] = 0;
+    memcpy(g->affine + y * 8, j->affine, 64);
   }
   HdState saved; hd_save(&saved); glBindBuffer(GL_PIXEL_UNPACK_BUFFER, 0);
   glPixelStorei(GL_UNPACK_ALIGNMENT, 1); glPixelStorei(GL_UNPACK_ROW_LENGTH, 0);
@@ -254,20 +324,36 @@ bool SnesHdGpuDraw(SnesHdGpu *g, const SnesHdFrame *frame, unsigned scale,
     glTexSubImage3D(GL_TEXTURE_2D_ARRAY, 0, 0, 0, source_layers[s], 256, 128, 1,
                      GL_RED_INTEGER, GL_UNSIGNED_SHORT, p->copy); uploaded += 65536;
   }
+  hd_bind(g, 5);
+  for (unsigned s = 0; s < v.tilemap_count; ++s) {
+    const SnesHdTilemap *m = v.tilemaps[s]; SnesHdTilemap **p = &g->maps[map_layers[s]];
+    if (*p && (*p)->hash == m->hash && (*p)->width == m->width && (*p)->height == m->height &&
+        !memcmp((*p)->texels, m->texels, (size_t)m->width * m->height)) continue;
+    if (!*p) *p = malloc(sizeof(**p));
+    if (!*p) { hd_restore(&saved); return false; }
+    (*p)->hash = m->hash; (*p)->width = m->width; (*p)->height = m->height;
+    size_t bytes = (size_t)m->width * m->height;
+    memcpy((*p)->texels, m->texels, bytes);
+    glTexSubImage3D(GL_TEXTURE_2D_ARRAY, 0, 0, 0, map_layers[s], m->width, m->height, 1,
+        GL_RED_INTEGER, GL_UNSIGNED_BYTE, m->texels); uploaded += bytes;
+  }
   /* All staging/upload dimensions are native-sized and independent of scale. */
   hd_image(g, 0, GL_R32UI, v.width, v.height, GL_RED_INTEGER, GL_UNSIGNED_INT, g->native_pixels);
   hd_image(g, 1, GL_RGBA16UI, v.width, v.height, GL_RGBA_INTEGER, GL_UNSIGNED_SHORT, g->objects);
   hd_image(g, 2, GL_R16UI, 256, v.height, GL_RED_INTEGER, GL_UNSIGNED_SHORT, g->palette);
-  hd_image(g, 3, GL_RGBA32I, 4, v.height, GL_RGBA_INTEGER, GL_INT, g->metadata);
+  hd_image(g, 3, GL_RGBA32I, 6, v.height, GL_RGBA_INTEGER, GL_INT, g->metadata);
+  hd_image(g, 6, GL_RGBA32UI, 4, v.height, GL_RGBA_INTEGER, GL_UNSIGNED_INT, g->affine);
+  hd_image(g, 7, GL_R32UI, v.width, v.height, GL_RED_INTEGER, GL_UNSIGNED_INT, g->overlay);
   g->texture_width = g->width; g->texture_height = g->height;
-  uploaded += (uint64_t)v.width * v.height * 12 + v.height * (512 + 64);
+  uploaded += (uint64_t)v.width * v.height * 16 + v.height * (512 + 96 + 64);
   if (g->stats.gpu_timestamps) g->query_counter(g->queries[query][1], GL_TIMESTAMP);
-  glUseProgram(g->program); glBindVertexArray(g->vao);
-  const char *names[5] = {"native_plane", "object_plane", "palette_plane", "metadata", "picture"};
-  for (unsigned i = 0; i < 5; ++i) { hd_bind(g, i); glUniform1i(glGetUniformLocation(g->program, names[i]), i); }
-  glUniform2i(glGetUniformLocation(g->program, "requested"), v.width * scale, v.height * scale);
-  glUniform2i(glGetUniformLocation(g->program, "output_size"), width, height);
-  glUniform1i(glGetUniformLocation(g->program, "scale"), scale);
+  GLuint program = affine ? g->affine_program : g->program;
+  glUseProgram(program); glBindVertexArray(g->vao);
+  const char *names[kHdTextures] = {"native_plane", "object_plane", "palette_plane", "metadata", "picture", "tilemaps", "affine_plane", "overlay_plane"};
+  for (unsigned i = 0; i < kHdTextures; ++i) { hd_bind(g, i); glUniform1i(glGetUniformLocation(program, names[i]), i); }
+  glUniform2i(glGetUniformLocation(program, "requested"), v.width * scale, v.height * scale);
+  glUniform2i(glGetUniformLocation(program, "output_size"), width, height);
+  glUniform1i(glGetUniformLocation(program, "scale"), scale);
   glViewport(0, 0, width, height); glDisable(GL_SCISSOR_TEST); glDisable(GL_BLEND);
   glDisable(GL_DEPTH_TEST); glDisable(GL_CULL_FACE); glDisable(GL_FRAMEBUFFER_SRGB);
   glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE); glDrawArrays(GL_TRIANGLES, 0, 3);
@@ -282,6 +368,7 @@ bool SnesHdGpuDraw(SnesHdGpu *g, const SnesHdFrame *frame, unsigned scale,
 #else
 struct SnesHdGpu { int unused; };
 SnesHdGpu *SnesHdGpuCreate(void) { return NULL; }
+bool SnesHdGpuSupportsAffine(const SnesHdGpu *g) { (void)g; return false; }
 void SnesHdGpuDestroy(SnesHdGpu *g) { (void)g; }
 void SnesHdGpuReset(SnesHdGpu *g) { (void)g; }
 bool SnesHdGpuAdmit(SnesHdGpu *g,unsigned w,unsigned h,unsigned s,size_t b,unsigned *x,unsigned *y) {

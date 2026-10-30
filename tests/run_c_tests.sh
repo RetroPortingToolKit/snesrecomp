@@ -71,21 +71,21 @@ echo "=== PPU sprite limits ==="
     -DSNESRECOMP_REVERSE_DEBUG=0 \
     -I "$ROOT/runner/src" -I "$ROOT/runner/src/snes" \
     "$ROOT/tests/ppu/ppu_sprite_limit_test.c" \
-    "$ROOT/runner/src/snes/ppu.c" \
+    "$ROOT/runner/src/snes/hd_jobs.c" "$ROOT/runner/src/snes/ppu.c" \
     "$ROOT/runner/src/snes/ppu_legacy.c" \
     -lm -o "$OUT/ppu_sprite_limit_test"
 "$OUT/ppu_sprite_limit_test"
 
 echo "=== PPU modes 4-6 fall back to the compatibility renderer ==="
-"$CC" -std=c11 -Wall -Wextra -O1     -DSNESRECOMP_REVERSE_DEBUG=0     -I "$ROOT/runner/src" -I "$ROOT/runner/src/snes"     "$ROOT/tests/ppu/ppu_hires_mode_test.c"     "$ROOT/runner/src/snes/ppu.c"     "$ROOT/runner/src/snes/ppu_legacy.c"     -lm -o "$OUT/ppu_hires_mode_test"
+"$CC" -std=c11 -Wall -Wextra -O1     -DSNESRECOMP_REVERSE_DEBUG=0     -I "$ROOT/runner/src" -I "$ROOT/runner/src/snes"     "$ROOT/tests/ppu/ppu_hires_mode_test.c"     "$ROOT/runner/src/snes/hd_jobs.c" "$ROOT/runner/src/snes/ppu.c"     "$ROOT/runner/src/snes/ppu_legacy.c"     -lm -o "$OUT/ppu_hires_mode_test"
 "$OUT/ppu_hires_mode_test"
 
 echo "=== PPU widescreen world-mirror band ==="
-"$CC" -std=c11 -Wall -Wextra -O1     -DSNESRECOMP_REVERSE_DEBUG=0     -I "$ROOT/runner/src" -I "$ROOT/runner/src/snes"     "$ROOT/tests/ppu/ppu_world_mirror_test.c"     "$ROOT/runner/src/snes/ppu.c"     "$ROOT/runner/src/snes/ppu_legacy.c"     -lm -o "$OUT/ppu_world_mirror_test"
+"$CC" -std=c11 -Wall -Wextra -O1     -DSNESRECOMP_REVERSE_DEBUG=0     -I "$ROOT/runner/src" -I "$ROOT/runner/src/snes"     "$ROOT/tests/ppu/ppu_world_mirror_test.c"     "$ROOT/runner/src/snes/hd_jobs.c" "$ROOT/runner/src/snes/ppu.c"     "$ROOT/runner/src/snes/ppu_legacy.c"     -lm -o "$OUT/ppu_world_mirror_test"
 "$OUT/ppu_world_mirror_test"
 
 echo "=== PPU widescreen elastic anchor band ==="
-"$CC" -std=c11 -Wall -Wextra -O1     -DSNESRECOMP_REVERSE_DEBUG=0     -I "$ROOT/runner/src" -I "$ROOT/runner/src/snes"     "$ROOT/tests/ppu/ppu_elastic_band_test.c"     "$ROOT/runner/src/snes/ppu.c"     "$ROOT/runner/src/snes/ppu_legacy.c"     -lm -o "$OUT/ppu_elastic_band_test"
+"$CC" -std=c11 -Wall -Wextra -O1     -DSNESRECOMP_REVERSE_DEBUG=0     -I "$ROOT/runner/src" -I "$ROOT/runner/src/snes"     "$ROOT/tests/ppu/ppu_elastic_band_test.c"     "$ROOT/runner/src/snes/hd_jobs.c" "$ROOT/runner/src/snes/ppu.c"     "$ROOT/runner/src/snes/ppu_legacy.c"     -lm -o "$OUT/ppu_elastic_band_test"
 "$OUT/ppu_elastic_band_test"
 
 echo "=== HD Mode 7 sampling and composition ==="
@@ -93,13 +93,13 @@ echo "=== HD Mode 7 sampling and composition ==="
     -DSNESRECOMP_REVERSE_DEBUG=0 \
     -I "$ROOT/runner/src" -I "$ROOT/runner/src/snes" \
     "$ROOT/tests/ppu/ppu_mode7_hd_test.c" \
-    "$ROOT/runner/src/snes/ppu.c" \
+    "$ROOT/runner/src/snes/hd_jobs.c" "$ROOT/runner/src/snes/ppu.c" \
     "$ROOT/runner/src/snes/ppu_legacy.c" \
     -lm -o "$OUT/ppu_mode7_hd_test"
 "$OUT/ppu_mode7_hd_test"
 
 echo "=== PPU raster journal ==="
-"$CC" -std=c11 -Wall -Wextra -O1     -DSNESRECOMP_REVERSE_DEBUG=0     -I "$ROOT/runner/src" -I "$ROOT/runner/src/snes"     "$ROOT/tests/ppu/ppu_raster_journal_test.c"     "$ROOT/runner/src/snes/ppu.c"     "$ROOT/runner/src/snes/ppu_legacy.c"     -lm -o "$OUT/ppu_raster_journal_test"
+"$CC" -std=c11 -Wall -Wextra -O1     -DSNESRECOMP_REVERSE_DEBUG=0     -I "$ROOT/runner/src" -I "$ROOT/runner/src/snes"     "$ROOT/tests/ppu/ppu_raster_journal_test.c"     "$ROOT/runner/src/snes/hd_jobs.c" "$ROOT/runner/src/snes/ppu.c"     "$ROOT/runner/src/snes/ppu_legacy.c"     -lm -o "$OUT/ppu_raster_journal_test"
 "$OUT/ppu_raster_journal_test"
 
 echo "=== DMA / HDMA ==="

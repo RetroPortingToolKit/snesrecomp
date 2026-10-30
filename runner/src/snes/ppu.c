@@ -1,4 +1,5 @@
 #include "ppu.h"
+#include "hd_jobs_internal.h"
 #include "mode7_hd.h"
 
 extern unsigned char g_snesrecomp_last_hdmaen;
@@ -2613,95 +2614,10 @@ static bool PpuHdWindowCondition(unsigned mode, bool inside) {
   return mode == 3 || (mode == 1 && !inside) || (mode == 2 && inside);
 }
 
-struct SnesHdFrame {
-  unsigned width, height, source_count;
-  bool sealed, failed;
-  SnesHdLine *lines;
-  SnesHdPicture *sources[kSnesHdMaxHeight];
-  const uint16_t *last_vram;
-  uint32_t last_generation;
-  unsigned last_source;
-};
-
-SnesHdFrame *SnesHdFrameCreate(unsigned width, unsigned height) {
-  if (!width || width > kSnesHdMaxWidth || !height || height > kSnesHdMaxHeight)
-    return NULL;
-  SnesHdFrame *f = calloc(1, sizeof(*f));
-  if (!f) return NULL;
-  f->lines = calloc(height, sizeof(*f->lines));
-  if (!f->lines) { free(f); return NULL; }
-  f->width = width; f->height = height;
-  return f;
-}
-void SnesHdFrameDestroy(SnesHdFrame *f) {
-  if (!f) return;
-  for (unsigned i = 0; i < f->source_count; ++i) free(f->sources[i]);
-  free(f->lines); free(f);
-}
 bool PpuSetHdFrameCapture(Ppu *p, SnesHdFrame *f) {
   if (!p || (f && (f->sealed || f->failed))) return false;
   p->hdFrame = f; return true;
 }
-static int SnesHdAddSource(SnesHdFrame *f, const uint16_t *vram) {
-  uint64_t hash = UINT64_C(14695981039346656037);
-  for (unsigned i = 0; i < 32768; ++i) {
-    hash ^= vram[i]; hash *= UINT64_C(1099511628211);
-  }
-  for (unsigned i = 0; i < f->source_count; ++i)
-    if (f->sources[i]->hash == hash &&
-        !memcmp(f->sources[i]->vram, vram, 65536)) return (int)i;
-  if (f->source_count == kSnesHdMaxHeight) { f->failed = true; return -1; }
-  SnesHdPicture *s = malloc(sizeof(*s));
-  if (!s) { f->failed = true; return -1; }
-  memcpy(s->vram, vram, sizeof(s->vram));
-  s->hash = hash; f->sources[f->source_count] = s;
-  return (int)f->source_count++;
-}
-bool SnesHdFrameSeal(SnesHdFrame *f) {
-  if (!f || f->sealed || f->failed) return false;
-  for (unsigned i = 0; i < f->height; ++i)
-    if (!f->lines[i].kind) return false;
-  f->sealed = true; return true;
-}
-bool SnesHdFrameView(const SnesHdFrame *f, SnesHdView *v) {
-  if (!f || !v || !f->sealed || f->failed) return false;
-  *v = (SnesHdView){f->width, f->height, f->source_count, f->lines,
-      (const SnesHdPicture *const *)f->sources,
-      sizeof(*f) + f->height * sizeof(*f->lines) +
-          f->source_count * sizeof(SnesHdPicture)};
-  return true;
-}
-bool SnesHdFrameCopyLine(SnesHdFrame *f, unsigned y, const SnesHdFrame *s,
-                        unsigned sy, unsigned crop) {
-  if (!f || f->sealed || f->failed || !s || !s->sealed || s->failed ||
-      y >= f->height || sy >= s->height || crop > s->width ||
-      f->width > s->width - crop) return false;
-  const SnesHdLine *a = &s->lines[sy]; SnesHdLine *b = &f->lines[y];
-  *b = *a;
-  memmove(b->native, a->native + crop, f->width * sizeof(uint32_t));
-  memmove(b->object, a->object + crop, f->width * sizeof(uint16_t));
-  memmove(b->object_color, a->object_color + crop, f->width * sizeof(uint16_t));
-  memmove(b->visibility, a->visibility + crop, f->width);
-  memmove(b->native_mask, a->native_mask + crop, f->width);
-  b->screen_left += (int16_t)crop;
-  if (a->kind == 2) {
-    int n = SnesHdAddSource(f, s->sources[a->source]->vram);
-    if (n < 0) return false;
-    b->source = (uint16_t)n;
-  }
-  return true;
-}
-bool SnesHdFrameSetNative(SnesHdFrame *f, const uint32_t *pixels,
-                          size_t pitch, const uint8_t *mask, size_t mp) {
-  if (!f || f->sealed || f->failed || !pixels || pitch < f->width * 4 ||
-      (mask && mp < f->width)) return false;
-  for (unsigned y = 0; y < f->height; ++y) {
-    memcpy(f->lines[y].native, (const uint8_t *)pixels + y * pitch, f->width * 4);
-    if (mask) memcpy(f->lines[y].native_mask, mask + y * mp, f->width);
-  }
-  return true;
-}
-
 /* Resolve colour after HD background sampling and native OBJ priority. An
  * opaque native BG pixel cannot serve as a mask: a fractional sample may be
  * transparent and reveal a sprite that the native sample had covered. */
@@ -2782,7 +2698,7 @@ bool SnesHdFrameCaptureLine(SnesHdFrame *f, unsigned y, const Ppu *p,
   const uint16_t *vram = PpuRenderVram(p); int source;
   if (!p->renderVram && f->source_count && f->last_vram == vram &&
       f->last_generation == p->vramWriteCount) source = (int)f->last_source;
-  else source = SnesHdAddSource(f, vram);
+  else source = SnesHdFrameAddPicture(f, vram);
   if (source < 0) return false;
   f->last_vram = vram; f->last_generation = p->vramWriteCount;
   f->last_source = (unsigned)source;
@@ -2805,74 +2721,6 @@ bool SnesHdFrameCaptureLine(SnesHdFrame *f, unsigned y, const Ppu *p,
   j->kind = 2;
   return true;
 }
-static int SnesHdFloorDiv(int n, int d) { return n / d - (n < 0 && n % d != 0); }
-static int SnesHdCoordinate(int origin, int step, int row, int x,
-                             unsigned sx, unsigned sy, unsigned scale) {
-  int q = origin + x * step, whole = SnesHdFloorDiv(q, 256);
-  /* Split the whole texel before multiplying the remainder by scale. All
-   * register-derived intermediates fit32 bits, including64x and negative X. */
-  return whole + SnesHdFloorDiv((q - whole * 256) * (int)scale +
-      (int)sx * step + (int)sy * row, (int)(256 * scale));
-}
-static uint16_t SnesHdPixelColor(const SnesHdLine *j, unsigned x, uint16_t p) {
-  unsigned layer = (p >> 8) & 15;
-  return layer == 4 || layer == 6 ? j->object_color[x] : j->palette[p & 255];
-}
-static uint32_t SnesHdSample(const SnesHdFrame *f, unsigned scale,
-                              unsigned px, unsigned py) {
-  unsigned x = px / scale, y = py / scale;
-  const SnesHdLine *j = &f->lines[y];
-  if (scale == 1 || j->kind != 2 || j->native_mask[x]) return j->native[x];
-  int screen_x = j->screen_left + (int)x;
-  if (screen_x < j->active_left || screen_x >= j->active_right) return 0;
-  int tx = SnesHdCoordinate(j->origin_x, j->step_x, j->row_x, screen_x,
-                            px % scale, py % scale, scale);
-  int ty = SnesHdCoordinate(j->origin_y, j->step_y, j->row_y, screen_x,
-                            px % scale, py % scale, scale);
-  unsigned index = SnesMode7HdFetchInt(j->control, f->sources[j->source]->vram,
-                                      tx, ty, -1);
-  uint16_t bg = index ? (uint16_t)(0x5000 | index) : 0x0500;
-  unsigned visible = j->visibility[x];
-  uint16_t main = visible & 1 ? bg : 0x0500, sub = visible & 2 ? bg : 0x0500;
-  if ((visible & 4) && j->object[x] > main) main = j->object[x];
-  if ((visible & 8) && j->object[x] > sub) sub = j->object[x];
-  bool inside = (visible & 16) != 0;
-  bool clip = PpuHdWindowCondition(j->cgwsel >> 6, inside);
-  unsigned layer = (main >> 8) & 15;
-  bool math = !PpuHdWindowCondition((j->cgwsel >> 4) & 3, inside) &&
-      (j->cgadsub & (1u << layer));
-  unsigned color = SnesHdPixelColor(j, x, main), other = j->fixed_color;
-  bool half = math && (j->cgadsub & 64);
-  if (math && (j->cgwsel & 2)) {
-    if (sub & 255) other = SnesHdPixelColor(j, x, sub); else half = false;
-  }
-  uint32_t rgb = 0;
-  for (unsigned c = 0; c < 3; ++c) {
-    int value = clip ? 0 : (color >> (5 * c)) & 31;
-    if (math) {
-      int second = (other >> (5 * c)) & 31;
-      value += j->cgadsub & 128 ? -second : second;
-      if (value < 0) value = 0;
-      if (half) value /= 2;
-      if (value > 31) value = 31;
-    }
-    rgb |= (uint32_t)(((value << 3) | (value >> 2)) * j->brightness / 15) << (16 - 8 * c);
-  }
-  return rgb;
-}
-bool SnesHdFrameRenderRegion(const SnesHdFrame *f, unsigned scale,
-    unsigned x, unsigned y, unsigned w, unsigned h, uint32_t *pixels, size_t pitch) {
-  if (!f || !f->sealed || f->failed || !scale || scale > kSnesHdMaxScale ||
-      !pixels || !w || !h || x > f->width * scale || y > f->height * scale ||
-      w > f->width * scale - x || h > f->height * scale - y ||
-      pitch < (size_t)w * 4 || pitch > SIZE_MAX / h) return false;
-  for (unsigned row = 0; row < h; ++row) {
-    uint32_t *out = (uint32_t *)((uint8_t *)pixels + row * pitch);
-    for (unsigned col = 0; col < w; ++col) out[col] = SnesHdSample(f, scale, x + col, y + row);
-  }
-  return true;
-}
-
 static void PpuDrawMode7HdLine(Ppu *ppu, unsigned line) {
   const PpuMode7HdSurface *surface = &ppu->mode7Hd;
   if (!line || line > surface->height) return;

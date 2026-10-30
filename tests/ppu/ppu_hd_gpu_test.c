@@ -42,14 +42,15 @@ static void compare_roi(SnesHdGpu *g, const SnesHdFrame *f, unsigned scale,
 int main(void) {
   SDL_SetMainReady();
   CHECK(SDL_Init(SDL_INIT_VIDEO));
-  SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 3);
-  SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 3);
+  SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 4);
+  SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 0);
   SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_CORE);
   SDL_Window *window = SDL_CreateWindow("SNES HD GPU automated test", 64, 64,
       SDL_WINDOW_OPENGL | SDL_WINDOW_HIDDEN); CHECK(window);
   SDL_GLContext context = SDL_GL_CreateContext(window); CHECK(context);
   CHECK(ogl_LoadFunctions());
   SnesHdGpu *g = SnesHdGpuCreate(); CHECK(g);
+  CHECK(SnesHdGpuSupportsAffine(g));
   glGenFramebuffers(1, &framebuffer);
   unsigned comparisons = 0;
   static const unsigned scales[] = {1, 2, 3, 4, 16, 32, 64};
@@ -76,6 +77,38 @@ int main(void) {
       SnesHdGpuStats stats; CHECK(SnesHdGpuReadStats(g, true, &stats));
       CHECK(stats.gpu_timestamps && stats.draw_gpu_ns);
     }
+    SnesHdFrameDestroy(f);
+  }
+  /* Prepared cameras and large owned maps take the same composition path.
+   * Negative coordinates, fractional transforms, row interpolation, source
+   * replacement and reset must agree with the portable consumer. */
+  for (unsigned seed = 0; seed < 4; ++seed) {
+    setup();
+    uint8_t tiles[32 * 16];
+    for (unsigned i = 0; i < sizeof(tiles); ++i) tiles[i] = (uint8_t)(i * 71 + seed);
+    SnesHdFrame *f = SnesHdFrameCreate(288, HEIGHT); CHECK(f);
+    int picture = SnesHdFrameAddPicture(f, p.vram);
+    int map = SnesHdFrameAddTilemap(f, tiles, 32, 16); CHECK(picture >= 0 && map >= 0);
+    for (unsigned y = 0; y < HEIGHT; ++y) {
+      SnesHdLine j = {0};
+      j.kind = kSnesHdAffine; j.source = (uint16_t)picture; j.tilemap = (uint16_t)(map + 1);
+      j.brightness = 15; j.active_left = -16; j.active_right = 272; j.screen_left = -16;
+      j.map_offset_x = -513; j.map_offset_y = 4099; j.control = seed == 3 ? 0xc0 : 0;
+      memcpy(j.palette, p.cgram, sizeof(j.palette));
+      for (unsigned x = 0; x < 288; ++x) j.visibility[x] = 3;
+      const double t[8] = {-23.125, 256.0 * y - 93.5, 257.03, -129.99, 37.1, 511.11, .004, -.001};
+      memcpy(j.affine, t, sizeof(t)); CHECK(SnesHdFrameSetLine(f, y, &j));
+    }
+    CHECK(SnesHdFrameSeal(f));
+    for (unsigned s = 0; s < countof(scales); ++s) {
+      unsigned scale = scales[s], w, h;
+      CHECK(SnesHdGpuAdmit(g, 288, HEIGHT, scale, (size_t)1024 * 1024 * 1024, &w, &h));
+      make_target(w, h); CHECK(SnesHdGpuDraw(g, f, scale, w, h));
+      compare_roi(g, f, scale, 16 * scale, 0, 64, h < 16 ? h : 16);
+      compare_roi(g, f, scale, w - 64, h > 8 ? h - 8 : 0, 64, h < 8 ? h : 8);
+      comparisons += 2;
+    }
+    if (seed == 2) SnesHdGpuReset(g);
     SnesHdFrameDestroy(f);
   }
   printf("GPU parity: %u ROI comparisons at1/2/3/4/16/32/64x passed\n", comparisons);
