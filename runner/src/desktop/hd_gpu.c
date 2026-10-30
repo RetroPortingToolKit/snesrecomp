@@ -2,6 +2,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
+#include <math.h>
 
 #if defined(SNESRECOMP_HD_GPU) && SNESRECOMP_HD_GPU
 #include "gl_core_3_1.h"
@@ -11,13 +12,15 @@
 #endif
 typedef void (CODEGEN_FUNCPTR *HdQueryCounter)(GLuint, GLenum);
 typedef void (CODEGEN_FUNCPTR *HdQueryResult64)(GLuint, GLenum, uint64_t *);
-enum { kResidentPictures = 256, kQueryFrames = 4, kHdTextures = 8 };
+enum { kResidentPictures = 256, kQueryFrames = 4, kHdTextures = 9 };
 typedef struct HdResident {
   uint64_t hash, seen;
   uint16_t *copy;
 } HdResident;
 struct SnesHdGpu {
   GLuint program, affine_program, vao, textures[kHdTextures], queries[kQueryFrames][3];
+  GLuint coordinate_program, coordinate_fbo;
+  unsigned coordinate_width, coordinate_height;
   unsigned width, height, texture_width, texture_height, max_texture, max_layers, query_pending;
   bool failed;
   uint64_t serial;
@@ -34,7 +37,7 @@ struct SnesHdGpu {
   SnesHdGpuStats stats;
 };
 typedef struct HdState {
-  GLint program, vao, active, textures[kHdTextures][2], viewport[4], scissor[4], unpack, row_length, pbo;
+  GLint program, vao, active, textures[kHdTextures][2], viewport[4], scissor[4], unpack, row_length, pbo, draw_fbo;
   GLboolean blend, depth, cull, scissor_on, srgb, color[4];
 } HdState;
 static void hd_save(HdState *s) {
@@ -43,6 +46,7 @@ static void hd_save(HdState *s) {
   glGetIntegerv(GL_SCISSOR_BOX, s->scissor); glGetBooleanv(GL_COLOR_WRITEMASK, s->color);
   glGetIntegerv(GL_UNPACK_ALIGNMENT, &s->unpack); glGetIntegerv(GL_UNPACK_ROW_LENGTH, &s->row_length);
   glGetIntegerv(GL_PIXEL_UNPACK_BUFFER_BINDING, &s->pbo);
+  glGetIntegerv(GL_DRAW_FRAMEBUFFER_BINDING, &s->draw_fbo);
   s->blend = glIsEnabled(GL_BLEND); s->depth = glIsEnabled(GL_DEPTH_TEST);
   s->cull = glIsEnabled(GL_CULL_FACE); s->scissor_on = glIsEnabled(GL_SCISSOR_TEST);
   s->srgb = glIsEnabled(GL_FRAMEBUFFER_SRGB);
@@ -66,6 +70,7 @@ static void hd_restore(const HdState *s) {
   glColorMask(s->color[0], s->color[1], s->color[2], s->color[3]);
   glPixelStorei(GL_UNPACK_ALIGNMENT, s->unpack); glPixelStorei(GL_UNPACK_ROW_LENGTH, s->row_length);
   glBindBuffer(GL_PIXEL_UNPACK_BUFFER, s->pbo);
+  glBindFramebuffer(GL_DRAW_FRAMEBUFFER, s->draw_fbo);
 }
 static const char *vertex_source =
   "#version 330 core\n"
@@ -73,7 +78,7 @@ static const char *vertex_source =
 static const char *fragment_source =
   "uniform usampler2D native_plane,object_plane,palette_plane;\n"
   "uniform isampler2D metadata;uniform usampler2DArray picture,tilemaps;\n"
-  "uniform usampler2D affine_plane,overlay_plane;\n"
+  "uniform usampler2D affine_plane,overlay_plane;uniform isampler2D coordinate_plane;\n"
   "uniform ivec2 requested,output_size;uniform int scale;out vec4 result;\n"
   "int fd(int n,int d){return n>=0?int(uint(n)/uint(d)):-1-int(uint(-(n+1))/uint(d));}\n"
   "int coord(int o,int step,int row,int x,int sx,int sy){int q=o+x*step;int b=fd(q,256);"
@@ -87,7 +92,7 @@ static const char *fragment_source =
   "return word(tile*64+(p.y&7)*8+(p.x&7),layer)>>8;}\n"
   "uint color(uint p,uvec4 object,int y){uint layer=(p>>8)&15u;return layer==4u||layer==6u?object.g:texelFetch(palette_plane,ivec2(int(p&255u),y),0).r;}\n"
   "void rgb(uint c){result=vec4(vec3((c>>16)&255u,(c>>8)&255u,c&255u)/255.0,1.0);}\n"
-  "void main(){ivec2 p=ivec2(gl_FragCoord.xy);p=p*(requested/output_size)+p*(requested%output_size)/output_size;"
+  "void main(){ivec2 pixel=ivec2(gl_FragCoord.xy),p=pixel;p=p*(requested/output_size)+p*(requested%output_size)/output_size;"
   "ivec2 n=p/scale;uvec4 object=texelFetch(object_plane,n,0);ivec4 cfg=texelFetch(metadata,ivec2(0,n.y),0);"
   "if(scale==1||cfg.x==1||object.a!=0u){rgb(texelFetch(native_plane,n,0).r);return;}"
   "ivec4 a=texelFetch(metadata,ivec2(1,n.y),0),b=texelFetch(metadata,ivec2(2,n.y),0),c=texelFetch(metadata,ivec2(3,n.y),0);"
@@ -95,11 +100,19 @@ static const char *fragment_source =
   "uint visible=object.b;uint index=0u;"
   "if((visible&3u)!=0u){ivec2 t=ivec2(coord(a.x,a.z,b.x,x,sx,sy),coord(a.y,a.w,b.y,x,sx,sy));\n"
   "#ifdef HD_AFFINE\n"
-  "if(cfg.x==3){uvec4 d0=texelFetch(affine_plane,ivec2(0,n.y),0),d1=texelFetch(affine_plane,ivec2(1,n.y),0),d2=texelFetch(affine_plane,ivec2(2,n.y),0),d3=texelFetch(affine_plane,ivec2(3,n.y),0);"
+  "if(cfg.x==3){ivec4 map=texelFetch(metadata,ivec2(4,n.y),0);bvec2 uncertain=bvec2(true);"
+  "if((map.w&1)!=0){ivec4 lo=texelFetch(coordinate_plane,ivec2(n.x,pixel.y),0),hi=texelFetch(coordinate_plane,ivec2(n.x+1,pixel.y),0);"
+  "ivec2 frac=lo.zw&65535,delta=(hi.xy-lo.xy)*65536+(hi.zw&65535)-frac;"
+  "ivec2 numerator=frac*scale+sx*delta;int den=scale*65536;ivec2 q=ivec2(fd(numerator.x,den),fd(numerator.y,den));"
+  "ivec2 rem=numerator-q*den;t=lo.xy+q;uncertain=bvec2(rem.x<=2*scale||rem.x>=den-2*scale,rem.y<=2*scale||rem.y>=den-2*scale);"
+  "if((map.w&2)!=0)uncertain=bvec2(false);"
+  "if((lo.z&65536)!=0){t.x=lo.x;uncertain.x=false;}if((lo.w&65536)!=0){t.y=lo.y;uncertain.y=false;}}"
+  "if(any(uncertain)){uvec4 d0=texelFetch(affine_plane,ivec2(0,n.y),0),d1=texelFetch(affine_plane,ivec2(1,n.y),0),d2=texelFetch(affine_plane,ivec2(2,n.y),0),d3=texelFetch(affine_plane,ivec2(3,n.y),0);"
   "precise double fy=double(sy)/double(scale),px=double(x)+double(sx)/double(scale);"
   "precise double ox=packDouble2x32(d0.xy)+packDouble2x32(d2.xy)*fy,oy=packDouble2x32(d0.zw)+packDouble2x32(d2.zw)*fy;"
   "precise double dx=packDouble2x32(d1.xy)+packDouble2x32(d3.xy)*fy,dy=packDouble2x32(d1.zw)+packDouble2x32(d3.zw)*fy;"
-  "precise double tx=(ox+px*dx)/256.0LF,ty=(oy+px*dy)/256.0LF;t=ivec2(int(floor(tx)),int(floor(ty)));}\n"
+  "precise double tx=(ox+px*dx)/256.0LF,ty=(oy+px*dy)/256.0LF;"
+  "if(uncertain.x)t.x=int(floor(tx));if(uncertain.y)t.y=int(floor(ty));}}\n"
   "#endif\n"
   "index=fetch_index(t,cfg.z,cfg.y,texelFetch(metadata,ivec2(4,n.y),0),texelFetch(metadata,ivec2(5,n.y),0));}"
   "uint bg=index!=0u?0x5000u|index:0x500u;uint mainp=(visible&1u)!=0u?bg:0x500u,sub=(visible&2u)!=0u?bg:0x500u;"
@@ -115,6 +128,23 @@ static const char *fragment_source =
   "uvec3 fg=uvec3((over>>16)&255u,(over>>8)&255u,over&255u);"
   "outc=min(uvec3(255),(outc*(255u-alpha)+fg*255u+127u)/255u);"
   "result=vec4(vec3(outc)/255.0,1.0);}\n";
+/* One double-precision calculation per native column and enhanced row.
+ * Main sampling interpolates Q16 endpoint bounds with 32-bit integers.
+ * Within two Q16 units of a texel edge it repeats the exact expression;
+ * quantization therefore cannot choose a different source texel. */
+static const char *coordinate_source =
+  "uniform usampler2D affine_plane;uniform isampler2D metadata;"
+  "uniform int requested_height,output_height,scale;out ivec4 coordinates;"
+  "void main(){ivec2 p=ivec2(gl_FragCoord.xy);int py=p.y*(requested_height/output_height)+p.y*(requested_height%output_height)/output_height;"
+  "int y=py/scale;ivec4 b=texelFetch(metadata,ivec2(2,y),0);"
+  "uvec4 d0=texelFetch(affine_plane,ivec2(0,y),0),d1=texelFetch(affine_plane,ivec2(1,y),0),d2=texelFetch(affine_plane,ivec2(2,y),0),d3=texelFetch(affine_plane,ivec2(3,y),0);"
+  "precise double fy=double(py%scale)/double(scale),x=double(b.z+p.x);"
+  "precise double ox=packDouble2x32(d0.xy)+packDouble2x32(d2.xy)*fy,oy=packDouble2x32(d0.zw)+packDouble2x32(d2.zw)*fy;"
+  "precise double dx=packDouble2x32(d1.xy)+packDouble2x32(d3.xy)*fy,dy=packDouble2x32(d1.zw)+packDouble2x32(d3.zw)*fy;"
+  "precise double tx=(ox+x*dx)/256.0LF,ty=(oy+x*dy)/256.0LF;"
+  "int wx=int(floor(tx)),wy=int(floor(ty));"
+  "int fx=int(floor((tx-double(wx))*65536.0LF)),fyq=int(floor((ty-double(wy))*65536.0LF));"
+  "coordinates=ivec4(wx,wy,fx|(dx==0.0LF?65536:0),fyq|(dy==0.0LF?65536:0));}\n";
 static GLuint hd_shader(GLenum kind, const char *source, bool affine) {
   const char *parts[2] = {affine ? "#version 400 core\n#define HD_AFFINE 1\n" :
       "#version 330 core\n", source};
@@ -126,9 +156,9 @@ static GLuint hd_shader(GLenum kind, const char *source, bool affine) {
     fprintf(stderr, "SNES HD GPU shader: %s\n", log); glDeleteShader(shader); return 0; }
   return shader;
 }
-static GLuint hd_program(bool affine) {
+static GLuint hd_program_source(const char *source, bool affine) {
   GLuint vs = hd_shader(GL_VERTEX_SHADER, vertex_source, false);
-  GLuint fs = hd_shader(GL_FRAGMENT_SHADER, fragment_source, affine);
+  GLuint fs = hd_shader(GL_FRAGMENT_SHADER, source, affine);
   if (!vs || !fs) { if (vs) glDeleteShader(vs); if (fs) glDeleteShader(fs); return 0; }
   GLuint program = glCreateProgram(); glAttachShader(program, vs); glAttachShader(program, fs);
   glLinkProgram(program); glDeleteShader(vs); glDeleteShader(fs);
@@ -157,11 +187,14 @@ SnesHdGpu *SnesHdGpuCreate(void) {
   if (max_texture < 1024 || layers < kSnesHdMaxTilemaps || units < kHdTextures) { free(g); return NULL; }
   g->max_texture = (unsigned)max_texture;
   g->max_layers = layers < kResidentPictures ? (unsigned)layers : kResidentPictures;
-  g->program = hd_program(false);
+  g->program = hd_program_source(fragment_source, false);
   if (!g->program) { free(g); return NULL; }
   /* Prepared double-precision camera jobs are optional. Register jobs retain
    * the GL3.3 integer path; lacking GL4 keeps the portable consumer usable. */
-  if (ogl_IsVersionGEQ(4, 0)) g->affine_program = hd_program(true);
+  if (ogl_IsVersionGEQ(4, 0)) {
+    g->affine_program = hd_program_source(fragment_source, true);
+    if (g->affine_program) g->coordinate_program = hd_program_source(coordinate_source, true);
+  }
   HdState saved; hd_save(&saved); glBindBuffer(GL_PIXEL_UNPACK_BUFFER, 0);
   glPixelStorei(GL_UNPACK_ALIGNMENT, 1); glPixelStorei(GL_UNPACK_ROW_LENGTH, 0);
   glGenTextures(kHdTextures, g->textures); glGenVertexArrays(1, &g->vao); hd_bind(g, 4);
@@ -201,6 +234,8 @@ void SnesHdGpuDestroy(SnesHdGpu *g) {
   SnesHdGpuReset(g); glDeleteTextures(kHdTextures, g->textures); glDeleteVertexArrays(1, &g->vao);
   if (g->program) glDeleteProgram(g->program);
   if (g->affine_program) glDeleteProgram(g->affine_program);
+  if (g->coordinate_program) glDeleteProgram(g->coordinate_program);
+  if (g->coordinate_fbo) glDeleteFramebuffers(1, &g->coordinate_fbo);
   if (g->stats.gpu_timestamps) glDeleteQueries(kQueryFrames * 3, &g->queries[0][0]);
   free(g->native_pixels); free(g->overlay); free(g->objects); free(g->palette); free(g->metadata); free(g->affine); free(g);
 }
@@ -209,7 +244,8 @@ bool SnesHdGpuAdmit(SnesHdGpu *g, unsigned w, unsigned h, unsigned scale,
   if (!g || !out_w || !out_h || !w || w > kSnesHdMaxWidth || !h ||
       h > kSnesHdMaxHeight || !scale || scale > kSnesHdMaxScale || budget < 4) return false;
   unsigned rw = w * scale, rh = h * scale, aw = rw, ah = rh;
-  while (aw > g->max_texture || ah > g->max_texture || (uint64_t)aw * ah * 4 > budget) {
+  while (aw > g->max_texture || ah > g->max_texture ||
+      (uint64_t)aw * ah * 4 + (uint64_t)(w + 1) * ah * 16 > budget) {
     aw = aw > 1 ? aw / 2 : 1; ah = ah > 1 ? ah / 2 : 1;
   }
   *out_w = aw; *out_h = ah; return true;
@@ -308,6 +344,14 @@ bool SnesHdGpuDraw(SnesHdGpu *g, const SnesHdFrame *frame, unsigned scale,
     const SnesHdTilemap *map = j->tilemap ? v.tilemaps[j->tilemap - 1] : NULL;
     m[16] = map ? (int)map_layers[j->tilemap - 1] + 1 : 0;
     m[17] = map ? (int)map->width : 0; m[18] = map ? (int)map->height : 0; m[19] = 0;
+    if (g->coordinate_program && j->kind == kSnesHdAffine &&
+        fabs(j->affine[2]) + fabs(j->affine[6]) < 65536 &&
+        fabs(j->affine[3]) + fabs(j->affine[7]) < 65536) {
+      m[19] = 1;
+      bool integral = true;
+      for (unsigned i = 0; i < 8; ++i) integral &= floor(j->affine[i]) == j->affine[i];
+      if (integral && !(scale & (scale - 1))) m[19] |= 2;
+    }
     m[20] = j->map_offset_x; m[21] = j->map_offset_y; m[22] = m[23] = 0;
     memcpy(g->affine + y * 8, j->affine, 64);
   }
@@ -349,9 +393,34 @@ bool SnesHdGpuDraw(SnesHdGpu *g, const SnesHdFrame *frame, unsigned scale,
   g->texture_width = g->width; g->texture_height = g->height;
   uploaded += (uint64_t)v.width * v.height * 16 + v.height * (512 + 96 + 64);
   if (g->stats.gpu_timestamps) g->query_counter(g->queries[query][1], GL_TIMESTAMP);
+  glBindVertexArray(g->vao); glDisable(GL_SCISSOR_TEST); glDisable(GL_BLEND);
+  glDisable(GL_DEPTH_TEST); glDisable(GL_CULL_FACE); glDisable(GL_FRAMEBUFFER_SRGB);
+  glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
+  if (affine && g->coordinate_program) {
+    hd_bind(g, 8);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+    if (g->coordinate_width != v.width + 1 || g->coordinate_height != height) {
+      glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA32I, v.width + 1, height, 0, GL_RGBA_INTEGER, GL_INT, NULL);
+      g->coordinate_width = v.width + 1; g->coordinate_height = height;
+    }
+    if (!g->coordinate_fbo) glGenFramebuffers(1, &g->coordinate_fbo);
+    glBindFramebuffer(GL_DRAW_FRAMEBUFFER, g->coordinate_fbo);
+    glFramebufferTexture2D(GL_DRAW_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, g->textures[8], 0);
+    if (glCheckFramebufferStatus(GL_DRAW_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE) { hd_restore(&saved); return false; }
+    glUseProgram(g->coordinate_program);
+    hd_bind(g, 3); hd_bind(g, 6);
+    glUniform1i(glGetUniformLocation(g->coordinate_program,"metadata"),3);
+    glUniform1i(glGetUniformLocation(g->coordinate_program,"affine_plane"),6);
+    glUniform1i(glGetUniformLocation(g->coordinate_program,"requested_height"),v.height*scale);
+    glUniform1i(glGetUniformLocation(g->coordinate_program,"output_height"),height);
+    glUniform1i(glGetUniformLocation(g->coordinate_program,"scale"),scale);
+    glViewport(0,0,v.width+1,height); glDrawArrays(GL_TRIANGLES,0,3);
+    glBindFramebuffer(GL_DRAW_FRAMEBUFFER,saved.draw_fbo);
+  }
   GLuint program = affine ? g->affine_program : g->program;
   glUseProgram(program); glBindVertexArray(g->vao);
-  const char *names[kHdTextures] = {"native_plane", "object_plane", "palette_plane", "metadata", "picture", "tilemaps", "affine_plane", "overlay_plane"};
+  const char *names[kHdTextures] = {"native_plane", "object_plane", "palette_plane", "metadata", "picture", "tilemaps", "affine_plane", "overlay_plane", "coordinate_plane"};
   for (unsigned i = 0; i < kHdTextures; ++i) { hd_bind(g, i); glUniform1i(glGetUniformLocation(program, names[i]), i); }
   glUniform2i(glGetUniformLocation(program, "requested"), v.width * scale, v.height * scale);
   glUniform2i(glGetUniformLocation(program, "output_size"), width, height);
