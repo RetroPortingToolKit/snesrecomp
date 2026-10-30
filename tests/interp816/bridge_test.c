@@ -22,6 +22,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include "interp_bridge.h"   /* -> cpu_state.h (types, inline frame helpers) */
+#include "cpu_plain_rom_read.h"
 #include "tier2_capture.h"
 #include "snes.h"            /* Snes storage for the bridge's APU clock hook */
 #include "apu.h"
@@ -158,6 +159,15 @@ uint8_t *cart_getRomPtr(Cart *cart, uint8_t bank, uint16_t adr) {
 void (*g_interp_recent_dump_hook)(int n, FILE *out) = 0;
 uint8 cpu_read8(CpuState *cpu, uint8 bank, uint16 addr) {
     (void)cpu; return RAM[(((uint32)bank << 16) | addr) & 0xFFFFFF];
+}
+/* Model the claimed immutable read through this harness's flat-memory bus.
+ * The actual cpu_state implementation/latches have their own bus test. */
+bool cpu_read8_plain_rom(CpuState *cpu, uint8 bank, uint16 addr, uint8 *out) {
+    if (addr < 0x8000 || !g_snes || !g_snes->cart ||
+        (g_snes->cart->type != CART_LOROM && g_snes->cart->type != CART_HIROM) ||
+        !cart_getRomPtr(g_snes->cart, bank, addr)) return false;
+    *out = cpu_read8(cpu, bank, addr);
+    return true;
 }
 /* Write-site attribution probe (S16): what the bridge published as the
  * executing opcode's PC when this store reached the bus. */

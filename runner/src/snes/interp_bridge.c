@@ -7,6 +7,7 @@
 #include <string.h>
 #include <time.h>
 #include "interp_bridge.h"
+#include "cpu_plain_rom_read.h"
 #include "interp816.h"
 #include "tier2_capture.h"
 #include "snes.h"   /* Snes, apuCatchupCycles, snes_catchupApu */
@@ -300,10 +301,25 @@ static int bridge_read_is_stable(uint32_t adr) {
     return cart_getRomPtr(g_snes->cart, bank, a) != NULL;
 }
 
+#ifndef SNESRECOMP_INTERP_FUSED_ROM_READ
+#define SNESRECOMP_INTERP_FUSED_ROM_READ 0
+#endif
+
 static uint8_t bridge_bus_read(void *mem, uint32_t adr) {
     CpuState *cpu = (CpuState *)mem;
     bridge_timing_bus(adr);
-    if (!bridge_read_is_stable(adr)) s_interp_volatile_read_epoch++;
+    uint8_t value;
+    int stable_rom = 0;
+#if SNESRECOMP_INTERP_FUSED_ROM_READ
+    /* A ROM fetch used to decode the same mapping twice: once to establish
+     * stable-poll eligibility, then again inside cpu_read8 -> RomPtr. Claim
+     * the immutable plain-cart case once. Device and invalid reads retain the
+     * reference classifier/bus, including synchronization and diagnostics. */
+    if ((uint16_t)adr >= 0x8000)
+        stable_rom = cpu_read8_plain_rom(cpu, (uint8_t)(adr >> 16),
+                                         (uint16_t)adr, &value);
+#endif
+    if (!stable_rom && !bridge_read_is_stable(adr)) s_interp_volatile_read_epoch++;
     int continuous=bridge_continuous_read(adr);
     if (continuous) {
         s_interp_continuous_read_epoch++;
@@ -314,7 +330,8 @@ static uint8_t bridge_bus_read(void *mem, uint32_t adr) {
         if (!s_idle_poll_now) s_interp_idle_live_epoch++;
     }
     if (bridge_is_apu_port(adr)) bridge_apu_flush(cpu);
-    uint8_t value=cpu_read8(cpu,(uint8)((adr>>16)&0xff),(uint16)adr);
+    if (!stable_rom)
+        value=cpu_read8(cpu,(uint8)((adr>>16)&0xff),(uint16)adr);
     if (continuous) {
         BridgeDynamicValue *d=&s_bridge_dynamic_values[(adr^(adr>>8)^(adr>>16))&63];
         if (!d->valid || d->address!=adr || d->value!=value) {
