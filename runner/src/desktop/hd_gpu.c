@@ -21,6 +21,7 @@ struct SnesHdGpu {
   unsigned width, height, texture_width, texture_height, max_texture, max_layers, query_pending;
   bool failed;
   uint64_t serial;
+  uint64_t query_frame[kQueryFrames];
   uint32_t *native_pixels, *overlay;
   uint16_t *objects, *palette;
   int32_t *metadata;
@@ -222,6 +223,7 @@ bool SnesHdGpuReadStats(SnesHdGpu *g, bool wait, SnesHdGpuStats *stats) {
       uint64_t t[3];
       for (unsigned i = 0; i < 3; ++i) g->query_result(g->queries[slot][i], GL_QUERY_RESULT, &t[i]);
       g->stats.upload_gpu_ns = t[1] - t[0]; g->stats.draw_gpu_ns = t[2] - t[1];
+      g->stats.timed_frame = g->query_frame[slot];
       g->query_pending = 0;
     }
   }
@@ -357,7 +359,10 @@ bool SnesHdGpuDraw(SnesHdGpu *g, const SnesHdFrame *frame, unsigned scale,
   glViewport(0, 0, width, height); glDisable(GL_SCISSOR_TEST); glDisable(GL_BLEND);
   glDisable(GL_DEPTH_TEST); glDisable(GL_CULL_FACE); glDisable(GL_FRAMEBUFFER_SRGB);
   glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE); glDrawArrays(GL_TRIANGLES, 0, 3);
-  if (g->stats.gpu_timestamps) { g->query_counter(g->queries[query][2], GL_TIMESTAMP); g->query_pending = query + 1; }
+  if (g->stats.gpu_timestamps) {
+    g->query_counter(g->queries[query][2], GL_TIMESTAMP); g->query_pending = query + 1;
+    g->query_frame[query] = g->stats.frames + 1;
+  }
   GLenum error = glGetError(); hd_restore(&saved);
   if (error != GL_NO_ERROR) { g->failed = true; fprintf(stderr, "SNES HD GPU error0x%x; native fallback\n", error); return false; }
   g->stats.frames++; g->stats.uploaded_bytes = uploaded;

@@ -10,6 +10,7 @@ typedef struct SnesHdGpuStats {
   unsigned requested_width, requested_height, output_width, output_height;
   size_t source_gpu_bytes, target_bytes;
   bool gpu_timestamps;
+  uint64_t timed_frame; /* frame associated with the most recent ready timestamps */
 } SnesHdGpuStats;
 /* Requires a current desktop OpenGL3.3 context. Missing GPU support returns
  * NULL; all platforms retain the portable frame/ROI consumer. */

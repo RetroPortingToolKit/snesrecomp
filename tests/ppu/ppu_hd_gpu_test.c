@@ -95,7 +95,10 @@ int main(void) {
       j.brightness = 15; j.active_left = -16; j.active_right = 272; j.screen_left = -16;
       j.map_offset_x = -513; j.map_offset_y = 4099; j.control = seed == 3 ? 0xc0 : 0;
       memcpy(j.palette, p.cgram, sizeof(j.palette));
-      for (unsigned x = 0; x < 288; ++x) j.visibility[x] = 3;
+      for (unsigned x = 0; x < 288; ++x) {
+        j.visibility[x] = 3;
+        j.overlay[x] = x % 3 == 0 ? 0xff000000 : x % 3 == 1 ? 0x80402010 : 0;
+      }
       const double t[8] = {-23.125, 256.0 * y - 93.5, 257.03, -129.99, 37.1, 511.11, .004, -.001};
       memcpy(j.affine, t, sizeof(t)); CHECK(SnesHdFrameSetLine(f, y, &j));
     }
