@@ -1061,6 +1061,8 @@ size_t RtlSaveSnapshotToMemory(void *data, size_t capacity) {
 
 static bool s_rollback_load;
 bool RtlIsRollbackLoad(void) {return s_rollback_load;}
+static bool s_rollback_save;
+bool RtlIsRollbackSave(void) {return s_rollback_save;}
 
 bool RtlLoadSnapshotFromMemory(const void *data, size_t size) {
   if (!data || size > RTL_SAV_MAX_SIZE) return false;
@@ -1370,7 +1372,10 @@ size_t RtlRollbackSaveToMemory(void *data, size_t capacity) {
 
   if (!data || !g_snes)
     return 0;
+  const bool previous_rollback_save=s_rollback_save;
+  s_rollback_save=true;
   guest = RtlSaveSnapshotToMemory(data, capacity);
+  s_rollback_save=previous_rollback_save;
   if (guest == 0)
     return 0;
   used = guest;

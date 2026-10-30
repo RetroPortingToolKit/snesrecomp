@@ -375,6 +375,9 @@ bool RtlLoadSnapshotFromMemory(const void *data, size_t size);
  * Preserve presentation cue acknowledgements in this context; an ordinary
  * save-state load still ends the old presentation timeline. */
 bool RtlIsRollbackLoad(void);
+/* True while rollback/canonical capture invokes title save callbacks. Local
+ * presentation (streaming music, etc.) must be neutral in those snapshots. */
+bool RtlIsRollbackSave(void);
 
 /*
  * Rollback snapshots (netplay ROLLBACK mode).
