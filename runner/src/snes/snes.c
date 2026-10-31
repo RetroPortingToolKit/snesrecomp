@@ -320,7 +320,7 @@ uint8_t snes_readBBus(Snes* snes, uint8_t adr) {
     // APU port read ($2140-$217F). Synchronize the SPC to this exact guest
     // timestamp before observing its output-port state.
     RtlApuLock();
-    rtl_sync_apu_to_cpu_locked();
+    { void rtl_sync_apu_for_access_locked(uint16_t a); rtl_sync_apu_for_access_locked((uint16_t)(0x2100 + adr)); }
     uint8_t v = snes->apu->outPorts[adr & 0x3];
     v = rtl_apu_port_observers_read(0x2100 + adr, v);
     { void rtl_port_log_cpu(uint16_t adr, char rw, uint8_t v);
@@ -671,7 +671,21 @@ uint8_t snes_readReg(Snes* snes, uint16_t adr) {
       // The synthetic advance shares the live beam helper, so IRQ and
       // auto-joypad edges remain coherent with the reported counters.
       uint8_t val = (snes->autoJoyTimer > 0);
-      val |= (snes->hPos >= 1024) << 6;
+      /* SNESRECOMP_HBLANK_EXACT (default 1): bit 6 is H-blank at the read's
+       * own clock (2 clocks into its bus cycle), H >= 1097 or H < 4, as
+       * MesenCE reads it (16,671 reads measured). 0: hPos >= 1024 at the
+       * beam's last sync. */
+      static int hb_exact = -1;
+      if (hb_exact < 0) { const char *e = getenv("SNESRECOMP_HBLANK_EXACT"); hb_exact = !(e && e[0] == '0'); }
+      if (hb_exact) {
+        extern uint64_t rtl_cpu_master_now(void);
+        extern uint32_t interp_bridge_access_lead(uint16_t adr, uint32_t fallback);
+        const uint64_t at = rtl_cpu_master_now() + interp_bridge_access_lead(0x4212, 20);
+        const uint64_t h = at > snes->beamMasterLast ? (snes->hPos + (at - snes->beamMasterLast)) % 1364u : snes->hPos;
+        val |= (h >= 1097 || h < 4) << 6;
+      } else {
+        val |= (snes->hPos >= 1024) << 6;
+      }
       val |= (snes->inVblank || snes->vPos >= 225) << 7;
       return val;
     }

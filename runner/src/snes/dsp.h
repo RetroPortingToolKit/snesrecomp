@@ -105,6 +105,16 @@ struct Dsp {
   int16_t sampleBuffer[DSP_SAMPLE_RING * 2];
   uint32_t sampleWrite; // total samples produced (monotonic; index = & mask)
   uint32_t sampleRead;  // total samples consumed (monotonic; index = & mask)
+  /* Samples left of each voice's key-on delay (hardware: 5 silent samples,
+   * then playback from the sample's first block). After the saved range:
+   * dsp_saveload keeps its layout. */
+  uint8_t konDelay[8];
+  /* The envelope/noise rate counter all voices share (hardware): counts
+   * down once per sample through 0x7800 values. */
+  int rateCounter;
+  /* A decoded end block whose ENDx bit is still to be set (when playback
+   * reaches sample `endxAt` of the block; hardware's decoder runs ahead). */
+  bool endPending[8];
 };
 
 

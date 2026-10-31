@@ -329,9 +329,18 @@ void RtlApuUseMasterClock(bool on, uint32_t lead) {
 }
 static RtlCpuAccessClockHook s_cpu_access_clock;
 void RtlSetCpuAccessClockHook(RtlCpuAccessClockHook hook) { s_cpu_access_clock = hook; }
+/* The port the access in progress touches ($2140-$2143), 0 for a sync with no
+ * access (the interpreter's flushes, frame ends): the interpreter knows that
+ * access's own cycle; anything else uses the instruction-wide lead. */
+static uint16_t s_apu_access_adr;
+static bool s_apu_access_write;
 static uint64_t rtl_apu_half_ticks(void) {
-  uint64_t m = s_cpu_access_clock ? s_cpu_access_clock(g_cpu.master_cycles, s_apu_lead)
-                                  : g_cpu.master_cycles + s_apu_lead;
+  extern uint32_t interp_bridge_access_lead(uint16_t adr, uint32_t fallback);
+  uint32_t lead = s_apu_access_adr ? interp_bridge_access_lead(s_apu_access_adr, s_apu_lead) : s_apu_lead;
+  /* A write lands at the end of its 6-clock bus cycle, 4 after the sample point. */
+  if (s_apu_access_write) lead += 4;
+  uint64_t m = s_cpu_access_clock ? s_cpu_access_clock(g_cpu.master_cycles, lead)
+                                  : g_cpu.master_cycles + lead;
   return (m / RTL_MASTER_PER_SEC) * RTL_SMP_HALF_PER_SEC +
          (m % RTL_MASTER_PER_SEC) * RTL_SMP_HALF_PER_SEC / RTL_MASTER_PER_SEC;
 }
@@ -1907,8 +1916,10 @@ uint16 ReadRegWord(uint16 reg) {
     void RtlApuLock(void); void RtlApuUnlock(void);
     extern Snes *g_snes;
     RtlApuLock();
-    rtl_sync_apu_to_cpu_locked();
+    void rtl_sync_apu_for_access_locked(uint16_t adr);
+    rtl_sync_apu_for_access_locked(reg);
     uint8_t lo = g_snes->apu->outPorts[(reg & 0x3)];
+    if (rtl_apu_master_clock()) rtl_sync_apu_for_access_locked((uint16_t)(reg + 1));
     uint8_t hi = g_snes->apu->outPorts[((reg + 1) & 0x3)];
     RtlApuUnlock();
     lo = rtl_apu_port_observers_read(reg, lo);
@@ -2153,7 +2164,11 @@ void RtlApuWrite(uint16 adr, uint8 val) {
   if (rtl_apu_master_clock()) {
     RtlApuLock();
     audio_trace_on_cpu_port_write(port, val);
+    s_apu_access_adr = adr;
+    s_apu_access_write = true;
     uint64_t target = rtl_apu_write_target();
+    s_apu_access_write = false;
+    s_apu_access_adr = 0;
     while (!apu_enqueuePortWriteAt(g_snes->apu, port, val, target))
       apu_cycle(g_snes->apu);
     rtl_port_log_cpu(adr, 'W', val);
@@ -2209,6 +2224,13 @@ static bool rtl_run_apu_to_guest_cycle_locked(uint64_t target) {
   return synced;
 }
 
+/* A CPU read of an APU port: sync to that access's own clock. */
+void rtl_sync_apu_for_access_locked(uint16_t adr) {
+  s_apu_access_adr = adr;
+  rtl_sync_apu_to_cpu_locked();
+  s_apu_access_adr = 0;
+}
+
 void rtl_sync_apu_to_cpu_locked(void) {
 #ifdef SNESRECOMP_INTERP_PROFILE
   { extern uint64_t apus_prof_calls; extern double apus_prof_ms;
@@ -2217,6 +2239,12 @@ void rtl_sync_apu_to_cpu_locked(void) {
   clock_t _t1 = clock();
 #endif
   if (rtl_apu_master_clock()) {
+    { static long long watch = -2;
+      if (watch == -2) { const char *e = getenv("SNESRECOMP_SYNC_WATCH"); watch = e ? atoll(e) : -1; }
+      if (watch >= 0 && (long long)g_cpu.master_cycles >= watch - 200 && (long long)g_cpu.master_cycles <= watch + 200)
+        fprintf(stderr, "[sync] master=%llu portClock=%llu last=%llu out0=%02X pc=%04X\n",
+                (unsigned long long)g_cpu.master_cycles, (unsigned long long)g_snes->apu->portClock,
+                (unsigned long long)rtl_apu_read_last(), g_snes->apu->outPorts[0], g_snes->apu->spc->pc); }
     g_snes->apu->holdTarget = rtl_apu_read_last();
     if (!apu_runThroughCycle(g_snes->apu, g_snes->apu->holdTarget, 1u << 22))
       fprintf(stderr, "[apu] CPU-port master-clock sync timed out\n");

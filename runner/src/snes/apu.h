@@ -67,6 +67,9 @@ struct Apu {
   bool holdActive;
   bool held;
   uint64_t holdTarget;
+  /* Cycles each timer has already been advanced past portClock, by a timer
+   * access on its own cycle inside the running opcode (apu.c). */
+  uint8_t timerAhead[3];
 };
 
 /*

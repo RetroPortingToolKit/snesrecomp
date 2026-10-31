@@ -245,7 +245,7 @@ uint32_t dsp_output_ring_write(const Dsp *dsp) {
 }
 
 void dsp_saveload(Dsp *dsp, SaveLoadInfo *sli) {
-  sli->func(sli, &dsp->ram, sizeof(Dsp) - offsetof(Dsp, ram));
+  sli->func(sli, &dsp->ram, offsetof(Dsp, konDelay) - offsetof(Dsp, ram));
 }
 
 void dsp_set_output_suppressed(Dsp *dsp, bool suppressed) {
@@ -253,6 +253,7 @@ void dsp_set_output_suppressed(Dsp *dsp, bool suppressed) {
 }
 
 void dsp_cycle(Dsp* dsp) {
+  if (--dsp->rateCounter < 0) dsp->rateCounter = 0x77ff;
   int totalL = 0;
   int totalR = 0;
   int echoL = 0, echoR = 0;
@@ -397,7 +398,53 @@ static void dsp_handleEcho(Dsp* dsp, int* outputL, int* outputR, bool audit,
   }
 }
 
+/* The shared rate counter: a rate of period P (rateValues) fires when
+ * (counter + offset) % P == 0; the offset cycles 0, 1040, 536 over the rate
+ * indices from 1 (0 for the two fastest), so rates of one group step apart.
+ * SNESRECOMP_DSP_GLOBAL_COUNTER=0 restores a counter per voice. */
+static int dsp_globalCounterOn(void) {
+  static int on = -1;
+  if (on < 0) { const char *e = getenv("SNESRECOMP_DSP_GLOBAL_COUNTER"); on = !(e && e[0] == '0'); }
+  return on;
+}
+static bool dsp_rateFires(const Dsp* dsp, int period) {
+  if (period == 0) return false;
+  int index = 0;
+  for (int i = 1; i < 32; i++) if (rateValues[i] == period) { index = i; break; }
+  if (index == 0) return false;
+  int offset = index >= 30 ? 0 : ((index - 1) % 3 == 0 ? 0 : (index - 1) % 3 == 1 ? 1040 : 536);
+  return ((dsp->rateCounter + offset) % period) == 0;
+}
+
+/* SNESRECOMP_DSP_KON_DELAY: samples of key-on delay (default 5, hardware);
+ * 0 restores immediate key-on playback. */
+static int dsp_endxAt(void) {
+  static int at = -2;
+  if (at == -2) { const char *e = getenv("SNESRECOMP_DSP_ENDX_AT"); at = e ? atoi(e) : 4; }
+  /* The decoder works 4 samples at a time, 8 ahead of playback: it finishes
+   * an end block when playback reaches its sample 4. -1: when the next block
+   * starts (the old behavior). */
+  return at;
+}
+
+static int dsp_konDelayOn(void) {
+  static int on = -1;
+  if (on < 0) { const char *e = getenv("SNESRECOMP_DSP_KON_DELAY"); on = e ? atoi(e) : 5; }
+  return on;
+}
+
 static void dsp_cycleChannel(Dsp* dsp, int ch) {
+  // Key-on delay: the voice is silent for 5 samples, then plays its sample
+  // from the first block (decoded as the delay ends, position 0).
+  if (dsp->konDelay[ch]) {
+    dsp->channel[ch].sampleOut = 0;
+    dsp->channel[ch].gain = 0;
+    if (--dsp->konDelay[ch] == 0) {
+      dsp->channel[ch].pitchCounter = 0;
+      dsp_decodeBrr(dsp, ch);
+    }
+    return;
+  }
   // handle pitch counter
   uint16_t pitch = dsp->channel[ch].pitch;
   if(ch > 0 && dsp->channel[ch].pitchModulation) {
@@ -411,6 +458,10 @@ static void dsp_cycleChannel(Dsp* dsp, int ch) {
     dsp_decodeBrr(dsp, ch);
   }
   dsp->channel[ch].pitchCounter = newCounter;
+  if (dsp->endPending[ch] && ((newCounter & 0xffff) >> 12) >= dsp_endxAt()) {
+    dsp->endPending[ch] = false;
+    dsp->ram[0x7c] |= 1 << ch; // set ENDx
+  }
   int16_t sample = 0;
   if(dsp->channel[ch].useNoise) {
     sample = dsp->noiseSample;
@@ -444,6 +495,13 @@ static void dsp_cycleChannel(Dsp* dsp, int ch) {
       // follows ADSR or the GAIN program is decided live per tick (the
       // stage machine is source-independent — see dsp_handleGain).
       dsp->channel[ch].adsrState = 0;
+      if (dsp_konDelayOn()) {
+        dsp->konDelay[ch] = (uint8_t)dsp_konDelayOn();
+        dsp->ram[0x7c] &= ~(1 << ch); // key-on clears the voice's ENDx bit
+        dsp->endPending[ch] = false;
+        dsp->channel[ch].sampleOut = 0;
+        return;
+      }
     }
   }
   // handle reset
@@ -476,12 +534,17 @@ static void dsp_cycleChannel(Dsp* dsp, int ch) {
     if(stage > 2) stage = 2;
     rate = dsp->channel[ch].adsrRates[stage];
   }
+  if (dsp_globalCounterOn()) {
+    if(releasing || (!doingDirectGain && dsp_rateFires(dsp, rate)))
+      dsp_handleGain(dsp, ch, liveGain);
+  } else {
   if(!releasing && !doingDirectGain && rate != 0) {
     dsp->channel[ch].rateCounter++;
   }
   if(releasing || (!doingDirectGain && dsp->channel[ch].rateCounter >= rate && rate != 0)) {
     if(!releasing) dsp->channel[ch].rateCounter = 0;
     dsp_handleGain(dsp, ch, liveGain);
+  }
   }
   if(doingDirectGain) dsp->channel[ch].gain = dsp->channel[ch].gainValue;
   // set outputs
@@ -582,7 +645,7 @@ static void dsp_decodeBrr(Dsp* dsp, int ch) {
       dsp->channel[ch].adsrState = 4;
       dsp->channel[ch].gain = 0;
     }
-    dsp->ram[0x7c] |= 1 << ch; // set ENDx
+    if (dsp_endxAt() < 0) dsp->ram[0x7c] |= 1 << ch; // set ENDx
   }
 #if SNESRECOMP_DSP_FORENSICS
   /* Dev faithful-reference: capture this BRR block's start + the two seed
@@ -595,6 +658,7 @@ static void dsp_decodeBrr(Dsp* dsp, int ch) {
   int shift = header >> 4;
   int filter = (header & 0xc) >> 2;
   dsp->channel[ch].previousFlags = header & 0x3;
+  if (dsp_endxAt() >= 0 && (header & 1)) dsp->endPending[ch] = true;
   uint8_t curByte = 0;
   int old = dsp->channel[ch].old;
   int older = dsp->channel[ch].older;
@@ -636,10 +700,14 @@ static void dsp_decodeBrr(Dsp* dsp, int ch) {
 }
 
 static void dsp_handleNoise(Dsp* dsp) {
-  if(dsp->noiseRate != 0) {
-    dsp->noiseCounter++;
+  bool noiseStep;
+  if (dsp_globalCounterOn()) {
+    noiseStep = dsp_rateFires(dsp, dsp->noiseRate);
+  } else {
+    if(dsp->noiseRate != 0) dsp->noiseCounter++;
+    noiseStep = dsp->noiseCounter >= dsp->noiseRate && dsp->noiseRate != 0;
   }
-  if(dsp->noiseCounter >= dsp->noiseRate && dsp->noiseRate != 0) {
+  if(noiseStep) {
     int bit = (dsp->noiseSample & 1) ^ ((dsp->noiseSample >> 1) & 1);
     dsp->noiseSample = ((dsp->noiseSample >> 1) & 0x3fff) | (bit << 14);
     dsp->noiseSample = ((int16_t) ((dsp->noiseSample & 0x7fff) << 1)) >> 1;

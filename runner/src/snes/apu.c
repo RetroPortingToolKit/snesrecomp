@@ -39,8 +39,36 @@ static const uint8_t bootRom[0x40] = {
  * SNESRECOMP_SPC_READ_BIAS / _WRITE_BIAS shift the cycle a port access is
  * taken to land on (SPC cycles, default 0). */
 static int s_access_cycles = -1;
+static int apu_accessCycles(void);
+/* One SPC cycle of timer i, as apu_cycle runs it. */
+static void apu_timerStep(Apu* apu, int i) {
+  extern uint64_t g_apu_timer0_total_ticks;
+  if(apu->timer[i].cycles == 0) {
+    apu->timer[i].cycles = i == 2 ? 16 : 128;
+    if(apu->timer[i].enabled) {
+      apu->timer[i].divider++;
+      if(apu->timer[i].divider == apu->timer[i].target) {
+        apu->timer[i].divider = 0;
+        apu->timer[i].counter++;
+        apu->timer[i].counter &= 0xf;
+        if (i == 0) g_apu_timer0_total_ticks++;
+      }
+    }
+  }
+  apu->timer[i].cycles--;
+}
+/* A timer access on cycle `k` of the running opcode sees the timers as they
+ * are there: advance them to it now; apu_cycle skips what was done ahead. */
+static void apu_timersTo(Apu* apu, uint8_t k) {
+  if (!apu_accessCycles()) return;
+  for (int i = 0; i < 3; i++)
+    while (apu->timerAhead[i] < k) { apu_timerStep(apu, i); apu->timerAhead[i]++; }
+}
 /* SNESRECOMP_PORT_LOG=1: every SPC access to $F4 on stderr, "[pl] S<R|W> <val> <spc cycle>". */
 int g_apu_port_log = -1;
+/* SNESRECOMP_DSP_LOG=1: every SPC access to $F3, "[pl] SD|SE <val> <spc cycle> <dsp reg>". */
+static int s_dsp_log = -1;
+static int apu_dspLog(void) { if (s_dsp_log < 0) s_dsp_log = getenv("SNESRECOMP_DSP_LOG") != NULL; return s_dsp_log; }
 static void apu_portLog(Apu* apu, char rw, uint8_t v, unsigned port) {
   if (g_apu_port_log < 0) g_apu_port_log = getenv("SNESRECOMP_PORT_LOG") != NULL;
   if (g_apu_port_log)
@@ -250,13 +278,20 @@ bool apu_enqueuePortWriteAt(Apu* apu, uint8_t port, uint8_t val, uint64_t target
     return false;
   /* Late only past opcodes that touch no port (the others are held). */
   if (target < apu->portClock) target = apu->portClock;
-  if (target < apu->portLastTarget) target = apu->portLastTarget;
-  ApuPortWrite *w = &apu->portQueue[apu->portQTail & (APU_PORT_QUEUE_LEN - 1)];
+  /* Keep the queue in time order: a word write arrives high byte first but
+   * lands low byte first. */
+  uint32_t i = apu->portQTail;
+  while (i != apu->portQHead &&
+         apu->portQueue[(i - 1) & (APU_PORT_QUEUE_LEN - 1)].target_cycle > target) {
+    apu->portQueue[i & (APU_PORT_QUEUE_LEN - 1)] = apu->portQueue[(i - 1) & (APU_PORT_QUEUE_LEN - 1)];
+    i--;
+  }
+  ApuPortWrite *w = &apu->portQueue[i & (APU_PORT_QUEUE_LEN - 1)];
   w->target_cycle = target;
   w->port = (uint8_t)(port & 3);
   w->val = val;
   apu->portQTail++;
-  apu->portLastTarget = target;
+  if (target > apu->portLastTarget) apu->portLastTarget = target;
   return true;
 }
 
@@ -351,6 +386,12 @@ void apu_cycle(Apu* apu) {
   apu_drainPortQueue(apu);
   if(apu->cpuCyclesLeft == 0) {
     if (apu_holdOpcode(apu)) { apu->held = true; return; }
+    { static long long lo = -2, hi = 0;
+      if (lo == -2) { const char *e = getenv("SNESRECOMP_SPC_EXEC_LOG"); lo = -1; if (e) sscanf(e, "%lld-%lld", &lo, &hi); }
+      if (lo >= 0 && (long long)apu->portClock >= lo && (long long)apu->portClock <= hi)
+        fprintf(stderr, "[sx] %04X %llu %02X %02X %02X a=%02X y=%02X\n", apu->spc->pc, (unsigned long long)apu->portClock,
+                apu->ram[apu->spc->pc], apu->ram[(uint16_t)(apu->spc->pc + 1)], apu->ram[(uint16_t)(apu->spc->pc + 2)],
+                apu->spc->a, apu->spc->y); }
     /* Sample PC right BEFORE running the opcode — so PC reflects the
      * instruction we're about to execute, not the post-opcode PC. */
 #if SNESRECOMP_SPC_DIAGNOSTICS
@@ -363,12 +404,16 @@ void apu_cycle(Apu* apu) {
 
   if((apu->cycles & 0x1f) == 0) {
     // every 32 cycles
+    uint8_t endx = apu->dsp->ram[0x7c];
     dsp_cycle(apu->dsp);
+    if (apu_dspLog() && (apu->dsp->ram[0x7c] & ~endx))
+      fprintf(stderr, "[pl] SX %02X %llu 7C\n", apu->dsp->ram[0x7c] & ~endx, (unsigned long long)apu->portClock);
   }
 
   // handle timers
   extern uint64_t g_apu_timer0_total_ticks;
   for(int i = 0; i < 3; i++) {
+    if (apu->timerAhead[i]) { apu->timerAhead[i]--; continue; }
     if(apu->timer[i].cycles == 0) {
       apu->timer[i].cycles = i == 2 ? 16 : 128;
       if(apu->timer[i].enabled) {
@@ -417,7 +462,11 @@ uint8_t apu_cpuRead(Apu* apu, uint16_t adr) {
       return apu->dspAdr;
     }
     case 0xf3: {
-      return dsp_read(apu->dsp, apu->dspAdr & 0x7f);
+      uint8_t v = dsp_read(apu->dsp, apu->dspAdr & 0x7f);
+      if (apu_dspLog() && !apu->spc->dry)
+        fprintf(stderr, "[pl] SD %02X %llu %02X\n", v,
+                (unsigned long long)(apu->portClock + apu->spc->accessCycle), apu->dspAdr);
+      return v;
     }
     case 0xf4:
     case 0xf5:
@@ -449,6 +498,7 @@ uint8_t apu_cpuRead(Apu* apu, uint16_t adr) {
     case 0xfd:
     case 0xfe:
     case 0xff: {
+      apu_timersTo(apu, apu->spc->accessCycle);
       uint8_t ret = apu->timer[adr - 0xfd].counter;
       apu->timer[adr - 0xfd].counter = 0;
       return ret;
@@ -501,6 +551,7 @@ void apu_cpuWrite(Apu* apu, uint16_t adr, uint8_t val) {
       break; // test register
     }
     case 0xf1: {
+      apu_timersTo(apu, apu->spc->accessCycle);
       for(int i = 0; i < 3; i++) {
         if(!apu->timer[i].enabled && (val & (1 << i))) {
           apu->timer[i].divider = 0;
@@ -524,6 +575,9 @@ void apu_cpuWrite(Apu* apu, uint16_t adr, uint8_t val) {
       break;
     }
     case 0xf3: {
+      if (apu_dspLog())
+        fprintf(stderr, "[pl] SE %02X %llu %02X\n", val,
+                (unsigned long long)(apu->portClock + apu->spc->accessCycle), apu->dspAdr);
       if(apu->dspAdr < 0x80) dsp_write(apu->dsp, apu->dspAdr, val);
       break;
     }
@@ -544,6 +598,7 @@ void apu_cpuWrite(Apu* apu, uint16_t adr, uint8_t val) {
     case 0xfa:
     case 0xfb:
     case 0xfc: {
+      apu_timersTo(apu, apu->spc->accessCycle);
       apu->timer[adr - 0xfa].target = val;
       break;
     }
