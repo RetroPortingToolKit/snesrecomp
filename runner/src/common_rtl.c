@@ -1872,7 +1872,13 @@ uint8 ReadRegOpenBus(uint16 reg, uint8 open_bus) {
     return cart_read(g_snes->cart, 0, reg);
   }
   if (reg >= 0x2100 && reg < 0x2140) {
-    return ppu_read(g_ppu, reg & 0xff);
+    uint8 v = ppu_read(g_ppu, reg & 0xff);
+    if (reg == 0x2137) v = open_bus;  /* SLHV drives no data: the read sees open bus (MesenCE) */
+    /* SNESRECOMP_PPU_READ_LOG=1: "[ppur] <reg> <val> <cpu clock>" per PPU register read (a probe). */
+    static int ppur_log = -1;
+    if (ppur_log < 0) ppur_log = getenv("SNESRECOMP_PPU_READ_LOG") != NULL;
+    if (ppur_log) fprintf(stderr, "[ppur] %04X %02X %llu\n", reg, v, (unsigned long long)g_cpu.master_cycles);
+    return v;
   } else if (reg >= 0x2140 && reg < 0x2180) {
     // APU read — route through emulator (real SPC700 outPorts).
     return snes_read(g_snes, reg);
