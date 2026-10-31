@@ -35,6 +35,44 @@ static const uint8_t bootRom[0x40] = {
   0xf6, 0xda, 0x00, 0xba, 0xf4, 0xc4, 0xf4, 0xdd, 0x5d, 0xd0, 0xdb, 0x1f, 0x00, 0x00, 0xc0, 0xff
 };
 
+/* SNESRECOMP_SPC_ACCESS_CYCLES=0 restores instruction-start port timing.
+ * SNESRECOMP_SPC_READ_BIAS / _WRITE_BIAS shift the cycle a port access is
+ * taken to land on (SPC cycles, default 0). */
+static int s_access_cycles = -1;
+/* SNESRECOMP_PORT_LOG=1: every SPC access to $F4 on stderr, "[pl] S<R|W> <val> <spc cycle>". */
+int g_apu_port_log = -1;
+static void apu_portLog(Apu* apu, char rw, uint8_t v, unsigned port) {
+  if (g_apu_port_log < 0) g_apu_port_log = getenv("SNESRECOMP_PORT_LOG") != NULL;
+  if (g_apu_port_log)
+    fprintf(stderr, "[pl] S%c %02X %llu %04X %02X %u %u\n", rw, v,
+            (unsigned long long)(apu->portClock + apu->spc->accessCycle),
+            apu->spc->opPc, apu->spc->op, apu->spc->accessCycle, port);
+}
+static int s_read_bias, s_write_bias;
+static int apu_accessCycles(void) {
+  if (s_access_cycles < 0) {
+    const char *e = getenv("SNESRECOMP_SPC_ACCESS_CYCLES");
+    s_access_cycles = !(e && e[0] == '0');
+    e = getenv("SNESRECOMP_SPC_READ_BIAS");
+    s_read_bias = e ? atoi(e) : 0;
+    e = getenv("SNESRECOMP_SPC_WRITE_BIAS");
+    s_write_bias = e ? atoi(e) : 0;
+  }
+  return s_access_cycles;
+}
+
+/* Before an opcode starts at portClock: true if it must wait, because one of
+ * its port accesses lands after the clock the CPU has reached. */
+static bool apu_holdOpcode(Apu* apu) {
+  if (!apu->holdActive) return false;
+  if (apu->portClock + 16u <= apu->holdTarget) return false;  /* fits whole */
+  int c = spc_probePortCycle(apu->spc);
+  if (c < 0) return false;
+  int bias = s_read_bias > s_write_bias ? s_read_bias : s_write_bias;
+  int64_t at = (int64_t)apu->portClock + c + bias;
+  return at > (int64_t)apu->holdTarget;
+}
+
 Apu* apu_init(void) {
   Apu* apu = calloc(1, sizeof(Apu));  /* zero padding: saveload/co-sim hash determinism */
   apu->spc = spc_init(apu);
@@ -65,7 +103,9 @@ void apu_reset(Apu* apu) {
     apu->timer[i].counter = 0;
     apu->timer[i].enabled = false;
   }
-  apu->cpuCyclesLeft = 7;
+  /* Access-exact timing: the IPL's first $F4 access lands on SPC cycle 2400
+   * from power-on (MesenCE), which a 3-cycle reset gives this core. */
+  apu->cpuCyclesLeft = apu_accessCycles() ? 3 : 7;
   apu->portClock = 0;
   apu_clearPortQueue(apu);
 }
@@ -110,8 +150,14 @@ bool apu_schedulePortWrite(Apu* apu, uint8_t port, uint8_t val,
   uint64_t target = apu->portTargetAnchor +
                     (guest_cycle - apu->portGuestAnchor);
   if (target < apu->portClock) {
-    apu->portGuestAnchor = guest_cycle;
-    apu->portTargetAnchor = apu->portClock;
+    /* The SPC ran past the write's time inside an opcode that touched no port
+     * (access-exact timing holds the others), so nothing saw the port in
+     * between: apply it now and keep the mapping. Only a real lead (callback
+     * audio) moves the mapping. */
+    if (!apu_accessCycles() || apu->portClock - target > 64u) {
+      apu->portGuestAnchor = guest_cycle;
+      apu->portTargetAnchor = apu->portClock;
+    }
     target = apu->portClock;
   }
   if (target < apu->portLastTarget)
@@ -132,6 +178,19 @@ static void apu_drainPortQueue(Apu* apu) {
   while (apu->portQHead != apu->portQTail) {
     ApuPortWrite *w = &apu->portQueue[apu->portQHead & (APU_PORT_QUEUE_LEN - 1)];
     if (w->target_cycle > apu->portClock)
+      break;
+    apu_applyPortWrite(apu, w);
+    apu->portQHead++;
+  }
+}
+
+/* A port read on cycle `cycle` of the running opcode sees the CPU writes due
+ * by then. Writes are queued in time order, so taking them early is safe:
+ * every later access of this opcode is later still. */
+static void apu_drainPortQueueTo(Apu* apu, uint64_t clock) {
+  while (apu->portQHead != apu->portQTail) {
+    ApuPortWrite *w = &apu->portQueue[apu->portQHead & (APU_PORT_QUEUE_LEN - 1)];
+    if (w->target_cycle > clock)
       break;
     apu_applyPortWrite(apu, w);
     apu->portQHead++;
@@ -162,7 +221,11 @@ bool apu_runToGuestCycle(Apu* apu, uint64_t guest_cycle,
   if (target < apu->portLastTarget)
     target = apu->portLastTarget;
 
+  apu->held = false;
+  apu->holdActive = apu_accessCycles() != 0;
+  apu->holdTarget = target;
   for (;;) {
+    if (apu->held) break;
     bool due_event = false;
     if (apu->portQHead != apu->portQTail) {
       const ApuPortWrite *w =
@@ -170,13 +233,49 @@ bool apu_runToGuestCycle(Apu* apu, uint64_t guest_cycle,
       due_event = w->target_cycle <= target;
     }
     if (apu->portClock >= target && !due_event)
-      return true;
-    if (!max_cycles) return false;
+      break;
+    if (!max_cycles) { apu->holdActive = false; return false; }
     uint64_t distance = target > apu->portClock ? target - apu->portClock : 1u;
     uint32_t span = distance > max_cycles ? max_cycles : (uint32_t)distance;
     apu_runCycles(apu, span);
     max_cycles -= span;
   }
+  apu->holdActive = false;
+  apu->held = false;
+  return true;
+}
+
+bool apu_enqueuePortWriteAt(Apu* apu, uint8_t port, uint8_t val, uint64_t target) {
+  if (apu_portQueueDepth(apu) >= APU_PORT_QUEUE_LEN)
+    return false;
+  /* Late only past opcodes that touch no port (the others are held). */
+  if (target < apu->portClock) target = apu->portClock;
+  if (target < apu->portLastTarget) target = apu->portLastTarget;
+  ApuPortWrite *w = &apu->portQueue[apu->portQTail & (APU_PORT_QUEUE_LEN - 1)];
+  w->target_cycle = target;
+  w->port = (uint8_t)(port & 3);
+  w->val = val;
+  apu->portQTail++;
+  apu->portLastTarget = target;
+  return true;
+}
+
+bool apu_runThroughCycle(Apu* apu, uint64_t last, uint32_t max_cycles) {
+  apu_accessCycles();
+  apu->held = false;
+  apu->holdActive = true;
+  apu->holdTarget = last;
+  bool done = true;
+  while (apu->portClock <= last && !apu->held) {
+    if (!max_cycles) { done = false; break; }
+    uint64_t distance = last + 1 - apu->portClock;
+    uint32_t span = distance > max_cycles ? max_cycles : (uint32_t)distance;
+    apu_runCycles(apu, span);
+    max_cycles -= span;
+  }
+  apu->holdActive = false;
+  apu->held = false;
+  return done;
 }
 
 bool apu_waitForTransferReady(Apu* apu, uint8_t request_port,
@@ -251,6 +350,7 @@ extern int g_spc_pc_max_seen;
 void apu_cycle(Apu* apu) {
   apu_drainPortQueue(apu);
   if(apu->cpuCyclesLeft == 0) {
+    if (apu_holdOpcode(apu)) { apu->held = true; return; }
     /* Sample PC right BEFORE running the opcode — so PC reflects the
      * instruction we're about to execute, not the post-opcode PC. */
 #if SNESRECOMP_SPC_DIAGNOSTICS
@@ -296,7 +396,7 @@ void apu_runCycles(Apu* apu, uint32_t clocks) {
 #if SNESRECOMP_APU_NATIVE
   apu_runCycles_native(apu, clocks);
 #else
-  while (clocks--) apu_cycle(apu);
+  while (clocks-- && !apu->held) apu_cycle(apu);
 #endif
 }
 
@@ -323,7 +423,12 @@ uint8_t apu_cpuRead(Apu* apu, uint16_t adr) {
     case 0xf5:
     case 0xf6:
     case 0xf7: {
+      if (apu_accessCycles() && apu->spc->accessCycle) {
+        int64_t at = (int64_t)apu->portClock + apu->spc->accessCycle + s_read_bias;
+        if (at > (int64_t)apu->portClock) apu_drainPortQueueTo(apu, (uint64_t)at);
+      }
       uint8_t v = apu->inPorts[adr - 0xf4];
+      apu_portLog(apu, 'R', v, adr - 0xf4u);
       audio_trace_on_spc_port_read((uint8_t)(adr - 0xf4), v);
 #if defined(SNESRECOMP_TRACE) && SNESRECOMP_TRACE
       if (getenv("SNESRECOMP_SPC_PORT_TRACE")) {
@@ -426,6 +531,7 @@ void apu_cpuWrite(Apu* apu, uint16_t adr, uint8_t val) {
     case 0xf5:
     case 0xf6:
     case 0xf7: {
+      apu_portLog(apu, 'W', val, adr - 0xf4u);
       audio_trace_on_spc_port_write((uint8_t)(adr - 0xf4), val);
       apu->outPorts[adr - 0xf4] = val;
       break;

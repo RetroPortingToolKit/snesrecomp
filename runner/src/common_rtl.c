@@ -293,6 +293,70 @@ static int16 g_audio_last_output_l;
 static int16 g_audio_last_output_r;
 static void rtl_sync_apu_frame_boundary(void);
 
+/* Master-clock APU timeline. Off by default; SNESRECOMP_APU_MASTER_CLOCK=1 or
+ * RtlApuUseMasterClock turns it on. The SPC's time is the CPU's master clock
+ * since power-on scaled to the SMP's 2 x 1,025,280 half-cycles per
+ * 21,477,270 master clocks (MesenCE, bsnes), with no per-frame rebasing,
+ * relative catch-up or boot path: a CPU write is queued at the SPC cycle that
+ * first sees it, a CPU read runs the SPC through the last cycle whose writes
+ * it sees. `lead` is the master clocks from the CPU's instruction start to its
+ * port access (RtlSetCpuAccessClockHook adds host stalls). Edges measured on
+ * MesenCE (Secret of Evermore's sound uploads): an SPC access sees a CPU write
+ * from 2 half-cycles on, a CPU read sees SPC writes up to its own half-cycle.
+ * SNESRECOMP_APU_KR / _KW (half-cycles) move the two edges for experiments. */
+#define RTL_SMP_HALF_PER_SEC 2050560ull
+#define RTL_MASTER_PER_SEC 21477270ull
+static int s_apu_master = -1;
+static uint32_t s_apu_lead;
+static int s_apu_kr, s_apu_kw;
+static int64_t s_apu_spc_offset;
+bool rtl_apu_master_clock(void) {
+  if (s_apu_master < 0) {
+    const char *e = getenv("SNESRECOMP_APU_MASTER_CLOCK");
+    s_apu_master = e && e[0] == '1';
+    if ((e = getenv("SNESRECOMP_APU_LEAD"))) s_apu_lead = (uint32_t)atoi(e);
+    s_apu_kr = (e = getenv("SNESRECOMP_APU_KR")) ? atoi(e) : 0;
+    s_apu_kw = (e = getenv("SNESRECOMP_APU_KW")) ? atoi(e) : 0;
+  }
+  return s_apu_master;
+}
+uint64_t rtl_cpu_master_now(void) { return g_cpu.master_cycles; }
+
+void RtlApuUseMasterClock(bool on, uint32_t lead) {
+  rtl_apu_master_clock();
+  s_apu_master = on;
+  if (!getenv("SNESRECOMP_APU_LEAD")) s_apu_lead = lead;
+}
+static RtlCpuAccessClockHook s_cpu_access_clock;
+void RtlSetCpuAccessClockHook(RtlCpuAccessClockHook hook) { s_cpu_access_clock = hook; }
+static uint64_t rtl_apu_half_ticks(void) {
+  uint64_t m = s_cpu_access_clock ? s_cpu_access_clock(g_cpu.master_cycles, s_apu_lead)
+                                  : g_cpu.master_cycles + s_apu_lead;
+  return (m / RTL_MASTER_PER_SEC) * RTL_SMP_HALF_PER_SEC +
+         (m % RTL_MASTER_PER_SEC) * RTL_SMP_HALF_PER_SEC / RTL_MASTER_PER_SEC;
+}
+/* SPC cycle c starts at half-cycle 2c. A state load or reset leaves portClock
+ * elsewhere: re-anchor when the two are far apart. */
+static int64_t rtl_apu_spc_cycle(int64_t half) {
+  int64_t c = half / 2 - s_apu_spc_offset;
+  int64_t d = c - (int64_t)g_snes->apu->portClock;
+  if (d > (1 << 22) || d < -4096) {
+    s_apu_spc_offset += d;
+    c -= d;
+  }
+  return c;
+}
+/* A write at half-cycle h is seen by SPC accesses from half-cycle h + 2 on. */
+static uint64_t rtl_apu_write_target(void) {
+  int64_t c = rtl_apu_spc_cycle((int64_t)rtl_apu_half_ticks() + 3 + s_apu_kr);
+  return c < 0 ? 0 : (uint64_t)c;
+}
+/* A read at half-cycle h sees SPC writes made by half-cycle h. */
+static uint64_t rtl_apu_read_last(void) {
+  int64_t c = rtl_apu_spc_cycle((int64_t)rtl_apu_half_ticks() - s_apu_kw);
+  return c < 0 ? 0 : (uint64_t)c;
+}
+
 static uint64_t rtl_apu_guest_cycle(void) {
   if (g_extended_frame_timing)
     return rtl_apu_clock_now(&g_apu_frame_clock, g_cpu.master_cycles);
@@ -1849,6 +1913,8 @@ uint16 ReadRegWord(uint16 reg) {
     RtlApuUnlock();
     lo = rtl_apu_port_observers_read(reg, lo);
     hi = rtl_apu_port_observers_read(reg + 1, hi);
+    { void rtl_port_log_cpu(uint16 adr, char rw, uint8 v);
+      rtl_port_log_cpu(reg, 'R', lo); rtl_port_log_cpu(reg + 1, 'R', hi); }
     g_cpu.open_bus = hi;
     return (uint16_t)lo | ((uint16_t)hi << 8);
   }
@@ -2045,6 +2111,20 @@ void rtl_accumulate_apu_catchup(void) {
 uint64_t apuw_prof_calls = 0;
 double apuw_prof_ms = 0.0;
 #endif
+/* SNESRECOMP_PORT_LOG=1: every CPU access to $2140, "[pl] C<R|W> <val> <master clock>". */
+void rtl_port_log_cpu(uint16 adr, char rw, uint8 v) {
+  extern int g_apu_port_log;
+  if (g_apu_port_log < 0) g_apu_port_log = getenv("SNESRECOMP_PORT_LOG") != NULL;
+  if (g_apu_port_log && (adr & 0x3f) < 4) {
+    const Apu *a = g_snes->apu;
+    uint64_t spc = rtl_apu_master_clock() ? (rw == 'W' ? a->portLastTarget : a->holdTarget)
+        : !g_apu_frame_time_valid ? a->portClock
+        : rw == 'W' ? a->portLastTarget : a->holdTarget;
+    fprintf(stderr, "[pl] C%c %02X %llu %llu %u\n", rw, v, (unsigned long long)g_cpu.master_cycles,
+            (unsigned long long)spc, (unsigned)(adr & 3));
+  }
+}
+
 void RtlApuWrite(uint16 adr, uint8 val) {
   if (s_guest_scope_active) return;
   assert(adr >= 0x2140 && adr <= 0x217f);
@@ -2070,6 +2150,17 @@ void RtlApuWrite(uint16 adr, uint8 val) {
   }
 #endif
 
+  if (rtl_apu_master_clock()) {
+    RtlApuLock();
+    audio_trace_on_cpu_port_write(port, val);
+    uint64_t target = rtl_apu_write_target();
+    while (!apu_enqueuePortWriteAt(g_snes->apu, port, val, target))
+      apu_cycle(g_snes->apu);
+    rtl_port_log_cpu(adr, 'W', val);
+    RtlApuUnlock();
+    return;
+  }
+
   RtlApuLock();
   if (!g_apu_frame_time_valid) {
     rtl_accumulate_apu_catchup();
@@ -2087,6 +2178,7 @@ void RtlApuWrite(uint16 adr, uint8 val) {
     while (!apu_schedulePortWrite(g_snes->apu, port, val, guest_cycle))
       apu_cycle(g_snes->apu);
   }
+  rtl_port_log_cpu(adr, 'W', val);
   RtlApuUnlock();
 #ifdef SNESRECOMP_INTERP_PROFILE
   { extern uint64_t apuw_prof_calls; extern double apuw_prof_ms;
@@ -2124,6 +2216,13 @@ void rtl_sync_apu_to_cpu_locked(void) {
     apus_prof_calls++; }
   clock_t _t1 = clock();
 #endif
+  if (rtl_apu_master_clock()) {
+    g_snes->apu->holdTarget = rtl_apu_read_last();
+    if (!apu_runThroughCycle(g_snes->apu, g_snes->apu->holdTarget, 1u << 22))
+      fprintf(stderr, "[apu] CPU-port master-clock sync timed out\n");
+    g_snes->apu->holdTarget = rtl_apu_read_last();
+    return;
+  }
   if (!g_apu_frame_time_valid) {
     rtl_accumulate_apu_catchup();
     snes_catchupApu(g_snes);
@@ -2312,6 +2411,15 @@ static void rtl_sync_apu_frame_boundary(void) {
     _t0 = snesrecomp_host_now_ns();
   }
   RtlApuLock();
+  if (rtl_apu_master_clock()) {
+    /* Guest time is the master clock: no minimum frame of SPC time. */
+    if (g_extended_frame_timing)
+      (void)rtl_apu_clock_finish(&g_apu_frame_clock, g_cpu.master_cycles);
+    if (!apu_runThroughCycle(g_snes->apu, rtl_apu_read_last(), 1u << 24))
+      fprintf(stderr, "[apu] frame-boundary master-clock sync timed out\n");
+    RtlApuUnlock();
+    return;
+  }
   audio_trace_set_producer(AUDIO_TRACE_PRODUCER_CPU);
   uint64_t before = g_snes->apu->portClock;
   /* RtlRunFrame has already incremented snes_frame_counter. This is the exact
