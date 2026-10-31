@@ -910,7 +910,25 @@ void snes_writeReg(Snes* snes, uint16_t adr, uint8_t val) {
           dma_master = 0;  /* no channel: no transfer, no time */
         } else if (dma_align) {
           extern uint64_t rtl_cpu_master_now(void);
-          uint64_t start = rtl_cpu_master_now() + (uint64_t)dma_lead;
+          const uint64_t now = rtl_cpu_master_now();
+          uint64_t start = now + (uint64_t)dma_lead;
+          /* MesenCE's HDMA init event (line 0, H = 12 + (line start & 7))
+           * takes a CPU cycle start of its own, then another for the HDMA
+           * init itself, even with no HDMA channel on; a pending DMA waits
+           * for both. The write's cycle starts 12 clocks before `start` (the
+           * next opcode fetch 6, then the cycle the DMA would start in). */
+          {
+            const uint64_t line = snes->beamMasterLast - snes->hPos;
+            const uint64_t line0 = snes->vPos == 0 ? line : snes->vPos == 261 ? line + 1364u : 0;
+            if (line0) {
+              const uint64_t ev = line0 + 12u + (line0 & 7u);
+              const uint64_t write_cycle = start - 12u, next_fetch = start - 6u;
+              if (ev > write_cycle - 6u && ev <= next_fetch) start += 6u;
+              else if (ev > next_fetch && ev <= start) start += 12u;
+            }
+          }
+          /* The cycles it waits are the next instruction's own, charged as it
+           * runs; only the alignment from the later start differs. */
           uint64_t t = (8 - (start & 7)) + 8 + body;
           if (dma_end_speed > 0) t += (uint64_t)dma_end_speed - t % (uint64_t)dma_end_speed;
           dma_master = t;
