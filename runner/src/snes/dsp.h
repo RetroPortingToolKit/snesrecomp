@@ -54,6 +54,41 @@ typedef struct DspChannel {
   bool echoEnable;
 } DspChannel;
 
+/* The per-clock S-DSP (dsp_clock.c): one voice's state. */
+typedef struct DspClockVoice {
+  int32_t env;       /* envelope, 11 bits */
+  int32_t envPrev;   /* last computed value before clamping (bent increase) */
+  int32_t pos;       /* interpolation position: 3 bits of sample, 12 of fraction */
+  uint8_t mode;      /* release, attack, decay, sustain */
+  uint16_t brrAdr;
+  uint8_t brrOff;
+  uint8_t konDelay;
+  uint8_t envx;
+  uint8_t bufPos;
+  int16_t buf[12];   /* decoded samples, a ring of three groups of 4 */
+} DspClockVoice;
+
+/* The per-clock S-DSP: the registers as its steps read them, and the values
+ * latched between steps (shared by the voices, as on the chip). */
+typedef struct DspClock {
+  uint8_t regs[0x80];
+  uint8_t step;
+  uint16_t counter;
+  int32_t noise;
+  uint8_t outxBuf, envxBuf, endxBuf;
+  int32_t voiceOut;
+  int32_t out[2];
+  int32_t pitch;
+  uint16_t dirAdr, nextAdr;
+  uint8_t dir, non, pmon, eon, kon, konNew, kof, everyOther, srcn, brrHeader, brrData, looped, adsr1;
+  int32_t echoIn[2], echoOut[2];
+  int16_t echoHist[8][2];
+  uint16_t echoPtr, echoLen, echoOff;
+  uint8_t echoHistPos, esa;
+  bool echoOn;
+  DspClockVoice v[8];
+} DspClock;
+
 struct Dsp {
   uint8_t *apu_ram;
   // Host publication policy, outside the guest snapshot. Speculation still
@@ -115,6 +150,7 @@ struct Dsp {
   /* A decoded end block whose ENDx bit is still to be set (when playback
    * reaches sample `endxAt` of the block; hardware's decoder runs ahead). */
   bool endPending[8];
+  DspClock clk;   /* SNESRECOMP_DSP_PER_CLOCK; host state, not serialized (dsp_saveload stops at konDelay) */
 };
 
 
@@ -122,6 +158,12 @@ Dsp *dsp_init(uint8_t *ram);
 void dsp_free(Dsp* dsp);
 void dsp_reset(Dsp* dsp);
 void dsp_cycle(Dsp* dsp);
+/* The per-clock S-DSP (dsp_clock.c): on unless SNESRECOMP_DSP_PER_CLOCK=0; then apu_cycle runs dsp_clock every
+ * SPC cycle instead of dsp_cycle every 32nd. */
+bool dsp_perClock(void);
+void dsp_clock(Dsp* dsp);
+void dsp_clockReset(Dsp* dsp);
+void dsp_clockWrite(Dsp* dsp, uint8_t adr, uint8_t val);
 /* Presentation only. Select dry voices AND their native echo at the DAC;
  * every canonical voice, echo RAM write and clock still runs unchanged.
  * 0xff restores ordinary output (the default). Caller holds the APU lock.

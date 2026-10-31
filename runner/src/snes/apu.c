@@ -64,6 +64,12 @@ static void apu_timersTo(Apu* apu, uint8_t k) {
   for (int i = 0; i < 3; i++)
     while (apu->timerAhead[i] < k) { apu_timerStep(apu, i); apu->timerAhead[i]++; }
 }
+/* A $F3 access on cycle `k` of the running opcode sees the per-clock S-DSP
+ * as it is there (MesenCE steps it before each bus cycle's access). */
+static void apu_dspTo(Apu* apu, uint8_t k) {
+  if (!dsp_perClock() || !apu_accessCycles()) return;
+  while (apu->dspAhead < k) { dsp_clock(apu->dsp); apu->dspAhead++; }
+}
 /* SNESRECOMP_PORT_LOG=1: every SPC access to $F4 on stderr, "[pl] S<R|W> <val> <spc cycle>". */
 int g_apu_port_log = -1;
 /* SNESRECOMP_DSP_LOG=1: every SPC access to $F3, "[pl] SD|SE <val> <spc cycle> <dsp reg>". */
@@ -124,8 +130,13 @@ void apu_reset(Apu* apu) {
   apu->cycles = 0;
   memset(apu->inPorts, 0, sizeof(apu->inPorts));
   memset(apu->outPorts, 0, sizeof(apu->outPorts));
+  /* MesenCE's prescaler toggles every half period and clocks the stage-2
+   * counter on the falling edge: a timer ticks on the last cycle of each
+   * 128 (16) cycle period from power-on, not on the first. */
+  const char *tp = getenv("SNESRECOMP_SPC_TIMER_PHASE");
+  int timer_phase = tp ? atoi(tp) : (apu_accessCycles() ? 1 : 0);
   for(int i = 0; i < 3; i++) {
-    apu->timer[i].cycles = 0;
+    apu->timer[i].cycles = timer_phase ? (i == 2 ? 16 : 128) - timer_phase : 0;
     apu->timer[i].divider = 0;
     apu->timer[i].target = 0;
     apu->timer[i].counter = 0;
@@ -135,6 +146,7 @@ void apu_reset(Apu* apu) {
    * from power-on (MesenCE), which a 3-cycle reset gives this core. */
   apu->cpuCyclesLeft = apu_accessCycles() ? 3 : 7;
   apu->portClock = 0;
+  apu->dspAhead = 0;
   apu_clearPortQueue(apu);
 }
 
@@ -402,7 +414,10 @@ void apu_cycle(Apu* apu) {
   }
   apu->cpuCyclesLeft--;
 
-  if((apu->cycles & 0x1f) == 0) {
+  if (dsp_perClock()) {
+    if (apu->dspAhead) apu->dspAhead--;
+    else dsp_clock(apu->dsp);
+  } else if((apu->cycles & 0x1f) == 0) {
     // every 32 cycles
     uint8_t endx = apu->dsp->ram[0x7c];
     dsp_cycle(apu->dsp);
@@ -462,6 +477,7 @@ uint8_t apu_cpuRead(Apu* apu, uint16_t adr) {
       return apu->dspAdr;
     }
     case 0xf3: {
+      if (!apu->spc->dry) apu_dspTo(apu, apu->spc->accessCycle);
       uint8_t v = dsp_read(apu->dsp, apu->dspAdr & 0x7f);
       if (apu_dspLog() && !apu->spc->dry)
         fprintf(stderr, "[pl] SD %02X %llu %02X\n", v,
@@ -578,6 +594,7 @@ void apu_cpuWrite(Apu* apu, uint16_t adr, uint8_t val) {
       if (apu_dspLog())
         fprintf(stderr, "[pl] SE %02X %llu %02X\n", val,
                 (unsigned long long)(apu->portClock + apu->spc->accessCycle), apu->dspAdr);
+      apu_dspTo(apu, apu->spc->accessCycle);
       if(apu->dspAdr < 0x80) dsp_write(apu->dsp, apu->dspAdr, val);
       break;
     }

@@ -70,6 +70,8 @@ struct Apu {
   /* Cycles each timer has already been advanced past portClock, by a timer
    * access on its own cycle inside the running opcode (apu.c). */
   uint8_t timerAhead[3];
+  /* The same for the per-clock S-DSP (dsp_clock.c), stepped to a $F3 access's cycle. */
+  uint8_t dspAhead;
 };
 
 /*

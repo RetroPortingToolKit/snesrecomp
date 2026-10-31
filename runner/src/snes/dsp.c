@@ -215,6 +215,8 @@ void dsp_reset(Dsp* dsp) {
   memset(dsp->sampleBuffer, 0, sizeof(dsp->sampleBuffer));
   dsp->sampleWrite = 0;
   dsp->sampleRead = 0;
+  dsp_clockReset(dsp);
+  if (dsp_perClock()) dsp->ram[0x7c] = 0; // ENDX reads 0 after power-on (MesenCE)
 }
 
 void dsp_output_ring_save(const Dsp *dsp, DspOutputRing *out) {
@@ -720,6 +722,9 @@ uint8_t dsp_read(Dsp* dsp, uint8_t adr) {
 }
 
 void dsp_write(Dsp* dsp, uint8_t adr, uint8_t val) {
+  /* Both models take every write, so dsp_cycle keeps working for callers
+   * that step it directly (the audio tests); apu_cycle runs one of them. */
+  const uint8_t written = val;
   audio_trace_on_reg_write(adr, val);
   int ch = adr >> 4;
   switch(adr) {
@@ -846,6 +851,7 @@ void dsp_write(Dsp* dsp, uint8_t adr, uint8_t val) {
     }
   }
   dsp->ram[adr] = val;
+  if (dsp_perClock()) dsp_clockWrite(dsp, adr, written);
 }
 
 uint32_t dsp_available(const Dsp* dsp) {
