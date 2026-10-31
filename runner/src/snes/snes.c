@@ -23,6 +23,9 @@
 #include "sdd1.h"
 #include "../ppu_dma_trace.h"
 
+/* Master clocks charged for general DMA since power-on (snes.h). */
+uint64_t g_snes_dma_charged;
+
 int snes_frame_counter;
 static const double apuCyclesPerMaster = (32040 * 32) / (1364 * 262 * 60.0);
 
@@ -921,6 +924,7 @@ void snes_writeReg(Snes* snes, uint16_t adr, uint8_t val) {
         /* SnesInit installs the CpuState-clock charge; a host that drives
          * the beam itself installs its own (see snes.h). With no hook the
          * device layer advances its own beam, so snes.c needs no CpuState. */
+        g_snes_dma_charged += dma_master;
         if (s_master_clock_charge_hook) {
           s_master_clock_charge_hook(snes, dma_master);
         } else {

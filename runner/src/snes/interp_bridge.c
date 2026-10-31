@@ -2802,7 +2802,7 @@ static int _interp_run_core(CpuState *cpu, uint32_t entry_pc24,
             extern int snes_frame_counter;
             fprintf(stderr,
                     "[cyc] f=%d pc=$%06X op=$%02X cyc=%d bus_xfers=%u "
-                    "bus_master=%llu internal=%u master_delta=%llu\n",
+                    "bus_master=%llu internal=%u master_delta=%llu now=%llu\n",
                     snes_frame_counter, (unsigned)pc_before, (unsigned)op,
                     _cyc, s_interp_bus_cycles,
                     (unsigned long long)s_interp_bus_master,
@@ -2811,7 +2811,8 @@ static int _interp_run_core(CpuState *cpu, uint32_t entry_pc24,
                     (unsigned long long)(s_interp_bus_master +
                         (uint64_t)((unsigned)_cyc > s_interp_bus_cycles
                                        ? (unsigned)_cyc - s_interp_bus_cycles
-                                       : 0) * 6u));
+                                       : 0) * 6u),
+                    (unsigned long long)cpu->master_cycles);
         }
 
         if (auto_quiescent &&
