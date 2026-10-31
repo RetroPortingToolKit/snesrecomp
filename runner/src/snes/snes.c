@@ -67,6 +67,28 @@ static void snes_trace_direct_wram_write(uint32_t off, uint8_t old, uint8_t val)
 }
 #endif
 
+/* SLHV ($2137 read, or WRIO bit 7 falling): the beam at the access's own
+ * clock (2 clocks into its bus cycle, MesenCE's sample point), as a dot
+ * count with the two long dots (MesenCE's SnesPpu::GetCycle). */
+extern void (*g_ppu_latch_position_hook)(uint16_t *h_dot, uint16_t *v);
+static void snes_latch_position(uint16_t *h_dot, uint16_t *v_out) {
+  extern Snes *g_snes;
+  extern uint64_t rtl_cpu_master_now(void);
+  extern uint32_t interp_bridge_access_lead(uint16_t adr, uint32_t fallback);
+  uint32_t lead = interp_bridge_access_lead(0x2137, 0xffffffffu);
+  if (lead == 0xffffffffu) lead = interp_bridge_access_lead(0x4201, 0);
+  const uint64_t at = rtl_cpu_master_now() + lead;
+  int64_t h = (int64_t)g_snes->hPos + (int64_t)(at - g_snes->beamMasterLast);
+  int v = g_snes->vPos;
+  while (h >= 1364) { h -= 1364; v = v + 1 >= 262 ? 0 : v + 1; }
+  while (h < 0) { h += 1364; v = v ? v - 1 : 261; }
+  *h_dot = (uint16_t)(h <= 1292 ? h >> 2 : h <= 1310 ? (h - 2) >> 2 : (h - 4) >> 2);
+  *v_out = (uint16_t)v;
+  static int hv_log = -1;
+  if (hv_log < 0) hv_log = getenv("SNESRECOMP_HV_LOG") != NULL;
+  if (hv_log) fprintf(stderr, "[hv] h=%lld v=%d dot=%u at=%llu\n", (long long)h, v, *h_dot, (unsigned long long)at);
+}
+
 void snes_set_hdma_beam_enabled(Snes *snes, bool enabled) {
   snes->hdmaBeamOff = !enabled;
 }
@@ -252,7 +274,8 @@ void snes_reset(Snes* snes, bool hard) {
   snes->joypad1Index = snes->joypad2Index = 0;
   snes->joypad1Latched = snes->joypad2Latched = 0;
   joypad_reset_state();
-  snes->ppuLatch = false;
+  snes->ppuLatch = true;  /* WRIO reads $FF after power-on and reset */
+  g_ppu_latch_position_hook = snes_latch_position;
   snes->multiplyA = 0xff;
   snes->multiplyResult = 0xfe01;
   snes->divideA = 0xffff;
