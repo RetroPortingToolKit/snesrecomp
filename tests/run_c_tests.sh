@@ -59,6 +59,12 @@ case "$(uname -s)" in
     *) echo "  (skipped: Windows only)" ;;
 esac
 
+echo "=== DSP capture cursor ==="
+"$CC" -std=c11 -Wall -Wextra -Werror -O1 \
+    -I "$ROOT/runner/src" "$ROOT/tests/audio_capture_cursor_test.c" \
+    -o "$OUT/audio_capture_cursor_test"
+"$OUT/audio_capture_cursor_test"
+
 echo "=== MSU soundtrack routing ==="
 "$CC" -std=c11 -Wall -Wextra -O1 \
     -D_POSIX_C_SOURCE=200809L -I "$ROOT/runner/src" \
