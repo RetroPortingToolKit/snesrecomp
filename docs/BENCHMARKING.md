@@ -1,5 +1,13 @@
 # SNES benchmark output
 
+`SNESRECOMP_DSPOUT=<path>` enables diagnostic raw DSP recording; ordinary
+playback does not use this recorder. Reset/load establishes a fresh cursor
+before guest execution, and speculative run-ahead frames are excluded. Each
+captured span must fit the DSP ring, including valid uint32 counter wrap.
+An unexpected timeline change, ring overrun, or output open/write/flush error
+prints `[dsp_capture]` and exits unsuccessfully. Treat that run and its partial
+output as invalid. Captures are flushed at each frame boundary.
+
 Finite benchmark hosts emit one machine-readable line on stdout:
 
 ```text
