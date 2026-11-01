@@ -215,6 +215,9 @@ void dsp_reset(Dsp* dsp) {
   memset(dsp->sampleBuffer, 0, sizeof(dsp->sampleBuffer));
   dsp->sampleWrite = 0;
   dsp->sampleRead = 0;
+  memset(dsp->konDelay, 0, sizeof(dsp->konDelay));
+  memset(dsp->endPending, 0, sizeof(dsp->endPending));
+  dsp->rateCounter = 0;
   dsp_clockReset(dsp);
   if (dsp_perClock()) dsp->ram[0x7c] = 0; // ENDX reads 0 after power-on (MesenCE)
 }
@@ -247,7 +250,7 @@ uint32_t dsp_output_ring_write(const Dsp *dsp) {
 }
 
 void dsp_saveload(Dsp *dsp, SaveLoadInfo *sli) {
-  sli->func(sli, &dsp->ram, offsetof(Dsp, konDelay) - offsetof(Dsp, ram));
+  sli->func(sli, &dsp->ram, sizeof(Dsp) - offsetof(Dsp, ram));
 }
 
 void dsp_set_output_suppressed(Dsp *dsp, bool suppressed) {

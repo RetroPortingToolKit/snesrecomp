@@ -2230,6 +2230,30 @@ static bool rtl_run_apu_to_guest_cycle_locked(uint64_t target) {
   return synced;
 }
 
+/* Master-clock timeline (RtlApuUseMasterClock): a CPU port access or sync
+ * runs the SPC through the last cycle whose writes it sees. */
+static void rtl_apu_master_sync_locked(void) {
+  { static long long watch = -2;
+    if (watch == -2) { const char *e = getenv("SNESRECOMP_SYNC_WATCH"); watch = e ? atoll(e) : -1; }
+    if (watch >= 0 && (long long)g_cpu.master_cycles >= watch - 200 && (long long)g_cpu.master_cycles <= watch + 200)
+      fprintf(stderr, "[sync] master=%llu portClock=%llu last=%llu out0=%02X pc=%04X\n",
+              (unsigned long long)g_cpu.master_cycles, (unsigned long long)g_snes->apu->portClock,
+              (unsigned long long)rtl_apu_read_last(), g_snes->apu->outPorts[0], g_snes->apu->spc->pc); }
+  g_snes->apu->holdTarget = rtl_apu_read_last();
+  if (!apu_runThroughCycle(g_snes->apu, g_snes->apu->holdTarget, 1u << 22))
+    fprintf(stderr, "[apu] CPU-port master-clock sync timed out\n");
+  g_snes->apu->holdTarget = rtl_apu_read_last();
+}
+
+/* The same at a frame end: guest time is the master clock, so there is no
+ * minimum frame of SPC time. */
+static void rtl_apu_master_frame_end_locked(void) {
+  if (g_extended_frame_timing)
+    (void)rtl_apu_clock_finish(&g_apu_frame_clock, g_cpu.master_cycles);
+  if (!apu_runThroughCycle(g_snes->apu, rtl_apu_read_last(), 1u << 24))
+    fprintf(stderr, "[apu] frame-boundary master-clock sync timed out\n");
+}
+
 /* A CPU read of an APU port: sync to that access's own clock. */
 void rtl_sync_apu_for_access_locked(uint16_t adr) {
   s_apu_access_adr = adr;
@@ -2245,16 +2269,7 @@ void rtl_sync_apu_to_cpu_locked(void) {
   clock_t _t1 = clock();
 #endif
   if (rtl_apu_master_clock()) {
-    { static long long watch = -2;
-      if (watch == -2) { const char *e = getenv("SNESRECOMP_SYNC_WATCH"); watch = e ? atoll(e) : -1; }
-      if (watch >= 0 && (long long)g_cpu.master_cycles >= watch - 200 && (long long)g_cpu.master_cycles <= watch + 200)
-        fprintf(stderr, "[sync] master=%llu portClock=%llu last=%llu out0=%02X pc=%04X\n",
-                (unsigned long long)g_cpu.master_cycles, (unsigned long long)g_snes->apu->portClock,
-                (unsigned long long)rtl_apu_read_last(), g_snes->apu->outPorts[0], g_snes->apu->spc->pc); }
-    g_snes->apu->holdTarget = rtl_apu_read_last();
-    if (!apu_runThroughCycle(g_snes->apu, g_snes->apu->holdTarget, 1u << 22))
-      fprintf(stderr, "[apu] CPU-port master-clock sync timed out\n");
-    g_snes->apu->holdTarget = rtl_apu_read_last();
+    rtl_apu_master_sync_locked();
     return;
   }
   if (!g_apu_frame_time_valid) {
@@ -2446,11 +2461,7 @@ static void rtl_sync_apu_frame_boundary(void) {
   }
   RtlApuLock();
   if (rtl_apu_master_clock()) {
-    /* Guest time is the master clock: no minimum frame of SPC time. */
-    if (g_extended_frame_timing)
-      (void)rtl_apu_clock_finish(&g_apu_frame_clock, g_cpu.master_cycles);
-    if (!apu_runThroughCycle(g_snes->apu, rtl_apu_read_last(), 1u << 24))
-      fprintf(stderr, "[apu] frame-boundary master-clock sync timed out\n");
+    rtl_apu_master_frame_end_locked();
     RtlApuUnlock();
     return;
   }
