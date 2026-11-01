@@ -127,6 +127,44 @@ int main(void) {
     if (seed == 2) SnesHdGpuReset(g);
     SnesHdFrameDestroy(f);
   }
+  /* Non-periodic maps exercise the Q16 fast-path boundary and steeper
+   * double-precision fallback without hiding coordinate errors in repetition.
+   * Cover both signs and non-power-of-two scales above32x. */
+  for (unsigned seed = 0; seed < 4; ++seed) {
+    setup();
+    static uint8_t tiles[512 * 256];
+    for (unsigned y = 0; y < 256; ++y) for (unsigned x = 0; x < 512; ++x)
+      tiles[y * 512 + x] = (uint8_t)(1 + (x * 7 + y * 11 + (x / 128) * 53 + (y / 128) * 73) % 255);
+    for (unsigned tile = 0; tile < 256; ++tile) for (unsigned texel = 0; texel < 64; ++texel)
+      p.vram[tile * 64 + texel] = (uint16_t)((1 + (tile * 31 + texel) % 255) << 8);
+    SnesHdFrame *f = SnesHdFrameCreate(288, HEIGHT); CHECK(f);
+    int picture = SnesHdFrameAddPicture(f, p.vram);
+    int map = SnesHdFrameAddTilemap(f, tiles, 512, 256); CHECK(picture >= 0 && map >= 0);
+    for (unsigned y = 0; y < HEIGHT; ++y) {
+      SnesHdLine j = {0};
+      j.kind = kSnesHdAffine; j.source = (uint16_t)picture; j.tilemap = (uint16_t)(map + 1);
+      j.brightness = 15; j.active_left = -16; j.active_right = 272; j.screen_left = -16;
+      memcpy(j.palette, p.cgram, sizeof(j.palette));
+      memset(j.visibility, 3, sizeof(j.visibility));
+      const double t[8] = {-23.125, 256.0 * y - 93.5,
+        (seed & 1 ? -1 : 1) * 256.0 * (seed < 2 ? 255.875 : 1100.125),
+        (seed & 1 ? 1 : -1) * 256.0 * (seed < 2 ? 199.375 : 733.375),
+        37.1, 511.11, .004, -.001};
+      memcpy(j.affine, t, sizeof(t)); CHECK(SnesHdFrameSetLine(f, y, &j));
+    }
+    CHECK(SnesHdFrameSeal(f));
+    static const unsigned steep_scales[] = {1, 16, 24, 32, 33, 40, 48, 56, 64};
+    for (unsigned s = 0; s < countof(steep_scales); ++s) {
+      unsigned scale = steep_scales[s], w, h;
+      CHECK(SnesHdGpuAdmit(g, 288, HEIGHT, scale, (size_t)1024 * 1024 * 1024, &w, &h));
+      make_target(w, h); CHECK(SnesHdGpuDraw(g, f, scale, w, h));
+      compare_roi(g, f, scale, 16 * scale, 0, 128, h < 16 ? h : 16);
+      compare_roi(g, f, scale, w - 128, h - 4, 128, 4);
+      comparisons += 2;
+      compare_visible(g, f, scale);
+    }
+    SnesHdFrameDestroy(f);
+  }
   /* Exercise the shared offscreen presenter, including exact visible centers,
    * explicit opaque-black foreground and caller GL state restoration. */
   setup(); PpuSetExtraSpace(&p,16);
@@ -153,7 +191,7 @@ int main(void) {
   }
   CHECK(SnesHdFrameView(presented,&(SnesHdView){0}));
   SnesHdFrameDestroy(presented);
-  printf("GPU parity: %u ROI comparisons at1/2/3/4/16/32/64x and shared target/foreground/state checks passed\n", comparisons);
+  printf("GPU parity: %u ROI comparisons at1..64x (including33/40/48/56x) and shared target/foreground/state checks passed\n", comparisons);
   glDeleteFramebuffers(1, &framebuffer); glDeleteTextures(1, &target);
   SnesHdGpuDestroy(g); SDL_GL_DestroyContext(context); SDL_DestroyWindow(window); SDL_Quit();
   return 0;
