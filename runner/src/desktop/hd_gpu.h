@@ -11,6 +11,7 @@ typedef struct SnesHdGpuStats {
   unsigned requested_width, requested_height, output_width, output_height;
   size_t source_gpu_bytes, target_bytes;
   bool gpu_timestamps;
+  unsigned samples_per_pixel; /* 1, or 4 for admitted track-only smoothing */
   uint64_t timed_frame; /* frame associated with the most recent ready timestamps */
 } SnesHdGpuStats;
 /* Requires a current desktop OpenGL3.3 context. Missing GPU support returns
@@ -44,6 +45,13 @@ bool SnesHdGpuRender(SnesHdGpu *gpu, const SnesHdFrame *frame, unsigned scale,
     unsigned display_width, unsigned display_height, bool visible_samples,
     size_t budget, const uint32_t *native, size_t native_pitch,
     const uint32_t *overlay, size_t overlay_pitch, SnesHdGpuImage *image);
+/* Optional four-sample track AA. Native/foreground pixels remain point sampled;
+ * sample storage depends on the output window, never on scale squared. Device
+ * or budget limits fall back to the unsmoothed presentation. */
+bool SnesHdGpuRenderSmoothed(SnesHdGpu *gpu, const SnesHdFrame *frame, unsigned scale,
+    unsigned display_width, unsigned display_height, bool visible_samples,
+    size_t budget, const uint32_t *native, size_t native_pitch,
+    const uint32_t *overlay, size_t overlay_pitch, bool smoothing, SnesHdGpuImage *image);
 /* Nonblocking timestamp collection in normal use. wait=true is for bounded
  * benchmark/QA only, never the interactive presentation loop. */
 bool SnesHdGpuReadStats(SnesHdGpu *gpu, bool wait, SnesHdGpuStats *stats);

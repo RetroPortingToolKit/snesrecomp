@@ -65,3 +65,19 @@ Tests: `tests/ppu/ppu_mode7_hd_test.c`, `ppu_hd_gpu_test.c` and
 No new netplay feature or simulation-profile negotiation is introduced:
 presentation jobs do not affect the guest, and peers can present locally at
 different resolutions without changing simulation.
+
+## Optional track smoothing
+
+Game-owned presenters may call `SnesHdGpuRenderSmoothed` with smoothing enabled
+to average four quarter-pixel samples. Existing APIs retain their exact point
+sampling. Samples are accepted only within continuous camera bands and outside
+native masks, sprite pixels and foreground overlays. Native 1x is unchanged.
+Composition remains in the GPU shader; CPU preparation and source uploads do
+not scale with resolution or sample count. The affine-coordinate scratch has
+twice the output height rather than an expanded full-resolution color image.
+Admission includes this storage and disables smoothing when it cannot fit.
+The portable/no-GPU API remains available and takes its existing fallback.
+
+The GPU test also checks four-sample averages against independent portable
+point samples at1/2/8/32/48/64x for register and prepared-affine jobs, protected
+foreground, camera splits, immutable published lines and low-budget fallback.

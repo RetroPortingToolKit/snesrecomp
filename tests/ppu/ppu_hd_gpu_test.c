@@ -50,6 +50,66 @@ static void compare_visible(SnesHdGpu *g,const SnesHdFrame *f,unsigned scale) {
     CHECK((gpu[y*w+x]&0xffffff)==(expected&0xffffff));
   }
 }
+static void check_smoothing(SnesHdGpu *g) {
+  enum { sw=16, sh=8, dw=37, dh=19 };
+  for(unsigned affine=0;affine<2;++affine) {
+  setup();
+  SnesHdFrame *f=SnesHdFrameCreate(sw,sh);CHECK(f);
+  int picture=SnesHdFrameAddPicture(f,p.vram);CHECK(picture>=0);
+  for(unsigned y=0;y<sh;++y) {
+    SnesHdLine j={0};j.kind=affine?kSnesHdAffine:kSnesHdMode7;j.source=picture;j.brightness=15;j.active_right=sw;
+    j.origin_x=y<4?0:20000;j.origin_y=y*256;j.step_x=769;j.step_y=93;j.row_y=256;
+    memcpy(j.palette,p.cgram,sizeof(j.palette));
+    j.affine[0]=y<4?0:20000;j.affine[1]=y*256;
+    j.affine[2]=769.125;j.affine[3]=93.25;j.affine[5]=256;
+    for(unsigned x=0;x<sw;++x) {
+      j.visibility[x]=3;j.native[x]=0x123456;j.native_mask[x]=x<2;
+      if(x==2)j.overlay[x]=0xff000000;
+      if(x==3){j.object[x]=0x601f;j.object_color[x]=0x3e0;j.visibility[x]|=12;}
+    }
+    CHECK(SnesHdFrameSetLine(f,y,&j));
+  }
+  CHECK(SnesHdFrameSeal(f));
+  SnesHdView immutable;CHECK(SnesHdFrameView(f,&immutable));
+  SnesHdLine *before=malloc(sh*sizeof(*before));CHECK(before);
+  memcpy(before,immutable.lines,sh*sizeof(*before));
+  const unsigned scales[]={1,2,8,32,48,64};
+  for(unsigned si=0;si<countof(scales);++si) {
+    unsigned scale=scales[si];SnesHdGpuImage image;
+    CHECK(SnesHdGpuRenderSmoothed(g,f,scale,dw,dh,true,1024*1024,NULL,0,NULL,0,true,&image));
+    glBindFramebuffer(GL_FRAMEBUFFER,framebuffer);
+    glFramebufferTexture2D(GL_FRAMEBUFFER,GL_COLOR_ATTACHMENT0,GL_TEXTURE_2D,image.texture,0);
+    uint32_t actual[dw*dh];glReadPixels(0,0,dw,dh,GL_BGRA,GL_UNSIGNED_BYTE,actual);
+    unsigned averaged=0;
+    for(unsigned y=0;y<dh;++y)for(unsigned x=0;x<dw;++x) {
+      unsigned px=(2*x+1)*sw*scale/(2*dw),py=(2*y+1)*sh*scale/(2*dh);
+      unsigned nx=px/scale,ny=py/scale,count=0,sum[3]={0};uint32_t point;
+      CHECK(SnesHdFrameRenderRegion(f,scale,px,py,1,1,&point,4));
+      if(scale>1 && nx>=4)for(unsigned sy=0;sy<2;++sy)for(unsigned sx=0;sx<2;++sx) {
+        unsigned qx=(4*x+2*sx+1)*sw*scale/(4*dw),qy=(4*y+2*sy+1)*sh*scale/(4*dh);
+        if(qx/scale<4 || (ny<4)!=(qy/scale<4))continue;
+        uint32_t c;CHECK(SnesHdFrameRenderRegion(f,scale,qx,qy,1,1,&c,4));
+        for(unsigned ch=0;ch<3;++ch)sum[ch]+=(c>>(ch*8))&255;++count;
+      }
+      if(count)++averaged;
+      for(unsigned ch=0;ch<3;++ch) {
+        int expected=count?(sum[ch]+count/2)/count:(point>>(ch*8))&255;
+        int got=(actual[y*dw+x]>>(ch*8))&255;
+        CHECK(abs(got-expected)<=(count?1:0));
+      }
+    }
+    CHECK(scale==1 || averaged>0);
+    SnesHdGpuStats stats;CHECK(SnesHdGpuReadStats(g,true,&stats));
+    CHECK(stats.samples_per_pixel==(scale==1?1:4));
+  }
+  SnesHdGpuImage image;
+  size_t point_budget=(size_t)dw*dh*4+(size_t)(sw+1)*dh*16;
+  CHECK(SnesHdGpuRenderSmoothed(g,f,64,dw,dh,true,point_budget,NULL,0,NULL,0,true,&image));
+  SnesHdGpuStats stats;CHECK(SnesHdGpuReadStats(g,true,&stats));CHECK(stats.samples_per_pixel==1);
+  CHECK(!memcmp(before,immutable.lines,sh*sizeof(*before)));free(before);
+  SnesHdFrameDestroy(f);
+  }
+}
 int main(void) {
   SDL_SetMainReady();
   CHECK(SDL_Init(SDL_INIT_VIDEO));
@@ -63,6 +123,7 @@ int main(void) {
   SnesHdGpu *g = SnesHdGpuCreate(); CHECK(g);
   CHECK(SnesHdGpuSupportsAffine(g));
   glGenFramebuffers(1, &framebuffer);
+  check_smoothing(g);
   unsigned comparisons = 0;
   static const unsigned scales[] = {1, 2, 3, 4, 16, 32, 64};
   for (unsigned seed = 0; seed < 32; ++seed) {
