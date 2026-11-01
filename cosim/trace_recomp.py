@@ -48,7 +48,11 @@ if not s: sys.exit("connect timeout")
 buf = b""
 def line():
     global buf
-    while b"\n" not in buf: buf += s.recv(4096)
+    while b"\n" not in buf:
+        chunk = s.recv(4096)
+        if not chunk:
+            raise RuntimeError("recomp disconnected during capture; output is incomplete")
+        buf += chunk
     l, buf = buf.split(b"\n", 1); return l.decode()
 def cmd(c): s.sendall((c + "\n").encode()); return line()
 for i in range(frames):

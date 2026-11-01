@@ -5,6 +5,7 @@
 #endif
 #include "common_rtl.h"
 #include "apu_frame_clock.h"
+#include "audio_capture_cursor.h"
 #include "common_cpu_infra.h"
 #include "snes/interp_bridge.h"
 #include <setjmp.h>
@@ -622,28 +623,47 @@ static void recomp_dspreg_trace_tick(void) {
  * appends them as raw s16 stereo PCM (~32040 Hz, pre-host-resample) — the exact
  * game-agnostic audio the recomp generates, to align against bsnes's
  * BSNES_COSIM_DSPOUT stream. Env-gated (SNESRECOMP_DSPOUT). */
-static void recomp_dspout_capture(void) {
-    static int enabled = -1;
-    static FILE *f = NULL;
-    static uint32_t prev_write = 0;
-    static int primed = 0;
-    extern Snes *g_snes;
-    if (enabled < 0) {
+static int s_dspout_enabled = -1;
+static AudioCaptureCursor s_dspout_cursor;
+static void recomp_dspout_begin_frame(void) {
+    if (g_rtl_speculative_frame) return;
+    if (s_dspout_enabled < 0) {
         const char *p = getenv("SNESRECOMP_DSPOUT");
-        enabled = (p && p[0]) ? 1 : 0;
+        s_dspout_enabled = p && p[0];
     }
-    if (!enabled) return;
-    if (!g_snes || !g_snes->apu || !g_snes->apu->dsp) return;
-    if (!f) { f = fopen(getenv("SNESRECOMP_DSPOUT"), "wb"); if (!f) { enabled = 0; return; } }
+    if (s_dspout_enabled && g_snes && g_snes->apu && g_snes->apu->dsp)
+        audio_capture_begin(&s_dspout_cursor, RtlStateGeneration(),
+                            g_snes->apu->dsp->sampleWrite);
+}
+static void recomp_dspout_capture(void) {
+    static FILE *f;
+    if (g_rtl_speculative_frame || !s_dspout_enabled ||
+        !g_snes || !g_snes->apu || !g_snes->apu->dsp) return;
+    if (!f) { f = fopen(getenv("SNESRECOMP_DSPOUT"), "wb"); if (!f) {
+        fprintf(stderr, "[dsp_capture] cannot open requested output\n");
+        exit(EXIT_FAILURE);
+    } }
     Dsp *dsp = g_snes->apu->dsp;
-    uint32_t w = dsp->sampleWrite;
-    if (!primed) { prev_write = w; primed = 1; return; }
-    for (uint32_t s = prev_write; s != w; s++) {
-        uint32_t idx = (s & (DSP_SAMPLE_RING - 1)) * 2;
-        int16 pair[2] = { dsp->sampleBuffer[idx], dsp->sampleBuffer[idx + 1] };
-        fwrite(pair, sizeof(int16), 2, f);
+    uint32_t first, count;
+    if (!audio_capture_span(&s_dspout_cursor, RtlStateGeneration(),
+                            dsp->sampleWrite, DSP_SAMPLE_RING, &first, &count)) {
+        fprintf(stderr, "[dsp_capture] invalid epoch or overwritten sample span: %u\n", count);
+        exit(EXIT_FAILURE);
     }
-    prev_write = w;
+    for (uint32_t n = 0; n < count; ++n) {
+        uint32_t idx = ((first + n) & (DSP_SAMPLE_RING - 1)) * 2;
+        int16 pair[2] = { dsp->sampleBuffer[idx], dsp->sampleBuffer[idx + 1] };
+        if (fwrite(pair, sizeof(int16), 2, f) != 2) {
+            fprintf(stderr, "[dsp_capture] sample write failed\n");
+            exit(EXIT_FAILURE);
+        }
+    }
+    /* Detect buffered I/O errors before a qualification run can accept a
+     * truncated capture. This diagnostic is opt-in; failure is a failed run. */
+    if (fflush(f) != 0) {
+        fprintf(stderr, "[dsp_capture] sample flush failed\n");
+        exit(EXIT_FAILURE);
+    }
 }
 
 /* ── Multiplayer seats ───────────────────────────────────────────────────
@@ -710,6 +730,7 @@ static void RtlApplyMultitapEnv(void) {
 }
 
 bool RtlRunFrame(uint32 inputs) {
+  recomp_dspout_begin_frame();
 #ifdef SNES_COSIM
   /* Co-sim (dev/diagnostics only): connect the coordinator once, before the
    * first frame executes. Boot ran deterministically already; the co-sim
