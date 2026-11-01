@@ -766,6 +766,7 @@ typedef struct {
   int cond_waited;
   char *dump_tag;     // dump <tag>
   uint32 host_command; // optional zero-frame presentation command
+  bool save_state;   // loadstate entry instead saves, without opening a modal UI
 } ScriptEntry;
 
 /* Entry kinds carried in the high bits of ScriptEntry.mask. The zero-frame
@@ -908,6 +909,7 @@ static ScriptEntry *NewScriptEntry(int *cap) {
  *   press <buttons> [N]     hold a+b+... for N frames (default 1)
  *                           prefix P2 buttons with p2:, e.g. right+p2:right
  *   loadstate N             load save-state slot N
+ *   savestate N             save slot N while the game keeps running
  *   reset                   the Reset hotkey's console reset
  *   turbo on|off            change the held-Turbo state at this frame boundary
  *   renderer toggle         invoke the renderer hotkey at this boundary
@@ -966,11 +968,12 @@ static void LoadScript(const char *path) {
       e->host_command = kKeys_ToggleRenderer;
       e->wait_frames = pending_wait;
       pending_wait = 0;
-    } else if (strcmp(cmd, "loadstate") == 0) {
+    } else if (strcmp(cmd, "loadstate") == 0 || strcmp(cmd, "savestate") == 0) {
       int slot = 0;
       sscanf(line, "%*s %d", &slot);
       ScriptEntry *e = NewScriptEntry(&cap);
       e->mask = kScriptLoadState | (slot & 0xF);
+      e->save_state = strcmp(cmd, "savestate") == 0;
       e->hold_frames = 1;
       e->wait_frames = pending_wait;
       pending_wait = 0;
@@ -1148,8 +1151,8 @@ static uint32 TickScript(void) {
     if (g_script_counter > 0) {
       g_script_counter--;
       if (e->mask & kScriptLoadState) {
-        RtlSaveLoad(kSaveLoad_Load, e->mask & 0xF);
-        GameReset();
+        RtlSaveLoad(e->save_state ? kSaveLoad_Save : kSaveLoad_Load, e->mask & 0xF);
+        if (!e->save_state) GameReset();
         return 0;
       }
       if (e->mask & kScriptReset) {
