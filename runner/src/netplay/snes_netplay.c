@@ -1158,7 +1158,7 @@ int snes_netplay_start(const SnesNetplayConfig *cfg)
     } else if (!use_ice) {
         /* Host relay with 3+ seats: the host is the hub (recomp-net fans the
          * guests' rows out); every guest dials it. Two seats stay the plain
-         * pair (host accept-first). LAN rooms are two seats and unaffected. */
+         * pair (host accept-first); four-seat LAN rooms use the same hub. */
         const int peer_empty = !cfg->peer_hostport || !cfg->peer_hostport[0];
         const int use_hub = cfg->transport_host && rcfg.local_slot == 0 &&
                             rcfg.slot_count >= 3 && peer_empty;
