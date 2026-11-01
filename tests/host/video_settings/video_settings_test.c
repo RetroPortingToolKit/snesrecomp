@@ -1,9 +1,34 @@
 #include "desktop/launcher_video.h"
+#include "desktop/local_views.h"
 #include <assert.h>
 #include <math.h>
 #include <string.h>
 
 int main(void) {
+  /* Both seats publish atomically, including padded pitches and canonical
+   * shared-screen fallback. Invalid geometry must leave the output alone. */
+  uint32_t left[6] = {1, 2, 99, 3, 4, 99};
+  uint32_t right[4] = {5, 6, 7, 8};
+  uint32_t pair[10];
+  memset(pair, 0xcc, sizeof(pair));
+  assert(SnesLocalViews_ComposeSideBySide(pair, 20, 2, 2, left, 12, right, 8));
+  assert(pair[0] == 1 && pair[1] == 2 && pair[2] == 5 && pair[3] == 6);
+  assert(pair[5] == 3 && pair[6] == 4 && pair[7] == 7 && pair[8] == 8);
+  assert(pair[4] == 0xcccccccc && pair[9] == 0xcccccccc);
+  assert(SnesLocalViews_ComposeSideBySide(pair, 20, 2, 2, left, 12, NULL, 0));
+  assert(pair[2] == 1 && pair[3] == 2 && pair[7] == 3 && pair[8] == 4);
+  assert(!SnesLocalViews_ComposeSideBySide(pair, 12, 2, 2, left, 12, right, 8));
+  assert(!SnesLocalViews_ComposeSideBySide(pair, 20, 1025, 2, left, 12, right, 8));
+  SnesDisplayViewport panes = SnesLocalViews_Viewport(5.0 / 4, 1600, 900);
+  assert(panes.width == 1600 && panes.height == 640 && panes.y == 130);
+  panes = SnesLocalViews_Viewport(16.0 / 9, 1920, 1080);
+  assert(panes.width == 1920 && panes.height == 540 && panes.y == 270);
+  SnesDisplayFrame pane=SnesLocalViews_ComputePane(256,224,5.0/4,16.0/9);
+  assert(pane.width==364 && pane.extra==54 && pane.aspect==16.0/9);
+  pane=SnesLocalViews_ComputePane(256,224,5.0/4,.5);
+  assert(pane.width==256 && pane.extra==0 && pane.aspect==5.0/4);
+  pane=SnesLocalViews_ComputePane(256,224,5.0/4,1000);
+  assert(pane.width==1024 && pane.extra==384 && pane.aspect==5);
   const int widths[][3] = {{342, 448, 682}, {398, 522, 796}, {456, 598, 910}};
   const int ratios[] = {16, 21, 32};
   const double pixel_aspects[] = {7.0 / 6, 1, 7.0 / 8};

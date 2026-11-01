@@ -38,10 +38,8 @@
 #include <stddef.h>
 #include <stdint.h>
 #include "display_aspect.h"
+#include "local_views.h"
 #include "rom_identity.h"
-
-/* Compositor surfaces may be wider than the guest PPU's own line buffer. */
-enum { kSnesDesktopMaxFrameWidth = 1024 };
 
 #ifdef __cplusplus
 extern "C" {
