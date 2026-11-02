@@ -14,12 +14,6 @@
 #include "ppu_registers.h"
 
 typedef struct Ppu Ppu;
-typedef struct PpuMode7HdSurface {
-  uint32_t *pixels;
-  size_t pitch; /* Bytes, including optional row padding. */
-  unsigned width, height; /* Native dimensions, before scale. */
-  unsigned scale;
-} PpuMode7HdSurface;
 typedef void PpuWidescreenLineEnhancer(Ppu *ppu, uint y, bool sub,
                                        void *context);
 
@@ -331,8 +325,6 @@ struct Ppu {
   PpuOverlayCapture overlayCaptures[kPpuOverlaySource_Count];
   uint32_t renderPitch;
   uint8_t *renderBuffer;
-  /* Optional additional presentation surface; never part of guest state. */
-  PpuMode7HdSurface mode7Hd;
   SnesHdFrame *hdFrame; /* Optional presentation builder; never serialized. */
   SnesHdCapture *hdCapture; /* Optional host-owned lazy publisher. */
   /* Optional host picture memory. Drawing only: CPU ports and save states
@@ -586,18 +578,6 @@ void ppu_drawCapturedLine(Ppu* ppu, int line, bool pixels);
  * drawing only: it does not replay register writes or advance the console. */
 void PpuDrawDetachedLine(Ppu *ppu, int line);
 
-/* Bind an additional XRGB8888 frame with 1..4 samples per native pixel in
- * each dimension. Width is 256 + twice the current centering budget; height
- * is 1..240. The caller owns pixels and must unbind before freeing them.
- * Returns false without changing the binding on invalid dimensions/capacity.
- * NULL disables HD; reset preserves the binding, just like renderBuffer.
- * Ordinary Mode 7 is resampled from picture memory. Other modes and unsupported
- * combinations use nearest-neighbor copies of the normal scanout. Scale 1 is
- * always a byte-exact copy. The normal output and emulated state are unchanged.
- * Call again after changing the native viewport width. */
-bool PpuBindMode7HdSurface(Ppu *ppu, uint32_t *pixels, size_t capacity,
-                            size_t pitch, unsigned width, unsigned height,
-                            unsigned scale);
 void ppu_sec_reset(void);
 void ppu_sec_read(double *eval, double *line, double *bg, double *spr,
                   double *compose, double *hdma);

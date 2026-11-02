@@ -17,7 +17,7 @@ static inline int SnesHdModPackage(bool enabled, RecompLauncherCModPackage *out)
 #define HD_TEXT(field, text) snprintf(out->field, sizeof(out->field), "%s", text)
   HD_TEXT(id, SNES_HD_PACKAGE); HD_TEXT(version, "1"); HD_TEXT(name, SNES_HD_NAME);
   HD_TEXT(author, "snesrecomp contributors"); HD_TEXT(description, SNES_HD_DESCRIPTION);
-  out->enabled = enabled; out->option_count = 1;
+  out->enabled = enabled; out->option_count = 2;
 #undef HD_TEXT
   return 1;
 }
@@ -29,12 +29,21 @@ static inline int SnesHdModFeature(bool enabled, RecompLauncherCModFeature *out)
   HD_TEXT(package_version, "1"); HD_TEXT(package_name, SNES_HD_NAME); HD_TEXT(name, SNES_HD_NAME);
   HD_TEXT(author, "snesrecomp contributors"); HD_TEXT(description, SNES_HD_DESCRIPTION);
   HD_TEXT(group, "Presentation"); HD_TEXT(status, enabled ? "Enabled" : "Native resolution");
-  out->enabled = enabled; out->option_count = 1;
+  out->enabled = enabled; out->option_count = 2;
 #undef HD_TEXT
   return 1;
 }
-static inline int SnesHdModOption(unsigned scale, int index, RecompLauncherCModOption *out) {
-  if (index != 0 || !out) return 0;
+static inline int SnesHdModOption(unsigned scale, unsigned samples, int index, RecompLauncherCModOption *out) {
+  if (index < 0 || index > 1 || !out) return 0;
+  if (index == 1) {
+    memset(out,0,sizeof(*out));
+    snprintf(out->id,sizeof(out->id),"supersample");
+    snprintf(out->label,sizeof(out->label),"Supersampling");
+    snprintf(out->description,sizeof(out->description),"1 disables anti-aliasing. 2, 3 or 4 average more samples per pixel for smoother Mode 7 edges, at greater rendering cost.");
+    snprintf(out->value,sizeof(out->value),"%u",samples);
+    snprintf(out->default_value,sizeof(out->default_value),"1");
+    out->type=RECOMP_MOD_OPTION_INTEGER;out->min_value=1;out->max_value=4;out->step=1;return 1;
+  }
   memset(out, 0, sizeof(*out));
   snprintf(out->id, sizeof(out->id), "scale");
   snprintf(out->label, sizeof(out->label), "Resolution multiplier");

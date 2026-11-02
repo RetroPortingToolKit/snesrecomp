@@ -22,6 +22,12 @@ void snes_host_app_apply_launch(const RecompLauncherCNetplayLaunch *net,
   snes_netplay_config_defaults(&out->net_cfg);
   out->net_cfg.enabled = 1;
   out->net_cfg.local_slot = net->local_slot;
+  /* Session slots are settled by the room, independently of its seat ceiling.
+   * Leaving the two-seat default here made P3/P4 launches fail before frame0. */
+  if (net->player_count > 0)
+    out->net_cfg.slot_count = net->player_count;
+  else if (net->max_slots > 0)
+    out->net_cfg.slot_count = net->max_slots;
   out->net_cfg.spectator = net->is_spectator ? 1 : 0;
   out->net_cfg.spectator_wire_slot = net->spectator_wire_slot;
   out->net_cfg.input_player =

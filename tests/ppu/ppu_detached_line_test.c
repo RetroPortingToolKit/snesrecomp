@@ -60,7 +60,7 @@ enum { WIDTH = 272, HEIGHT = 240 };
 static Snes machine;
 static Ppu live, live_before, normal, detached, detached_before;
 static uint32_t pixels[WIDTH * HEIGHT], expected[WIDTH * HEIGHT];
-static uint32_t hd[WIDTH * HEIGHT], expected_hd[WIDTH * HEIGHT];
+static SnesHdFrame *private_hd;
 static uint32_t seed = 0x6f13ad75;
 static uint32_t random32(void) {
   seed ^= seed << 13; seed ^= seed >> 17; seed ^= seed << 5; return seed;
@@ -116,10 +116,10 @@ static void fixture(unsigned test) {
   normal.renderBuffer = (uint8_t *)expected;
   detached.renderBuffer = (uint8_t *)pixels;
   normal.renderPitch = detached.renderPitch = WIDTH * 4;
-  normal.mode7Hd = (PpuMode7HdSurface){expected_hd, WIDTH * 4, WIDTH, HEIGHT, 1};
-  detached.mode7Hd = (PpuMode7HdSurface){hd, WIDTH * 4, WIDTH, HEIGHT, 1};
+  SnesHdFrameDestroy(private_hd);
+  private_hd = SnesHdFrameCreate(WIDTH, 1); CHECK(private_hd);
+  detached.hdFrame = private_hd; normal.hdFrame = NULL;
   memset(pixels, 0xa5, sizeof pixels); memset(expected, 0xa5, sizeof expected);
-  memset(hd, 0x36, sizeof hd); memset(expected_hd, 0x36, sizeof expected_hd);
 }
 
 int main(void) {
@@ -148,7 +148,7 @@ int main(void) {
       detached_before = detached;
       PpuDrawDetachedLine(&detached, line);
       CHECK(memcmp(pixels, expected, sizeof pixels) == 0);
-      CHECK(memcmp(hd, expected_hd, sizeof hd) == 0);
+      CHECK(!SnesHdFrameSeal(private_hd)); /* detached work never publishes */
       CHECK(line_calls == lines && drawn_calls == drawn && oam_calls == oam);
       CHECK(window_calls == windows && shadow_calls == shadows);
 #ifdef SNESRECOMP_INTERP_PROFILE
@@ -201,5 +201,6 @@ int main(void) {
   CHECK(memcmp(&live, &live_before, sizeof live) == 0);
   printf("ppu_detached_line: PASS cases=%u digest=%016llx debug=%u/%u/%u/%u\n",
          cases, (unsigned long long)digest, line_calls, drawn_calls, oam_calls, window_calls);
+  SnesHdFrameDestroy(private_hd);
   return 0;
 }

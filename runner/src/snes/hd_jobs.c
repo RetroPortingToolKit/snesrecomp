@@ -3,6 +3,8 @@
 #include <math.h>
 #include <stdlib.h>
 #include <string.h>
+#include <float.h>
+#include "mode7_reconstruct.h"
 
 
 static bool SnesHdWindowCondition(unsigned mode, bool inside) {
@@ -17,8 +19,12 @@ SnesHdFrame *SnesHdFrameCreate(unsigned width, unsigned height) {
   if (!f) return NULL;
   f->lines = calloc(height, sizeof(*f->lines));
   if (!f->lines) { free(f); return NULL; }
-  f->width = width; f->height = height;
+  f->width = width; f->height = height; f->supersample = 1;
   return f;
+}
+bool SnesHdFrameSetSampling(SnesHdFrame *f, unsigned samples) {
+  if (!f || f->sealed || samples < 1 || samples > 4) return false;
+  f->supersample = samples; return true;
 }
 void SnesHdFrameDestroy(SnesHdFrame *f) {
   if (!f) return;
@@ -64,7 +70,7 @@ int SnesHdFrameAddTilemap(SnesHdFrame *f, const uint8_t *tiles,
 }
 bool SnesHdFrameSetLine(SnesHdFrame *f, unsigned y, const SnesHdLine *j) {
   if (!f || f->sealed || f->failed || !j || y >= f->height ||
-      j->kind < kSnesHdNative || j->kind > kSnesHdAffine ||
+      j->kind < kSnesHdNative || j->kind > kSnesHdReconstructed ||
       (j->kind != kSnesHdNative && j->source >= f->source_count) ||
       j->tilemap > f->tilemap_count || j->brightness > 15) return false;
   if (j->kind == kSnesHdAffine) {
@@ -78,13 +84,55 @@ bool SnesHdFrameSetLine(SnesHdFrame *f, unsigned y, const SnesHdLine *j) {
         if (!isfinite(q) || fabs(q) > 256e6) return false;
       }
   }
-  f->lines[y] = *j; return true;
+  if (j->kind == kSnesHdReconstructed) {
+    for (unsigned i = 0; i < 8; ++i)
+      if (!isfinite(j->matrix[i]) || fabs(j->matrix[i]) > 32768) return false;
+    if (j->raster_line > 512) return false;
+  }
+  f->lines[y] = *j;
+  f->lines[y].perspective = 0;
+  return true;
 }
 bool SnesHdFrameSeal(SnesHdFrame *f) {
   if (!f || f->sealed || f->failed) return false;
   for (unsigned i = 0; i < f->height; ++i)
     if (!f->lines[i].kind) return false;
+  hd_reconstruct(f);
   f->sealed = true; return true;
+}
+bool SnesHdFrameTransform(const SnesHdFrame *f, unsigned y, double fraction, double t[4]) {
+  if (!f || !f->sealed || y >= f->height || !t || !isfinite(fraction) || fraction < 0 || fraction >= 1) return false;
+  const SnesHdLine *j = &f->lines[y];
+  if (j->kind == kSnesHdAffine) {
+    for (unsigned c = 0; c < 4; ++c) t[c] = j->affine[c] + j->affine[c+4] * fraction;
+    return true;
+  }
+  if (j->kind != kSnesHdReconstructed) return false;
+  double m[4], offset = fraction - .5, raster = j->raster_line + offset;
+  for (unsigned c = 0; c < 4; ++c) {
+    m[c] = j->matrix[c];
+    if (j->perspective) {
+      if (j->perspective & (1u << c))
+        m[c] = 1.0 / (j->reciprocal[c] + j->reciprocal[c+4] * raster);
+    } else {
+      const SnesHdLine *neighbor = offset < 0 && y && hd_same_camera(&f->lines[y-1], j) ? &f->lines[y-1] :
+          offset >= 0 && y+1 < f->height && hd_same_camera(j, &f->lines[y+1]) ? &f->lines[y+1] : j;
+      m[c] += fabs(offset) * (neighbor->matrix[c] - m[c]);
+    }
+  }
+  double cx = j->matrix[4], cy = j->matrix[5];
+  int h = (int)(j->matrix[6] - cx), v = (int)(j->matrix[7] - cy);
+  double hf = j->matrix[6] - cx - h, vf = j->matrix[7] - cy - v;
+  h = h & 0x2000 ? h | ~1023 : h & 1023;
+  v = v & 0x2000 ? v | ~1023 : v & 1023;
+  double ry = j->control & 2 ? 255 - raster : raster;
+  t[0] = cx * 256 + m[0] * (h+hf) + m[1] * (ry + v+vf);
+  t[1] = cy * 256 + m[2] * (h+hf) + m[3] * (ry + v+vf);
+  t[2] = m[0]; t[3] = m[2];
+  if (j->control & 1) { t[0] += 255*t[2]; t[1] += 255*t[3]; t[2] = -t[2]; t[3] = -t[3]; }
+  /* Sampling is centered about the native sample, in both dimensions. */
+  t[0] -= .5*t[2]; t[1] -= .5*t[3];
+  return true;
 }
 bool SnesHdFrameView(const SnesHdFrame *f, SnesHdView *v) {
   if (!f || !v || !f->sealed || f->failed) return false;
@@ -93,7 +141,7 @@ bool SnesHdFrameView(const SnesHdFrame *f, SnesHdView *v) {
       sizeof(*f) + f->height * sizeof(*f->lines) +
           f->source_count * sizeof(SnesHdPicture) +
           f->tilemap_count * sizeof(SnesHdTilemap), f->tilemap_count,
-      (const SnesHdTilemap *const *)f->tilemaps};
+      (const SnesHdTilemap *const *)f->tilemaps, f->supersample};
   return true;
 }
 bool SnesHdFrameCopyLine(SnesHdFrame *f, unsigned y, const SnesHdFrame *s,
@@ -173,47 +221,76 @@ static int SnesHdCoordinate(int origin, int step, int row, int x,
 }
 static uint16_t SnesHdPixelColor(const SnesHdLine *j, unsigned x, uint16_t p) {
   unsigned layer = (p >> 8) & 15;
+  if ((j->composition & 1) && layer == 0) {
+    unsigned i = p & 255;
+    return ((i & 7) << 2) | ((i & 56) << 4) | ((i & 192) << 7);
+  }
   return layer == 4 || layer == 6 ? j->object_color[x] : j->palette[p & 255];
 }
+typedef struct SnesHdRowCache {
+  uint32_t color[128][256], valid[128][8];
+  int tx, ty;
+  unsigned index;
+  bool texel_valid;
+} SnesHdRowCache;
+/* Canonicalize only floating roundoff at an exact texel edge. This is not
+ * texture filtering: offsets distinguishable beyond the transform error bound keep floor
+ * semantics, including negative coordinates. GPU sampling uses the same rule. */
+static int SnesHdFloorTexel(double value) {
+  double nearest = floor(value + .5);
+  if (fabs(value - nearest) <= fmax(1048576, fabs(value)) * (8*DBL_EPSILON)) value = nearest;
+  return SnesMode7HdFloorInt(value);
+}
 static uint32_t SnesHdSample(const SnesHdFrame *f, unsigned scale,
-                              unsigned px, unsigned py) {
+                              unsigned px, unsigned py, const double t[4], SnesHdRowCache *cache) {
   unsigned x = px / scale, y = py / scale;
   const SnesHdLine *j = &f->lines[y];
   if (scale == 1 || j->kind == kSnesHdNative || j->native_mask[x]) return j->native[x];
   int screen_x = j->screen_left + (int)x;
   if (screen_x < j->active_left || screen_x >= j->active_right) return 0;
-  int tx = SnesHdCoordinate(j->origin_x, j->step_x, j->row_x, screen_x,
-                            px % scale, py % scale, scale);
-  int ty = SnesHdCoordinate(j->origin_y, j->step_y, j->row_y, screen_x,
-                            px % scale, py % scale, scale);
-  if (j->kind == kSnesHdAffine) {
-    double fraction = (double)(py % scale) / scale;
+  int tx, ty;
+  if (j->kind == kSnesHdAffine || j->kind == kSnesHdReconstructed) {
     double position = screen_x + (double)(px % scale) / scale;
-    double ox = j->affine[0] + j->affine[4] * fraction;
-    double oy = j->affine[1] + j->affine[5] * fraction;
-    double dx = j->affine[2] + j->affine[6] * fraction;
-    double dy = j->affine[3] + j->affine[7] * fraction;
-    tx = (int)floor((ox + position * dx) / 256);
-    ty = (int)floor((oy + position * dy) / 256);
+    tx = SnesHdFloorTexel((t[0] + position * t[2]) / 256);
+    ty = SnesHdFloorTexel((t[1] + position * t[3]) / 256);
+  } else {
+    tx = SnesHdCoordinate(j->origin_x, j->step_x, j->row_x, screen_x,
+                            px % scale, py % scale, scale);
+    ty = SnesHdCoordinate(j->origin_y, j->step_y, j->row_y, screen_x,
+                            px % scale, py % scale, scale);
   }
-  int tile = -1;
-  if (j->tilemap) {
-    const SnesHdTilemap *m = f->tilemaps[j->tilemap - 1];
-    unsigned mx = ((uint32_t)tx + (uint32_t)j->map_offset_x) >> 3;
-    unsigned my = ((uint32_t)ty + (uint32_t)j->map_offset_y) >> 3;
-    tile = m->texels[(my & (m->height - 1)) * m->width + (mx & (m->width - 1))];
+  unsigned index;
+  if (cache->texel_valid && cache->tx == tx && cache->ty == ty) index = cache->index;
+  else {
+    int tile = -1;
+    if (j->tilemap) {
+      const SnesHdTilemap *m = f->tilemaps[j->tilemap - 1];
+      unsigned mx = ((uint32_t)tx + (uint32_t)j->map_offset_x) >> 3;
+      unsigned my = ((uint32_t)ty + (uint32_t)j->map_offset_y) >> 3;
+      tile = m->texels[(my & (m->height - 1)) * m->width + (mx & (m->width - 1))];
+    }
+    index = SnesMode7HdFetchInt(j->control, f->sources[j->source]->vram,
+                                        tx, ty, tile);
+    cache->tx = tx; cache->ty = ty; cache->index = index; cache->texel_valid = true;
   }
-  unsigned index = SnesMode7HdFetchInt(j->control, f->sources[j->source]->vram,
-                                      tx, ty, tile);
   uint16_t bg = index ? (uint16_t)(0x5000 | index) : 0x0500;
   unsigned visible = j->visibility[x];
+  bool cacheable = !j->overlay[x] && (!(visible & 12) || !(j->object[x] & 255));
+  unsigned key = visible & 115;
+  uint32_t bit = 1u << (index & 31);
+  if (cacheable && (cache->valid[key][index >> 5] & bit)) return cache->color[key][index];
   uint16_t main = visible & 1 ? bg : 0x0500, sub = visible & 2 ? bg : 0x0500;
+  if ((j->composition & 2) && (index & 127)) {
+    uint16_t bg2 = ((index & 128) ? 0x9100 : 0x1100) | (index & 127);
+    if ((visible & 32) && bg2 > main) main = bg2;
+    if ((visible & 64) && bg2 > sub) sub = bg2;
+  }
   if ((visible & 4) && j->object[x] > main) main = j->object[x];
   if ((visible & 8) && j->object[x] > sub) sub = j->object[x];
   bool inside = (visible & 16) != 0;
   bool clip = SnesHdWindowCondition(j->cgwsel >> 6, inside);
   unsigned layer = (main >> 8) & 15;
-  bool math = !SnesHdWindowCondition((j->cgwsel >> 4) & 3, inside) &&
+  bool math = layer < 6 && !SnesHdWindowCondition((j->cgwsel >> 4) & 3, inside) &&
       (j->cgadsub & (1u << layer));
   unsigned color = SnesHdPixelColor(j, x, main), other = j->fixed_color;
   bool half = math && (j->cgadsub & 64);
@@ -242,6 +319,7 @@ static uint32_t SnesHdSample(const SnesHdFrame *f, unsigned scale,
     }
     rgb = mixed;
   }
+  if (cacheable) { cache->valid[key][index >> 5] |= bit; cache->color[key][index] = rgb; }
   return rgb;
 }
 bool SnesHdFrameRenderRegion(const SnesHdFrame *f, unsigned scale,
@@ -250,9 +328,33 @@ bool SnesHdFrameRenderRegion(const SnesHdFrame *f, unsigned scale,
       !pixels || !w || !h || x > f->width * scale || y > f->height * scale ||
       w > f->width * scale - x || h > f->height * scale - y ||
       pitch < (size_t)w * 4 || pitch > SIZE_MAX / h) return false;
+  SnesHdRowCache cache;
+  unsigned cached_y = UINT_MAX;
   for (unsigned row = 0; row < h; ++row) {
+    unsigned native_y = (y+row) / scale;
+    if (native_y != cached_y) {
+      memset(cache.valid, 0, sizeof(cache.valid)); cache.texel_valid = false;
+      cached_y = native_y;
+    }
     uint32_t *out = (uint32_t *)((uint8_t *)pixels + row * pitch);
-    for (unsigned col = 0; col < w; ++col) out[col] = SnesHdSample(f, scale, x + col, y + row);
+    unsigned samples = f->lines[native_y].kind == kSnesHdNative ? 1 : f->supersample;
+    double t[4][4] = {{0}};
+    for (unsigned sy = 0; sy < samples; ++sy)
+      SnesHdFrameTransform(f, native_y,
+          (double)(((y+row)%scale)*samples+sy)/(scale*samples), t[sy]);
+    for (unsigned col = 0; col < w; ++col) {
+      if (samples == 1) {
+        out[col] = SnesHdSample(f, scale, x+col, y+row, t[0], &cache); continue;
+      }
+      unsigned sum[3] = {0};
+      for (unsigned sy = 0; sy < samples; ++sy) for (unsigned sx = 0; sx < samples; ++sx) {
+        uint32_t rgb = SnesHdSample(f, scale*samples,
+            (x+col)*samples+sx, (y+row)*samples+sy, t[sy], &cache);
+        for (unsigned c = 0; c < 3; ++c) sum[c] += (rgb>>(c*8)) & 255;
+      }
+      unsigned count = samples*samples;
+      out[col] = ((sum[0]+count/2)/count) | ((sum[1]+count/2)/count)<<8 | ((sum[2]+count/2)/count)<<16;
+    }
   }
   return true;
 }

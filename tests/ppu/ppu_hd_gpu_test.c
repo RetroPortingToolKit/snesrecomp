@@ -2,6 +2,9 @@
 #define main old_ppu_hd_test_main
 #include "ppu_mode7_hd_test.c"
 #undef main
+#define main reconstruction_cpu_test_main
+#include "ppu_mode7_reconstruct_test.c"
+#undef main
 #include "desktop/hd_gpu.h"
 #include "gl_core_3_1.h"
 #include "desktop/sdl_compat.h"
@@ -64,6 +67,32 @@ int main(void) {
   CHECK(SnesHdGpuSupportsAffine(g));
   glGenFramebuffers(1, &framebuffer);
   unsigned comparisons = 0;
+  test_projection_geometry(); test_nonperspective();
+  for (unsigned flags = 0; flags < 16; ++flags) {
+    SnesHdFrame *f = projection_fixture(flags, true, true);
+    static const unsigned projection_scales[] = {2, 3, 8, 33, 64};
+    for (unsigned s = 0; s < countof(projection_scales); ++s) {
+      unsigned scale = projection_scales[s];
+      make_target(288*scale, 64*scale);
+      CHECK(SnesHdGpuDraw(g, f, scale, 288*scale, 64*scale));
+      compare_roi(g, f, scale, 3*scale, 20*scale, 64, 32);
+      compare_roi(g, f, scale, 280*scale, 32*scale-1, 16, 32);
+      compare_visible(g, f, scale); comparisons += 2;
+    }
+    SnesHdFrameDestroy(f);
+  }
+  for (unsigned samples=2;samples<=4;++samples) for(unsigned flags=0;flags<16;flags+=5) {
+    SnesHdFrame *f=projection_fixture_sampling(flags,true,true,samples);
+    static const unsigned aa_scales[]={1,3,8};
+    for(unsigned s=0;s<countof(aa_scales);++s) {
+      unsigned scale=aa_scales[s];make_target(288*scale,64*scale);
+      CHECK(SnesHdGpuDraw(g,f,scale,288*scale,64*scale));
+      compare_roi(g,f,scale,20*scale,20*scale,32,32);
+      compare_visible(g,f,scale);comparisons++;
+    }
+    compare_visible(g,f,64);
+    SnesHdFrameDestroy(f);
+  }
   static const unsigned scales[] = {1, 2, 3, 4, 16, 32, 64};
   for (unsigned seed = 0; seed < 32; ++seed) {
     setup(); PpuSetExtraSpace(&p, 16); sprite((seed >> 1) & 3);
@@ -127,6 +156,44 @@ int main(void) {
     if (seed == 2) SnesHdGpuReset(g);
     SnesHdFrameDestroy(f);
   }
+  /* Non-periodic maps exercise the Q16 fast-path boundary and steeper
+   * double-precision fallback without hiding coordinate errors in repetition.
+   * Cover both signs and non-power-of-two scales above32x. */
+  for (unsigned seed = 0; seed < 4; ++seed) {
+    setup();
+    static uint8_t tiles[512 * 256];
+    for (unsigned y = 0; y < 256; ++y) for (unsigned x = 0; x < 512; ++x)
+      tiles[y * 512 + x] = (uint8_t)(1 + (x * 7 + y * 11 + (x / 128) * 53 + (y / 128) * 73) % 255);
+    for (unsigned tile = 0; tile < 256; ++tile) for (unsigned texel = 0; texel < 64; ++texel)
+      p.vram[tile * 64 + texel] = (uint16_t)((1 + (tile * 31 + texel) % 255) << 8);
+    SnesHdFrame *f = SnesHdFrameCreate(288, HEIGHT); CHECK(f);
+    int picture = SnesHdFrameAddPicture(f, p.vram);
+    int map = SnesHdFrameAddTilemap(f, tiles, 512, 256); CHECK(picture >= 0 && map >= 0);
+    for (unsigned y = 0; y < HEIGHT; ++y) {
+      SnesHdLine j = {0};
+      j.kind = kSnesHdAffine; j.source = (uint16_t)picture; j.tilemap = (uint16_t)(map + 1);
+      j.brightness = 15; j.active_left = -16; j.active_right = 272; j.screen_left = -16;
+      memcpy(j.palette, p.cgram, sizeof(j.palette));
+      memset(j.visibility, 3, sizeof(j.visibility));
+      const double t[8] = {-23.125, 256.0 * y - 93.5,
+        (seed & 1 ? -1 : 1) * 256.0 * (seed < 2 ? 255.875 : 1100.125),
+        (seed & 1 ? 1 : -1) * 256.0 * (seed < 2 ? 199.375 : 733.375),
+        37.1, 511.11, .004, -.001};
+      memcpy(j.affine, t, sizeof(t)); CHECK(SnesHdFrameSetLine(f, y, &j));
+    }
+    CHECK(SnesHdFrameSeal(f));
+    static const unsigned steep_scales[] = {1, 16, 24, 32, 33, 40, 48, 56, 64};
+    for (unsigned s = 0; s < countof(steep_scales); ++s) {
+      unsigned scale = steep_scales[s], w, h;
+      CHECK(SnesHdGpuAdmit(g, 288, HEIGHT, scale, (size_t)1024 * 1024 * 1024, &w, &h));
+      make_target(w, h); CHECK(SnesHdGpuDraw(g, f, scale, w, h));
+      compare_roi(g, f, scale, 16 * scale, 0, 128, h < 16 ? h : 16);
+      compare_roi(g, f, scale, w - 128, h - 4, 128, 4);
+      comparisons += 2;
+      compare_visible(g, f, scale);
+    }
+    SnesHdFrameDestroy(f);
+  }
   /* Exercise the shared offscreen presenter, including exact visible centers,
    * explicit opaque-black foreground and caller GL state restoration. */
   setup(); PpuSetExtraSpace(&p,16);
@@ -153,7 +220,29 @@ int main(void) {
   }
   CHECK(SnesHdFrameView(presented,&(SnesHdView){0}));
   SnesHdFrameDestroy(presented);
-  printf("GPU parity: %u ROI comparisons at1/2/3/4/16/32/64x and shared target/foreground/state checks passed\n", comparisons);
+  /* The resolve scratch must obey the same memory cap and restore caller GL
+   * state on both refusal and a reduced visible target. */
+  SnesHdFrame *sampled=projection_fixture_sampling(0,true,true,4);
+  glBindFramebuffer(GL_DRAW_FRAMEBUFFER,saved_fbo);glViewport(5,6,11,12);
+  CHECK(!SnesHdGpuRender(g,sampled,64,pw,ph,true,1,NULL,0,NULL,0,&image));
+  const size_t sample_budget=128u*1024u;
+  CHECK(SnesHdGpuRender(g,sampled,64,pw,ph,true,sample_budget,NULL,0,NULL,0,&image));
+  CHECK(image.width<pw && image.height<ph);
+  CHECK((uint64_t)image.width*image.height*4*17+
+      (uint64_t)289*image.height*4*16<=sample_budget);
+  glGetIntegerv(GL_DRAW_FRAMEBUFFER_BINDING,&restored_fbo);CHECK(saved_fbo==restored_fbo);
+  glGetIntegerv(GL_VIEWPORT,vp);CHECK(vp[0]==5 && vp[1]==6 && vp[2]==11 && vp[3]==12);
+  glBindFramebuffer(GL_FRAMEBUFFER,framebuffer);
+  glFramebufferTexture2D(GL_FRAMEBUFFER,GL_COLOR_ATTACHMENT0,GL_TEXTURE_2D,image.texture,0);
+  glReadPixels(0,0,image.width,image.height,GL_BGRA,GL_UNSIGNED_BYTE,visible);
+  for(unsigned y=0;y<image.height;++y)for(unsigned x=0;x<image.width;++x) {
+    uint32_t expected;unsigned px=(2*x+1)*288*64/(2*image.width);
+    unsigned py=(2*y+1)*64*64/(2*image.height);
+    CHECK(SnesHdFrameRenderRegion(sampled,64,px,py,1,1,&expected,4));
+    CHECK((visible[y*image.width+x]&0xffffff)==(expected&0xffffff));
+  }
+  SnesHdFrameDestroy(sampled);
+  printf("GPU parity: %u ROI comparisons at1..64x (including33/40/48/56x) and shared target/foreground/state checks passed\n", comparisons);
   glDeleteFramebuffers(1, &framebuffer); glDeleteTextures(1, &target);
   SnesHdGpuDestroy(g); SDL_GL_DestroyContext(context); SDL_DestroyWindow(window); SDL_Quit();
   return 0;

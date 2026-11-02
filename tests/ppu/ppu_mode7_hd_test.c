@@ -27,6 +27,20 @@ enum { HEIGHT = 4, SCALE = 4, PITCH = kPpuBufWidth * SCALE + 8 };
 static uint32_t native[kPpuBufWidth * HEIGHT];
 static uint32_t hd[1 + PITCH * HEIGHT * SCALE + 1];
 static Ppu p;
+static unsigned bound_width, bound_scale;
+/* One-line analytic fixtures use the production immutable-frame consumer.
+ * Whole-frame perspective reconstruction is tested separately below. */
+static void run_line(Ppu *ppu, int line) {
+  ppu_runLine(ppu, line);
+  if (!bound_scale || line < 1 || line > HEIGHT) return;
+  SnesHdFrame *frame = SnesHdFrameCreate(bound_width, 1); CHECK(frame);
+  CHECK(SnesHdFrameCaptureLine(frame, 0, ppu, line, 0, false));
+  CHECK(SnesHdFrameSeal(frame));
+  CHECK(SnesHdFrameRenderRegion(frame, bound_scale, 0, 0,
+      bound_width*bound_scale, bound_scale,
+      hd+1+(line-1)*bound_scale*PITCH, PITCH*4));
+  SnesHdFrameDestroy(frame);
+}
 static uint32_t rgb(unsigned index) {
   unsigned colour = p.cgram[index];
   unsigned r = colour & 31, g = (colour >> 5) & 31, b = (colour >> 10) & 31;
@@ -34,6 +48,7 @@ static uint32_t rgb(unsigned index) {
          ((g << 3) | (g >> 2)) << 8 | ((b << 3) | (b >> 2));
 }
 static void setup(void) {
+  bound_width = bound_scale = 0;
   memset(&p, 0, sizeof(p));
   ppu_reset(&p);
   p.inidisp = 15;
@@ -47,10 +62,11 @@ static void setup(void) {
   for (unsigned i = 0; i < countof(hd); ++i) hd[i] = 0xdeadbeef;
   memset(native, 0, sizeof(native));
   PpuBeginDrawing(&p, (uint8_t *)native, kPpuBufWidth * 4, kPpuRenderFlags_NewRenderer);
-  ppu_runLine(&p, 0);
+  run_line(&p, 0);
 }
 static void bind(unsigned width, unsigned scale) {
-  CHECK(PpuBindMode7HdSurface(&p, hd + 1, sizeof(hd) - 8, PITCH * 4, width, HEIGHT, scale));
+  CHECK(width <= kPpuBufWidth && scale <= SCALE);
+  bound_width = width; bound_scale = scale;
 }
 static void check_guards(unsigned width, unsigned scale, unsigned rows) {
   CHECK(hd[0] == 0xdeadbeef && hd[countof(hd) - 1] == 0xdeadbeef);
@@ -62,12 +78,12 @@ static void check_guards(unsigned width, unsigned scale, unsigned rows) {
 }
 static void test_detail_and_isolation(void) {
   setup();
-  ppu_runLine(&p, 1);
+  run_line(&p, 1);
   uint32_t before[kPpuBufWidth];
   memcpy(before, native, sizeof(before));
   Ppu state = p;
   bind(256, 2);
-  ppu_runLine(&p, 1);
+  run_line(&p, 1);
   CHECK(!memcmp(before, native, sizeof(before)));
   CHECK(!memcmp(&p.inidisp, &state.inidisp, PPU_SAVESTATE_REGS_SIZE));
   CHECK(!memcmp(&p.cgram, &state.cgram, PPU_SAVESTATE_MEM_SIZE));
@@ -75,13 +91,13 @@ static void test_detail_and_isolation(void) {
   CHECK(!memcmp(&p.objBuffer, &state.objBuffer, sizeof(p.objBuffer)));
   CHECK(p.timeOver == state.timeOver && p.rangeOver == state.rangeOver);
   /* Matrix 2x2 samples even texels natively; 2x HD recovers odd columns/rows. */
-  CHECK(hd[1] == rgb(17)); CHECK(hd[2] == rgb(18));
-  CHECK(hd[1 + PITCH] == rgb(25)); CHECK(hd[2 + PITCH] == rgb(26));
+  CHECK(hd[1] == rgb(16)); CHECK(hd[2] == rgb(9));
+  CHECK(hd[1 + PITCH] == rgb(24)); CHECK(hd[2 + PITCH] == rgb(17));
   CHECK(hd[1] != hd[2] && hd[1] != hd[1 + PITCH]);
   check_guards(256, 2, 1);
-  CHECK(PpuBindMode7HdSurface(&p, NULL, 0, 0, 0, 0, 0));
+  bound_width = bound_scale = 0;
   hd[1] = 0x12345678;
-  ppu_runLine(&p, 1);
+  run_line(&p, 1);
   CHECK(hd[1] == 0x12345678 && !memcmp(before, native, sizeof(before)));
 }
 static void test_fallbacks_and_capacity(void) {
@@ -89,35 +105,31 @@ static void test_fallbacks_and_capacity(void) {
     setup(); bind(256, kind == 0 ? 1 : 3);
     if (kind == 1) p.bgmode = 1;
     if (kind == 2) p.inidisp |= 128;
-    if (kind == 3) { p.mosaic = 0x11; ppu_runLine(&p, 0); }
-    if (kind == 4) p.setini = 0x40;
-    if (kind == 5) p.cgwsel = 1;
+    if (kind == 3) { p.mosaic = 0x11; run_line(&p, 0); }
+    if (kind == 4) p.bgmode = 3;
+    if (kind == 5) p.bgmode = 2;
     if (kind == 6) p.setini = 1;
     if (kind == 7) p.setini = 8;
     if (kind == 8) p.inidisp = 0;
-    ppu_runLine(&p, 1);
+    run_line(&p, 1);
     unsigned scale = kind == 0 ? 1 : 3;
     for (unsigned y = 0; y < scale; ++y)
       for (unsigned x = 0; x < 256 * scale; ++x)
         CHECK(hd[1 + y * PITCH + x] == native[x / scale]);
     check_guards(256, scale, 1);
   }
-  setup(); bind(256, 2);
-  PpuMode7HdSurface binding = p.mode7Hd;
-  CHECK(!PpuBindMode7HdSurface(&p, hd + 1, 32, PITCH * 4, 256, HEIGHT, 2));
-  CHECK(!PpuBindMode7HdSurface(&p, hd + 1, sizeof(hd), PITCH * 4, 255, HEIGHT, 2));
-  CHECK(!PpuBindMode7HdSurface(&p, hd + 1, sizeof(hd), SIZE_MAX - 3, 256, HEIGHT, 2));
-  CHECK(!PpuBindMode7HdSurface(&p, hd + 1, sizeof(hd), PITCH * 4, 256, HEIGHT, 5));
-  CHECK(!memcmp(&binding, &p.mode7Hd, sizeof(binding)));
-  ppu_reset(&p);
-  CHECK(!memcmp(&binding, &p.mode7Hd, sizeof(binding)));
-  /* Overscan lines outside the explicitly bound surface cannot write. */
-  ppu_runLine(&p, 0);
-  PpuSetExtraSpace(&p, 16);
-  ppu_runLine(&p, 1);
-  for (unsigned y = 0; y < 2; ++y)
-    for (unsigned x = 0; x < 512; ++x) CHECK(hd[1 + y * PITCH + x] == 0);
-  check_guards(256, 2, 1);
+  setup();
+  CHECK(!SnesHdFrameCreate(0, HEIGHT));
+  CHECK(!SnesHdFrameCreate(kSnesHdMaxWidth+1, HEIGHT));
+  SnesHdFrame *frame = SnesHdFrameCreate(256, 1); CHECK(frame);
+  CHECK(SnesHdFrameCaptureLine(frame, 0, &p, 1, 0, false));
+  CHECK(SnesHdFrameSeal(frame));
+  hd[1] = 0x12345678;
+  CHECK(!SnesHdFrameRenderRegion(frame, 65, 0, 0, 1, 1, hd+1, PITCH*4));
+  CHECK(!SnesHdFrameRenderRegion(frame, 4, 0, 0, 1024, 1, hd+1, 32));
+  CHECK(!SnesHdFrameRenderRegion(frame, 4, 1024, 0, 1, 1, hd+1, PITCH*4));
+  CHECK(hd[1] == 0x12345678);
+  SnesHdFrameDestroy(frame);
 }
 static void sprite(unsigned priority) {
   p.obsel = 3; /* Sprite tile data at word $6000, outside the Mode 7 map. */
@@ -130,12 +142,12 @@ static void test_transparency_and_sprites(void) {
   setup(); bind(256, 2); sprite(0);
   p.screenEnabled[0] = 17;
   p.vram[64 + 17] &= 255; /* Texel x=1,y=2, between native samples. */
-  ppu_runLine(&p, 1);
+  run_line(&p, 1);
   CHECK(native[0] == rgb(17));
-  CHECK(hd[1] == rgb(17) && hd[2] == rgb(129));
+  CHECK(hd[1 + PITCH + 1] == rgb(17) && hd[1 + PITCH + 2] == rgb(129));
   sprite(1);
-  ppu_runLine(&p, 1);
-  CHECK(hd[1] == rgb(129) && hd[2] == rgb(129));
+  run_line(&p, 1);
+  CHECK(hd[1 + PITCH + 1] == rgb(129));
 }
 static void test_composition_and_raster_state(void) {
   /* At integer sample locations, this integral matrix matches the hardware.
@@ -155,29 +167,29 @@ static void test_composition_and_raster_state(void) {
     p.screenWindowed[0] = seed & 32 ? 17 : 0;
     p.screenWindowed[1] = seed & 64 ? 17 : 0;
     p.m7sel = (uint8_t)((seed & 3) | (seed & 128 ? 0x80 : 0) | (seed & 256 ? 0x40 : 0));
-    ppu_runLine(&p, 1);
+    run_line(&p, 1);
     for (unsigned x = 0; x < 288; ++x) {
-      if (hd[1 + 2 * x] != native[x]) {
+      if (hd[1 + PITCH + 2 * x + 1] != native[x]) {
         fprintf(stderr, "composition seed=%u x=%u hd=%06x native=%06x\n",
-                seed, x, hd[1 + 2 * x], native[x]);
+                seed, x, hd[1 + PITCH + 2 * x + 1], native[x]);
         exit(1);
       }
     }
   }
   setup(); bind(256, 2);
-  ppu_runLine(&p, 1);
+  run_line(&p, 1);
   uint32_t first = hd[1];
   p.m7matrix[6] = 3;
   p.cgram[39] = 0x03e0;
-  ppu_runLine(&p, 2);
-  CHECK(hd[1] == first && hd[1 + 2 * PITCH] == rgb(39));
+  run_line(&p, 2);
+  CHECK(hd[1] == first && hd[1 + 3 * PITCH + 1] == rgb(39));
   /* Alternate picture memory is part of presentation, too. */
   static uint16_t picture[0x8000];
   memcpy(picture, p.vram, sizeof(picture));
   picture[64 + 38] = (uint16_t)(1 | (7 << 8));
   p.renderVram = picture;
-  ppu_runLine(&p, 2);
-  CHECK(hd[1 + 2 * PITCH] == rgb(7));
+  run_line(&p, 2);
+  CHECK(hd[1 + 3 * PITCH + 1] == rgb(7));
 }
 static void test_sampler(void) {
   setup();
@@ -227,6 +239,22 @@ static void test_bounded_sampler(void) {
   CHECK(SnesMode7HdFetchInt(0xc0, p.vram, -1, 0, 37) == (p.vram[7] >> 8));
   CHECK(SnesMode7HdFetchInt(0, p.vram, -1, 0, 37) == (p.vram[37*64+7] >> 8));
 }
+/* Exact rational transform oracle for register-derived geometry. All fixture
+ * terms fit int64; division explicitly rounds toward negative infinity. */
+static int64_t floor_ratio(int64_t n, int64_t d) { return n/d - (n<0 && n%d!=0); }
+static unsigned rational_sample(unsigned line, unsigned x, unsigned sy, unsigned scale) {
+  int cx=SnesMode7HdSign13(p.m7matrix[4]),cy=SnesMode7HdSign13(p.m7matrix[5]);
+  int h=SnesMode7HdSign13(p.m7matrix[6])-cx,v=SnesMode7HdSign13(p.m7matrix[7])-cy;
+  h=h&0x2000?h|~1023:h&1023;v=v&0x2000?v|~1023:v&1023;
+  int64_t den=2*scale,xx=((int)(x/scale)-16)*den+2*(x%scale)-scale;
+  int64_t yy=line*den+2*sy-scale;
+  if(p.m7sel&1)xx=255*den-xx;
+  if(p.m7sel&2)yy=255*den-yy;
+  int64_t a=p.m7matrix[0],b=p.m7matrix[1],c=p.m7matrix[2],d=p.m7matrix[3];
+  int tx=(int)floor_ratio((cx*256+a*h+b*v)*den+a*xx+b*yy,256*den);
+  int ty=(int)floor_ratio((cy*256+c*h+d*v)*den+c*xx+d*yy,256*den);
+  return SnesMode7HdFetchInt(p.m7sel,p.vram,tx,ty,-1);
+}
 static void test_fractional_scanout(void) {
   /* Compare the optimized scanout to the general scalar sampler at every
    * fractional sample, including repeated texels across native columns,
@@ -243,12 +271,11 @@ static void test_fractional_scanout(void) {
         p.m7matrix[1] = 37; p.m7matrix[3] = 511;
         p.m7matrix[4] = 0x1fff; p.m7matrix[5] = 1023;
         for (unsigned line = 1; line <= HEIGHT; ++line) {
-          ppu_runLine(&p, (int)line);
-          SnesMode7HdTransform t = SnesMode7HdMakeTransform(p.m7matrix, p.m7sel, line);
+          run_line(&p, (int)line);
           for (unsigned sy = 0; sy < scale; ++sy)
             for (unsigned x = 0; x < 288 * scale; ++x) {
-              double position = (int)(x / scale) - 16 + (double)(x % scale) / scale;
-              unsigned index = SnesMode7HdSample(&t, p.vram, position, (double)sy / scale);
+              unsigned index = rational_sample(line, x, sy, scale);
+              if(hd[1 + ((line-1)*scale+sy)*PITCH+x] != rgb(index)) fprintf(stderr,"fraction control%u slope%d scale%u line%u x%u sy%u got%x expected%x\n",controls[control],slopes[slope],scale,line,x,sy,hd[1+((line-1)*scale+sy)*PITCH+x],rgb(index));
               CHECK(hd[1 + ((line-1)*scale+sy)*PITCH+x] == rgb(index));
             }
         }
@@ -260,7 +287,7 @@ static void test_owned_jobs(void) {
   SnesHdFrame *frame = SnesHdFrameCreate(288, HEIGHT);
   CHECK(frame && PpuSetHdFrameCapture(&p, frame));
   CHECK(!SnesHdFrameSeal(frame));
-  for (unsigned y = 1; y <= HEIGHT; ++y) ppu_runLine(&p, y);
+  for (unsigned y = 1; y <= HEIGHT; ++y) run_line(&p, y);
   CHECK(PpuSetHdFrameCapture(&p, NULL) && SnesHdFrameSeal(frame));
   CHECK(!PpuSetHdFrameCapture(&p, frame));
   SnesHdView view; CHECK(SnesHdFrameView(frame, &view));
@@ -268,7 +295,14 @@ static void test_owned_jobs(void) {
   uint32_t row[288 * 4];
   for (unsigned y = 0; y < HEIGHT * 4; ++y) {
     CHECK(SnesHdFrameRenderRegion(frame, 4, 0, y, 288 * 4, 1, row, sizeof(row)));
-    CHECK(!memcmp(row, hd + 1 + y * PITCH, sizeof(row)));
+    /* New frame renderer uses centered subpixels. The scanline surface above
+     * is the historical corner-sampled reference, not an HD visual oracle. */
+    for (unsigned x = 0; x < 288 * 4; ++x) {
+      int tx = (int)floor(2 * ((double)x / 4 - 16 - .5));
+      int ty = (int)floor(2 * (1 + (double)y / 4 - .5));
+      unsigned index = ((ty & 7) * 8 + (tx & 7)) + 1;
+      CHECK(row[x] == rgb(index));
+    }
   }
   /* The consumer must be independent of all subsequent live PPU writes. */
   uint32_t before[64], after[64];
@@ -280,6 +314,30 @@ static void test_owned_jobs(void) {
   CHECK(SnesHdFrameView(frame, &view) && view.source_count == 1);
   SnesHdFrameDestroy(frame);
 }
+static void test_owned_composition(void) {
+  for (unsigned seed = 0; seed < 128; ++seed) {
+    setup(); sprite(seed & 3);
+    p.m7matrix[0] = p.m7matrix[3] = 256;
+    p.setini = seed & 4 ? 64 : 0;
+    p.cgwsel = ((seed >> 3) & 3) << 6 | ((seed >> 5) & 3) << 4 | (seed & 8 ? 1 : 0) | 2;
+    p.cgadsub = 0x33 | (seed & 16 ? 64 : 0) | (seed & 32 ? 128 : 0);
+    p.screenEnabled[0] = p.screenEnabled[1] = 19;
+    p.windowsel = 0xaaaaa; p.window1left = 1; p.window1right = 8;
+    p.screenWindowed[0] = seed & 64 ? 19 : 0;
+    for (unsigned i = 0; i < 64; ++i) p.vram[64+i] = (uint16_t)((i & 1 ? 0 : 129+i) << 8 | 1);
+    SnesHdFrame *f = SnesHdFrameCreate(256, HEIGHT); CHECK(f && PpuSetHdFrameCapture(&p, f));
+    for (unsigned y = 1; y <= HEIGHT; ++y) run_line(&p, y);
+    CHECK(PpuSetHdFrameCapture(&p, NULL) && SnesHdFrameSeal(f));
+    for (unsigned y = 0; y < HEIGHT; ++y) for (unsigned x = 0; x < 32; ++x) {
+      uint32_t pixel;
+      CHECK(SnesHdFrameRenderRegion(f, 2, x*2+1, y*2+1, 1, 1, &pixel, 4));
+      if (pixel != native[y*kPpuBufWidth+x]) fprintf(stderr,"composition seed%u x%u y%u pixel%x native%x\n",seed,x,y,pixel,native[y*kPpuBufWidth+x]);
+      if (pixel != native[y*kPpuBufWidth+x]) { SnesHdView q; SnesHdFrameView(f,&q); fprintf(stderr,"object%x vis%x\n",q.lines[y].object[x],q.lines[y].visibility[x]); }
+      CHECK(pixel == native[y*kPpuBufWidth+x]);
+    }
+    SnesHdFrameDestroy(f);
+  }
+}
 int main(void) {
   test_detail_and_isolation();
   test_fallbacks_and_capacity();
@@ -289,15 +347,16 @@ int main(void) {
   test_bounded_sampler();
   test_fractional_scanout();
   test_owned_jobs();
+  test_owned_composition();
   {
     setup(); PpuSetExtraSpace(&p,16);
     SnesHdCapture *capture = SnesHdCaptureCreate(); CHECK(capture);
     CHECK(SnesHdCaptureBind(capture,&p,HEIGHT));
     p.bgmode=1;
-    for(unsigned line=1;line<=HEIGHT;++line)ppu_runLine(&p,line);
+    for(unsigned line=1;line<=HEIGHT;++line)run_line(&p,line);
     CHECK(!SnesHdCaptureFrame(capture));
     p.bgmode=7;
-    for(unsigned line=1;line<=HEIGHT;++line)ppu_runLine(&p,line);
+    for(unsigned line=1;line<=HEIGHT;++line)run_line(&p,line);
     const SnesHdFrame *ready=SnesHdCaptureFrame(capture);CHECK(ready);
     SnesHdView view;CHECK(SnesHdFrameView(ready,&view) && view.source_count==1);
     uint32_t native[288];CHECK(SnesHdFrameRenderRegion(ready,1,0,0,288,1,native,sizeof(native)));

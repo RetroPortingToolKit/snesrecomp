@@ -1,107 +1,56 @@
-# Opt-in HD Mode 7
+# HD Mode 7
 
-HD Mode 7 samples the original tilemap at fractional screen coordinates. It
-reveals texture detail lost when the PPU samples just once per screen pixel;
-it does not replace the artwork. This is a presentation enhancement, separate
-from CPU execution, DSP-1 HLE, widescreen and temporal interpolation.
+The shared renderer reconstructs continuous Mode 7 geometry from an owned
+frame of raster state. It resamples the original artwork; sprites and HUD
+retain native detail. CPU and GPU consume the same reconstruction.
 
-The implementation is original project code based on our existing Mode 7
-register interpretation and affine mathematics. The feature described by
-[bsnes-hd](https://github.com/DerKoun/bsnes-hd#settings) is a behavioral reference.
-No bsnes/bsnes-hd implementation was imported or translated. Those projects
-use GPLv3 licenses, while this framework's original code uses PolyForm
-Noncommercial; a direct code port would require a different licensing solution.
+See [HD_MODE7_REBUILD.md](HD_MODE7_REBUILD.md) for frozen emulator references,
+mathematics, acceptance evidence and remaining game qualification.
 
-## Shared PPU integration
+## Standard PPU hosts
 
-The normal frame remains available unchanged. Bind a separate, non-overlapping
-host-owned XRGB8888 surface before scanout:
+Create a `SnesHdCapture`, set its sampling and bind it to the live PPU with the
+native frame height. The ordinary scanout stays available. After scanout,
+`SnesHdCaptureFrame` returns the completed immutable frame, or NULL when the
+frame has no supported Mode 7 content. Reset discards old published frames.
+Unbind or destroy the capture before destroying its PPU.
 
 ```c
-unsigned width = 256 + 2 * ppu->extraLeftRight;
-unsigned height = 224, scale = 2;
-size_t pitch = (size_t)width * scale * sizeof(uint32_t);
-size_t capacity = pitch * height * scale;
-uint32_t *hd = malloc(capacity);
-if (!hd || !PpuBindMode7HdSurface(ppu, hd, capacity, pitch,
-                                  width, height, scale)) {
-  free(hd);
-  hd = NULL;
-}
-/* Render normally with PpuBeginDrawing / ppu_runLine. Present hd at
- * width*scale by height*scale, with the same display aspect ratio. */
-/* Before freeing the surface: */
-PpuBindMode7HdSurface(ppu, NULL, 0, 0, 0, 0, 0);
-free(hd);
+SnesHdCapture *capture = SnesHdCaptureCreate();
+SnesHdCaptureSetSampling(capture, 1); /* 1: off; 2..4 samples per axis */
+SnesHdCaptureBind(capture, ppu, 224);
+/* Execute ordinary PPU scanout. */
+const SnesHdFrame *frame = SnesHdCaptureFrame(capture);
+/* Draw with SnesHdGpuRender, or SnesHdFrameRenderRegion. */
+SnesHdCaptureDestroy(capture);
 ```
 
-The API accepts scale 1..4, native heights 1..240, padded row strides and
-native widths 256..448. It validates capacity and alignment. The host must
-rebind when changing the native width. A mismatched width clears the bound
-rows instead of reading beyond the native image. Bindings survive reset and
-are excluded from savestates. A NULL binding is the default and adds no HD
-rendering or allocation. Scale 1 copies the native image exactly.
+The desktop host does this automatically. Graphics settings retain enabled,
+resolution multiplier (1..64) and supersampling (1..4). The latter is independent
+of output resolution; 1 disables it. Its squared cost is elective, default off.
 
-Mode 7 uses the live scanline's matrix, picture memory, palette, visibility,
-windows, main/subscreen selection, sprite priorities, colour math and brightness.
-Sprites remain on the native grid. Fractional transparent background samples
-can reveal sprites even where the native background sample was opaque.
+## Custom renderers
 
-Other modes are nearest-neighbour scaled. Mosaic, EXTBG, direct colour,
-interlace, pseudo-hires, active host overlays and custom widescreen line
-enhancers also retain the native composition. This is an explicit fallback,
-not a claim of HD coverage for every PPU combination. No new imagery is
-invented for unpopulated widescreen margins.
+Publish native composition, picture-memory versions and raw camera rows to a
+`SnesHdFrame` builder. Set sampling before sealing. `kSnesHdReconstructed` rows
+supply signed coefficients, centers and offsets, original raster Y and camera
+identity. Sealing prepares the geometry; neither consumer reads live guest RAM.
+F-Zero uses this path, retaining its course map, HUD and temporal camera policy.
 
-## Custom game renderers
+The portable ROI interface bounds allocation and accepts padded output rows.
+The GPU supports bounded targets and averages supersamples before returning the
+presentation image. Nearest window-sized presentation preserves the full-target
+sampling result; filters that inspect adjacent pixels use a full target.
+Supersampling scratch storage is included in target admission.
 
-`runner/src/snes/mode7_hd.h` contains a renderer-independent transform and
-sampler. It retains signed scroll/centre interpretation, flips, wrapping and
-out-of-map fill while removing intermediate hardware truncation. The generic
-PPU uses each scanline's own affine matrix; it does not infer perspective or
-smooth across raster boundaries.
+Mosaic retains authored native blocks. Unsupported interlace, pseudo-hires or
+host-overlay combinations retain native composition. At 1x with supersampling
+off, output is the exact native image. The old scanline surface API has been
+removed: it could not reconstruct perspective from a complete frame.
 
-The PPU's optimized path checks an affine span's coordinate bounds once per
-output row, keeps resolved texels as integers and reuses a texture lookup when
-adjacent samples hit the same texel. Fractional offsets are precomputed;
-every sample still uses its original affine expression. These helpers are
-also available to custom renderers:
+## Checks
 
-- `SnesMode7HdSpanFits` checks both raw coordinate endpoints against an
-  exclusive positive integer limit. A host may use a tighter limit for its
-  own address calculations. Non-finite endpoints reject the fast path.
-- `SnesMode7HdFloorInt` is exact for coordinates within an accepted span.
-  Do not use it for an unchecked coordinate or outside that span.
-- `SnesMode7HdFetchInt` fetches a palette index from integer texels.
-- `SnesMode7HdLocate` and `SnesMode7HdFetch` provide the general whole-texel
-  path, including huge/non-finite host transforms. The existing
-  `SnesMode7HdSample` convenience API remains available.
-
-Both fetch helpers accept a tile override (`-1` uses the native tilemap).
-This lets a game supply streamed course data while sharing wrapping,
-transparency, tile-zero fill and character lookup. An override cannot bypass
-the SNES outside-map rules. Any caller's repeated-texel cache must be reset
-when its source picture, transform control or tile override changes.
-
-F-Zero's integration additionally interpolates transforms between adjacent
-scanlines of the same camera band, using its existing published frame data.
-It retains that game's course-streaming, sprites, HUD layout and independent
-presentation FPS. Other titles still need their own frontend surface binding
-or custom renderer integration and game validation.
-
-## Validation
-
-`tests/ppu/ppu_mode7_hd_test.c` exercises analytic detail in both dimensions,
-disabled/native output and state isolation, guarded sizes/strides, fallback
-modes, transparency behind sprites, raster changes, host picture memory and
-512 combinations of colour math/windows/priority/overflow. Fractional
-scanout also compares every sample at scales
-2/3/4 against the general sampler, covering repeated texels, flips, negative
-coordinates and overflow; integer limits and tile overrides have explicit
-checks. With HD unbound the original scanout remains unchanged. It runs in
-`tests/ppu/run.ps1`. The composition regression's disabled-path digest matches
-the original renderer (`436319d369c4a1e3` at base `74be148`).
-
-Rendering work grows with scale squared. This implementation uses the CPU;
-profile the selected game and host before choosing 4x or a high presentation
-rate. Resolution does not change simulation speed.
+`tests/ppu/run.ps1` covers the portable PPU contract. The GPU parity test adds
+full/visible targets, supersampling, texel boundaries, large maps, negative
+margins, flips, composition and retained GL state. Detached drawing is tested
+with `tests/ppu/run_detached_line.py` and cannot publish HD frames.

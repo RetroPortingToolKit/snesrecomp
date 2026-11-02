@@ -35,7 +35,7 @@ static inline void SnesRasterImageBegin(SnesRasterImage *image, const Ppu *p) {
 /* Extra drawing callbacks/surfaces require their own capture contract. */
 static inline bool SnesRasterImageCanDefer(const Ppu *p) {
   if (!p || p->extraLeftCur || p->extraRightCur || p->extraBottomCur ||
-      p->renderVram || p->extraObjectCount || p->mode7Hd.pixels ||
+      p->renderVram || p->extraObjectCount ||
       p->widescreenLineEnhancer || (p->setini & 3)) return false;
   for (unsigned i = 0; i < kPpuOverlaySource_Count; ++i)
     if (p->overlayRenderBuffer[i]) return false;
@@ -67,7 +67,7 @@ static inline bool SnesRasterImageMaterializePrefix(SnesRasterImage *image,
   p->renderPitch = 256 * 4;
   p->renderVram = NULL;
   p->extraObjects = NULL; p->extraObjectCount = 0;
-  p->mode7Hd.pixels = NULL;
+  p->hdFrame = NULL; p->hdCapture = NULL;
   p->widescreenLineEnhancer = NULL; p->widescreenLineEnhancerContext = NULL;
   memset(p->overlayRenderBuffer, 0, sizeof(p->overlayRenderBuffer));
   ppu_drawCapturedLine(p, 0, false);

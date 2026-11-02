@@ -744,6 +744,7 @@ static void PreparePpuFrame(void) {
   if (g_config.mode7.enabled && !g_game->hd_frame &&
       g_config.output_method == kOutputMethod_OpenGL) {
     if (!g_hd_capture) g_hd_capture = SnesHdCaptureCreate();
+    SnesHdCaptureSetSampling(g_hd_capture,g_config.mode7.supersample);
     SnesHdCaptureBind(g_hd_capture, g_ppu, (unsigned)fh);
   } else if (g_hd_capture) {
     SnesHdCaptureBind(g_hd_capture, NULL, 0);
