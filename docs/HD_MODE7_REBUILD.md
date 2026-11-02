@@ -124,7 +124,7 @@ Remaining visual qualification includes Pilotwings, SMW Mode 7 bosses and
 Super Metroid effects, broader natural F-Zero course play and owner acceptance.
 Super Mario Kart shared capture and sampled turning comparisons are recorded
 below. Supersampling and retirement of the historical scanline API are implemented.
-Do not merge or release as fully qualified before the remaining game checks.
+This evidence does not qualify the remaining untested games.
 
 
 ## Matched emulator comparison, continuation
@@ -199,3 +199,14 @@ frames through the existing CPU fallback; it records 420 missed presentations
 and is only a functional check. Four-player GPU jobs are not implemented by the
 current title adapter, and CPU supersampling there is costly. Do not describe
 that run as 60 FPS or GPU-qualified. No external-network play was tested.
+
+## Main integration and owner acceptance
+
+On 2026-11-02 the owner confirmed that the F-Zero camera-alias flicker fix
+appeared to resolve the reported corruption and explicitly authorized main
+integration in both repositories and a new F-Zero Nextcloud release. The current
+upstream main was merged with the tested reconstruction and F-Zero's existing
+qualified dependencies. The complete PPU suite and772 GPU comparisons pass on
+the combined engine. This clears the F-Zero visual handoff; the broader coverage
+and pre-existing snapshot caveats above remain recorded, without claiming tests
+that were not performed. Release tracking: beads-8wg.5.123.
