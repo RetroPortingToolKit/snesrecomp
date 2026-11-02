@@ -268,7 +268,14 @@ static void test_owned_jobs(void) {
   uint32_t row[288 * 4];
   for (unsigned y = 0; y < HEIGHT * 4; ++y) {
     CHECK(SnesHdFrameRenderRegion(frame, 4, 0, y, 288 * 4, 1, row, sizeof(row)));
-    CHECK(!memcmp(row, hd + 1 + y * PITCH, sizeof(row)));
+    /* New frame renderer uses centered subpixels. The scanline surface above
+     * is the historical corner-sampled reference, not an HD visual oracle. */
+    for (unsigned x = 0; x < 288 * 4; ++x) {
+      int tx = (int)floor(2 * ((double)x / 4 - 16 - .5));
+      int ty = (int)floor(2 * (1 + (double)y / 4 - .5));
+      unsigned index = ((ty & 7) * 8 + (tx & 7)) + 1;
+      CHECK(row[x] == rgb(index));
+    }
   }
   /* The consumer must be independent of all subsequent live PPU writes. */
   uint32_t before[64], after[64];
@@ -280,6 +287,30 @@ static void test_owned_jobs(void) {
   CHECK(SnesHdFrameView(frame, &view) && view.source_count == 1);
   SnesHdFrameDestroy(frame);
 }
+static void test_owned_composition(void) {
+  for (unsigned seed = 0; seed < 128; ++seed) {
+    setup(); sprite(seed & 3);
+    p.m7matrix[0] = p.m7matrix[3] = 256;
+    p.setini = seed & 4 ? 64 : 0;
+    p.cgwsel = ((seed >> 3) & 3) << 6 | ((seed >> 5) & 3) << 4 | (seed & 8 ? 1 : 0) | 2;
+    p.cgadsub = 0x33 | (seed & 16 ? 64 : 0) | (seed & 32 ? 128 : 0);
+    p.screenEnabled[0] = p.screenEnabled[1] = 19;
+    p.windowsel = 0xaaaaa; p.window1left = 1; p.window1right = 8;
+    p.screenWindowed[0] = seed & 64 ? 19 : 0;
+    for (unsigned i = 0; i < 64; ++i) p.vram[64+i] = (uint16_t)((i & 1 ? 0 : 129+i) << 8 | 1);
+    SnesHdFrame *f = SnesHdFrameCreate(256, HEIGHT); CHECK(f && PpuSetHdFrameCapture(&p, f));
+    for (unsigned y = 1; y <= HEIGHT; ++y) ppu_runLine(&p, y);
+    CHECK(PpuSetHdFrameCapture(&p, NULL) && SnesHdFrameSeal(f));
+    for (unsigned y = 0; y < HEIGHT; ++y) for (unsigned x = 0; x < 32; ++x) {
+      uint32_t pixel;
+      CHECK(SnesHdFrameRenderRegion(f, 2, x*2+1, y*2+1, 1, 1, &pixel, 4));
+      if (pixel != native[y*kPpuBufWidth+x]) fprintf(stderr,"composition seed%u x%u y%u pixel%x native%x\n",seed,x,y,pixel,native[y*kPpuBufWidth+x]);
+      if (pixel != native[y*kPpuBufWidth+x]) { SnesHdView q; SnesHdFrameView(f,&q); fprintf(stderr,"object%x vis%x\n",q.lines[y].object[x],q.lines[y].visibility[x]); }
+      CHECK(pixel == native[y*kPpuBufWidth+x]);
+    }
+    SnesHdFrameDestroy(f);
+  }
+}
 int main(void) {
   test_detail_and_isolation();
   test_fallbacks_and_capacity();
@@ -289,6 +320,7 @@ int main(void) {
   test_bounded_sampler();
   test_fractional_scanout();
   test_owned_jobs();
+  test_owned_composition();
   {
     setup(); PpuSetExtraSpace(&p,16);
     SnesHdCapture *capture = SnesHdCaptureCreate(); CHECK(capture);

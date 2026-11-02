@@ -1,4 +1,10 @@
-# Opt-in HD Mode 7
+# HD Mode 7
+
+The desktop and F-Zero frame path has been replaced by shared perspective
+reconstruction. See [HD_MODE7_REBUILD.md](HD_MODE7_REBUILD.md) for the current
+contract, reference sources, qualification status and deliberate fallbacks.
+The remainder of this document describes the historical scanline surface API,
+which remains a diagnostic reference and does not provide perspective correction.
 
 HD Mode 7 samples the original tilemap at fractional screen coordinates. It
 reveals texture detail lost when the PPU samples just once per screen pixel;

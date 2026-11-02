@@ -8,7 +8,7 @@ extern "C" {
 #endif
 enum { kSnesHdDefaultScale = 8, kSnesHdMaxWidth = 1024, kSnesHdMaxHeight = 512, kSnesHdMaxScale = 64,
        kSnesHdMaxTilemaps = 16, kSnesHdMapWidth = 1024, kSnesHdMapHeight = 512 };
-enum { kSnesHdNative = 1, kSnesHdMode7 = 2, kSnesHdAffine = 3 };
+enum { kSnesHdNative = 1, kSnesHdMode7 = 2, kSnesHdAffine = 3, kSnesHdReconstructed = 4 };
 typedef struct SnesHdFrame SnesHdFrame;
 typedef struct SnesHdCapture SnesHdCapture;
 typedef struct SnesHdSettings { bool enabled; unsigned scale; } SnesHdSettings;
@@ -50,6 +50,11 @@ typedef struct SnesHdLine {
    * four values are origin XY/step XY; the next four are their row deltas.
    * This preserves interpolated cameras without quantizing them to registers. */
   double affine[8];
+  /* Raw signed matrix/centre/scroll, before spatial reconstruction. Camera
+   * identifies independent views; raster_line is the original PPU Y. */
+  double matrix[8], reciprocal[8];
+  uint16_t raster_line, camera;
+  uint8_t perspective, composition; /* composition: direct=1, EXTBG=2 */
   int32_t map_offset_x, map_offset_y;
   uint16_t tilemap; /* zero: hardware map; otherwise owned map index + 1 */
 } SnesHdLine;
@@ -98,6 +103,10 @@ bool SnesHdFrameSetNative(SnesHdFrame *frame, const uint32_t *pixels,
     size_t pitch, const uint8_t *coverage, size_t coverage_pitch);
 bool SnesHdFrameSeal(SnesHdFrame *frame);
 bool SnesHdFrameView(const SnesHdFrame *frame, SnesHdView *view);
+/* Shared spatial reconstruction. Returns Q8 origin XY and step XY for one
+ * enhanced row. Both CPU and GPU consume this result. */
+bool SnesHdFrameTransform(const SnesHdFrame *frame, unsigned y,
+    double subline, double transform[4]);
 /* Portable bounded ROI consumer; no scale-sized allocation. Scale1 always
  * copies the exact native image. High-scale readbacks may be tiled by caller. */
 bool SnesHdFrameRenderRegion(const SnesHdFrame *frame, unsigned scale,

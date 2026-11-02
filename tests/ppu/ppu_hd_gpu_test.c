@@ -2,6 +2,9 @@
 #define main old_ppu_hd_test_main
 #include "ppu_mode7_hd_test.c"
 #undef main
+#define main reconstruction_cpu_test_main
+#include "ppu_mode7_reconstruct_test.c"
+#undef main
 #include "desktop/hd_gpu.h"
 #include "gl_core_3_1.h"
 #include "desktop/sdl_compat.h"
@@ -64,6 +67,20 @@ int main(void) {
   CHECK(SnesHdGpuSupportsAffine(g));
   glGenFramebuffers(1, &framebuffer);
   unsigned comparisons = 0;
+  test_projection_geometry(); test_nonperspective();
+  for (unsigned flags = 0; flags < 16; ++flags) {
+    SnesHdFrame *f = projection_fixture(flags, true, true);
+    static const unsigned projection_scales[] = {2, 3, 8, 33, 64};
+    for (unsigned s = 0; s < countof(projection_scales); ++s) {
+      unsigned scale = projection_scales[s];
+      make_target(288*scale, 64*scale);
+      CHECK(SnesHdGpuDraw(g, f, scale, 288*scale, 64*scale));
+      compare_roi(g, f, scale, 3*scale, 20*scale, 64, 32);
+      compare_roi(g, f, scale, 280*scale, 32*scale-1, 16, 32);
+      compare_visible(g, f, scale); comparisons += 2;
+    }
+    SnesHdFrameDestroy(f);
+  }
   static const unsigned scales[] = {1, 2, 3, 4, 16, 32, 64};
   for (unsigned seed = 0; seed < 32; ++seed) {
     setup(); PpuSetExtraSpace(&p, 16); sprite((seed >> 1) & 3);

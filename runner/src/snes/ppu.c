@@ -834,6 +834,7 @@ static void PpuDrawVisibleLine(Ppu *ppu, int line, bool pixels, bool live) {
   if (!pixels) return;
 
   if ((ppu->renderFlags & kPpuRenderFlags_NewRenderer) &&
+      !(PPU_mode(ppu) == 7 && (PPU_m7extBg(ppu) || PPU_directColor(ppu))) &&
       PpuOptimizedRendererHandlesMode(PPU_mode(ppu))) {
     if (live)
       debug_server_on_ppu_line_drawn(line, 1, ppu->bgmode);
@@ -2742,9 +2743,10 @@ bool SnesHdFrameCaptureLine(SnesHdFrame *f, unsigned y, const Ppu *p,
            f->width * 4);
   j->kind = 1;
   bool affine = PPU_mode(p) == 7 && !PPU_forcedBlank(p) &&
-      !PPU_m7extBg(p) && !PPU_directColor(p) && !PPU_interlace(p) &&
+      !PPU_interlace(p) &&
       !PPU_pseudoHires(p) &&
       !(PPU_mosaicEnabled(p, 0) && PPU_mosaicSize(p) > 1) &&
+      !(PPU_m7extBg(p) && PPU_mosaicEnabled(p, 1) && PPU_mosaicSize(p) > 1) &&
       !p->widescreenLineEnhancer && !(p->wsHudSplitHeight & 0x80);
   for (unsigned source = 0; affine && source < kPpuOverlaySource_Count; ++source)
     if (PpuOverlayActiveOnLine(p, (PpuOverlaySource)source, (int)line - 1) &&
@@ -2765,6 +2767,12 @@ bool SnesHdFrameCaptureLine(SnesHdFrame *f, unsigned y, const Ppu *p,
   }
   PpuWindows_Calc(&window, (Ppu *)p, 5, (int)line);
   PpuHdMarkWindow(visibility, &window, 16, true);
+  if (PPU_m7extBg(p)) for (unsigned sub = 0; sub < 2; ++sub) {
+    if (!IS_SCREEN_ENABLED(p, sub, 1)) continue;
+    if (IS_SCREEN_WINDOWED(p, sub, 1)) PpuWindows_Calc(&window, (Ppu *)p, 1, (int)line);
+    else PpuWindows_Clear(&window, (Ppu *)p, 1, (int)line);
+    PpuHdMarkWindow(visibility, &window, (uint8_t)(32u << sub), false);
+  }
   const uint16_t *vram = PpuRenderVram(p); int source;
   if (!p->renderVram && f->source_count && f->last_vram == vram &&
       f->last_generation == p->vramWriteCount) source = (int)f->last_source;
@@ -2788,7 +2796,11 @@ bool SnesHdFrameCaptureLine(SnesHdFrame *f, unsigned y, const Ppu *p,
     j->visibility[x] = visibility[i]; j->object[x] = p->objBuffer.data[i];
     j->object_color[x] = PpuPixelColor(p, j->object[x], i);
   }
-  j->kind = 2;
+  for (unsigned c = 0; c < 8; ++c)
+    j->matrix[c] = c < 4 ? p->m7matrix[c] : SnesMode7HdSign13(p->m7matrix[c]);
+  j->raster_line = (uint16_t)line;
+  j->composition = (PPU_directColor(p) ? 1 : 0) | (PPU_m7extBg(p) ? 2 : 0);
+  j->kind = kSnesHdReconstructed;
   return true;
 }
 static void PpuDrawMode7HdLine(Ppu *ppu, unsigned line) {
