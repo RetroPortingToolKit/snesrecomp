@@ -25,6 +25,10 @@ void ppu_setGuestScope(bool active) {s_guest_scope=active;}
 /* SLHV's beam position at the latching access's own clock (snes.c installs
  * it); without it the latch takes the beam as it stands. */
 void (*g_ppu_latch_position_hook)(uint16_t *h_dot, uint16_t *v);
+/* The beam (H in master clocks, 0..1363, and V) at the clock a register
+ * access reaches the PPU (snes.c installs it). Reads during rendering need it
+ * to know what the PPU itself is fetching. */
+bool (*g_ppu_beam_hook)(uint16_t adr, uint16_t *h_clock, uint16_t *v);
 
 #ifndef SNESRECOMP_PPU_8BPP_HLE
 #define SNESRECOMP_PPU_8BPP_HLE 0
@@ -3403,6 +3407,118 @@ static uint16_t ppu_getVramRemap(Ppu* ppu) {
   return adr;
 }
 
+/* ---- What the PPU itself reads from OAM and CGRAM while it renders ----
+ * During active display the PPU owns OAM and CGRAM; a CPU read of $2138 or
+ * $213B returns the byte at the address the PPU is using at that moment, not
+ * the CPU's address (the CPU's address still advances). The rules follow
+ * MesenCE 2.2.1 (SnesPpu::GetOamAddress, CanAccessCgram), the parity reference:
+ *  - OAM, H clock <= 1020: the range phase walks one sprite per two dots from
+ *    the priority-rotation start; the X byte of that sprite.
+ *  - OAM, later: the time phase walks the sprites in range for this line
+ *    backward, two dots per 8-pixel sliver from dot 270; before dot 270 it still
+ *    holds where the previous line's walk ended.
+ *  - CGRAM: free in H clocks 0..87 and 1096..1363, on line 0, from the NMI line
+ *    on and in forced blank. Otherwise the PPU's last palette lookup; that is
+ *    the backdrop (0) whenever a drawn pixel shows it on the sub screen, which
+ *    is every pixel while no layer is enabled there. With sub screen layers on,
+ *    the pixel's own palette entry is not modelled (the CPU's address is used).
+ * On only while the beam hook answers (snes.c: with the master-clock APU
+ * timeline). Switch: SNESRECOMP_PPU_RENDER_READS=0 restores CPU addresses. */
+typedef struct PpuObjPos { int16_t x; uint8_t y, w, h; } PpuObjPos;
+
+static void ppu_objPosition(const Ppu *ppu, uint8_t i, PpuObjPos *o) {
+  /* OBSEL size pairs; bit 3 of the index is the sprite's large bit. */
+  static const uint8_t w[16] = { 8, 8, 8, 16, 16, 32, 16, 16, 16, 32, 64, 32, 64, 64, 32, 32 };
+  static const uint8_t h[16] = { 8, 8, 8, 16, 16, 32, 32, 32, 16, 32, 64, 32, 64, 64, 64, 32 };
+  uint8_t hi = ppu->highOam[i >> 2] >> ((i & 3) << 1);
+  o->x = (int16_t)(((hi & 1) ? 0xff00 : 0) | (ppu->oam[i << 1] & 0xff));
+  o->y = ppu->oam[i << 1] >> 8;
+  uint8_t mode = (uint8_t)(PPU_objSize(ppu) | ((hi & 2) << 2));
+  o->w = w[mode];
+  o->h = h[mode];
+}
+
+static bool ppu_objInRange(const Ppu *ppu, const PpuObjPos *o, int line) {
+  if (o->x != -256 && (o->x + o->w <= 0 || o->x > 255)) return false;
+  uint16_t endY = (uint16_t)(o->y + (PPU_objInterlace(ppu) ? o->h >> 1 : o->h));
+  return (line >= o->y && line < endY) || ((uint8_t)endY < o->y && line < (uint8_t)endY);
+}
+
+static uint16_t ppu_oamByteAddress(const Ppu *ppu) {
+  return ppu->oamInHigh ? (uint16_t)(0x200 | ((ppu->oamAdr & 0xf) << 1) | ppu->oamSecondWrite)
+                        : (uint16_t)((ppu->oamAdr << 1) | ppu->oamSecondWrite);
+}
+
+static uint8_t ppu_objFirst(const Ppu *ppu) {
+  return PPU_objPriority(ppu) ? (uint8_t)((ppu_oamByteAddress(ppu) & 0x1fc) >> 2) : 0;
+}
+
+/* The time phase of `line` through sliver step `last` (0..69); `held` is the
+ * index it starts from when no sprite is in range. */
+static uint8_t ppu_objTimeIndex(const Ppu *ppu, int line, int last, uint8_t held) {
+  uint8_t list[32];
+  int n = 0;
+  uint8_t first = ppu_objFirst(ppu);
+  for (int k = 0; k < 128; k++) {
+    uint8_t i = (uint8_t)((first + k) & 0x7f);
+    PpuObjPos o;
+    ppu_objPosition(ppu, i, &o);
+    if (ppu_objInRange(ppu, &o, line) && n < 32) list[n++] = i;
+  }
+  if (n == 0) return held;
+  uint8_t t = list[n - 1], cur = 0xff, col = 0;
+  PpuObjPos o = { 0 };
+  for (int x = 0; x <= last; x++) {
+    if (x >= 2 && (x & 1) && n == 0 && col == 0) break;
+    if (n == 0) continue;
+    if (x & 1) {
+      col--;
+      int16_t sx = o.x == -256 ? 0 : o.x;
+      int16_t endTileX = (int16_t)(sx + (((o.w >> 3) - col - 1) << 3) + 8);
+      if (col == 0 || endTileX >= 256) { n--; col = 0; }
+      if (n > 0) t = list[n - 1];
+    } else {
+      ppu_objPosition(ppu, t, &o);
+      if (t != cur) {
+        cur = t;
+        col = (uint8_t)(o.w >> 3);
+        if (o.x <= -8 && o.x != -256) col = (uint8_t)(col + o.x / 8);
+      }
+    }
+  }
+  return t;
+}
+
+static int ppu_renderReadsOn(void) {
+  static int on = -1;
+  if (on < 0) { const char *e = getenv("SNESRECOMP_PPU_RENDER_READS"); on = !(e && e[0] == '0'); }
+  return on;
+}
+
+/* The OAM byte address the PPU reads for a $2138 read now, or -1 when the CPU's. */
+static int ppu_renderOamAddress(const Ppu *ppu) {
+  uint16_t hc, v;
+  if (!ppu_renderReadsOn() || !g_ppu_beam_hook || PPU_forcedBlank(ppu)) return -1;
+  if (!g_ppu_beam_hook(0x2138, &hc, &v) || v >= (PPU_overscan(ppu) ? 240 : 225)) return -1;
+  int dot = hc <= 1292 ? hc >> 2 : hc <= 1310 ? (hc - 2) >> 2 : (hc - 4) >> 2;
+  if (hc <= 1020) return ((ppu_objFirst(ppu) + ((dot + 1) >> 1)) & 0x7f) << 2;
+  /* Where the previous rendered lines' walks ended (OAM as it is now). */
+  uint8_t held = 0;
+  for (int l = 0; l < (int)v; l++) held = ppu_objTimeIndex(ppu, l, 69, held);
+  if (dot >= 270) held = ppu_objTimeIndex(ppu, v, dot - 270 > 69 ? 69 : dot - 270, held);
+  return held << 2;
+}
+
+/* The CGRAM word index the PPU reads for a $213B read now, or -1 when the CPU's. */
+static int ppu_renderCgramAddress(const Ppu *ppu) {
+  uint16_t hc, v;
+  if (!ppu_renderReadsOn() || !g_ppu_beam_hook || PPU_forcedBlank(ppu)) return -1;
+  if (!g_ppu_beam_hook(0x213b, &hc, &v) || v == 0 || v >= (PPU_overscan(ppu) ? 240 : 225)) return -1;
+  if (hc < 88 || hc >= 1096) return -1;
+  if ((ppu->screenEnabled[1] & 0x1f) == 0) return 0;
+  return -1;
+}
+
 uint8_t ppu_read(Ppu* ppu, uint8_t adr) {
   switch(adr) {
   case 0x34:
@@ -3431,6 +3547,7 @@ uint8_t ppu_read(Ppu* ppu, uint8_t adr) {
     }
     case 0x38: {
       uint8_t ret = 0;
+      int render = ppu_renderOamAddress(ppu);
       if(ppu->oamInHigh) {
         ret = ppu->highOam[((ppu->oamAdr & 0xf) << 1) | ppu->oamSecondWrite];
         if(ppu->oamSecondWrite) {
@@ -3446,6 +3563,9 @@ uint8_t ppu_read(Ppu* ppu, uint8_t adr) {
         }
       }
       ppu->oamSecondWrite = !ppu->oamSecondWrite;
+      if (render >= 0)
+        ret = render < 0x200 ? (uint8_t)(ppu->oam[render >> 1] >> ((render & 1) << 3))
+                             : ppu->highOam[render & 0x1f];
       return ret;
     }
     case 0x39: {
@@ -3466,10 +3586,13 @@ uint8_t ppu_read(Ppu* ppu, uint8_t adr) {
     }
     case 0x3b: {
       uint8_t ret = 0;
+      int render = ppu_renderCgramAddress(ppu);
+      uint16_t color = ppu->cgram[render >= 0 ? render : ppu->cgramPointer];
       if(!ppu->cgramSecondWrite) {
-        ret = ppu->cgram[ppu->cgramPointer] & 0xff;
+        ret = color & 0xff;
       } else {
-        ret = ((ppu->cgram[ppu->cgramPointer++] >> 8) & 0x7f);
+        ret = ((color >> 8) & 0x7f);
+        ppu->cgramPointer++;
       }
       ppu->cgramSecondWrite = !ppu->cgramSecondWrite;
       return ret;
