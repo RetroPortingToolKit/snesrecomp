@@ -11,9 +11,9 @@ enum { kSnesHdDefaultScale = 8, kSnesHdMaxWidth = 1024, kSnesHdMaxHeight = 512, 
 enum { kSnesHdNative = 1, kSnesHdMode7 = 2, kSnesHdAffine = 3, kSnesHdReconstructed = 4 };
 typedef struct SnesHdFrame SnesHdFrame;
 typedef struct SnesHdCapture SnesHdCapture;
-typedef struct SnesHdSettings { bool enabled; unsigned scale; } SnesHdSettings;
+typedef struct SnesHdSettings { bool enabled; unsigned scale, supersample; } SnesHdSettings;
 static inline SnesHdSettings SnesHdDefaultSettings(void) {
-  SnesHdSettings settings = {true, kSnesHdDefaultScale};
+  SnesHdSettings settings = {true, kSnesHdDefaultScale, 1};
   return settings;
 }
 static inline bool SnesHdParseScale(const char *text, unsigned *scale) {
@@ -27,11 +27,17 @@ static inline bool SnesHdParseScale(const char *text, unsigned *scale) {
   if (!value) return false;
   *scale = value; return true;
 }
+static inline bool SnesHdParseSampling(const char *text, unsigned *samples) {
+  unsigned value;
+  if (!samples || !SnesHdParseScale(text,&value) || value>4) return false;
+  *samples=value; return true;
+}
 struct Ppu;
 /* Lazy frame publisher for standard PPU hosts: no packet allocation on frames
  * without Mode7. Bound only to the live PPU; detached work never publishes. */
 SnesHdCapture *SnesHdCaptureCreate(void);
 bool SnesHdCaptureBind(SnesHdCapture *capture, struct Ppu *ppu, unsigned height);
+bool SnesHdCaptureSetSampling(SnesHdCapture *capture, unsigned samples_per_axis);
 void SnesHdCaptureReset(SnesHdCapture *capture);
 void SnesHdCaptureDestroy(SnesHdCapture *capture);
 const SnesHdFrame *SnesHdCaptureFrame(const SnesHdCapture *capture);
@@ -75,8 +81,12 @@ typedef struct SnesHdView {
   size_t owned_bytes;
   unsigned tilemap_count;
   const SnesHdTilemap *const *tilemaps;
+  unsigned supersample;
 } SnesHdView;
 SnesHdFrame *SnesHdFrameCreate(unsigned width, unsigned height);
+/* 1 disables supersampling; 2..4 average that many samples in each axis.
+ * Set before sealing; affects presentation only, including at output scale 1. */
+bool SnesHdFrameSetSampling(SnesHdFrame *frame, unsigned samples_per_axis);
 void SnesHdFrameDestroy(SnesHdFrame *frame);
 /* Prepared renderers publish the same job contract as the PPU capture.
  * Sources are copied/deduplicated once, then referenced by row jobs. */

@@ -38,8 +38,8 @@ Old standalone documentation described an earlier CPU-only implementation.
 `kSnesHdReconstructed` jobs publish raw signed matrix/centre/scroll values,
 original raster Y, composition state and a camera identity. Sealing the owned
 frame fits `1/coefficient = intercept + slope*Y` using interior scanlines.
-Constant and zero coefficients remain constant. Fits must explain all original
-rows within quantization tolerance and remain finite throughout every subrow.
+Constant and zero coefficients remain constant. Fits must explain the interior rows within quantization/table tolerance and
+remain finite and bounded throughout every subrow, including extrapolated edges.
 Changing camera/centre/scroll, flips, composition or discontinuous coefficients
 separates regions. Failed fits use local affine geometry.
 
@@ -53,7 +53,7 @@ Texture coordinates use floor, including negative margins.
 The portable consumer and GPU upload use that same function. GPU endpoint
 acceleration retains its exact double evaluation at uncertain texel boundaries.
 Prepared transforms scale with output height, not the number of output pixels.
-Scale 1 retains the exact native image.
+Scale 1 retains the exact native image with supersampling off.
 
 EXTBG reuses the sampled texel, with its high bit selecting BG2 priority and
 seven remaining color bits. Each background and OBJ has independent main/sub
@@ -64,9 +64,9 @@ reference instead of silently drawing BG1 alone.
 
 Mosaic deliberately uses native composition to preserve authored blocks,
 including EXTBG's independent horizontal mosaic. Interlace, pseudo-hires and
-unsupported host overlay policies also retain native composition. The historical
-scanline surface API remains a diagnostic reference; desktop capture and
-F-Zero use the reconstructed frame path. No compatibility shim was added.
+unsupported host overlay policies also retain native composition. The old scanline surface API and its duplicated renderer have been removed.
+Its useful analytic/composition checks now exercise the frame consumer.
+No compatibility shim was added.
 
 F-Zero owns course streaming/maps, HUD layout and temporal camera selection.
 Its CPU HD path now consumes the same sealed jobs as its GPU path; duplicated
@@ -77,8 +77,8 @@ applied to raw camera values before spatial reconstruction.
 
 Implementation and qualification are separate. Keep this issue open until
 matched bsnes-hd captures, motion, representative other games, performance and
-owner visual checks are complete. Supersampling is currently off; a separately
-selectable supersampling control has not been implemented.
+owner visual checks are complete. Supersampling is selectable independently of resolution (1=off, 2..4 per axis),
+with persistence and launcher controls in the shared host and F-Zero.
 
 Analytic tests cover exact/quantized perspective, zeros, sign changes and camera
 splits. Composition checks compare centered samples against the complete native
@@ -86,10 +86,10 @@ PPU, including EXTBG/direct color. GPU checks cover non-power-of-two scales,
 flips, composition, negative margins, large maps and resized targets.
 
 Real F-Zero input `captures/bump160-deluxe-21x9/frame-001200.bin` reconstructs
-all 177 track rows. Original and candidate 4x images have been inspected; this
-is a matched local comparison, not yet a matched bsnes-hd comparison.
+all 177 track rows. Original/candidate captures and matched bsnes-hd frames have
+been inspected; see the geometric comparison below.
 
-Windows: complete PPU suite, F-Zero renderer suite and 736 GPU ROI comparisons
+Windows: complete PPU suite, F-Zero renderer suite and 772 GPU ROI comparisons
 pass. Linux/WSL: PPU-HD composition suite, reconstruction tests (also with
 NDEBUG) and the GPU-disabled portable consumer compile pass. The Deck has no
 system C compiler; its temporary copied fixtures were removed.
@@ -120,8 +120,82 @@ the approximate baseline's 2.20 ms in the final matched run. Keep that fallback
 cost explicit. Raw samples, source/binary identities, jobs and capacity receipts
 are retained in `_wt-mode7-rebuild-fzero/build-mode7`.
 
-Remaining qualification: matched bsnes-hd stills and motion; Super Mario Kart,
-Pilotwings, SMW Mode 7 bosses and Super Metroid effects; broader F-Zero course,
-split-screen and resize gameplay; owner visual acceptance. A selectable
-supersampling control and removal/migration of the historical diagnostic
-scanline API are also unfinished. Do not merge or release as fully qualified.
+Remaining visual qualification includes Pilotwings, SMW Mode 7 bosses and
+Super Metroid effects, broader natural F-Zero course play and owner acceptance.
+Super Mario Kart shared capture and sampled turning comparisons are recorded
+below. Supersampling and retirement of the historical scanline API are implemented.
+Do not merge or release as fully qualified before the remaining game checks.
+
+
+## Matched emulator comparison, continuation
+
+The existing `tools/snesref` frontend drives a separately supplied bsnes-hd
+10.6 libretro core. Its binary SHA256 is
+`3e05e441f35ca21baa328094f6f9bf30645ea998ebb39956b154e160a8b00ed0`;
+source URL and inputs/settings are retained under `build/oracle`. The stock
+core does not expose WRAM, so no memory-state equivalence is claimed.
+Matched scripted F-Zero frame 1200 images identify the same scene/camera.
+On 280 road-edge rows at 8x, original renderer absolute edge error against
+bsnes-hd averages 10.979 high-resolution pixels (95th percentile 28, max 55).
+The rebuilt renderer averages 0.275 (95th percentile 1, max 11). These are
+specific silhouette comparisons, not a whole-image correctness score.
+
+Exact rational fixtures exposed floating cancellation at texel boundaries on
+non-power-of-two scales. Sampling now canonicalizes roundoff within eight ulps
+of the supported transform range before flooring; CPU and GPU use the same
+rule. Offsets beyond that numerical bound retain floor semantics. EXTBG-only
+visibility is now covered explicitly, including when BG1 is disabled.
+
+Supersampling has a portable integer box resolve and a GPU resolve. A native
+1x output with 2x supersampling is checked against the independently averaged
+2x output. GPU checks cover 2..4 samples per axis, scale 1, fractional scales,
+visible/full targets, flips and composition. Default sampling adds no resolve
+pass. GPU scratch allocation is budgeted and reduced with device limits.
+
+## Final implementation checks
+
+Super Mario Kart `d302c30a63b9110a6273e754745e6b5e58f2a64d` was regenerated
+with the current native analyzer in an isolated qualification worktree. Its
+existing headless host, DSP-1 LLE and verified local firmware drove 3,600 frames.
+A test-only hook exercised the shared capture/portable consumer every 60 frames:
+27 Mode 7 frames, 1,909 perspective-corrected rows, exact 1x native parity and
+bounded 4x rendering. The existing strict logic/audio/video soak also passed.
+The hook does not adopt HD presentation into SMK's custom SDL host.
+
+This real consumer exposed a rejected horizon band. Residual validation now
+uses the same interior region as fitting (two coefficient units or 2.5% for
+quantized DSP tables). Every subrow still rejects sign changes, poles and
+coefficients beyond the bounded extrapolation range. Separate camera bands
+remain separate. Analytic horizon-artifact and singularity checks cover this.
+The source patch, pinned title identity and run evidence are retained under
+`build/qualification/smk`. This is a shared-consumer check, not an emulator
+visual acceptance of every SMK track.
+
+Six matched turning frames (1630..1780, step 30) retain original HD, rebuilt HD
+and bsnes-hd output under `build/oracle/motion`. Their identical timer/camera
+scenes were inspected, including the rotated road edge at frame 1690. This is
+sampled motion evidence, not a continuous-video/flicker qualification. The
+owner-facing live comparison supplies synchronized native/16x panes from one
+simulation, plus paused grid, straight and turning snapshots.
+
+Final GPU checks additionally exercise 4x supersampling with a 128 KiB target
+budget: admission reduces the visible target to 68x3, CPU samples agree and
+caller framebuffer/viewport state is restored. Windows PPU, renderer/video/mod
+suites and Linux NDEBUG reconstruction checks pass.
+
+A later matched capture timing under different contention produced 4x totals
+3.874/4.637 ms (original/rebuild) and 8x 4.050/4.274 ms; draw times were
+0.145/0.134 and 0.347/0.353 ms. Together with the earlier measurements, this
+is mixed and cannot establish a performance win or reproducible regression.
+The slower CPU fallback remains explicit. Retain both sets of samples; this
+correctness replacement is prepared for review, not performance-qualified for
+all games or promoted to a release.
+
+Final F-Zero built checks: 16x single-player plus 2x supersampling survives four
+window/aspect setups, 420 frames, with sampled CPU/GPU agreement. A two-player
+course-0 run passes 1,440 frames, the same resize changes, sampled CPU/GPU parity
+and zero missed presentations. A four-player course-14 run completes 1,440
+frames through the existing CPU fallback; it records 420 missed presentations
+and is only a functional check. Four-player GPU jobs are not implemented by the
+current title adapter, and CPU supersampling there is costly. Do not describe
+that run as 60 FPS or GPU-qualified. No external-network play was tested.

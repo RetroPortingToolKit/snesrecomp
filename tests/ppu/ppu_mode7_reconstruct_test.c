@@ -6,7 +6,7 @@
 
 #define RECON_CHECK(e) do { if (!(e)) { fprintf(stderr, "reconstruction check failed at %d: %s\n", __LINE__, #e); exit(1); } } while (0)
 
-static SnesHdFrame *projection_fixture(unsigned flags, bool quantized, bool split) {
+static SnesHdFrame *projection_fixture_sampling(unsigned flags, bool quantized, bool split, unsigned samples) {
   SnesHdFrame *f = SnesHdFrameCreate(288, 64);
   static uint16_t vram[32768];
   for (unsigned i = 0; i < 32768; ++i) vram[i] = (uint16_t)(((i * 37 % 255 + 1) << 8) | (i * 19 & 255));
@@ -22,14 +22,18 @@ static SnesHdFrame *projection_fixture(unsigned flags, bool quantized, bool spli
     j.matrix[4] = 128; j.matrix[5] = 192; j.matrix[6] = 12; j.matrix[7] = -20;
     if (split && y >= 32) j.camera = 1;
     for (unsigned x = 0; x < 288; ++x) {
-      j.visibility[x] = x & 1 ? 127 : 123;
+      j.visibility[x] = x % 4 == 0 ? 96 : x & 1 ? 127 : 123;
       j.native[x] = 0x123456;
       if (x % 3 == 0) { j.object[x] = 0xa401; j.object_color[x] = 0x3e0; }
     }
     for (unsigned c = 0; c < 256; ++c) j.palette[c] = (uint16_t)(c * 127 & 32767);
     RECON_CHECK(SnesHdFrameSetLine(f, y, &j));
   }
+  RECON_CHECK(SnesHdFrameSetSampling(f,samples));
   RECON_CHECK(SnesHdFrameSeal(f)); return f;
+}
+static SnesHdFrame *projection_fixture(unsigned flags, bool quantized, bool split) {
+  return projection_fixture_sampling(flags,quantized,split,1);
 }
 static void test_projection_geometry(void) {
   SnesHdFrame *f = projection_fixture(0, false, false);
@@ -77,8 +81,29 @@ static void test_flat_quantization_and_copy(void) {
   SnesHdView v; RECON_CHECK(SnesHdFrameView(copy, &v)); RECON_CHECK(!v.lines[0].perspective);
   SnesHdFrameDestroy(copy); SnesHdFrameDestroy(f);
 }
+static void test_horizon_edges(void) {
+  for(unsigned pole=0;pole<2;++pole) {
+    SnesHdFrame *f=SnesHdFrameCreate(1,64);static uint16_t vram[32768];
+    RECON_CHECK(SnesHdFrameAddPicture(f,vram)==0);
+    for(unsigned y=0;y<64;++y) {
+      SnesHdLine j={0};j.kind=kSnesHdReconstructed;j.raster_line=y+1;j.active_right=1;
+      j.matrix[0]=4096.0/(y+(pole?.25:21));j.matrix[3]=256;
+      /* Edge rows may contain horizon/table artifacts; do not use them to
+       * judge an otherwise continuous plane. Interior rows must still fit. */
+      if(!pole && (y<2 || y>=62))j.matrix[0]*=1.08;
+      RECON_CHECK(SnesHdFrameSetLine(f,y,&j));
+    }
+    RECON_CHECK(SnesHdFrameSeal(f));SnesHdView v;RECON_CHECK(SnesHdFrameView(f,&v));
+    RECON_CHECK(pole ? !v.lines[0].perspective : v.lines[20].perspective!=0);
+    if(!pole) {
+      double t[4];RECON_CHECK(SnesHdFrameTransform(f,0,.25,t));
+      RECON_CHECK(fabs(t[2]-4096/20.75)<1e-8);
+    }
+    SnesHdFrameDestroy(f);
+  }
+}
 int main(void) {
-  test_projection_geometry(); test_nonperspective(); test_flat_quantization_and_copy();
+  test_projection_geometry(); test_nonperspective(); test_flat_quantization_and_copy(); test_horizon_edges();
   puts("Mode 7 reconstruction: analytic perspective, quantized coefficients, camera splits, zero/sign-changing coefficients passed");
   return 0;
 }

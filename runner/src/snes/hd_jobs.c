@@ -3,6 +3,7 @@
 #include <math.h>
 #include <stdlib.h>
 #include <string.h>
+#include <float.h>
 #include "mode7_reconstruct.h"
 
 
@@ -18,8 +19,12 @@ SnesHdFrame *SnesHdFrameCreate(unsigned width, unsigned height) {
   if (!f) return NULL;
   f->lines = calloc(height, sizeof(*f->lines));
   if (!f->lines) { free(f); return NULL; }
-  f->width = width; f->height = height;
+  f->width = width; f->height = height; f->supersample = 1;
   return f;
+}
+bool SnesHdFrameSetSampling(SnesHdFrame *f, unsigned samples) {
+  if (!f || f->sealed || samples < 1 || samples > 4) return false;
+  f->supersample = samples; return true;
 }
 void SnesHdFrameDestroy(SnesHdFrame *f) {
   if (!f) return;
@@ -136,7 +141,7 @@ bool SnesHdFrameView(const SnesHdFrame *f, SnesHdView *v) {
       sizeof(*f) + f->height * sizeof(*f->lines) +
           f->source_count * sizeof(SnesHdPicture) +
           f->tilemap_count * sizeof(SnesHdTilemap), f->tilemap_count,
-      (const SnesHdTilemap *const *)f->tilemaps};
+      (const SnesHdTilemap *const *)f->tilemaps, f->supersample};
   return true;
 }
 bool SnesHdFrameCopyLine(SnesHdFrame *f, unsigned y, const SnesHdFrame *s,
@@ -228,6 +233,14 @@ typedef struct SnesHdRowCache {
   unsigned index;
   bool texel_valid;
 } SnesHdRowCache;
+/* Canonicalize only floating roundoff at an exact texel edge. This is not
+ * texture filtering: offsets distinguishable beyond the transform error bound keep floor
+ * semantics, including negative coordinates. GPU sampling uses the same rule. */
+static int SnesHdFloorTexel(double value) {
+  double nearest = floor(value + .5);
+  if (fabs(value - nearest) <= fmax(1048576, fabs(value)) * (8*DBL_EPSILON)) value = nearest;
+  return SnesMode7HdFloorInt(value);
+}
 static uint32_t SnesHdSample(const SnesHdFrame *f, unsigned scale,
                               unsigned px, unsigned py, const double t[4], SnesHdRowCache *cache) {
   unsigned x = px / scale, y = py / scale;
@@ -238,8 +251,8 @@ static uint32_t SnesHdSample(const SnesHdFrame *f, unsigned scale,
   int tx, ty;
   if (j->kind == kSnesHdAffine || j->kind == kSnesHdReconstructed) {
     double position = screen_x + (double)(px % scale) / scale;
-    tx = SnesMode7HdFloorInt((t[0] + position * t[2]) / 256);
-    ty = SnesMode7HdFloorInt((t[1] + position * t[3]) / 256);
+    tx = SnesHdFloorTexel((t[0] + position * t[2]) / 256);
+    ty = SnesHdFloorTexel((t[1] + position * t[3]) / 256);
   } else {
     tx = SnesHdCoordinate(j->origin_x, j->step_x, j->row_x, screen_x,
                             px % scale, py % scale, scale);
@@ -324,9 +337,24 @@ bool SnesHdFrameRenderRegion(const SnesHdFrame *f, unsigned scale,
       cached_y = native_y;
     }
     uint32_t *out = (uint32_t *)((uint8_t *)pixels + row * pitch);
-    double t[4] = {0};
-    SnesHdFrameTransform(f, (y+row) / scale, (double)((y+row) % scale) / scale, t);
-    for (unsigned col = 0; col < w; ++col) out[col] = SnesHdSample(f, scale, x + col, y + row, t, &cache);
+    unsigned samples = f->lines[native_y].kind == kSnesHdNative ? 1 : f->supersample;
+    double t[4][4] = {{0}};
+    for (unsigned sy = 0; sy < samples; ++sy)
+      SnesHdFrameTransform(f, native_y,
+          (double)(((y+row)%scale)*samples+sy)/(scale*samples), t[sy]);
+    for (unsigned col = 0; col < w; ++col) {
+      if (samples == 1) {
+        out[col] = SnesHdSample(f, scale, x+col, y+row, t[0], &cache); continue;
+      }
+      unsigned sum[3] = {0};
+      for (unsigned sy = 0; sy < samples; ++sy) for (unsigned sx = 0; sx < samples; ++sx) {
+        uint32_t rgb = SnesHdSample(f, scale*samples,
+            (x+col)*samples+sx, (y+row)*samples+sy, t[sy], &cache);
+        for (unsigned c = 0; c < 3; ++c) sum[c] += (rgb>>(c*8)) & 255;
+      }
+      unsigned count = samples*samples;
+      out[col] = ((sum[0]+count/2)/count) | ((sum[1]+count/2)/count)<<8 | ((sum[2]+count/2)/count)<<16;
+    }
   }
   return true;
 }

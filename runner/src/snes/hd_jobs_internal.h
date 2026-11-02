@@ -2,7 +2,7 @@
 #define SNESRECOMP_HD_JOBS_INTERNAL_H
 #include "hd_jobs.h"
 struct SnesHdFrame {
-  unsigned width, height, source_count;
+  unsigned width, height, source_count, supersample;
   bool sealed, failed;
   SnesHdLine *lines;
   SnesHdPicture *sources[kSnesHdMaxHeight];

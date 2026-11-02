@@ -21,6 +21,8 @@ struct SnesHdGpu {
   GLuint program, affine_program, vao, textures[kHdTextures], queries[kQueryFrames][3];
   GLuint coordinate_program, coordinate_fbo;
   GLuint output_fbo, output_texture;
+  GLuint sample_program, sample_fbo, sample_texture;
+  unsigned sample_width, sample_height;
   unsigned output_width, output_height, logged_scale;
   bool logged_visible;
   unsigned coordinate_width, coordinate_height;
@@ -81,10 +83,11 @@ static const char *vertex_source =
   "#version 330 core\n"
   "void main(){vec2 p=vec2((gl_VertexID<<1)&2,gl_VertexID&2);gl_Position=vec4(p*2.0-1.0,0.0,1.0);}\n";
 static const char *fragment_source =
+  "#ifdef HD_AFFINE\ndouble canonical(double v){double n=floor(v+0.5LF);return abs(v-n)<=max(1048576.0LF,abs(v))*1.7763568394002505e-15LF?n:v;}\n#endif\n"
   "uniform usampler2D native_plane,object_plane,palette_plane;\n"
   "uniform isampler2D metadata;uniform usampler2DArray picture,tilemaps;\n"
   "uniform usampler2D affine_plane,overlay_plane;uniform isampler2D coordinate_plane;\n"
-  "uniform ivec2 requested,output_size;uniform int scale;out vec4 result;\n"
+  "uniform ivec2 requested,output_size;uniform int scale,sampling;out vec4 result;\n"
   "int fd(int n,int d){return n>=0?int(uint(n)/uint(d)):-1-int(uint(-(n+1))/uint(d));}\n"
   "int coord(int o,int step,int row,int x,int sx,int sy){int q=o+x*step;int b=fd(q,256);"
   "return b+fd((q-b*256)*scale+sx*step+sy*row,256*scale);}\n"
@@ -97,13 +100,13 @@ static const char *fragment_source =
   "return word(tile*64+(p.y&7)*8+(p.x&7),layer)>>8;}\n"
   "uint color(uint p,uvec4 object,int y){uint layer=(p>>8)&15u;if(layer==0u&&(texelFetch(metadata,ivec2(5,y),0).z&1)!=0){uint i=p&255u;return ((i&7u)<<2)|((i&56u)<<4)|((i&192u)<<7);}return layer==4u||layer==6u?object.g:texelFetch(palette_plane,ivec2(int(p&255u),y),0).r;}\n"
   "void rgb(uint c){result=vec4(vec3((c>>16)&255u,(c>>8)&255u,c&255u)/255.0,1.0);}\n"
-  "void main(){ivec2 pixel=ivec2(gl_FragCoord.xy);ivec2 p=ivec2((uvec2(pixel)*2u+1u)*uvec2(requested)/(uvec2(output_size)*2u));"
-  "ivec2 n=p/scale;uvec4 object=texelFetch(object_plane,n,0);ivec4 cfg=texelFetch(metadata,ivec2(0,n.y),0);"
+  "void main(){ivec2 pixel=ivec2(gl_FragCoord.xy);ivec2 p=ivec2((uvec2(pixel/sampling)*2u+1u)*uvec2(requested/sampling)/(uvec2(output_size/sampling)*2u));"
+  "p=p*sampling+pixel%sampling;ivec2 n=p/scale;uvec4 object=texelFetch(object_plane,n,0);ivec4 cfg=texelFetch(metadata,ivec2(0,n.y),0);"
   "if(scale==1||cfg.x==1||object.a!=0u){rgb(texelFetch(native_plane,n,0).r);return;}"
   "ivec4 a=texelFetch(metadata,ivec2(1,n.y),0),b=texelFetch(metadata,ivec2(2,n.y),0),c=texelFetch(metadata,ivec2(3,n.y),0);"
   "int x=b.z+n.x;if(x<b.w||x>=c.x){rgb(0u);return;}int sx=p.x%scale,sy=p.y%scale;"
   "uint visible=object.b;uint index=0u;"
-  "if((visible&3u)!=0u){ivec2 t=ivec2(coord(a.x,a.z,b.x,x,sx,sy),coord(a.y,a.w,b.y,x,sx,sy));\n"
+  "if((visible&99u)!=0u){ivec2 t=ivec2(coord(a.x,a.z,b.x,x,sx,sy),coord(a.y,a.w,b.y,x,sx,sy));\n"
   "#ifdef HD_AFFINE\n"
   "if(cfg.x==3||cfg.x==4){ivec4 map=texelFetch(metadata,ivec2(4,n.y),0);bvec2 uncertain=bvec2(true);"
   "if((map.w&1)!=0){ivec4 lo=texelFetch(coordinate_plane,ivec2(n.x,pixel.y),0),hi=texelFetch(coordinate_plane,ivec2(n.x+1,pixel.y),0);"
@@ -117,7 +120,7 @@ static const char *fragment_source =
   "precise double ox=packDouble2x32(d0.xy),oy=packDouble2x32(d0.zw);"
   "precise double dx=packDouble2x32(d1.xy),dy=packDouble2x32(d1.zw);"
   "precise double tx=(ox+px*dx)/256.0LF,ty=(oy+px*dy)/256.0LF;"
-  "if(uncertain.x)t.x=int(floor(tx));if(uncertain.y)t.y=int(floor(ty));}}\n"
+  "if(uncertain.x)t.x=int(floor(canonical(tx)));if(uncertain.y)t.y=int(floor(canonical(ty)));}}\n"
   "#endif\n"
   "index=fetch_index(t,cfg.z,cfg.y,texelFetch(metadata,ivec2(4,n.y),0),texelFetch(metadata,ivec2(5,n.y),0));}"
   "uint bg=index!=0u?0x5000u|index:0x500u;uint mainp=(visible&1u)!=0u?bg:0x500u,sub=(visible&2u)!=0u?bg:0x500u;"
@@ -140,16 +143,17 @@ static const char *fragment_source =
  * Within two Q16 units of a texel edge it repeats the exact expression;
  * quantization therefore cannot choose a different source texel. */
 static const char *coordinate_source =
+  "double canonical(double v){double n=floor(v+0.5LF);return abs(v-n)<=max(1048576.0LF,abs(v))*1.7763568394002505e-15LF?n:v;}"
   "uniform usampler2D affine_plane;uniform isampler2D metadata;"
-  "uniform int requested_height,output_height,scale;out ivec4 coordinates;"
-  "void main(){ivec2 p=ivec2(gl_FragCoord.xy);int py=int((uint(p.y)*2u+1u)*uint(requested_height)/(uint(output_height)*2u));"
+  "uniform int requested_height,output_height,scale,sampling;out ivec4 coordinates;"
+  "void main(){ivec2 p=ivec2(gl_FragCoord.xy);int py=int((uint(p.y/sampling)*2u+1u)*uint(requested_height/sampling)/(uint(output_height/sampling)*2u))*sampling+p.y%sampling;"
   "int y=py/scale;ivec4 b=texelFetch(metadata,ivec2(2,y),0);"
   "uvec4 d0=texelFetch(affine_plane,ivec2(0,p.y),0),d1=texelFetch(affine_plane,ivec2(1,p.y),0);"
   "precise double x=double(b.z+p.x);"
   "precise double ox=packDouble2x32(d0.xy),oy=packDouble2x32(d0.zw);"
   "precise double dx=packDouble2x32(d1.xy),dy=packDouble2x32(d1.zw);"
   "precise double tx=(ox+x*dx)/256.0LF,ty=(oy+x*dy)/256.0LF;"
-  "int wx=int(floor(tx)),wy=int(floor(ty));"
+  "tx=canonical(tx);ty=canonical(ty);int wx=int(floor(tx)),wy=int(floor(ty));"
   "int fx=int(floor((tx-double(wx))*65536.0LF)),fyq=int(floor((ty-double(wy))*65536.0LF));"
   "coordinates=ivec4(wx,wy,fx|(dx==0.0LF?65536:0),fyq|(dy==0.0LF?65536:0));}\n";
 static GLuint hd_shader(GLenum kind, const char *source, bool affine) {
@@ -244,6 +248,9 @@ void SnesHdGpuDestroy(SnesHdGpu *g) {
   if (g->affine_program) glDeleteProgram(g->affine_program);
   if (g->coordinate_program) glDeleteProgram(g->coordinate_program);
   if (g->coordinate_fbo) glDeleteFramebuffers(1, &g->coordinate_fbo);
+  if (g->sample_program) glDeleteProgram(g->sample_program);
+  if (g->sample_fbo) glDeleteFramebuffers(1, &g->sample_fbo);
+  if (g->sample_texture) glDeleteTextures(1, &g->sample_texture);
   if (g->output_fbo) glDeleteFramebuffers(1, &g->output_fbo);
   if (g->output_texture) glDeleteTextures(1, &g->output_texture);
   if (g->stats.gpu_timestamps) glDeleteQueries(kQueryFrames * 3, &g->queries[0][0]);
@@ -276,11 +283,11 @@ bool SnesHdGpuReadStats(SnesHdGpu *g, bool wait, SnesHdGpuStats *stats) {
   }
   *stats = g->stats; return true;
 }
-bool SnesHdGpuDrawLayers(SnesHdGpu *g, const SnesHdFrame *frame, unsigned scale,
+static bool HdDrawSamples(SnesHdGpu *g, const SnesHdFrame *frame, unsigned scale,
                    unsigned width, unsigned height, const uint32_t *native_override,
-                   size_t native_pitch, const uint32_t *overlay_override, size_t overlay_pitch) {
+                   size_t native_pitch, const uint32_t *overlay_override, size_t overlay_pitch, unsigned sampling) {
   SnesHdView v;
-  if (!g || g->failed || !SnesHdFrameView(frame, &v) || !scale || scale > 64 ||
+  if (!g || g->failed || !SnesHdFrameView(frame, &v) || !scale || scale > 64 * 4 ||
       !width || !height || width > g->max_texture || height > g->max_texture ||
       v.source_count > g->max_layers) return false;
   if ((native_override && native_pitch < v.width * 4) ||
@@ -311,7 +318,7 @@ bool SnesHdGpuDrawLayers(SnesHdGpu *g, const SnesHdFrame *frame, unsigned scale,
     g->affine = rows; g->affine_height = height;
   }
   for (unsigned row = 0; row < height; ++row) {
-    unsigned py = (unsigned)(((uint64_t)row * 2 + 1) * v.height * scale / ((uint64_t)height * 2));
+    unsigned py = (unsigned)(((uint64_t)(row/sampling) * 2 + 1) * v.height * (scale/sampling) / ((uint64_t)(height/sampling) * 2))*sampling+row%sampling;
     double *t = g->affine + row * 4;
     memset(t, 0, 32);
     SnesHdFrameTransform(frame, py / scale, (double)(py % scale) / scale, t);
@@ -375,6 +382,7 @@ bool SnesHdGpuDrawLayers(SnesHdGpu *g, const SnesHdFrame *frame, unsigned scale,
       if (j->kind == kSnesHdReconstructed ||
           (fabs(j->affine[2]) + fabs(j->affine[6]) < 65536 &&
            fabs(j->affine[3]) + fabs(j->affine[7]) < 65536)) m[19] = 1;
+      if (scale > 64) m[19] = 0;
     }
     m[20] = j->map_offset_x; m[21] = j->map_offset_y; m[22] = j->composition; m[23] = 0;
   }
@@ -438,6 +446,7 @@ bool SnesHdGpuDrawLayers(SnesHdGpu *g, const SnesHdFrame *frame, unsigned scale,
     glUniform1i(glGetUniformLocation(g->coordinate_program,"requested_height"),v.height*scale);
     glUniform1i(glGetUniformLocation(g->coordinate_program,"output_height"),height);
     glUniform1i(glGetUniformLocation(g->coordinate_program,"scale"),scale);
+    glUniform1i(glGetUniformLocation(g->coordinate_program,"sampling"),sampling);
     glViewport(0,0,v.width+1,height); glDrawArrays(GL_TRIANGLES,0,3);
     glBindFramebuffer(GL_DRAW_FRAMEBUFFER,saved.draw_fbo);
   }
@@ -448,6 +457,7 @@ bool SnesHdGpuDrawLayers(SnesHdGpu *g, const SnesHdFrame *frame, unsigned scale,
   glUniform2i(glGetUniformLocation(program, "requested"), v.width * scale, v.height * scale);
   glUniform2i(glGetUniformLocation(program, "output_size"), width, height);
   glUniform1i(glGetUniformLocation(program, "scale"), scale);
+  glUniform1i(glGetUniformLocation(program, "sampling"), sampling);
   glViewport(0, 0, width, height); glDisable(GL_SCISSOR_TEST); glDisable(GL_BLEND);
   glDisable(GL_DEPTH_TEST); glDisable(GL_CULL_FACE); glDisable(GL_FRAMEBUFFER_SRGB);
   glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE); glDrawArrays(GL_TRIANGLES, 0, 3);
@@ -465,6 +475,53 @@ bool SnesHdGpuDrawLayers(SnesHdGpu *g, const SnesHdFrame *frame, unsigned scale,
 bool SnesHdGpuDraw(SnesHdGpu *g,const SnesHdFrame *f,unsigned scale,unsigned w,unsigned h) {
   return SnesHdGpuDrawLayers(g,f,scale,w,h,NULL,0,NULL,0);
 }
+static const char *sample_resolve_source =
+  "uniform sampler2D plane;uniform int samples;out vec4 result;"
+  "void main(){ivec2 p=ivec2(gl_FragCoord.xy)*samples;uvec3 total=uvec3(0);"
+  "for(int y=0;y<samples;++y)for(int x=0;x<samples;++x)"
+  "total+=uvec3(round(texelFetch(plane,p+ivec2(x,y),0).rgb*255.0));"
+  "uint count=uint(samples*samples);result=vec4(vec3((total+count/2u)/count)/255.0,1.0);}";
+bool SnesHdGpuDrawLayers(SnesHdGpu *g, const SnesHdFrame *f, unsigned scale,
+    unsigned width, unsigned height, const uint32_t *native, size_t np,
+    const uint32_t *overlay, size_t op) {
+  SnesHdView v;
+  if (!g || !scale || scale > kSnesHdMaxScale || !SnesHdFrameView(f,&v)) return false;
+  unsigned samples=v.supersample;
+  if (samples==1) return HdDrawSamples(g,f,scale,width,height,native,np,overlay,op,1);
+  if (!width || !height || width>g->max_texture/samples || height>g->max_texture/samples) return false;
+  HdState saved;hd_save(&saved);glBindBuffer(GL_PIXEL_UNPACK_BUFFER,0);
+  if (!g->sample_program) g->sample_program=hd_program_source(sample_resolve_source,false);
+  if (!g->sample_texture) glGenTextures(1,&g->sample_texture);
+  if (!g->sample_fbo) glGenFramebuffers(1,&g->sample_fbo);
+  bool ok=g->sample_program!=0;
+  glActiveTexture(GL_TEXTURE0);glBindTexture(GL_TEXTURE_2D,g->sample_texture);
+  glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MIN_FILTER,GL_NEAREST);
+  glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MAG_FILTER,GL_NEAREST);
+  if (g->sample_width!=width*samples || g->sample_height!=height*samples) {
+    glTexImage2D(GL_TEXTURE_2D,0,GL_RGBA8,width*samples,height*samples,0,GL_RGBA,GL_UNSIGNED_BYTE,NULL);
+    g->sample_width=width*samples;g->sample_height=height*samples;
+  }
+  glBindFramebuffer(GL_DRAW_FRAMEBUFFER,g->sample_fbo);
+  glFramebufferTexture2D(GL_DRAW_FRAMEBUFFER,GL_COLOR_ATTACHMENT0,GL_TEXTURE_2D,g->sample_texture,0);
+  ok=ok && glCheckFramebufferStatus(GL_DRAW_FRAMEBUFFER)==GL_FRAMEBUFFER_COMPLETE &&
+      HdDrawSamples(g,f,scale*samples,width*samples,height*samples,native,np,overlay,op,samples);
+  if (ok) {
+    glBindFramebuffer(GL_DRAW_FRAMEBUFFER,saved.draw_fbo);
+    glUseProgram(g->sample_program);glBindVertexArray(g->vao);
+    glActiveTexture(GL_TEXTURE0);glBindTexture(GL_TEXTURE_2D,g->sample_texture);
+    glUniform1i(glGetUniformLocation(g->sample_program,"plane"),0);
+    glUniform1i(glGetUniformLocation(g->sample_program,"samples"),samples);
+    glViewport(0,0,width,height);glDisable(GL_SCISSOR_TEST);glDisable(GL_BLEND);
+    glDisable(GL_DEPTH_TEST);glDisable(GL_CULL_FACE);glDisable(GL_FRAMEBUFFER_SRGB);
+    glColorMask(GL_TRUE,GL_TRUE,GL_TRUE,GL_TRUE);glDrawArrays(GL_TRIANGLES,0,3);
+    if (g->stats.gpu_timestamps) g->query_counter(g->queries[(g->stats.frames-1)%kQueryFrames][2],GL_TIMESTAMP);
+    g->stats.requested_width/=samples;g->stats.requested_height/=samples;
+    g->stats.output_width=width;g->stats.output_height=height;
+    g->stats.target_bytes+=(size_t)width*height*4;
+    ok=glGetError()==GL_NO_ERROR;
+  }
+  hd_restore(&saved);return ok;
+}
 bool SnesHdGpuRender(SnesHdGpu *g,const SnesHdFrame *f,unsigned scale,
     unsigned dw,unsigned dh,bool visible,size_t budget,const uint32_t *native,size_t np,
     const uint32_t *overlay,size_t op,SnesHdGpuImage *image) {
@@ -475,6 +532,11 @@ bool SnesHdGpuRender(SnesHdGpu *g,const SnesHdFrame *f,unsigned scale,
     if (!dw || !dh || dw>g->max_texture || dh>g->max_texture ||
         (uint64_t)dw*dh*4+(uint64_t)(v.width+1)*dh*16>budget) return false;
     w=dw;h=dh;
+  }
+  while (w>g->max_texture/v.supersample || h>g->max_texture/v.supersample ||
+      (uint64_t)w*h*4*(v.supersample==1?1:1+v.supersample*v.supersample)+(uint64_t)(v.width+1)*h*v.supersample*16>budget) {
+    if (w==1 && h==1) return false;
+    w=w>1?w/2:1;h=h>1?h/2:1;
   }
   HdState saved;hd_save(&saved);
   if (!g->output_texture) glGenTextures(1,&g->output_texture);

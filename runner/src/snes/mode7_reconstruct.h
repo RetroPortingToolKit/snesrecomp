@@ -48,13 +48,19 @@ static void hd_reconstruct(SnesHdFrame *f) {
       }
       fit[c+4] = cross / square;
       fit[c] = sum / (hi-lo) - fit[c+4] * mid;
+      /* DSP tables may have horizon artifacts outside the fit interval.
+       * Judge residuals inside it, but reject poles/unbounded extrapolation
+       * throughout the complete band, including every subpixel row. */
       for (unsigned y = first; y < end && valid; ++y) {
         double denominator = fit[c] + fit[c+4] * f->lines[y].raster_line;
         double original = f->lines[y].matrix[c];
         if (!isfinite(denominator) || denominator * original <= 0 ||
             (denominator - .5*fit[c+4]) * original <= 0 ||
             (denominator + .5*fit[c+4]) * original <= 0 ||
-            fabs(1.0 / denominator - original) > fmax(2.0, fabs(original) * .015)) valid = false;
+            fabs(denominator - .5*fit[c+4]) < 1.0/65536 ||
+            fabs(denominator + .5*fit[c+4]) < 1.0/65536 ||
+            (y >= lo && y < hi &&
+             fabs(1.0 / denominator - original) > fmax(2.0, fabs(original) * .025))) valid = false;
       }
     }
     if (valid && varying) for (unsigned y = first; y < end; ++y) {

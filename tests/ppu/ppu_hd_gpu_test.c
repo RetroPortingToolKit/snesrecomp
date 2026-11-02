@@ -81,6 +81,18 @@ int main(void) {
     }
     SnesHdFrameDestroy(f);
   }
+  for (unsigned samples=2;samples<=4;++samples) for(unsigned flags=0;flags<16;flags+=5) {
+    SnesHdFrame *f=projection_fixture_sampling(flags,true,true,samples);
+    static const unsigned aa_scales[]={1,3,8};
+    for(unsigned s=0;s<countof(aa_scales);++s) {
+      unsigned scale=aa_scales[s];make_target(288*scale,64*scale);
+      CHECK(SnesHdGpuDraw(g,f,scale,288*scale,64*scale));
+      compare_roi(g,f,scale,20*scale,20*scale,32,32);
+      compare_visible(g,f,scale);comparisons++;
+    }
+    compare_visible(g,f,64);
+    SnesHdFrameDestroy(f);
+  }
   static const unsigned scales[] = {1, 2, 3, 4, 16, 32, 64};
   for (unsigned seed = 0; seed < 32; ++seed) {
     setup(); PpuSetExtraSpace(&p, 16); sprite((seed >> 1) & 3);
@@ -208,6 +220,28 @@ int main(void) {
   }
   CHECK(SnesHdFrameView(presented,&(SnesHdView){0}));
   SnesHdFrameDestroy(presented);
+  /* The resolve scratch must obey the same memory cap and restore caller GL
+   * state on both refusal and a reduced visible target. */
+  SnesHdFrame *sampled=projection_fixture_sampling(0,true,true,4);
+  glBindFramebuffer(GL_DRAW_FRAMEBUFFER,saved_fbo);glViewport(5,6,11,12);
+  CHECK(!SnesHdGpuRender(g,sampled,64,pw,ph,true,1,NULL,0,NULL,0,&image));
+  const size_t sample_budget=128u*1024u;
+  CHECK(SnesHdGpuRender(g,sampled,64,pw,ph,true,sample_budget,NULL,0,NULL,0,&image));
+  CHECK(image.width<pw && image.height<ph);
+  CHECK((uint64_t)image.width*image.height*4*17+
+      (uint64_t)289*image.height*4*16<=sample_budget);
+  glGetIntegerv(GL_DRAW_FRAMEBUFFER_BINDING,&restored_fbo);CHECK(saved_fbo==restored_fbo);
+  glGetIntegerv(GL_VIEWPORT,vp);CHECK(vp[0]==5 && vp[1]==6 && vp[2]==11 && vp[3]==12);
+  glBindFramebuffer(GL_FRAMEBUFFER,framebuffer);
+  glFramebufferTexture2D(GL_FRAMEBUFFER,GL_COLOR_ATTACHMENT0,GL_TEXTURE_2D,image.texture,0);
+  glReadPixels(0,0,image.width,image.height,GL_BGRA,GL_UNSIGNED_BYTE,visible);
+  for(unsigned y=0;y<image.height;++y)for(unsigned x=0;x<image.width;++x) {
+    uint32_t expected;unsigned px=(2*x+1)*288*64/(2*image.width);
+    unsigned py=(2*y+1)*64*64/(2*image.height);
+    CHECK(SnesHdFrameRenderRegion(sampled,64,px,py,1,1,&expected,4));
+    CHECK((visible[y*image.width+x]&0xffffff)==(expected&0xffffff));
+  }
+  SnesHdFrameDestroy(sampled);
   printf("GPU parity: %u ROI comparisons at1..64x (including33/40/48/56x) and shared target/foreground/state checks passed\n", comparisons);
   glDeleteFramebuffers(1, &framebuffer); glDeleteTextures(1, &target);
   SnesHdGpuDestroy(g); SDL_GL_DestroyContext(context); SDL_DestroyWindow(window); SDL_Quit();

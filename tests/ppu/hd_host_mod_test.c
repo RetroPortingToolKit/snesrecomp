@@ -32,6 +32,10 @@ int main(void) {
   assert(p->feature_set_option(p->ctx,f.package_id,f.id,"scale","64"));
   assert(!p->feature_set_option(p->ctx,f.package_id,f.id,"scale","65"));
   assert(g_config.mode7.scale==64 && g_config_dirty);
+  assert(p->feature_set_option(p->ctx,f.package_id,f.id,"supersample","4"));
+  assert(!p->feature_set_option(p->ctx,f.package_id,f.id,"supersample","5"));
+  assert(g_config.mode7.supersample==4);
+  assert(p->feature_option_get(p->ctx,f.package_id,f.id,1,&o) && !strcmp(o.value,"4"));
   assert(p->feature_enable(p->ctx,f.package_id,f.id,0) && !g_config.mode7.enabled);
   assert(p->commit(p->ctx,"test.sfc") && p->commit_netplay(p->ctx,"test.sfc") && commits==2);
   p=HdHostProvider(NULL);

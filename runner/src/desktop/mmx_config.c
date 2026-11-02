@@ -551,6 +551,8 @@ static bool HandleIniConfig(int section, const char *key, char *value) {
       return ParseBool(value, &g_config.new_renderer);
     } else if (StringEqualsNoCase(key, "Mode7Enabled")) {
       return ParseBool(value, &g_config.mode7.enabled);
+    } else if (StringEqualsNoCase(key, "Mode7Supersample")) {
+      return SnesHdParseSampling(value,&g_config.mode7.supersample);
     } else if (StringEqualsNoCase(key, "Mode7Scale")) {
       return SnesHdParseScale(value, &g_config.mode7.scale);
     } else if (StringEqualsNoCase(key, "IgnoreAspectRatio")) {
@@ -889,6 +891,7 @@ void WriteConfigFile(const char *filename) {
   CfgKV kvs[] = {
     { "Graphics", "Mode7Enabled" },
     { "Graphics", "Mode7Scale" },
+    { "Graphics", "Mode7Supersample" },
     { "Graphics", "WindowScale" },
     { "Graphics", "Fullscreen" },
     { "Graphics", "DisplayAspect" },
@@ -927,6 +930,7 @@ void WriteConfigFile(const char *filename) {
   const int N = (int)countof(kvs);
   CfgSet(kvs, N, "Graphics", "Mode7Enabled", "%d", g_config.mode7.enabled);
   CfgSet(kvs, N, "Graphics", "Mode7Scale", "%u", g_config.mode7.scale);
+  CfgSet(kvs, N, "Graphics", "Mode7Supersample", "%u", g_config.mode7.supersample);
   CfgSet(kvs, N, "Graphics", "WindowScale", "%d",
          g_config.window_scale ? g_config.window_scale : 3);
   CfgSet(kvs, N, "Graphics", "Fullscreen", "%d", (int)g_config.fullscreen);

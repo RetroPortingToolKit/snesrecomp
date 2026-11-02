@@ -14,7 +14,7 @@ static int HdFeatureGet(void *c, int i, RecompLauncherCModFeature *o) {
   return g_hd_parent.feature_get ? g_hd_parent.feature_get(c, i, o) : 0;
 }
 static int HdOption(void *c, const char *p, const char *f, int i, RecompLauncherCModOption *o) {
-  if (SnesHdModIdentity(p, f)) return SnesHdModOption(g_config.mode7.scale, i, o);
+  if (SnesHdModIdentity(p, f)) return SnesHdModOption(g_config.mode7.scale, g_config.mode7.supersample, i, o);
   return g_hd_parent.feature_option_get ? g_hd_parent.feature_option_get(c, p, f, i, o) : 0;
 }
 static int HdEnable(void *c, const char *p, const char *f, int e) {
@@ -23,11 +23,14 @@ static int HdEnable(void *c, const char *p, const char *f, int e) {
 }
 static int HdSetOption(void *c, const char *p, const char *f, const char *o, const char *v) {
   if (!SnesHdModIdentity(p, f)) return g_hd_parent.feature_set_option ? g_hd_parent.feature_set_option(c, p, f, o, v) : 0;
-  if (!o || strcmp(o, "scale") || !SnesHdParseScale(v, &g_config.mode7.scale)) return 0;
+  if (!o) return 0;
+  if (!strcmp(o,"scale")) { if(!SnesHdParseScale(v,&g_config.mode7.scale))return 0; }
+  else if(!strcmp(o,"supersample")) { if(!SnesHdParseSampling(v,&g_config.mode7.supersample))return 0; }
+  else return 0;
   g_config_dirty = true; return 1;
 }
 static int HdLegacyOption(void *c, const char *p, int i, RecompLauncherCModOption *o) {
-  if (SnesHdModIdentity(p, NULL)) return SnesHdModOption(g_config.mode7.scale, i, o);
+  if (SnesHdModIdentity(p, NULL)) return SnesHdModOption(g_config.mode7.scale, g_config.mode7.supersample, i, o);
   return g_hd_parent.option_get ? g_hd_parent.option_get(c, p, i, o) : 0;
 }
 static int HdLegacyEnable(void *c, const char *p, int e) {
