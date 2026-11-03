@@ -3453,6 +3453,62 @@ void ppu_rasterRenderEnd(Ppu *ppu) {
   ppu->oamBuffer = s_raster_port.oamBuffer;
 }
 
+typedef struct {
+  uint32_t magic, size, current, armed, completed;
+  PpuRasterField field[2];
+} PpuRasterState;
+#define PPU_RASTER_STATE_MAGIC 0x31524a50u /* PJR1 */
+
+size_t ppu_rasterStateSize(void) { return sizeof(PpuRasterState); }
+
+bool ppu_rasterStateValid(const void *data, size_t size) {
+  if (!data || size != sizeof(PpuRasterState)) return false;
+  PpuRasterState state;
+  memcpy(&state, data, sizeof state);
+  if (state.magic != PPU_RASTER_STATE_MAGIC || state.size != sizeof state ||
+      state.current > 1 || state.armed > 1 || state.completed > 1) return false;
+  for (unsigned f = 0; f < 2; ++f) {
+    const PpuRasterField *field = &state.field[f];
+    if (field->count < 0 || field->count > PPU_RASTER_MAX) return false;
+    for (int i = 0; i < field->count; ++i)
+      if (field->e[i].key >= 262 || !raster_reg_journaled(field->e[i].reg))
+        return false;
+  }
+  return true;
+}
+
+bool ppu_rasterStateSave(SaveLoadInfo *sli) {
+  if (s_raster_rendering) return false;
+  PpuRasterState state = {0};
+  state.magic = PPU_RASTER_STATE_MAGIC;
+  state.size = sizeof state;
+  state.current = s_raster_armed ? s_raster_cur : 0;
+  state.armed = s_raster_armed;
+  state.completed = s_raster_armed ? s_raster_have_completed : 0;
+  if (s_raster_armed) for (unsigned f = 0; f < 2; ++f) {
+    if (!s_raster_have_completed && f != (unsigned)s_raster_cur) continue;
+    state.field[f] = s_field[f];
+    /* Unused entries belong to discarded fields, not this snapshot. */
+    memset(state.field[f].e + state.field[f].count, 0,
+           (PPU_RASTER_MAX - state.field[f].count) * sizeof(PpuRasterEntry));
+  }
+  sli->func(sli, &state, sizeof state);
+  return true;
+}
+
+bool ppu_rasterStateLoad(SaveLoadInfo *sli) {
+  PpuRasterState state;
+  sli->func(sli, &state, sizeof state);
+  if (!ppu_rasterStateValid(&state, sizeof state)) return false;
+  memcpy(s_field, state.field, sizeof s_field);
+  s_raster_cur = state.current;
+  s_raster_armed = state.armed;
+  s_raster_have_completed = state.completed;
+  s_raster_rendering = s_raster_next = s_raster_hdmaen_pending = 0;
+  s_raster_render = NULL;
+  return true;
+}
+
 /* Snapshot of the journal as the renderer will consume it, for the debug
  * server. The journal is the difference between "what the game wrote" and
  * "what got drawn", so when a frame looks wrong this is the only place the two

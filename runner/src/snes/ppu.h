@@ -608,6 +608,11 @@ void ppu_rasterApplyLine(Ppu *ppu, int line);
 void ppu_rasterFieldBoundary(void);
 /* Disarm, for a machine rebuild (session reset). */
 void ppu_rasterReset(void);
+/* Build-specific journal context, captured between CPU/render passes. */
+size_t ppu_rasterStateSize(void);
+bool ppu_rasterStateSave(SaveLoadInfo *sli);
+bool ppu_rasterStateLoad(SaveLoadInfo *sli);
+bool ppu_rasterStateValid(const void *data, size_t size);
 
 /* Scanout latch bypass — set by the debug server around render_inject so an
  * injected OAM/CGRAM state is rendered as given. A frame-model host that
