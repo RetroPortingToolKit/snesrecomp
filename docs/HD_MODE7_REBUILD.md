@@ -282,3 +282,22 @@ and transitions. Requested120Hz save/load retains sampled HD correctness;
 state browser/rewind open-cancel checks pass in a private enabled profile.
 Committed rewind and the pre-existing22-cycle snapshot replay defect are not
 cleared by that check. No broad quality, sustained-rate or release claim follows.
+
+### Exact nearest presentation
+
+Engine `86fb6c19` shares the passthrough shader with game-owned HD presenters.
+Nearest HD output uses integer framebuffer pixel centers; floating interpolated
+UVs selected adjacent texels at exact boundaries. A patterned2048x1792 texture
+at768x576 reproduces180,224 legacy mismatches, now0;1280x720 also matches0.
+The772 existing GPU comparisons and shared Windows presenter object compile
+pass. Native/linear paths keep their existing UV policy; presets are separate.
+
+F-Zero `0faad3c` now matches44/44 actual full-raster and visible-sample output
+files, while all default visible files remain byte-identical to the earlier
+accepted binary. Current save/load/overlay and4P8xSS2 runtime gates pass.
+Same-host2P4xSS2 A/B/B/A is37.419,37.460,37.555,36.424FPS: neutral within
+variation. A later full-raster run gives35.877FPS, not an interleaved speedup
+claim. Maximum target allocations are37,013,080bytes visible versus97,771,520
+full. Setup/resize stalls remain, so sustained cadence is still unqualified.
+Owner passes both the prepared jump/landing and interpolated camera-alias clip.
+F-Zero now resolves HD-01/03/04/07; other quality/default/runtime areas remain.
