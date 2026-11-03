@@ -246,9 +246,9 @@ void snes_beam_frame_driver_draw_ppu_frame_observed(
   snes_set_hdma_beam_enabled(g_snes, false);
   ppu_rasterRenderBegin(g_ppu);
   dma_initHdma(g_snes->dma);
-  /* Hardware's V=0 init also performs each channel's first transfer before
-   * any visible pixel. */
-  dma_primeHdmaFirstLine(g_snes->dma);
+  /* H-blank on V=0 performs and consumes the first transfer before visible
+   * line 1. A preview leaves the address/count behind and repeats that slot. */
+  dma_doHdma(g_snes->dma);
   for (line = 1; line <= 224; line++) {
     uint8_t hdmaen;
     /* A split is written in H-blank after its line is drawn, so the previous
