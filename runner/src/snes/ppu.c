@@ -711,11 +711,14 @@ static inline void ClearBackdrop(const Ppu *ppu, PpuPixelPrioBufs *buf) {
 
 // mosaicModulo is sized for the logical 256-wide screen, but widescreen window
 // edges can fall in the border (negative on the left, >=256 on the right).
-// Clamp the lookup so the rare mosaic+widescreen combination stays in-bounds;
-// border mosaic alignment is approximate but never reads out of range. With
-// extra==0 (authentic) every index is already in [0,256), so this is a no-op.
-static inline uint8 PpuMosaicAt(Ppu *ppu, int i) {
-  return ppu->mosaicModulo[(unsigned)i < (unsigned)kPpuXPixels ? i : (i < 0 ? 0 : kPpuXPixels - 1)];
+// Extend the same mosaic grid periodically there. Clamping the coordinate
+// can make a window's first mosaic span nonpositive and overrun its buffer.
+static inline int PpuMosaicAt(Ppu *ppu, int i) {
+  if ((unsigned)i < (unsigned)kPpuXPixels) return ppu->mosaicModulo[i];
+  int size = PPU_mosaicSize(ppu);
+  int remainder = i % size;
+  if (remainder < 0) remainder += size;
+  return i - remainder;
 }
 
 /* Frame of the last OAM ring snapshot; see the note in ppu_runLine. Debug
@@ -795,7 +798,7 @@ static bool PpuOptimizedRendererHandlesMode(uint mode) {
   return mode <= 3 || mode == 7;
 }
 
-static void PpuPrepareMosaic(Ppu *ppu) {
+static void PpuUpdateMosaicTable(Ppu *ppu) {
   if (PPU_mosaicSize(ppu) != ppu->lastMosaicModulo) {
     int mod = PPU_mosaicSize(ppu);
     ppu->lastMosaicModulo = mod;
@@ -804,11 +807,17 @@ static void PpuPrepareMosaic(Ppu *ppu) {
       j = (j + 1 == mod ? 0 : j + 1);
     }
   }
+}
+
+static void PpuPrepareMosaic(Ppu *ppu) {
+  PpuUpdateMosaicTable(ppu);
   ppu->mosaicStartLine = 1;
 }
 
 static void PpuDrawVisibleLine(Ppu *ppu, int line, bool pixels, bool live) {
   PPU_T0_DECL
+  /* Frame-model and detached callers can start directly on a visible line. */
+  PpuUpdateMosaicTable(ppu);
   // Cache the brightness computation.
   if (PPU_brightness(ppu) != ppu->lastBrightnessMult) {
     uint8_t ppu_brightness = PPU_brightness(ppu);
@@ -1800,6 +1809,7 @@ static void PpuDrawBackground_4bpp_mosaic(Ppu *ppu,
     if (win.bits & (1 << windex))
       continue;  // layer is disabled for this window part
     int sx = win.edges[windex];
+    if (win.edges[windex + 1] <= sx) continue;
     int ws_sx = sx;
     PpuZbufType *dstz = dstbuf->data + sx + kPpuExtraLeftRight;
     PpuZbufType *dstz_end = dstbuf->data + win.edges[windex + 1] + kPpuExtraLeftRight;
@@ -2094,6 +2104,7 @@ static void PpuDrawBackground_2bpp_mosaic(Ppu *ppu, PpuPixelPrioBufs *dstbuf, in
     if (win.bits & (1 << windex))
       continue;  // layer is disabled for this window part
     int sx = win.edges[windex];
+    if (win.edges[windex + 1] <= sx) continue;
     PpuZbufType *dstz = dstbuf->data + sx + kPpuExtraLeftRight;
     PpuZbufType *dstz_end = dstbuf->data + win.edges[windex + 1] + kPpuExtraLeftRight;
     uint x = sx + ppu->hScroll[layer];
