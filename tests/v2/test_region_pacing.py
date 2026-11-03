@@ -197,12 +197,25 @@ static int check(const char *name, RecompReturn (*fn)(CpuState *),
     # would conceal accidentally starting a new nested interpreter frame.
     tail_helpers = (_c_function(bridge, "interp_tier_dispatch_tail_ex") +
                     _c_function(bridge, "interp_tier_dispatch_tail"))
+    timeline = _c_function((REPO / "runner/src/snes/interp_bridge.h").read_text(encoding="utf-8"),
+                           "interp_bridge_use_absolute_apu_timeline")
     credit_fixture = r'''
-struct Snes { bool cpuReadClocked; };
+typedef struct { int portTimeValid; } FakeApu;
+struct Snes { void *cart; FakeApu *apu; bool cpuReadClocked; };
 Snes *g_snes;
+static int s_interp_bridge_depth;
+static uint64 s_apu_pending_master;
+static int timeline_on, extended_on, sa1_on, shared_on;
+bool rtl_apu_frame_timeline_active(void) { return timeline_on; }
+bool rtl_apu_extended_frame_timing(void) { return extended_on; }
+bool cart_has_sa1(void *cart) { (void)cart; return sa1_on; }
+int cosim_apu_shared_clock(void) { return shared_on; }
+#define SNES_COSIM 1
 '''
     credit_fixture += _c_function((REPO / "runner/src/snes/snes.h").read_text(encoding="utf-8"),
                                   "snes_set_cpu_read_clocked")
+    credit_fixture += timeline + _c_function(bridge, "bridge_aot_credit_master")
+    credit_fixture += "\n#undef SNES_COSIM\n"
     main = ["int main(void) { int fails = 0;"]
     for name, code, m, x, dp in cases:
         values = ",".join(f"0x{b:02x}" for b in bytes.fromhex(code))
@@ -226,15 +239,40 @@ Snes *g_snes;
     Mmio_M1X1(&cpu);
     if (cpu.cycles || cpu.master_cycles || g_mmio_reads || g_balanced_calls != 1 || g_other_exits != 1) fails++;
   }
-''']
-    main += [r'''
-  { CpuState cpu = {0}; Snes snes = {0}; g_snes = &snes;
+  { CpuState cpu; memset(&cpu, 0, sizeof cpu);
+    FakeApu apu = {0}; Snes snes = {0, &apu}; g_snes = &snes;
+    g_cpu_aot_master_credit_hook = bridge_aot_credit_master;
+    s_interp_bridge_depth = 1; s_apu_pending_master = 0;
+    cpu_add_aot_master_cycles(&cpu, 11);       /* outer AOT instruction */
+    cpu.master_cycles += 7; s_apu_pending_master += 7; /* nested LLE opcode */
+    s_interp_bridge_depth = 2;
+    cpu_add_aot_master_cycles(&cpu, 13);       /* nested AOT instruction */
+    s_interp_bridge_depth = 1;
+    if (cpu.master_cycles != 31 || s_apu_pending_master != 31) fails++;
+    s_interp_bridge_depth = 0; cpu_add_aot_master_cycles(&cpu, 5);
+    if (s_apu_pending_master != 31) fails++;
+    s_interp_bridge_depth = 1; g_snes = NULL; cpu_add_aot_master_cycles(&cpu, 5);
+    if (s_apu_pending_master != 31) fails++;
+    g_snes = &snes; timeline_on = 1; sa1_on = 1; s_apu_pending_master = 0;
+    cpu_add_aot_master_cycles(&cpu, 6); /* existing SA-1 absolute clock */
+    if (s_apu_pending_master) fails++;
+    sa1_on = 0; extended_on = 1; apu.portTimeValid = 1;
+    cpu_add_aot_master_cycles(&cpu, 6); /* absolute mode still schedules sync */
+    if (s_apu_pending_master != 6) fails++;
+    timeline_on = 0; cpu_add_aot_master_cycles(&cpu, 7);
+    if (s_apu_pending_master != 13) fails++;
+    shared_on = 1; cpu_add_aot_master_cycles(&cpu, 8);
+    if (s_apu_pending_master != 13) fails++;
+    g_cpu_aot_master_credit_hook = NULL;
+    /* Real #247 scope helper must restore both unclocked and nested reads. */
+    snes.cpuReadClocked = false;
     cpu_read8_paced(&cpu, 0, 0x4212);
     if (snes.cpuReadClocked) fails++;
     snes.cpuReadClocked = true;
     cpu_read16_paced(&cpu, 0, 0x4212);
     if (!snes.cpuReadClocked) fails++;
-    g_snes = NULL;
+    uint64 before = cpu.master_cycles; cpu_add_aot_master_cycles(&cpu, 9);
+    if (cpu.master_cycles != before + 9 || s_apu_pending_master != 13) fails++;
   }
 ''']
     main += [extra_main]

@@ -631,6 +631,35 @@ static uint64_t s_lle_master_deadline = 0;
  * owning interpreter's guest call chain. */
 static int      s_interp_bridge_depth = 0;
 static int      s_interp_bounce_owner_depth = 0;
+/* Region-paced AOT reports each actual instruction-clock increment once.
+ * Queue it beside interpreted instruction credit; elapsed bounce spans also
+ * contain nested interpretation/refresh/DMA and cannot safely be re-credited.
+ * The existing bridge rollback state already owns this pending accumulator. */
+static void bridge_aot_credit_master(CpuState *cpu, uint64 clocks) {
+    (void)cpu;
+    if (!s_interp_bridge_depth || !g_snes) return;
+#ifdef SNES_COSIM
+    if (cosim_apu_shared_clock()) return;
+#endif
+    /* Match the interpreted opcode's scheduling predicate. Extended-frame
+     * absolute mode still needs a pending marker to schedule boundary sync;
+     * bridge_apu_flush owns the absolute/relative choice and does not convert
+     * this marker to relative catch-up when the absolute mapping is valid. */
+    if (!rtl_apu_extended_frame_timing() &&
+        interp_bridge_use_absolute_apu_timeline(
+            rtl_apu_frame_timeline_active(), cart_has_sa1(g_snes->cart), false)) return;
+    s_apu_pending_master += clocks;
+}
+/* The preceding native instruction is complete here. Credit callbacks run
+ * during fetch/data/stack phases and cannot flush at a safe opcode boundary.
+ * Apply the interpreter's existing batch threshold before another native
+ * instruction or a host-deadline unwind; never infer or add elapsed credit. */
+static void bridge_aot_instruction_boundary(CpuState *cpu) {
+    if (!s_interp_bridge_depth || !g_snes || !s_apu_pending_master) return;
+    if (s_apu_pending_master < bridge_bounce_flush_thresh()) return;
+    snes_sync_master_clock(g_snes, cpu->master_cycles);
+    bridge_apu_flush(cpu);
+}
 /* Count of AOT bodies entered through the paired ABI. Exposed so a host
  * can tell a genuinely-compiled run from one that quietly interpreted
  * everything -- without it, a wall-clock tier comparison is unreadable. */
@@ -2527,8 +2556,13 @@ static int _interp_run_core(CpuState *cpu, uint32_t entry_pc24,
                 if ((stop_pcs[si] & 0x7FFFFF) == pc_norm) {
                     sync_interp_to_cpu(&in, cpu);
                     bridge_apu_flush(cpu);
-                    if (cpu_dispatch_has_entry(cpu, pc_before))
+                    if (cpu_dispatch_has_entry(cpu, pc_before)) {
                         cpu_dispatch_pc_paired(cpu, pc_before, 0);
+                        if (s_apu_pending_master) {
+                            snes_refresh_charge();
+                            cpu_aot_instruction_boundary(cpu);
+                        }
+                    }
                     return 1;
                 }
             }
@@ -2944,6 +2978,10 @@ static int _interp_run_core(CpuState *cpu, uint32_t entry_pc24,
                                  (uint16_t)_sp_pre);
                 g_interp_wlog_pc24 = 0;
                 RecompReturn _air = cpu_dispatch_pc_paired(cpu, target, _fs);
+                if (s_apu_pending_master) {
+                    snes_refresh_charge();
+                    cpu_aot_instruction_boundary(cpu);
+                }
                 s_interp_bounce_owner_depth = _saved_bounce_owner;
                 s_interp_bounce_recomp_base = _saved_bounce_base;
                 g_interp_apu_driving = _apu_drv;
@@ -3268,6 +3306,8 @@ static int interp_bridge_run_ex2(CpuState *cpu, uint32_t entry_pc24,
                                  int reset_cap_on_bounce,
                                  const uint32_t *stop_pcs, int n_stop,
                                  int stop_on_rti) {
+    g_cpu_aot_master_credit_hook = bridge_aot_credit_master;
+    g_cpu_aot_instruction_boundary_hook = bridge_aot_instruction_boundary;
     int _saved = g_interp_apu_driving;
 #ifdef SNES_COSIM
     /* Shared APU clock: leave the flag clear so interpreted HW touches pace
