@@ -9,6 +9,30 @@ int main(void) {
   Dma dma = {0};
   s.dma = &dma;
   s.hdmaBeamOff = true;
+  /* Legacy block-clocked polling still supplies its compatibility tick. */
+  g_interp_apu_driving = 0;
+  s.hPos = 960; s.vPos = 12;
+  assert(snes_readReg(&s, 0x4212) == 0x40 && s.hPos == 1024);
+  /* A native caller that charged a real read sees that clock, with no extra
+   * 64 clocks. Nested scopes restore the prior caller's ownership. */
+  bool previous = snes_set_cpu_read_clocked(&s, true);
+  assert(!previous);
+  bool nested = snes_set_cpu_read_clocked(&s, true);
+  assert(nested);
+  snes_set_cpu_read_clocked(&s, nested);
+  s.hPos = 960; s.vPos = 12; s.beamMasterLast = 100;
+  snes_sync_master_clock(&s, 112);
+  assert(snes_readReg(&s, 0x4212) == 0 && s.hPos == 972);
+  snes_sync_master_clock(&s, 164);
+  assert(snes_readReg(&s, 0x4212) == 0x40 && s.hPos == 1024);
+  s.hPos = 1352; s.vPos = 224; s.beamMasterLast = 100;
+  s.autoJoyRead = true;
+  snes_sync_master_clock(&s, 120);
+  assert(snes_readReg(&s, 0x4212) == 0x81);
+  assert(s.hPos == 8 && s.vPos == 225 && s.autoJoyTimer == 4216);
+  snes_set_cpu_read_clocked(&s, previous);
+  assert(!s.cpuReadClocked);
+  s.autoJoyRead = false; s.autoJoyTimer = 0; s.inVblank = false;
   g_interp_apu_driving = 1;
   /* Every possible intermediate master-clock read remains observable, even
    * though a frame-model host owns the HDMA transfer at HBlank. */

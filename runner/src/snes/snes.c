@@ -271,6 +271,7 @@ void snes_reset(Snes* snes, bool hard) {
   snes->vTimer = 0x1ff;
   snes->inNmi = false;
   snes->rdnmiPending = false;
+  snes->cpuReadClocked = false;
   snes->inIrq = false;
   snes->inVblank = false;
   snes->autoJoyRead = false;
@@ -695,9 +696,11 @@ uint8_t snes_readReg(Snes* snes, uint16_t adr) {
       /* Whole-program interpreter runs already advance the beam from every
        * opcode's measured master clocks. Applying the legacy static-recomp
        * polling tick as well doubles time in $4212 wait loops (SMRPG's boot
-       * fades completed in half the reference frame count). */
+       * fades completed in half the reference frame count). Independently
+       * clocked native reads have the same contract, without changing APU
+       * ownership through g_interp_apu_driving. */
       extern int g_interp_apu_driving;
-      if (!g_interp_apu_driving)
+      if (!g_interp_apu_driving && !snes->cpuReadClocked)
         snes_advance_beam(snes, 64, false);
       // Bit 7 = vblank. The real frame loop drives vblank via inNmi, not
       // inVblank (inVblank is never set true), so on the static-recomp
