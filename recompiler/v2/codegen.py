@@ -534,7 +534,7 @@ def _reg(r: Reg) -> str:
 
 # ── SegRef → C address expressions ──────────────────────────────────────────
 
-def _segref_addr_expr(seg: SegRef) -> tuple:
+def _segref_addr_expr(seg: SegRef, pointer_expr: Optional[str] = None) -> tuple:
     """Resolve a SegRef into (bank_expr, addr_expr) C strings.
 
     bank_expr / addr_expr reference cpu state where appropriate. The
@@ -588,9 +588,15 @@ def _segref_addr_expr(seg: SegRef) -> tuple:
     if k == SegKind.STACK:
         return ("0x00", f"(uint16)(cpu->S + {seg.offset:#06x})")
     if k == SegKind.DP_INDIRECT:
-        # ((D + dp) word) (+ Y if indirect-Y), DB-bank.
         ptr_addr = f"(uint16)(cpu->D + {seg.offset:#06x})"
-        return ("cpu->DB", f"(uint16)(cpu_read16(cpu, 0x00, {ptr_addr}){idx})")
+        pointer = pointer_expr or f"cpu_read16(cpu, 0x00, {ptr_addr})"
+        if seg.index is None:
+            return ("cpu->DB", pointer)
+        # Index the full DB:pointer address, not just its low word. The
+        # access emitter supplies a cached pointer so the bank and low-word
+        # expressions cannot repeat a guest bus read.
+        eff24 = f"(((uint32)cpu->DB << 16) + (uint32){pointer}{idx})"
+        return (f"(uint8)({eff24} >> 16)", f"(uint16){eff24}")
     if k == SegKind.DP_INDIRECT_LONG:
         # ((D + dp) long) (+ Y).  The indexed form adds Y to the full
         # 24-bit pointer, including carry into the bank.  Keeping the pointer's
@@ -621,22 +627,51 @@ def _segref_addr_expr(seg: SegRef) -> tuple:
         return ("cpu->DB", f"cpu_read16(cpu, 0x00, {ptr_addr})")
     if k == SegKind.STACK_REL_INDIRECT_Y:
         ptr_addr = f"(uint16)(cpu->S + {seg.offset:#06x})"
-        return ("cpu->DB",
-                f"(uint16)(cpu_read16(cpu, 0x00, {ptr_addr}) + cpu->Y)")
+        pointer = pointer_expr or f"cpu_read16(cpu, 0x00, {ptr_addr})"
+        eff24 = f"(((uint32)cpu->DB << 16) + (uint32){pointer} + cpu->Y)"
+        return (f"(uint8)({eff24} >> 16)", f"(uint16){eff24}")
     raise ValueError(f"unsupported SegKind {k}")
 
 
 # ── Per-op handlers ─────────────────────────────────────────────────────────
 
+def _cached_segref_addr(seg: SegRef, name: str) -> tuple:
+    """Materialize indexed indirect pointers once before splitting bank/word."""
+    if ((seg.kind == SegKind.DP_INDIRECT and seg.index is not None)
+            or seg.kind == SegKind.STACK_REL_INDIRECT_Y):
+        base = "cpu->D" if seg.kind == SegKind.DP_INDIRECT else "cpu->S"
+        prefix = [f"uint16 {name} = cpu_read16(cpu, 0x00, "
+                  f"(uint16)({base} + {seg.offset:#06x}));"]
+        return prefix, *_segref_addr_expr(seg, name)
+    return [], *_segref_addr_expr(seg)
+
+
 def _emit_read(op: Read) -> List[str]:
-    bank, addr = _segref_addr_expr(op.seg)
-    return [f"{widths.ctype(op.width)} {_v(op.out)} = "
+    prefix, bank, addr = _cached_segref_addr(op.seg, f"_ptr{op.out.vid}")
+    if prefix and op.width == 2:
+        # The high data byte also carries at xx:FFFF. cpu_read16's generic
+        # API intentionally wraps within a bank, as required by pointer reads.
+        return prefix + [f"uint16 {_v(op.out)};", f"if ({addr} == 0xffff) {{",
+            f"  uint8 _lo = cpu_read8(cpu, {bank}, 0xffff);",
+            f"  {_v(op.out)} = (uint16)(_lo | ((uint16)cpu_read8(cpu, "
+            f"(uint8)({bank} + 1), 0) << 8));", "} else {",
+            f"  {_v(op.out)} = cpu_read16(cpu, {bank}, {addr});", "}"]
+    return prefix + [f"{widths.ctype(op.width)} {_v(op.out)} = "
             f"{widths.read_fn(op.width)}(cpu, {bank}, {addr});"]
 
 
 def _emit_write(op: Write) -> List[str]:
-    bank, addr = _segref_addr_expr(op.seg)
-    return [f"{widths.write_fn(op.width)}(cpu, {bank}, {addr}, {_v(op.src)});"]
+    prefix, bank, addr = _cached_segref_addr(op.seg, "_ptr")
+    line = f"{widths.write_fn(op.width)}(cpu, {bank}, {addr}, {_v(op.src)});"
+    if prefix and op.width == 2:
+        return ["{"] + ["  " + s for s in prefix] + [
+            f"  if ({addr} == 0xffff) {{",
+            f"    cpu_write8(cpu, {bank}, 0xffff, (uint8){_v(op.src)});",
+            f"    cpu_write8(cpu, (uint8)({bank} + 1), 0, (uint8)({_v(op.src)} >> 8));",
+            "  } else {", "    " + line, "  }", "}"]
+    if prefix:
+        return ["{"] + ["  " + s for s in prefix + [line]] + ["}"]
+    return [line]
 
 
 def _emit_readreg(op: ReadReg) -> List[str]:
