@@ -259,3 +259,26 @@ These are candidate results, not an overall quality, motion, shared-game or
 release acceptance. F-Zero's twelve-area matrix remains authoritative. Raw
 comparison inputs/settings, image metrics and binaries are retained in the
 owner's isolated quality workspace; the F-Zero evidence index records identities.
+
+### Validated band fallback and bounded motion acceptance
+
+Engine `07716db3` retains interior reciprocal anchors first and tries the
+previous whole-band regression only if that fit fails the same residual,
+pole/sign and subrow guards. Actual SMK coefficient tables cover both opposite
+quantization cases. Anchors alone reduced corrected rows664 versus historical
+1909; the corrected fit reaches2241 across27 sampled frames while retaining
+sampled native parity and historical final video/logic hashes/master cycles.
+The pinned SMK consumer `d302c30` was regenerated with the supported native
+analyzer and passed3600 strict DSP1LLE frames. This is not adoption into its
+custom HD host or a cross-game performance claim.
+
+All302 retained F-Zero4x SS1/SS2 images remain byte-identical. The owner accepts
+both151-frame stock cornering clips as comparable to bsnes-hd. F-Zero HD-03's
+straight/turning geometry checkpoint is resolved; its other ten areas remain
+open. Seven PPU suites,772 real-GPU comparisons, F-Zero renderer tests, Ubuntu
+GCC13.3 NDEBUG reconstruction and the GPU-disabled object compile pass.
+Current4P8x/SS2 and fresh2P actual GPU gates pass driving, contacts, resizing
+and transitions. Requested120Hz save/load retains sampled HD correctness;
+state browser/rewind open-cancel checks pass in a private enabled profile.
+Committed rewind and the pre-existing22-cycle snapshot replay defect are not
+cleared by that check. No broad quality, sustained-rate or release claim follows.
