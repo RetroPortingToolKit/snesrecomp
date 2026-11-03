@@ -7,6 +7,7 @@ foreach(variant IN ITEMS default trace0 trace1 cosim)
   add_executable(dsp_output_${variant}
     "${ROOT}/tests/audio/dsp_output_voices_test.c"
     "${ROOT}/runner/src/snes/dsp.c"
+    "${ROOT}/runner/src/snes/dsp_clock.c"
     "${ROOT}/runner/src/snes/dsp_shadow.c"
     "${ROOT}/runner/src/snes/audio_shadow.c"
     "${ROOT}/runner/src/audio_trace.c")

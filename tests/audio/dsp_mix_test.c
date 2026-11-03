@@ -30,12 +30,14 @@ typedef struct Snapshot {
   SaveLoadInfo info;
   unsigned char bytes[sizeof(Dsp)];
   bool loading;
+  size_t position;
 } Snapshot;
 static void transfer(SaveLoadInfo *info, void *data, size_t size) {
   Snapshot *snapshot = (Snapshot *)info;
-  assert(size <= sizeof(snapshot->bytes));
-  if (snapshot->loading) memcpy(data, snapshot->bytes, size);
-  else memcpy(snapshot->bytes, data, size);
+  assert(size <= sizeof(snapshot->bytes) - snapshot->position);
+  if (snapshot->loading) memcpy(data, snapshot->bytes + snapshot->position, size);
+  else memcpy(snapshot->bytes + snapshot->position, data, size);
+  snapshot->position += size;
 }
 
 int main(void) {
@@ -79,13 +81,14 @@ int main(void) {
       reference->suppressOutput = native->suppressOutput = (tick & 64u) != 0;
     }
     if (!(tick & 1023u)) {
-      Snapshot a = {{transfer, NULL}, {0}, false}, b = a;
+      Snapshot a = {.info = {transfer, NULL}}, b = a;
       reference_dsp_saveload(reference, &a.info); dsp_saveload(native, &b.info);
       assert(!memcmp(a.bytes, b.bytes, sizeof(a.bytes)));
       reference->channel[0].gain ^= 0x400;
       native->channel[0].gain ^= 0x400;
       reference->sampleRead++; native->sampleRead++;
       a.loading = b.loading = true;
+      a.position = b.position = 0;
       reference_dsp_saveload(reference, &a.info); dsp_saveload(native, &b.info);
     }
     uint32_t old_write = native->sampleWrite;

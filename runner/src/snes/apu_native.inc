@@ -37,6 +37,7 @@ static void apu_runCycles_native(Apu *apu, uint32_t clocks) {
   while (clocks) {
     apu_drainPortQueue(apu);
     if (!apu->cpuCyclesLeft) {
+      if (apu_holdOpcode(apu)) { apu->held = true; return; }
 #if SNESRECOMP_SPC_DIAGNOSTICS
       g_spc_pc_histogram[apu->spc->pc]++;
       if (apu->spc->pc > g_spc_pc_max_seen)

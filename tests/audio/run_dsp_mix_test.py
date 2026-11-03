@@ -34,7 +34,8 @@ for arm in ('reference', 'native'):
     run(base + defines + ['-c', str(source), '-o', str(build / (arm + '.o'))])
 binary = build / ('dsp_mix_test.exe' if os.name == 'nt' else 'dsp_mix_test')
 sources = [root / 'tests/audio/dsp_mix_test.c', build / 'reference.o',
-           build / 'native.o', root / 'runner/src/snes/dsp_shadow.c',
+           build / 'native.o', root / 'runner/src/snes/dsp_clock.c',
+           root / 'runner/src/snes/dsp_shadow.c',
            root / 'runner/src/snes/audio_shadow.c', root / 'runner/src/audio_trace.c']
 gc = '-Wl,-dead_strip' if sys.platform == 'darwin' else '-Wl,--gc-sections'
 run(base + [str(path) for path in sources] + [gc, '-lm', '-o', str(binary)])
