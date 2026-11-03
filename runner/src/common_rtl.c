@@ -6,6 +6,7 @@
 #include "common_rtl.h"
 #include "save_state_slots.h"
 #include "apu_frame_clock.h"
+#include "audio_capture_cursor.h"
 #include "common_cpu_infra.h"
 #include "snes/interp_bridge.h"
 #include <setjmp.h>
@@ -56,6 +57,22 @@ static void rtl_reset_audio_delivery(void);
 /* See RtlSetSpeculativeFrame in common_rtl.h. Run-ahead drives this on every
  * build, netplay or not, so it must not sit behind the netplay guard. */
 static bool g_rtl_speculative_frame;
+static bool s_guest_scope_active;
+#if defined(_MSC_VER)
+static __declspec(thread) bool s_guest_main_thread;
+#else
+static _Thread_local bool s_guest_main_thread;
+#endif
+static RtlStateExtraBoundCallback *s_state_extra_bound;
+void RtlSetStateExtraBound(RtlStateExtraBoundCallback *callback) {s_state_extra_bound=callback;}
+static uint32_t s_guest_scope_budget;
+static jmp_buf s_guest_scope_jump;
+
+bool RtlGuestScopeActive(void) { return s_guest_scope_active; }
+void RtlGuestScopeCheckpoint(void) {
+  if (s_guest_scope_active && !--s_guest_scope_budget)
+    longjmp(s_guest_scope_jump, 1);
+}
 
 uint8 g_ram[0x20000];
 uint8 *g_sram;
@@ -91,6 +108,7 @@ void RtlRemoveApuPortReadObserver(RtlApuPortReadObserver observer) {
   }
 }
 uint8 rtl_apu_port_observers_read(uint16 reg, uint8 value) {
+  if (s_guest_scope_active) return value;
   for (int i = 0; i < s_apu_read_observer_count; i++)
     if (s_apu_read_observers[i](reg, &value)) break;
   return value;
@@ -117,6 +135,7 @@ void RtlRemoveApuPortObserver(RtlApuPortObserver observer) {
 }
 
 int rtl_apu_port_observers_filter(uint16 reg, uint8 value) {
+  if (s_guest_scope_active) return 1;
   int consumed = 0;
   for (int i = 0; i < s_apu_port_observer_count; i++)
     if (s_apu_port_observers[i] && s_apu_port_observers[i](reg, value))
@@ -685,28 +704,47 @@ static void recomp_dspreg_trace_tick(void) {
  * appends them as raw s16 stereo PCM (~32040 Hz, pre-host-resample) — the exact
  * game-agnostic audio the recomp generates, to align against bsnes's
  * BSNES_COSIM_DSPOUT stream. Env-gated (SNESRECOMP_DSPOUT). */
-static void recomp_dspout_capture(void) {
-    static int enabled = -1;
-    static FILE *f = NULL;
-    static uint32_t prev_write = 0;
-    static int primed = 0;
-    extern Snes *g_snes;
-    if (enabled < 0) {
+static int s_dspout_enabled = -1;
+static AudioCaptureCursor s_dspout_cursor;
+static void recomp_dspout_begin_frame(void) {
+    if (g_rtl_speculative_frame) return;
+    if (s_dspout_enabled < 0) {
         const char *p = getenv("SNESRECOMP_DSPOUT");
-        enabled = (p && p[0]) ? 1 : 0;
+        s_dspout_enabled = p && p[0];
     }
-    if (!enabled) return;
-    if (!g_snes || !g_snes->apu || !g_snes->apu->dsp) return;
-    if (!f) { f = fopen(getenv("SNESRECOMP_DSPOUT"), "wb"); if (!f) { enabled = 0; return; } }
+    if (s_dspout_enabled && g_snes && g_snes->apu && g_snes->apu->dsp)
+        audio_capture_begin(&s_dspout_cursor, RtlStateGeneration(),
+                            g_snes->apu->dsp->sampleWrite);
+}
+static void recomp_dspout_capture(void) {
+    static FILE *f;
+    if (g_rtl_speculative_frame || !s_dspout_enabled ||
+        !g_snes || !g_snes->apu || !g_snes->apu->dsp) return;
+    if (!f) { f = fopen(getenv("SNESRECOMP_DSPOUT"), "wb"); if (!f) {
+        fprintf(stderr, "[dsp_capture] cannot open requested output\n");
+        exit(EXIT_FAILURE);
+    } }
     Dsp *dsp = g_snes->apu->dsp;
-    uint32_t w = dsp->sampleWrite;
-    if (!primed) { prev_write = w; primed = 1; return; }
-    for (uint32_t s = prev_write; s != w; s++) {
-        uint32_t idx = (s & (DSP_SAMPLE_RING - 1)) * 2;
-        int16 pair[2] = { dsp->sampleBuffer[idx], dsp->sampleBuffer[idx + 1] };
-        fwrite(pair, sizeof(int16), 2, f);
+    uint32_t first, count;
+    if (!audio_capture_span(&s_dspout_cursor, RtlStateGeneration(),
+                            dsp->sampleWrite, DSP_SAMPLE_RING, &first, &count)) {
+        fprintf(stderr, "[dsp_capture] invalid epoch or overwritten sample span: %u\n", count);
+        exit(EXIT_FAILURE);
     }
-    prev_write = w;
+    for (uint32_t n = 0; n < count; ++n) {
+        uint32_t idx = ((first + n) & (DSP_SAMPLE_RING - 1)) * 2;
+        int16 pair[2] = { dsp->sampleBuffer[idx], dsp->sampleBuffer[idx + 1] };
+        if (fwrite(pair, sizeof(int16), 2, f) != 2) {
+            fprintf(stderr, "[dsp_capture] sample write failed\n");
+            exit(EXIT_FAILURE);
+        }
+    }
+    /* Detect buffered I/O errors before a qualification run can accept a
+     * truncated capture. This diagnostic is opt-in; failure is a failed run. */
+    if (fflush(f) != 0) {
+        fprintf(stderr, "[dsp_capture] sample flush failed\n");
+        exit(EXIT_FAILURE);
+    }
 }
 
 /* ── Multiplayer seats ───────────────────────────────────────────────────
@@ -773,7 +811,9 @@ static void RtlApplyMultitapEnv(void) {
 }
 
 bool RtlRunFrame(uint32 inputs) {
+  s_guest_main_thread = true;
   if (g_rtl_game_info->frame_begin && !g_rtl_game_info->frame_begin(&inputs)) return false;
+  recomp_dspout_begin_frame();
 #ifdef SNES_COSIM
   /* Co-sim (dev/diagnostics only): connect the coordinator once, before the
    * first frame executes. Boot ran deterministically already; the co-sim
@@ -1061,6 +1101,8 @@ size_t RtlSaveSnapshotToMemory(void *data, size_t capacity) {
 
 static bool s_rollback_load;
 bool RtlIsRollbackLoad(void) {return s_rollback_load;}
+static bool s_rollback_save;
+bool RtlIsRollbackSave(void) {return s_rollback_save;}
 
 bool RtlLoadSnapshotFromMemory(const void *data, size_t size) {
   if (!data || size > RTL_SAV_MAX_SIZE) return false;
@@ -1207,7 +1249,10 @@ size_t RtlRollbackSnapshotBound(void) {
   size_t exec = 0;
   if (g_rtl_game_info && g_rtl_game_info->exec_state_bound)
     exec = g_rtl_game_info->exec_state_bound();
-  return (1u << 20) + sizeof(uint32) + exec + sizeof(RtlRollbackResidue);
+  size_t extra=s_state_extra_bound?s_state_extra_bound():0;
+  size_t base=(1u << 20)+sizeof(uint32)+sizeof(RtlRollbackResidue);
+  if(exec>SIZE_MAX-base||extra>SIZE_MAX-base-exec)return SIZE_MAX;
+  return base+exec+extra;
 }
 
 /* ── resync hooks ─────────────────────────────────────────────────────────
@@ -1321,6 +1366,67 @@ static void rtl_rb_residue_apply(const RtlRollbackResidue *r) {
 }
 
 static RtlRollbackResidue s_loaded_execution;
+
+bool RtlGuestScopeRun(RtlGuestScopeCallback callback, void *context,
+                      uint32_t budget) {
+  /* Count/save core devices directly. Calling the public save/load API here
+   * would serialize the world recursively, reset host audio, and invalidate
+   * presentation caches on every neighboring-area tick. */
+  if (!callback || !budget || !g_snes || !s_guest_main_thread || s_guest_scope_active ||
+      g_recomp_stack_top || cpu_interrupt_context_active() ||
+      !interp_bridge_guest_scope_idle()) return false;
+  MemorySli memory = {{&memory_sli_func}, NULL, 0, 0, true, false};
+  RtlApuLock();
+  uint32_t old_version = snes_saveload_get_version();
+  snes_saveload_set_version(RTL_SAV_VERSION);
+  snes_saveload(g_snes, &memory.base);
+  size_t bytes = memory.position;
+  uint8_t *saved = malloc(bytes);
+  Ppu *ppu = malloc(sizeof(*ppu));
+  if (!saved || !ppu || memory.error) {
+    free(saved); free(ppu);
+    snes_saveload_set_version(old_version);
+    RtlApuUnlock(); return false;
+  }
+  memory.data = saved; memory.capacity = bytes; memory.position = 0;
+  snes_saveload(g_snes, &memory.base);
+  RtlRollbackResidue residue;
+  rtl_rb_residue_capture(&residue);
+  Snes snes = *g_snes;
+  Dma dma = *g_snes->dma;
+  *ppu = *g_ppu;
+  const bool speculative = g_rtl_speculative_frame;
+  CpuTailcallContextSave tailcall;
+  cpu_tailcall_context_save(&tailcall);
+  extern const char *g_last_recomp_func;
+  const char *last_function = g_last_recomp_func;
+  volatile bool ok = false;
+  if (!memory.error) {
+    s_guest_scope_active = true;
+    ppu_setGuestScope(true);
+    s_guest_scope_budget = budget;
+    g_rtl_speculative_frame = true;
+    if (!setjmp(s_guest_scope_jump)) ok = callback(context);
+    s_guest_scope_active = false;
+    ppu_setGuestScope(false);
+    interp_bridge_guest_scope_unwind();
+    cpu_guest_scope_unwind();
+    g_last_recomp_func = last_function;
+    cpu_tailcall_context_restore(&tailcall);
+    g_rtl_speculative_frame = speculative;
+    memory.position = 0; memory.is_save = false; memory.error = false;
+    snes_saveload(g_snes, &memory.base);
+    *g_snes = snes;
+    *g_snes->dma = dma;
+    *g_ppu = *ppu;
+    rtl_rb_residue_apply(&residue);
+    if (memory.error) ok = false;
+  }
+  snes_saveload_set_version(old_version);
+  free(ppu); free(saved);
+  RtlApuUnlock();
+  return ok;
+}
 static bool s_loaded_execution_valid;
 /* A v6 savestate predates apu_frame_clock; it loads with the live clock, as
  * every savestate did before v7. */
@@ -1370,7 +1476,10 @@ size_t RtlRollbackSaveToMemory(void *data, size_t capacity) {
 
   if (!data || !g_snes)
     return 0;
+  const bool previous_rollback_save=s_rollback_save;
+  s_rollback_save=true;
   guest = RtlSaveSnapshotToMemory(data, capacity);
+  s_rollback_save=previous_rollback_save;
   if (guest == 0)
     return 0;
   used = guest;
@@ -1622,6 +1731,7 @@ void WriteReg(uint16 reg, uint8 value) {
     return;
   }
   if (reg >= 0x2000 && reg < 0x2008) {
+    if (s_guest_scope_active) return;
     if (msu1_enabled()) msu1_write(reg, value);
     debug_server_on_reg_write(reg, value);
     return;
@@ -1636,7 +1746,7 @@ void WriteReg(uint16 reg, uint8 value) {
     ppu_write(g_ppu, reg & 0xff, value);   /* journals itself */
   } else if (reg >= 0x2140 && reg < 0x2180) {
 #if SNESRECOMP_ENABLE_MODS
-    if (snes_mod_runtime_filter_apu_write_c(reg, value)) {
+    if (!s_guest_scope_active && snes_mod_runtime_filter_apu_write_c(reg, value)) {
       debug_server_on_reg_write(reg, value);
       return;
     }
@@ -1680,7 +1790,7 @@ uint8 ReadRegOpenBus(uint16 reg, uint8 open_bus) {
     return sa1_cpu_read(g_snes->cart->sa1, 0, reg, open_bus);
   }
   if (reg >= 0x2000 && reg < 0x2008) {
-    return msu1_enabled() ? msu1_read(reg) : open_bus;
+    return !s_guest_scope_active && msu1_enabled() ? msu1_read(reg) : open_bus;
   }
   if (reg == 0x2137)
     snes_sync_master_clock(g_snes, g_cpu.master_cycles);
@@ -1936,6 +2046,7 @@ uint64_t apuw_prof_calls = 0;
 double apuw_prof_ms = 0.0;
 #endif
 void RtlApuWrite(uint16 adr, uint8 val) {
+  if (s_guest_scope_active) return;
   assert(adr >= 0x2140 && adr <= 0x217f);
   if (rtl_apu_port_observers_filter(adr, val)) return;
   uint8_t port = (uint8_t)(adr & 3);

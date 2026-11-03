@@ -17,10 +17,13 @@ gcc $CFLAGS -I runner/src/snes \
 ./build/interp816_test
 
 echo ""
-echo "=== Phase 1: interp_bridge contract ==="
-gcc $CFLAGS -DSNESRECOMP_TIER2_TEST=1 -I runner/src -I runner/src/snes \
-    tests/interp816/bridge_test.c \
-    runner/src/snes/interp816.c runner/src/snes/interp_bridge.c \
-    runner/src/snes/tier2_capture.c runner/src/sha256.c \
-    runner/src/snes/cx4.c -lm -o build/bridge_test
-exec ./build/bridge_test
+for fused in 0 1; do
+    echo "=== Phase 1: interp_bridge contract (fused ROM reads $fused) ==="
+    gcc $CFLAGS -DSNESRECOMP_TIER2_TEST=1 \
+        -DSNESRECOMP_INTERP_FUSED_ROM_READ=$fused -I runner/src -I runner/src/snes \
+        tests/interp816/bridge_test.c \
+        runner/src/snes/interp816.c runner/src/snes/interp_bridge.c \
+        runner/src/snes/tier2_capture.c runner/src/sha256.c \
+        runner/src/snes/cx4.c -lm -o build/bridge_test_$fused
+    ./build/bridge_test_$fused
+done

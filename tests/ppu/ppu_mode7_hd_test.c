@@ -255,6 +255,31 @@ static void test_fractional_scanout(void) {
         check_guards(288, scale, HEIGHT);
       }
 }
+static void test_owned_jobs(void) {
+  setup(); PpuSetExtraSpace(&p, 16); bind(288, 4);
+  SnesHdFrame *frame = SnesHdFrameCreate(288, HEIGHT);
+  CHECK(frame && PpuSetHdFrameCapture(&p, frame));
+  CHECK(!SnesHdFrameSeal(frame));
+  for (unsigned y = 1; y <= HEIGHT; ++y) ppu_runLine(&p, y);
+  CHECK(PpuSetHdFrameCapture(&p, NULL) && SnesHdFrameSeal(frame));
+  CHECK(!PpuSetHdFrameCapture(&p, frame));
+  SnesHdView view; CHECK(SnesHdFrameView(frame, &view));
+  CHECK(view.source_count == 1 && view.owned_bytes < 200000);
+  uint32_t row[288 * 4];
+  for (unsigned y = 0; y < HEIGHT * 4; ++y) {
+    CHECK(SnesHdFrameRenderRegion(frame, 4, 0, y, 288 * 4, 1, row, sizeof(row)));
+    CHECK(!memcmp(row, hd + 1 + y * PITCH, sizeof(row)));
+  }
+  /* The consumer must be independent of all subsequent live PPU writes. */
+  uint32_t before[64], after[64];
+  CHECK(SnesHdFrameRenderRegion(frame, 64, 100, 50, 8, 8, before, 32));
+  memset(p.vram, 0, sizeof(p.vram)); memset(p.cgram, 0, sizeof(p.cgram));
+  memset(p.m7matrix, 0, sizeof(p.m7matrix));
+  CHECK(SnesHdFrameRenderRegion(frame, 64, 100, 50, 8, 8, after, 32));
+  CHECK(!memcmp(before, after, sizeof(before)));
+  CHECK(SnesHdFrameView(frame, &view) && view.source_count == 1);
+  SnesHdFrameDestroy(frame);
+}
 int main(void) {
   test_detail_and_isolation();
   test_fallbacks_and_capacity();
@@ -263,6 +288,27 @@ int main(void) {
   test_sampler();
   test_bounded_sampler();
   test_fractional_scanout();
+  test_owned_jobs();
+  {
+    setup(); PpuSetExtraSpace(&p,16);
+    SnesHdCapture *capture = SnesHdCaptureCreate(); CHECK(capture);
+    CHECK(SnesHdCaptureBind(capture,&p,HEIGHT));
+    p.bgmode=1;
+    for(unsigned line=1;line<=HEIGHT;++line)ppu_runLine(&p,line);
+    CHECK(!SnesHdCaptureFrame(capture));
+    p.bgmode=7;
+    for(unsigned line=1;line<=HEIGHT;++line)ppu_runLine(&p,line);
+    const SnesHdFrame *ready=SnesHdCaptureFrame(capture);CHECK(ready);
+    SnesHdView view;CHECK(SnesHdFrameView(ready,&view) && view.source_count==1);
+    uint32_t native[288];CHECK(SnesHdFrameRenderRegion(ready,1,0,0,288,1,native,sizeof(native)));
+    CHECK(!memcmp(native,p.renderBuffer,sizeof(native)));
+    ppu_reset(&p);CHECK(!SnesHdCaptureFrame(capture) && p.hdCapture==capture);
+    SnesHdCaptureDestroy(capture);CHECK(!p.hdCapture);
+    SnesHdSettings settings=SnesHdDefaultSettings();CHECK(settings.enabled && settings.scale==8);
+    unsigned scale=8;CHECK(SnesHdParseScale("64",&scale) && scale==64);
+    CHECK(!SnesHdParseScale("65",&scale) && scale==64);
+    CHECK(!SnesHdParseScale("9999999999999999999999",&scale));
+  }
   puts("HD Mode 7: detail, isolation, bounds, fallbacks, sprites, raster state, fractional scanout and 512 composition cases passed");
   return 0;
 }

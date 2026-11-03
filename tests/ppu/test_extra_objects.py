@@ -26,7 +26,7 @@ def test_extra_objects():
         subprocess.run([cc, '-std=c11', '-O2', '-DSNESRECOMP_REVERSE_DEBUG=0',
                         '-Irunner/src', '-Irunner/src/snes',
                         'tests/ppu/ppu_extra_object_test.c',
-                        'runner/src/snes/ppu.c', 'runner/src/snes/ppu_legacy.c',
+                        'runner/src/snes/ppu.c', 'runner/src/snes/hd_jobs.c', 'runner/src/snes/ppu_legacy.c',
                         '-lm', '-o', str(exe)], cwd=ROOT, check=True)
         subprocess.run([str(exe)], check=True)
 

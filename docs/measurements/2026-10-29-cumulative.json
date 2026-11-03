@@ -1,0 +1,276 @@
+{
+  "schema": "snesrecomp.cumulative-campaign-results.v1",
+  "issue": "beads-8wg.2.185",
+  "campaign": "beads-2wy8.1",
+  "status": "MEASURED_INDEPENDENTLY_REVIEWED",
+  "created_utc": "2026-10-30T04:47:14.433395+00:00",
+  "scope": "Before the first Oct22 recent raster/native/HLE campaign changes through owner-passed be97; not before every historic SNES optimization.",
+  "baseline_selection": {
+    "path": "G:\\Temp\\Codex\\snesrecomp\\native-hle-r8-20261029\\cumulative-20261030\\baseline-selection.json",
+    "sha256": "cf50b5b84d8daaa4a9af5275aadbd168d7aa9a73fcb6ab0db0988b96501cf02f"
+  },
+  "baseline_audit": {
+    "path": "G:\\Temp\\Codex\\snesrecomp\\native-hle-r8-20261029\\cumulative-20261030\\baseline-audit.json",
+    "sha256": "fd7dafe3945baa774aa0606bda7710064dab8dc5b44c96bfa052e97f724ba90e"
+  },
+  "protocol": "Per-game ABBA,2 samples perarm on the same host/configuration. Actual GUI/title renderer,softwareSDL/dummy video,active audio emulation with muted dummy output,16:9 342x224. Frame-based warmup,uncapped,no runahead. Two-boundary processCPU timing; separate visual/state captures. Original production executables unchanged.",
+  "metric": "Median all-thread processCPU milliseconds per simulated-and-presented gameplay frame. Lower is better; this measures headroom, not native gameplay pacing.",
+  "limits": [
+    "Recent October22 campaign baseline, not before all historical optimizations; original per-title engine/UI pins retained.",
+    "Full-package comparison includes title fixes and dependency changes. Per-game packages and workloads differ; do not pool or attribute gains to one shared component.",
+    "Two samples perarm and one route/scene pergame. Host load and clock variation retained. No all-scene,netplay,original-Xbox,memory-budget or other-platform guarantee.",
+    "Metroid sample uses SERVER/i5-4670; MMX and SMW use local9800X3D. No absolute cross-game speed comparison.",
+    "Metroid retains adaptive widescreen; only invalid world pixels beyond the authored room boundary are clipped."
+  ],
+  "games": [
+    {
+      "game": "Mega Man X",
+      "key": "mmx",
+      "package": "Complete recent October22 campaign package plus intervening correctness and dependency changes; per-title packages differ.",
+      "sources": {
+        "before": {
+          "title": "99450ef9017fb0a873a6201c85cf9e416da21398",
+          "engine": "7a67b85724a8b3be5b592c5a7578e35f739c81fb",
+          "ui": "7c635c6b366a6e0d5d3c913a7fce6ec04dd9f256"
+        },
+        "after": {
+          "title": "9fd759890bb4678d9b02dd23d7bb29113f798806",
+          "engine": "be97ec06cb9e492c58c3f84a90798f3139eb85d2",
+          "ui": "3f1d6f122a58823614abce14f5b86f4d165a629c"
+        }
+      },
+      "binaries": {
+        "before": {
+          "production": {
+            "path": "G:\\Temp\\Codex\\snesrecomp\\native-hle-r8-20261029\\cumulative-20261030\\mmx\\binaries\\before\\MegaManXSNESRecomp.exe",
+            "sha256": "c68c48a534cbddee64b0411038bb754257758c0b5613c64822d5b49d33ef2841"
+          },
+          "timed": {
+            "path": "G:\\Temp\\Codex\\snesrecomp\\native-hle-r8-20261029\\cumulative-20261030\\mmx\\binaries\\before\\CumulativeMmx.exe",
+            "sha256": "5463c2117680ed95e70c363a0d437a5d08a52eb0621dcb31a7aa7c98ae3bd2b5"
+          }
+        },
+        "after": {
+          "production": {
+            "path": "G:\\Temp\\Codex\\snesrecomp\\native-hle-r8-20261029\\integration\\binaries\\mmx\\candidate-detached\\MegaManXSNESRecomp.exe",
+            "sha256": "1be74a9c40289c8c9e46fe90f2d94572566210739d5d4b709be1b7e629c8c49f"
+          },
+          "timed": {
+            "path": "G:\\Temp\\Codex\\snesrecomp\\native-hle-r8-20261029\\cumulative-20261030\\mmx\\binaries\\after\\CumulativeMmx.exe",
+            "sha256": "250992d049b4ac219abaff619ac50a5d49cb21190014683e99edb40554770093"
+          }
+        }
+      },
+      "host": "DESKTOP-HN15M1H",
+      "affinity": "0x1",
+      "host_hardware": {
+        "cpu": "AMD Ryzen7 9800X3D",
+        "physical_cores": 8,
+        "logical_cpus": 16
+      },
+      "workload": "Freshboot intro-stage movement/shooting route, frames2801..6000 after2800 warmup frames.",
+      "visual_evidence": "Presented342x224 RGB, final CPU and full WRAM/VRAM/CGRAM match exactly at capture;16441 nonblack margin pixels each.",
+      "variation": "Candidate CPU sample range/min is9.23%; both AB and BA improve by66.7% and69.7%.",
+      "CPU_ms_per_frame_samples": {
+        "before": [
+          6.07421875,
+          6.103515625
+        ],
+        "after": [
+          2.021484375,
+          1.8505859375
+        ]
+      },
+      "median_CPU_ms_per_frame": {
+        "before": 6.0888671875,
+        "after": 1.93603515625
+      },
+      "CPU_reduction_percent": 68.2036888532478,
+      "paired_CPU_reductions_percent": [
+        66.72025723472669,
+        69.67999999999999
+      ],
+      "worker_result": {
+        "path": "G:\\Temp\\Codex\\snesrecomp\\native-hle-r8-20261029\\cumulative-20261030\\mmx\\evidence\\result.json",
+        "sha256": "e50324c64379d1bb008da03c673b451dcf003c344a4f631eecea11c09cbf7d6d"
+      },
+      "independent_review": {
+        "path": "G:\\Temp\\Codex\\snesrecomp\\native-hle-r8-20261029\\cumulative-20261030\\mmx\\independent-review.json",
+        "sha256": "8bbafad34b82ffedb01f239f95b219b243633c8f76e9fd9260787a0043ac8c11"
+      },
+      "raw_samples": {
+        "path": "G:\\Temp\\Codex\\snesrecomp\\native-hle-r8-20261029\\cumulative-20261030\\mmx\\evidence\\raw-cost-samples.json",
+        "sha256": "1de14e36abcbb5232e528cafc5b7ff8c84322869cd997b50e657d0aae087fbad"
+      }
+    },
+    {
+      "game": "Super Metroid",
+      "key": "sm",
+      "package": "Complete recent October22 campaign package plus intervening correctness and dependency changes; per-title packages differ.",
+      "sources": {
+        "before": {
+          "title": "b4bedbdf2b77569b6b71255513ff735392b80ac9",
+          "engine": "3cbd954f4fced471314d82206c2d4333b7a68d1e",
+          "ui": "cac2b8f4aaa5d1061c6b8f2c3ed7e73c46b0400e"
+        },
+        "after": {
+          "title": "459ae36e3fa58a86e30bbd2130cd1c8b076bab23",
+          "engine": "be97ec06cb9e492c58c3f84a90798f3139eb85d2",
+          "ui": "ef13e3f1a00e2e03f91e4b74343fd77213f8a234"
+        }
+      },
+      "binaries": {
+        "before": {
+          "production": {
+            "path": "G:\\Temp\\Codex\\snesrecomp\\native-hle-r8-20261029\\cumulative-20261030\\sm\\build-baseline\\SuperMetroidSNESRecomp.exe",
+            "sha256": "db3ef16e71424ee444d8a54c459763e93d0a0fef47ae89eee70654be3a612571"
+          },
+          "timed": {
+            "path": "G:\\Temp\\Codex\\snesrecomp\\native-hle-r8-20261029\\cumulative-20261030\\sm\\diagnostic\\before\\SuperMetroidSNESRecomp.exe",
+            "sha256": "3bd23b2e75a738743ed10137ae26c06095fdfb2f8e14a30668a9c6aa76f1a8b6"
+          }
+        },
+        "after": {
+          "production": {
+            "path": "G:\\Temp\\Codex\\snesrecomp\\native-hle-r8-20261029\\integration\\build-sm\\SuperMetroidSNESRecomp.exe",
+            "sha256": "6420f29d1e48a919c8121f6c0b3cd04270121ed4466cd1ee8de79d9d96ccb608"
+          },
+          "timed": {
+            "path": "G:\\Temp\\Codex\\snesrecomp\\native-hle-r8-20261029\\cumulative-20261030\\sm\\diagnostic\\after\\SuperMetroidSNESRecomp.exe",
+            "sha256": "067af3a2eb87368652f1db15f85bb6dbeb36631112bfa0d675ed8d5d928106b7"
+          }
+        }
+      },
+      "host": "SERVER",
+      "affinity": "0x1",
+      "host_hardware": {
+        "target": "server",
+        "cpu": {
+          "Name": "Intel(R) Core(TM) i5-4670 CPU @ 3.40GHz",
+          "NumberOfCores": 4,
+          "NumberOfLogicalProcessors": 4,
+          "MaxClockSpeed": 3401
+        },
+        "queried_after_timing": true
+      },
+      "workload": "Freshboot native door loader into stationary room0x9E9F, frames3601..12000 after3600 warmup frames; SERVER i5-4670.",
+      "visual_evidence": "Native center and valid right margin RGB exact.6521 left-strip pixels become black outside authored room (worldX-43..-1). Full source capture exact; boot/transition trace differences end before timing.",
+      "variation": "Within-arm CPU spread about1.5%; wall throughput is more variable. Includes room-matte correctness change and its saved work.",
+      "CPU_ms_per_frame_samples": {
+        "before": [
+          7.868303571428571,
+          7.991071428571429
+        ],
+        "after": [
+          3.1882440476190474,
+          3.236607142857143
+        ]
+      },
+      "median_CPU_ms_per_frame": {
+        "before": 7.9296875,
+        "after": 3.212425595238095
+      },
+      "CPU_reduction_percent": 59.488623035421064,
+      "paired_CPU_reductions_percent": [
+        59.479905437352244,
+        59.49720670391061
+      ],
+      "worker_result": {
+        "path": "G:\\Temp\\Codex\\snesrecomp\\native-hle-r8-20261029\\cumulative-20261030\\sm\\result.json",
+        "sha256": "22a9ff7d10dd87e0a9736eafda40b430bb4d1c49c6cde37c74690c88b8058afa"
+      },
+      "independent_review": {
+        "path": "G:\\Temp\\Codex\\snesrecomp\\native-hle-r8-20261029\\cumulative-20261030\\sm\\independent-review.json",
+        "sha256": "82d9bc2c3c7f762da5726b8bb45a1306f605e4a8d4a7b992e954091f44496f7e"
+      },
+      "raw_samples": {
+        "path": "G:\\Temp\\Codex\\snesrecomp\\native-hle-r8-20261029\\cumulative-20261030\\sm\\cost-results.json",
+        "sha256": "7248da63e42ae0df3b8786489fc3a6fba00533dfb84e87b5dfcd12d3575bda07"
+      }
+    },
+    {
+      "game": "Super Mario World",
+      "key": "smw",
+      "package": "Complete recent October22 campaign package plus intervening correctness and dependency changes; per-title packages differ.",
+      "sources": {
+        "before": {
+          "title": "6c773d6453638bfb56322a5eca419386446eae40",
+          "engine": "fa018f395d56f8ed3f29ba9cb6c5925c82f15f8f",
+          "ui": "01bff9477e6847b2281260f0a9526a85e45b8ba2"
+        },
+        "after": {
+          "title": "5210523d048890919f8e6ae58f230a8e58c4197f",
+          "engine": "be97ec06cb9e492c58c3f84a90798f3139eb85d2",
+          "ui": "01bff9477e6847b2281260f0a9526a85e45b8ba2"
+        }
+      },
+      "binaries": {
+        "after": {
+          "production": {
+            "path": "G:\\Temp\\Codex\\snesrecomp\\native-hle-r8-20261029\\integration\\binaries\\smw\\candidate-detached\\SuperMarioWorldSNESRecomp.exe",
+            "sha256": "aa60ba6de604060df92c3738b158f594ac250b29be1c4177bb726a01577498e9"
+          },
+          "timed": {
+            "path": "G:\\Temp\\Codex\\snesrecomp\\native-hle-r8-20261029\\cumulative-20261030\\smw\\instrumented\\after\\SuperMarioWorldSNESRecomp.exe",
+            "sha256": "2c3118886284aa2707f7be2f5987181da67dea135d41a5f9d76af5115fa3a542"
+          }
+        },
+        "before": {
+          "production": {
+            "path": "G:\\Temp\\Codex\\snesrecomp\\native-hle-r8-20261029\\cumulative-20261030\\smw\\binaries\\before\\SuperMarioWorldSNESRecomp.exe",
+            "sha256": "7fffb1b478567e91b77623b42a9ab3f67f68c6631d7253ba1c6bbe0c4d6d875f"
+          },
+          "timed": {
+            "path": "G:\\Temp\\Codex\\snesrecomp\\native-hle-r8-20261029\\cumulative-20261030\\smw\\instrumented\\before\\SuperMarioWorldSNESRecomp.exe",
+            "sha256": "4965fd65c765ac05ce516577da6a97734db2c58aad2bad30f3027c790a759ac9"
+          }
+        }
+      },
+      "host": "DESKTOP-HN15M1H",
+      "affinity": "0x10",
+      "host_hardware": {
+        "cpu": "AMD Ryzen7 9800X3D",
+        "physical_cores": 8,
+        "logical_cpus": 16
+      },
+      "workload": "Freshboot scrolling gameplay level0x2A, complete frames2601..3000 after2600 warmup frames; separate3300-frame capture warmup perarm.",
+      "visual_evidence": "Full presented342x224 capture and WRAM/VRAM/CGRAM/PPU/frame records byte-identical; gameplay camera moves0->242.",
+      "variation": "AB and BA CPU reductions19.08% and17.72%; wall throughput varies more with host load.",
+      "CPU_ms_per_frame_samples": {
+        "before": [
+          5.9375,
+          6.171875
+        ],
+        "after": [
+          4.8046875,
+          5.078125
+        ]
+      },
+      "median_CPU_ms_per_frame": {
+        "before": 6.0546875,
+        "after": 4.94140625
+      },
+      "CPU_reduction_percent": 18.387096774193544,
+      "paired_CPU_reductions_percent": [
+        19.07894736842105,
+        17.721518987341767
+      ],
+      "worker_result": {
+        "path": "G:\\Temp\\Codex\\snesrecomp\\native-hle-r8-20261029\\cumulative-20261030\\smw\\result.json",
+        "sha256": "8654f50a4c4a5d1697768ebc80c34156fa2e02b597bfcdc0789102d49ca2c180"
+      },
+      "independent_review": {
+        "path": "G:\\Temp\\Codex\\snesrecomp\\native-hle-r8-20261029\\cumulative-20261030\\smw\\independent-review.json",
+        "sha256": "5052fc4905411ed8083d4bc802e3a3f342d317208dd05e772c15e5b40bc4465a"
+      },
+      "raw_samples": {
+        "path": "G:\\Temp\\Codex\\snesrecomp\\native-hle-r8-20261029\\cumulative-20261030\\smw\\evidence\\raw-samples.json",
+        "sha256": "175511f3354ec171ce6acac59fbbf6730b171ba84226a6edfe9b4b478a3630d8"
+      }
+    }
+  ],
+  "evidence_retention": "Raw runs,captures,source/probe identities,commands,telemetry,binaries and audit scripts retained under this campaign evidence root. Build objects/source worktrees retained through campaign closeout for provenance; audit before cleanup. Duplicate SERVER scratch removed after local hash verification. No delivery-folder builds or owner saves changed.",
+  "repeated_owner_checks": false,
+  "owner_launches": false,
+  "new_runtime_changes": false
+}

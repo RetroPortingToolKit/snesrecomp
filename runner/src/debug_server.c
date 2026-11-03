@@ -5045,16 +5045,28 @@ static void cmd_ppu_lines(const char *args) {
 /* The last frame a title-owned presenter composed. See the declaration in
  * debug_server.h: without it every capture of an enhanced render path shows
  * the authentic 256-column raster instead of what the player is looking at. */
-static uint8_t s_composed_pixels[kPpuBufWidth * 4 * 240];
+static uint8_t *s_composed_pixels, *s_screenshot_pixels;
+static size_t s_composed_capacity, s_screenshot_capacity;
 static int s_composed_width, s_composed_height;
 static int s_composed_valid;
 
 void debug_server_note_composed_frame(const void *argb, unsigned pitch,
                                       int width, int height) {
-    if (!argb || width <= 0 || width > kPpuBufWidth || height <= 0 ||
-        height > 240 || pitch < (unsigned)width * 4) {
+    lock_mutex();
+    /* Host surfaces can extend both axes beyond console/OAM coordinates.
+     * Bound trace-only capture storage independently of PPU dimensions. */
+    if (!argb || width <= 0 || width > 8192 || height <= 0 ||
+        height > 8192 || (size_t)width*height > 32u*1024u*1024u ||
+        pitch < (unsigned)width * 4) {
         s_composed_valid = 0;
+        unlock_mutex();
         return;
+    }
+    size_t bytes=(size_t)width*height*4;
+    if(bytes>s_composed_capacity) {
+        uint8_t *p=realloc(s_composed_pixels,bytes);
+        if(!p){s_composed_valid=0;unlock_mutex();return;}
+        s_composed_pixels=p;s_composed_capacity=bytes;
     }
     for (int y = 0; y < height; y++)
         memcpy(s_composed_pixels + (size_t)y * (size_t)width * 4,
@@ -5062,6 +5074,7 @@ void debug_server_note_composed_frame(const void *argb, unsigned pitch,
     s_composed_width = width;
     s_composed_height = height;
     s_composed_valid = 1;
+    unlock_mutex();
 }
 
 static void cmd_screenshot(const char *args) {
@@ -5070,22 +5083,39 @@ static void cmd_screenshot(const char *args) {
     // Copy the most recently presented buffer. Re-rendering here loses
     // presentation-only layers (including widescreen coprocessor pixels) and
     // can observe forced blank after the frame has already been drawn.
-    static uint8_t scr_pixels[kPpuBufWidth * 4 * 240];
+    uint8_t *scr_pixels;
     int w, h;
     const char *source;
+    lock_mutex();
     if (s_composed_valid) {
         // A title-owned compositor is running: ITS surface is what the player
         // sees, and the PPU's render buffer is only the input it composed from.
         w = s_composed_width;
         h = s_composed_height;
         source = "composed";
+        size_t bytes=(size_t)w*h*4;
+        if(bytes>s_screenshot_capacity) {
+            uint8_t*p=realloc(s_screenshot_pixels,bytes);
+            if(!p){unlock_mutex();send_fmt("{\"error\":\"capture allocation failed\"}");return;}
+            s_screenshot_pixels=p;s_screenshot_capacity=bytes;
+        }
+        scr_pixels=s_screenshot_pixels;
         memcpy(scr_pixels, s_composed_pixels, (size_t)w * (size_t)h * 4);
+        unlock_mutex();
     } else {
+        unlock_mutex();
         uint8_t *saved_render_buffer = g_ppu->renderBuffer;
         uint32_t saved_render_pitch  = g_ppu->renderPitch;
         w = 256 + 2 * g_ppu->extraLeftRight;
         h = 224;
         source = "ppu";
+        size_t bytes=(size_t)w*h*4;
+        if(bytes>s_screenshot_capacity) {
+            uint8_t*p=realloc(s_screenshot_pixels,bytes);
+            if(!p){send_fmt("{\"error\":\"capture allocation failed\"}");return;}
+            s_screenshot_pixels=p;s_screenshot_capacity=bytes;
+        }
+        scr_pixels=s_screenshot_pixels;
         if (!saved_render_buffer || saved_render_pitch < (uint32_t)w * 4) {
             send_fmt("{\"error\":\"render buffer unavailable\"}");
             return;
@@ -5126,7 +5156,7 @@ static void cmd_screenshot(const char *args) {
     fwrite(hdr, 1, 54, f);
 
     // Write pixels (BGRA -> BGR, top to bottom)
-    uint8_t row_buf[kPpuBufWidth * 3 + 4];
+    uint8_t row_buf[8192 * 3 + 4];
     memset(row_buf, 0, sizeof(row_buf));
     for (int y = 0; y < h; y++) {
         const uint8_t *src = scr_pixels + y * w * 4;
@@ -9220,6 +9250,10 @@ void debug_server_shutdown(void) {
     if (s_listen_sock != SOCKET_INVALID) CLOSESOCKET(s_listen_sock);
     s_client_sock = SOCKET_INVALID;
     s_listen_sock = SOCKET_INVALID;
+
+    free(s_composed_pixels);s_composed_pixels=NULL;s_composed_capacity=0;
+    free(s_screenshot_pixels);s_screenshot_pixels=NULL;s_screenshot_capacity=0;
+    s_composed_valid=0;
 
 #ifdef _WIN32
     if (InterlockedCompareExchange(&s_mutex_state, 2, 2) == 2) {

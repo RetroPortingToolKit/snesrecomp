@@ -4,6 +4,7 @@
 #include <string.h>
 
 #include "common_cpu_infra.h"
+#include "common_rtl.h"
 #include "cpu_state.h"
 #include "snes/cart.h"
 #include "snes/snes.h"
@@ -71,6 +72,10 @@ void cpu_state_init(CpuState *cpu, uint8_t *ram) {
   (void)ram;
 }
 void rtl_reset_host_pacing(void) {}
+/* This stack-diagnostics harness has no isolated guest timeline. */
+void RtlGuestScopeCheckpoint(void) {}
+bool RtlGuestScopeActive(void) { return false; }
+void RtlSetStateExtraBound(RtlStateExtraBoundCallback *callback) { (void)callback; }
 
 /* PE linkers can retain SnesInit even with section GC. This harness exercises
  * stack diagnostics only; fail loudly if an initialization dependency runs. */

@@ -11,6 +11,13 @@
 #include "apu.h"
 #include "../audio_trace.h"
 
+#ifndef SNESRECOMP_DSP_NATIVE_MIX
+#define SNESRECOMP_DSP_NATIVE_MIX 0
+#endif
+#if SNESRECOMP_DSP_NATIVE_MIX != 0 && SNESRECOMP_DSP_NATIVE_MIX != 1
+#error SNESRECOMP_DSP_NATIVE_MIX must be 0 or 1
+#endif
+
 static const int rateValues[32] = {
   0, 2048, 1536, 1280, 1024, 768, 640, 512,
   384, 320, 256, 192, 160, 128, 96, 80,
@@ -58,7 +65,8 @@ const uint16_t gaussValues[512] = {
 };
 
 static void dsp_cycleChannel(Dsp* dsp, int ch);
-static void dsp_handleEcho(Dsp* dsp, int* outputL, int* outputR, bool audit);
+static void dsp_handleEcho(Dsp* dsp, int* outputL, int* outputR, bool audit,
+                           int inL, int inR);
 static void dsp_handleGain(Dsp* dsp, int ch, bool liveGain);
 static void dsp_decodeBrr(Dsp* dsp, int ch);
 /* dsp_getSample is declared non-static in dsp.h (dev faithful reference uses it). */
@@ -106,12 +114,22 @@ static void output_voices(Dsp *dsp, int *left, int *right) {
   /* FIR sample history follows firValues; preserve it while importing the
    * canonical cursor, coefficients and complete current voice outputs. */
   memcpy(mirror->ram, dsp->ram, offsetof(Dsp, firBufferL) - offsetof(Dsp, ram));
-  int l = 0, r = 0;
+  int l = 0, r = 0, echoL = 0, echoR = 0;
   for (unsigned i = 0; i < 8; ++i) {
     DspChannel *channel = &mirror->channel[i];
     if (!(filter->voices & (1u << i))) channel->sampleOut = 0;
-    l += (channel->sampleOut * channel->volumeL) >> 6;
-    r += (channel->sampleOut * channel->volumeR) >> 6;
+    int left = (channel->sampleOut * channel->volumeL) >> 6;
+    int right = (channel->sampleOut * channel->volumeR) >> 6;
+    l += left;
+    r += right;
+#if SNESRECOMP_DSP_NATIVE_MIX
+    if (channel->echoEnable) {
+      echoL += left;
+      echoR += right;
+      echoL = echoL < -32768 ? -32768 : echoL > 32767 ? 32767 : echoL;
+      echoR = echoR < -32768 ? -32768 : echoR > 32767 ? 32767 : echoR;
+    }
+#endif
     l = l < -32768 ? -32768 : l > 32767 ? 32767 : l;
     r = r < -32768 ? -32768 : r > 32767 ? 32767 : r;
   }
@@ -119,7 +137,7 @@ static void output_voices(Dsp *dsp, int *left, int *right) {
   r = (r * mirror->masterVolumeR) >> 7;
   l = l < -32768 ? -32768 : l > 32767 ? 32767 : l;
   r = r < -32768 ? -32768 : r > 32767 ? 32767 : r;
-  dsp_handleEcho(mirror, &l, &r, false);
+  dsp_handleEcho(mirror, &l, &r, false, echoL, echoR);
   *left = l; *right = r;
 }
 
@@ -237,10 +255,26 @@ void dsp_set_output_suppressed(Dsp *dsp, bool suppressed) {
 void dsp_cycle(Dsp* dsp) {
   int totalL = 0;
   int totalR = 0;
+  int echoL = 0, echoR = 0;
   for(int i = 0; i < 8; i++) {
     dsp_cycleChannel(dsp, i);
+#if SNESRECOMP_DSP_NATIVE_MIX
+    /* A voice's scaled contribution is shared by the dry and echo buses.
+     * Accumulate each bus in voice order, with its original saturation. */
+    int left = (dsp->channel[i].sampleOut * dsp->channel[i].volumeL) >> 6;
+    int right = (dsp->channel[i].sampleOut * dsp->channel[i].volumeR) >> 6;
+    totalL += left;
+    totalR += right;
+    if (dsp->channel[i].echoEnable) {
+      echoL += left;
+      echoR += right;
+      echoL = echoL < -0x8000 ? -0x8000 : (echoL > 0x7fff ? 0x7fff : echoL);
+      echoR = echoR < -0x8000 ? -0x8000 : (echoR > 0x7fff ? 0x7fff : echoR);
+    }
+#else
     totalL += (dsp->channel[i].sampleOut * dsp->channel[i].volumeL) >> 6;
     totalR += (dsp->channel[i].sampleOut * dsp->channel[i].volumeR) >> 6;
+#endif
     totalL = totalL < -0x8000 ? -0x8000 : (totalL > 0x7fff ? 0x7fff : totalL); // clamp 16-bit
     totalR = totalR < -0x8000 ? -0x8000 : (totalR > 0x7fff ? 0x7fff : totalR); // clamp 16-bit
   }
@@ -261,7 +295,7 @@ void dsp_cycle(Dsp* dsp) {
   }
   int routedL = totalL, routedR = totalR;
   output_voices(dsp, &routedL, &routedR);
-  dsp_handleEcho(dsp, &totalL, &totalR, true);
+  dsp_handleEcho(dsp, &totalL, &totalR, true, echoL, echoR);
   DspOutputFilter *filter = dsp->output_filter;
   if (filter && filter->voices != 0xff && !filter->suspended) { totalL = routedL; totalR = routedR; }
   if(dsp->mute) {
@@ -288,7 +322,8 @@ void dsp_cycle(Dsp* dsp) {
   dsp->evenCycle = !dsp->evenCycle;
 }
 
-static void dsp_handleEcho(Dsp* dsp, int* outputL, int* outputR, bool audit) {
+static void dsp_handleEcho(Dsp* dsp, int* outputL, int* outputR, bool audit,
+                           int inL, int inR) {
   // get value out of ram
   uint16_t adr = dsp->echoBufferAdr + dsp->echoBufferIndex * 4;
   dsp->firBufferL[dsp->firBufferIndex] = (
@@ -327,7 +362,8 @@ static void dsp_handleEcho(Dsp* dsp, int* outputL, int* outputR, bool audit) {
   *outputL = outL < -0x8000 ? -0x8000 : (outL > 0x7fff ? 0x7fff : outL); // clamp 16-bit
   *outputR = outR < -0x8000 ? -0x8000 : (outR > 0x7fff ? 0x7fff : outR); // clamp 16-bit
   // get echo input
-  int inL = 0, inR = 0;
+#if !SNESRECOMP_DSP_NATIVE_MIX
+  inL = 0; inR = 0;
   for(int i = 0; i < 8; i++) {
     if(dsp->channel[i].echoEnable) {
       inL += (dsp->channel[i].sampleOut * dsp->channel[i].volumeL) >> 6;
@@ -336,6 +372,7 @@ static void dsp_handleEcho(Dsp* dsp, int* outputL, int* outputR, bool audit) {
       inR = inR < -0x8000 ? -0x8000 : (inR > 0x7fff ? 0x7fff : inR); // clamp 16-bit
     }
   }
+#endif
   // write this to ram
   inL += (sumL * dsp->feedbackVolume) >> 7;
   inR += (sumR * dsp->feedbackVolume) >> 7;

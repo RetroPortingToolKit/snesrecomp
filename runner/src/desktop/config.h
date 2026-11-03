@@ -6,6 +6,7 @@
 #include "types.h"
 #include "sdl_compat.h"
 #include "display_aspect.h"
+#include "snes/hd_jobs.h"
 
 /* Controller seats the desktop host can drive: two console ports, or up to
  * eight with a Super Multitap in each (docs/MULTITAP.md). */
@@ -95,6 +96,7 @@ typedef struct Config {
   uint8 window_scale;
   bool enable_audio;
   bool linear_filtering;
+  SnesHdSettings mode7; /* Local presentation; defaults to GPU 8x. */
   uint8 output_method;
   uint16 audio_freq;
   uint8 audio_channels;

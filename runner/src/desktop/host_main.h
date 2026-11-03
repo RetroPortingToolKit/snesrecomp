@@ -50,6 +50,7 @@ extern "C" {
 struct RtlGameInfo;
 struct SpcPlayer;
 struct RecompLauncherCModProvider;
+struct SnesHdFrame;
 struct RecompLauncherCGameInfo;
 
 /* Per-frame numbers a game's after_run_frame hook may want. Wall-clock
@@ -106,6 +107,11 @@ typedef struct SnesDesktopHostGame {
    * (SNESRECOMP_ENABLE_MODS) the framework's mod runtime provider is used
    * unless this returns one, in which case this one wins. */
   const struct RecompLauncherCModProvider *(*mods_provider)(void);
+
+  /* Optional immutable jobs for a game-owned compositor. Without this hook,
+   * the host lazily captures ordinary PPU frames. Native/custom output and
+   * adaptive widescreen remain authoritative. */
+  const struct SnesHdFrame *(*hd_frame)(void);
 
   /* After config.ini (+config.local.ini) is parsed and before the launcher
    * opens. Load per-title settings here. */

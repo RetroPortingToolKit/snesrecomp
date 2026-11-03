@@ -45,10 +45,13 @@ def test_interp816_and_bridge_contract():
                      '-I', 'runner/src/snes']
             groups = [
                 ['tests/interp816/interp816_test.c', 'runner/src/snes/interp816.c'],
-                ['tests/interp816/bridge_test.c', 'runner/src/snes/interp816.c',
-                 'runner/src/snes/interp_bridge.c', 'runner/src/snes/tier2_capture.c',
-                 'runner/src/sha256.c', 'runner/src/snes/cx4.c'],
             ]
+            for fused in (0, 1):
+                groups.append([
+                 f'-DSNESRECOMP_INTERP_FUSED_ROM_READ={fused}',
+                 'tests/interp816/bridge_test.c', 'runner/src/snes/interp816.c',
+                 'runner/src/snes/interp_bridge.c', 'runner/src/snes/tier2_capture.c',
+                 'runner/src/sha256.c', 'runner/src/snes/cx4.c'])
             for index, sources in enumerate(groups):
                 exe = pathlib.Path(directory) / f'contract-{index}.exe'
                 subprocess.run(flags + sources + ['-lm', '-o', str(exe)],

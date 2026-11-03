@@ -112,6 +112,24 @@ package source together. Source URLs must be HTTP(S), without whitespace or
 control characters, and fit the launcher's 256-byte field. Credit original hack
 authors and specific patch contributors separately from the native implementation.
 
+A feature that only works on top of another declares it with `requires`, a
+comma-separated list of `package-id/feature-id`:
+
+```toml
+[[feature]]
+id = "learner"
+name = "Learner Mode"
+requires = "example.coop/coop"
+```
+
+Enabling the feature enables everything it requires (transitively, each one
+settling its own plugin rivals). Turning a requirement off, or deselecting it
+because a rival claimed the same plugin, turns its dependents off too. The
+launcher appends "Requires <name>." to the feature's description. A
+requirement that is not installed, or a saved state that holds a dependent
+without its requirement, is a validation error, so the plan is refused rather
+than run partly.
+
 Options use the same feature-oriented concepts exposed by recomp-ui:
 
 ```toml
@@ -179,6 +197,10 @@ each registered reset callback, then activates the resolved plugins. Reset
 callbacks make the package state authoritative over old config files: disabling
 widescreen restores native 4:3 on the next launch even if a legacy config once
 stored `Widescreen = 1`.
+
+An optional `experimental = true` in a `[[feature]]` marks it with the
+launcher's Experimental channel badge. Omitted or false remains Stable;
+this metadata does not change activation, defaults or network identity.
 
 Features that claim the same plugin ID are alternatives. Enabling one, by
 feature or by package, deselects every other enabled feature claiming any of

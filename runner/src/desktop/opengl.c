@@ -39,6 +39,12 @@
 #include "glsl_shader.h"
 #include "config.h"
 #include "display_aspect.h"
+#include "hd_gpu.h"
+#if SNESRECOMP_SDL3
+#define DeleteGlContext SDL_GL_DestroyContext
+#else
+#define DeleteGlContext SDL_GL_DeleteContext
+#endif
 
 #define CODE(...) #__VA_ARGS__
 
@@ -49,6 +55,15 @@ static int g_draw_width, g_draw_height;
 static unsigned int g_program, g_flash_program, g_VAO;
 static GlTextureWithSize g_texture;
 static GlslShader *g_glsl_shader;
+static SnesHdGpu *g_hd_gpu;
+static bool g_hd_tried;
+static const SnesHdFrame *g_hd_frame;
+static const uint32_t *g_hd_overlay;
+static size_t g_hd_overlay_pitch;
+void snesrecomp_opengl_set_hd(const SnesHdFrame *frame,
+                            const uint32_t *overlay, size_t pitch) {
+  g_hd_frame = frame; g_hd_overlay = overlay; g_hd_overlay_pitch = pitch;
+}
 static bool g_want_screenshot;
 static double g_screenshot_flash_start_time = -1.0;
 static const double kScreenshotFlashSeconds = 0.15;
@@ -130,13 +145,23 @@ static void LoadShaderFromConfig(void) {
 
 static bool OpenGLRenderer_Init(SDL_Window *window) {
   g_window = window;
+  SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 4);
+  SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 0);
   g_context = SDL_GL_CreateContext(window);
+  if (!g_context) {
+    SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 3);
+    SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 3);
+    g_context = SDL_GL_CreateContext(window);
+  }
+  if (!g_context) return false;
 
   ApplySwapInterval();
   ogl_LoadFunctions();
 
-  if (!ogl_IsVersionGEQ(3, 3))
-    Die("You need OpenGL 3.3");
+  if (!ogl_IsVersionGEQ(3, 3)) {
+    DeleteGlContext(g_context); g_context = NULL;
+    return false;
+  }
 
   if (kDebugFlag) {
     glEnable(GL_DEBUG_OUTPUT);
@@ -268,6 +293,14 @@ static void OpenGLRenderer_Reconfigure(void) {
 }
 
 static void OpenGLRenderer_Destroy(void) {
+  SnesHdGpuDestroy(g_hd_gpu); g_hd_gpu = NULL; g_hd_tried = false;
+  if (g_glsl_shader) GlslShader_Destroy(g_glsl_shader);
+  g_glsl_shader = NULL; g_shader_resolved = false;
+  glDeleteTextures(1, &g_texture.gl_texture); memset(&g_texture, 0, sizeof(g_texture));
+  glDeleteProgram(g_program); glDeleteProgram(g_flash_program);
+  glDeleteVertexArrays(1, &g_VAO);
+  free(g_screen_buffer); g_screen_buffer = NULL; g_screen_buffer_size = 0;
+  DeleteGlContext(g_context); g_context = NULL;
 }
 
 static void OpenGLRenderer_GetOutputSize(int *width, int *height) {
@@ -361,6 +394,7 @@ static bool DrawScreenshotFlash(double elapsed_seconds) {
 }
 
 static void OpenGLRenderer_BeginDraw(int width, int height, uint8 **pixels, int *pitch) {
+  g_hd_frame = NULL; g_hd_overlay = NULL; g_hd_overlay_pitch = 0;
   size_t size = (size_t)width * (size_t)height;
 
   if (size > g_screen_buffer_size) {
@@ -390,13 +424,29 @@ static void OpenGLRenderer_EndDraw(void) {
   if (g_compute_viewport)
     g_compute_viewport(g_draw_width, g_draw_height, drawable_width, drawable_height, &viewport);
 
-  glBindTexture(GL_TEXTURE_2D, g_texture.gl_texture);
+  GlTextureWithSize image = g_texture;
+  SnesHdGpuImage hd_image;
+  bool enhanced = false;
+  if (g_hd_frame && g_config.mode7.enabled) {
+    if (!g_hd_tried) { g_hd_gpu = SnesHdGpuCreate(); g_hd_tried = true; }
+    enhanced = SnesHdGpuRender(g_hd_gpu, g_hd_frame, g_config.mode7.scale,
+        (unsigned)viewport.width, (unsigned)viewport.height,
+        !g_config.linear_filtering && !g_glsl_shader, 128u * 1024u * 1024u,
+        (const uint32_t *)g_screen_buffer, g_draw_width * 4,
+        g_hd_overlay, g_hd_overlay_pitch, &hd_image);
+    if (enhanced) image = (GlTextureWithSize){hd_image.texture, hd_image.width, hd_image.height};
+  }
+  glActiveTexture(GL_TEXTURE0);
+  glBindTexture(GL_TEXTURE_2D, enhanced ? image.gl_texture : g_texture.gl_texture);
+  if (!enhanced) {
   if (g_draw_width == g_texture.width && g_draw_height == g_texture.height) {
     glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, g_draw_width, g_draw_height, GL_BGRA, GL_UNSIGNED_INT_8_8_8_8_REV, g_screen_buffer);
   } else {
     g_texture.width = g_draw_width;
     g_texture.height = g_draw_height;
     glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, g_draw_width, g_draw_height, 0, GL_BGRA, GL_UNSIGNED_INT_8_8_8_8_REV, g_screen_buffer);
+  }
+    image = g_texture;
   }
 
   glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
@@ -411,7 +461,7 @@ static void OpenGLRenderer_EndDraw(void) {
     glBindVertexArray(g_VAO);
     glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
   } else {
-    GlslShader_Render(g_glsl_shader, &g_texture, viewport.x, viewport.y,
+    GlslShader_Render(g_glsl_shader, &image, viewport.x, viewport.y,
                       viewport.width, viewport.height);
   }
 

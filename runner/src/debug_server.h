@@ -81,6 +81,8 @@ void debug_server_set_ram(uint8_t *ram, uint32_t ram_size);
 
 // Register an optional game-owned TCP command handler. Commands are reached
 // through `game <subcommand> [args]` so runner commands remain generic.
+// Runs on the NETWORK thread. Queue state-changing work to the game thread;
+// never execute guest code or save/restore its machine in this callback.
 void debug_server_set_game_command_handler(DebugServerGameCommandHandler handler);
 
 // MMIO register-write trace. Call from snes_write paths after the write

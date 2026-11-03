@@ -132,7 +132,10 @@ const char *SkipPrefix(const char *big, const char *little) {
 }
 
 void StrSet(char **rv, const char *s) {
-  char *news = strdup(s);
+  size_t size = strlen(s) + 1;
+  char *news = (char *)malloc(size);
+  if (!news) Die("memory allocation failed");
+  memcpy(news, s, size);
   char *old = *rv;
   *rv = news;
   free(old);

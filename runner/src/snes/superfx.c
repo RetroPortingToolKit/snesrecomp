@@ -16,6 +16,10 @@
 #include <stdlib.h>
 #include <string.h>
 
+#ifndef SNESRECOMP_SUPERFX_IDLE_NATIVE
+#define SNESRECOMP_SUPERFX_IDLE_NATIVE 0
+#endif
+
 enum { kSuperFxWsMaxExtra = 288, kSuperFxWsMaxWidth = 800 };
 
 void superfx_saveload(SuperFx *fx, SaveLoadInfo *sli) {
@@ -728,6 +732,22 @@ void superfx_sync(SuperFx *f, uint64_t master) {
   f->clock_credit += (int64_t)(master-f->master_clock); f->master_clock=master;
   /* Six clocks is the longest idle quantum and the normal uncached access. */
   unsigned guard=0; while(f->clock_credit>=6 && guard++<2000000) {
+#if SNESRECOMP_SUPERFX_IDLE_NATIVE
+    /* A stopped GSU has no observers between idle quanta. Retire buffered
+     * accesses and pending replay callbacks through the scalar path first;
+     * once empty, only clock credit changes. Count skipped quanta against
+     * the same guard and retain the sub-six-clock remainder. */
+    if (!(f->sfr & SFR_G) && !f->romcl && !f->ramcl &&
+        !(f->presentation && f->presentation->pending) &&
+        !f->ws_replay_pending) {
+      int64_t quanta = f->clock_credit / 6;
+      unsigned budget = 2000001u - guard;
+      if (quanta > budget) quanta = budget;
+      f->clock_credit -= quanta * 6;
+      guard += (unsigned)quanta - 1u;
+      continue;
+    }
+#endif
     run_one(f);
     if (f->presentation && f->presentation->pending)
       finish_presentation_replay(f);

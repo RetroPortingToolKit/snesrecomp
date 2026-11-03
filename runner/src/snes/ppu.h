@@ -10,6 +10,8 @@
 #include <stdbool.h>
 
 #include "saveload.h"
+#include "hd_jobs.h"
+#include "ppu_registers.h"
 
 typedef struct Ppu Ppu;
 typedef struct PpuMode7HdSurface {
@@ -177,30 +179,9 @@ typedef struct WindowLayer {
 struct Ppu {
   // Snes registers. Saved to snapshot. Need to be stable
   // -- START OF SNAPSHOT, 0x40 bytes
-  uint8 inidisp;
-  uint8 obsel;
-  uint8 oamaddl;
-  uint8 oamaddh;
-  uint8 bgmode;
-  uint8 mosaic;
-  uint8 bgXsc[4];
-  uint16 bgTileAdr;
-  uint8 m7sel;
-  uint8 setini;
-  uint16 hScroll[4];
-  uint16 vScroll[4];
-  int16_t m7matrix[8]; // a, b, c, d, x, y, h, v
-  uint16 fixedColor;
-  uint32 windowsel;
-  uint8 window1left;
-  uint8 window1right;
-  uint8 window2left;
-  uint8 window2right;
-  uint16 wbgobjlog;
-  uint8 screenEnabled[2];
-  uint8 screenWindowed[2];
-  uint8 cgadsub;
-  uint8 cgwsel;
+#define SNESRECOMP_PPU_REGISTER(type, name, array) type name array;
+#include "ppu_register_fields.inc"
+#undef SNESRECOMP_PPU_REGISTER
   // -- END OF SNAPSHOT
 
   // vram access
@@ -352,6 +333,8 @@ struct Ppu {
   uint8_t *renderBuffer;
   /* Optional additional presentation surface; never part of guest state. */
   PpuMode7HdSurface mode7Hd;
+  SnesHdFrame *hdFrame; /* Optional presentation builder; never serialized. */
+  SnesHdCapture *hdCapture; /* Optional host-owned lazy publisher. */
   /* Optional host picture memory. Drawing only: CPU ports and save states
    * always use vram. The caller owns 32768 words until unbound. */
   const uint16_t *renderVram;
@@ -386,6 +369,21 @@ struct Ppu {
 
 
 };
+
+/* Both C and C++ consumers verify every field and the following device state.
+ * The capture/serializer layout does not change with the compact interface. */
+#ifdef __cplusplus
+#define SNESRECOMP_PPU_LAYOUT_ASSERT(condition, message) static_assert(condition, message)
+#else
+#define SNESRECOMP_PPU_LAYOUT_ASSERT(condition, message) _Static_assert(condition, message)
+#endif
+#define SNESRECOMP_PPU_REGISTER(type, name, array) \
+  SNESRECOMP_PPU_LAYOUT_ASSERT(offsetof(Ppu, name) == offsetof(SnesRenderRegisters, name), "PPU register offset: " #name);
+#include "ppu_register_fields.inc"
+#undef SNESRECOMP_PPU_REGISTER
+SNESRECOMP_PPU_LAYOUT_ASSERT(offsetof(Ppu, vramPointer) == sizeof(SnesRenderRegisters), "PPU register prefix size");
+SNESRECOMP_PPU_LAYOUT_ASSERT(PPU_SAVESTATE_REGS_SIZE == sizeof(SnesRenderRegisters), "serialized PPU register size");
+#undef SNESRECOMP_PPU_LAYOUT_ASSERT
 
 #define SPRITE_PRIO_TO_PRIO(prio, level6) (((prio) * 4 + 2) * 16 + 4 + (level6 ? 2 : 0))
 #define SPRITE_PRIO_TO_PRIO_HI(prio) ((prio) * 4 + 2)
@@ -578,6 +576,16 @@ void ppu_runLineState(Ppu* ppu, int line);
  * hardware line. Used for explicit reference-image/readback requests. */
 void ppu_drawCapturedLine(Ppu* ppu, int line, bool pixels);
 
+/* Render a private picture using the ordinary pixel algorithms, without
+ * publishing live scanout/debug/write-journal/OAM-history or status effects.
+ * line0 prepares mosaic only; lines1..240 write output row(line-1). The caller
+ * owns a detached Ppu and all bound output/overlay/HD storage, which must not
+ * alias the live machine. Existing field parity and OAM motion hints are used
+ * as supplied. Host line-enhancer and global WS-shadow callbacks are omitted.
+ * Invalid lines, NULL and the live machine's Ppu are ignored. This is picture
+ * drawing only: it does not replay register writes or advance the console. */
+void PpuDrawDetachedLine(Ppu *ppu, int line);
+
 /* Bind an additional XRGB8888 frame with 1..4 samples per native pixel in
  * each dimension. Width is 256 + twice the current centering budget; height
  * is 1..240. The caller owns pixels and must unbind before freeing them.
@@ -608,6 +616,9 @@ void ppu_set_vram_write_log_hook(PpuVramWriteLogHook hook);
  * register write with the beam line. A host arms it with ppu_rasterBegin and
  * brackets its render loop with RenderBegin / ApplyLine per line / RenderEnd. */
 void ppu_rasterBegin(Ppu *ppu);
+/* Isolated native loaders may change registers/beam time on a scratch
+ * timeline. Keep those writes out of the live field replay and write log. */
+void ppu_setGuestScope(bool active);
 void ppu_rasterRenderBegin(Ppu *ppu);
 void ppu_rasterRenderEnd(Ppu *ppu);
 int  ppu_rasterTakeHdmaen(uint8_t *out);

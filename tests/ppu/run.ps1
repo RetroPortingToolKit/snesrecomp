@@ -12,6 +12,7 @@ foreach ($test in $tests) {
         "-I$root\runner\src", "-I$root\runner\src\snes",
         "$root\tests\ppu\$test.c",
         "$root\runner\src\snes\ppu.c",
+        "$root\runner\src\snes\hd_jobs.c",
         "$root\runner\src\snes\ppu_legacy.c",
         "-o", $out
     )

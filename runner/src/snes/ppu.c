@@ -1,7 +1,10 @@
 #include "ppu.h"
+#include "hd_jobs_internal.h"
 #include "mode7_hd.h"
 
 extern unsigned char g_snesrecomp_last_hdmaen;
+static bool s_guest_scope;
+void ppu_setGuestScope(bool active) {s_guest_scope=active;}
 #include "ppu_legacy.h"
 
 #include <stdio.h>
@@ -28,6 +31,15 @@ extern unsigned char g_snesrecomp_last_hdmaen;
 
 extern Snes *g_snes;
 extern unsigned char g_snesrecomp_last_hdmaen;
+
+/* Detached pictures share the pixel algorithms, but must not publish live
+ * machine diagnostics or consult callbacks owned by another picture. Keep
+ * this render scope private and per thread; it is not emulated PPU state. */
+#ifdef _MSC_VER
+static __declspec(thread) unsigned s_detached_line_depth;
+#else
+static _Thread_local unsigned s_detached_line_depth;
+#endif
 
 #ifdef SNESRECOMP_INTERP_PROFILE
 static double g_ppu_sec_eval_ms = 0;
@@ -60,9 +72,9 @@ void ppu_sec_read(double *eval, double *line, double *bg, double *spr,
     *compose = 0.0;
   *hdma = g_ppu_sec_hdma_ms;
 }
-#define PPU_T0_DECL uint64_t _ppu_t;
-#define PPU_T0 (_ppu_t = ppu_sec_now())
-#define PPU_ACC(V) do { (V) += 1e-6 * (double)(ppu_sec_now() - _ppu_t); } while (0)
+#define PPU_T0_DECL uint64_t _ppu_t = 0;
+#define PPU_T0 do { if (!s_detached_line_depth) _ppu_t = ppu_sec_now(); } while (0)
+#define PPU_ACC(V) do { if (!s_detached_line_depth) (V) += 1e-6 * (double)(ppu_sec_now() - _ppu_t); } while (0)
 #else
 #define PPU_T0_DECL
 #define PPU_T0 do { } while (0)
@@ -73,6 +85,8 @@ static void PpuDrawWholeLine(Ppu *ppu, uint y);
 static void PpuDrawMode7HdLine(Ppu *ppu, unsigned line);
 
 static bool ppu_evaluateSprites(Ppu* ppu, int line);
+static void SnesHdCaptureLine(SnesHdCapture *capture, Ppu *ppu, unsigned line);
+static void SnesHdCaptureDetach(SnesHdCapture *capture, Ppu *ppu);
 static uint16_t ppu_getVramRemap(Ppu* ppu);
 static void PpuUpdateWidescreenOamHistory(Ppu *ppu, int line);
 
@@ -86,6 +100,7 @@ Ppu* ppu_init(void) {
 }
 
 void ppu_free(Ppu* ppu) {
+  if (ppu && ppu->hdCapture) SnesHdCaptureDetach(ppu->hdCapture, ppu);
   free(ppu);
 }
 
@@ -95,6 +110,8 @@ void ppu_reset(Ppu* ppu) {
     uint8_t *renderBuffer = ppu->renderBuffer;
     uint32_t renderFlags = ppu->renderFlags;
     PpuMode7HdSurface mode7Hd = ppu->mode7Hd;
+    SnesHdCapture *hdCapture = ppu->hdCapture;
+    SnesHdCaptureReset(hdCapture);
     uint32_t overlayPitch[kPpuOverlaySource_Count];
     uint8_t *overlayBuffer[kPpuOverlaySource_Count];
     memcpy(overlayPitch, ppu->overlayRenderPitch, sizeof(overlayPitch));
@@ -104,6 +121,7 @@ void ppu_reset(Ppu* ppu) {
     ppu->renderPitch = (uint32_t)pitch;
     ppu->renderFlags = renderFlags;
     ppu->mode7Hd = mode7Hd;
+    ppu->hdCapture = hdCapture;
     memcpy(ppu->overlayRenderPitch, overlayPitch, sizeof(overlayPitch));
     memcpy(ppu->overlayRenderBuffer, overlayBuffer, sizeof(overlayBuffer));
   }
@@ -719,6 +737,7 @@ static uint32_t s_wlog_line_frame = 0xffffffffu;
 uint8_t g_ppu_wlog_src = kPpuWlogCpu;
 
 void ppu_wlog_note_reg(uint16_t reg, uint8_t val) {
+  if(s_guest_scope)return;
   const uint32_t frame = (uint32_t)snes_frame_counter;
   PpuWlogEntry *e = &s_wlog[s_wlog_head++ & (PPU_WLOG_CAP - 1)];
   e->frame = frame;
@@ -782,8 +801,83 @@ static bool PpuOptimizedRendererHandlesMode(uint mode) {
   return mode <= 3 || mode == 7;
 }
 
-static void PpuRunLineJob(Ppu* ppu, int line, bool pixels, bool live) {
+static void PpuPrepareMosaic(Ppu *ppu) {
+  if (PPU_mosaicSize(ppu) != ppu->lastMosaicModulo) {
+    int mod = PPU_mosaicSize(ppu);
+    ppu->lastMosaicModulo = mod;
+    for (int i = 0, j = 0; i < countof(ppu->mosaicModulo); i++) {
+      ppu->mosaicModulo[i] = i - j;
+      j = (j + 1 == mod ? 0 : j + 1);
+    }
+  }
+  ppu->mosaicStartLine = 1;
+}
+
+static void PpuDrawVisibleLine(Ppu *ppu, int line, bool pixels, bool live) {
   PPU_T0_DECL
+  // Cache the brightness computation.
+  if (PPU_brightness(ppu) != ppu->lastBrightnessMult) {
+    uint8_t ppu_brightness = PPU_brightness(ppu);
+    ppu->lastBrightnessMult = ppu_brightness;
+    for (int i = 0; i < 32; i++)
+      ppu->brightnessMultHalf[i * 2] = ppu->brightnessMultHalf[i * 2 + 1] = ppu->brightnessMult[i] =
+      ((i << 3) | (i >> 2)) * ppu_brightness / 15;
+    memset(&ppu->brightnessMult[32], ppu->brightnessMult[31], 31);
+  }
+
+  ClearBackdrop(ppu, &ppu->objBuffer);
+  if (ppu->overlayRenderBuffer[kPpuOverlaySource_Obj])
+    memset(&ppu->overlayBuffers[kPpuOverlaySource_Obj], 0,
+           sizeof(ppu->overlayBuffers[kPpuOverlaySource_Obj]));
+  ppu->lineHasSprites = !PPU_forcedBlank(ppu) && ppu_evaluateSprites(ppu, line - 1);
+
+  if (!pixels) return;
+
+  if ((ppu->renderFlags & kPpuRenderFlags_NewRenderer) &&
+      PpuOptimizedRendererHandlesMode(PPU_mode(ppu))) {
+    if (live)
+      debug_server_on_ppu_line_drawn(line, 1, ppu->bgmode);
+    PPU_T0; PpuDrawWholeLine(ppu, line); PPU_ACC(g_ppu_sec_line_ms);
+#ifdef SNESRECOMP_INTERP_PROFILE
+    if (!s_detached_line_depth) g_ppu_sec_line_n++;
+#endif
+  } else {
+    if (live)
+      debug_server_on_ppu_line_drawn(line, 0, ppu->bgmode);
+    ppu_draw_whole_line_legacy(ppu, line);
+  }
+  if (ppu->mode7Hd.pixels)
+    PpuDrawMode7HdLine(ppu, (unsigned)line);
+  if (ppu->hdFrame && !s_detached_line_depth)
+    SnesHdFrameCaptureLine(ppu->hdFrame, (unsigned)line - 1, ppu,
+                            (unsigned)line, 0, false);
+  if (ppu->hdCapture && live && !s_guest_scope && !s_detached_line_depth)
+    SnesHdCaptureLine(ppu->hdCapture, ppu, (unsigned)line);
+}
+
+void PpuDrawDetachedLine(Ppu *ppu, int line) {
+  if (!ppu || (g_snes && ppu == g_snes->ppu) || line < 0 || line > 240)
+    return;
+  if (line == 0) {
+    PpuPrepareMosaic(ppu);
+    return;
+  }
+  if (!ppu->renderBuffer) return;
+  const bool range_over = ppu->rangeOver, time_over = ppu->timeOver;
+  PpuWidescreenLineEnhancer *enhancer = ppu->widescreenLineEnhancer;
+  void *context = ppu->widescreenLineEnhancerContext;
+  ppu->widescreenLineEnhancer = NULL;
+  ppu->widescreenLineEnhancerContext = NULL;
+  ++s_detached_line_depth;
+  PpuDrawVisibleLine(ppu, line, true, false);
+  --s_detached_line_depth;
+  ppu->widescreenLineEnhancer = enhancer;
+  ppu->widescreenLineEnhancerContext = context;
+  ppu->rangeOver = range_over;
+  ppu->timeOver = time_over;
+}
+
+static void PpuRunLineJob(Ppu* ppu, int line, bool pixels, bool live) {
   /* Writes from here to the next ppu_runLine land on line + 1; no register
    * write happens inside a line's render. */
   if (live) {
@@ -823,56 +917,14 @@ static void PpuRunLineJob(Ppu* ppu, int line, bool pixels, bool live) {
     debug_server_on_oam_render();
   }
   if(line == 0) {
-    if (PPU_mosaicSize(ppu) != ppu->lastMosaicModulo) {
-      int mod = PPU_mosaicSize(ppu);
-      ppu->lastMosaicModulo = mod;
-      for (int i = 0, j = 0; i < countof(ppu->mosaicModulo); i++) {
-        ppu->mosaicModulo[i] = i - j;
-        j = (j + 1 == mod ? 0 : j + 1);
-      }
-    }
-
-
+    PpuPrepareMosaic(ppu);
     // pre-render line
     // TODO: this now happens halfway into the first line
-    ppu->mosaicStartLine = 1;
     ppu->rangeOver = false;
     ppu->timeOver = false;
     ppu->evenFrame = !ppu->evenFrame;
   } else {
-    // Cache the brightness computation
-    if (PPU_brightness(ppu) != ppu->lastBrightnessMult) {
-      uint8_t ppu_brightness = PPU_brightness(ppu);
-      ppu->lastBrightnessMult = ppu_brightness;
-      for (int i = 0; i < 32; i++)
-        ppu->brightnessMultHalf[i * 2] = ppu->brightnessMultHalf[i * 2 + 1] = ppu->brightnessMult[i] =
-        ((i << 3) | (i >> 2)) * ppu_brightness / 15;
-      // Store 31 extra entries to remove the need for clamping to 31.
-      memset(&ppu->brightnessMult[32], ppu->brightnessMult[31], 31);
-    }
-
-    // evaluate sprites
-    ClearBackdrop(ppu, &ppu->objBuffer);
-    if (ppu->overlayRenderBuffer[kPpuOverlaySource_Obj])
-      memset(&ppu->overlayBuffers[kPpuOverlaySource_Obj], 0,
-             sizeof(ppu->overlayBuffers[kPpuOverlaySource_Obj]));
-    ppu->lineHasSprites = !PPU_forcedBlank(ppu) && ppu_evaluateSprites(ppu, line - 1);
-
-    if (!pixels) return;
-
-    if ((ppu->renderFlags & kPpuRenderFlags_NewRenderer) &&
-        PpuOptimizedRendererHandlesMode(PPU_mode(ppu))) {
-      if (live) debug_server_on_ppu_line_drawn(line, 1, ppu->bgmode);
-      PPU_T0; PpuDrawWholeLine(ppu, line); PPU_ACC(g_ppu_sec_line_ms);
-#ifdef SNESRECOMP_INTERP_PROFILE
-      g_ppu_sec_line_n++;
-#endif
-    } else {
-      if (live) debug_server_on_ppu_line_drawn(line, 0, ppu->bgmode);
-      ppu_draw_whole_line_legacy(ppu, line);
-    }
-    if (ppu->mode7Hd.pixels)
-      PpuDrawMode7HdLine(ppu, (unsigned)line);
+    PpuDrawVisibleLine(ppu, line, pixels, live);
   }
 }
 
@@ -997,7 +1049,8 @@ static void PpuWindows_CalcWithExtra(PpuWindows *win, Ppu *ppu, uint layer,
   } else {
     win->bits = w1_bits | w2_bits;
   }
-  debug_server_on_ppu_window(y, (int)layer, win->edges, win->nr, win->bits);
+  if (!s_detached_line_depth)
+    debug_server_on_ppu_window(y, (int)layer, win->edges, win->nr, win->bits);
 }
 
 static void PpuWindows_Calc(PpuWindows *win, Ppu *ppu, uint layer, int y) {
@@ -1144,7 +1197,7 @@ static void PpuDrawBackground_4bpp(Ppu *ppu, PpuPixelPrioBufs *dstbuf,
   int tileadr = PPU_bgTileAdr(ppu, layer), pixel;
   int tileadr1 = tileadr + 7 - (y & 0x7), tileadr0 = tileadr + (y & 0x7);
   const uint16 *addr;
-  bool ws_shadow = WsShadowLayerActive(layer);
+  bool ws_shadow = !s_detached_line_depth && WsShadowLayerActive(layer);
 #define WS_TILE(t, sx) (ws_shadow ? WsShadowTile(layer, (sx), y, (uint16_t)ppu->hScroll[layer], (uint16_t)(tp - PpuRenderVram(ppu)), (uint16_t)(t)) : (uint32)(t))
   for (size_t windex = 0; windex < win.nr; windex++) {
     if (win.bits & (1 << windex))
@@ -1343,7 +1396,7 @@ static void PpuDrawBackgroundBig(Ppu *ppu, PpuPixelPrioBufs *dstbuf, uint y,
     const int left = win.edges[windex];
     const int right = win.edges[windex + 1];
     PpuZbufType *dstz = dstbuf->data + left + kPpuExtraLeftRight;
-    const bool ws_shadow = WsShadowLayerActive((int)layer);
+    const bool ws_shadow = !s_detached_line_depth && WsShadowLayerActive((int)layer);
     for (int screen_x = left; screen_x < right; screen_x++, dstz++) {
       const int mx = mosaic ? PpuMosaicAt(ppu, screen_x) : screen_x;
       const int sx = mx + ppu->hScroll[layer];
@@ -1748,7 +1801,7 @@ static void PpuDrawBackground_4bpp_mosaic(Ppu *ppu,
   int tileadr = PPU_bgTileAdr(ppu, layer), pixel;
   int tileadr1 = tileadr + 7 - (y & 0x7), tileadr0 = tileadr + (y & 0x7);
   const uint16 *addr;
-  bool ws_shadow = WsShadowLayerActive(layer);
+  bool ws_shadow = !s_detached_line_depth && WsShadowLayerActive(layer);
 #define WS_TILE(t, sx) (ws_shadow ? WsShadowTile(layer, (sx), y, (uint16_t)ppu->hScroll[layer], (uint16_t)(tp - PpuRenderVram(ppu)), (uint16_t)(t)) : (uint32)(t))
   for (size_t windex = 0; windex < win.nr; windex++) {
     if (win.bits & (1 << windex))
@@ -2189,7 +2242,7 @@ static void PpuDrawSprites(Ppu *ppu, uint y, uint sub, bool clear_backdrop) {
   }
 }
 
-static bool PpuOverlayActiveOnLine(Ppu *ppu, PpuOverlaySource source,
+static bool PpuOverlayActiveOnLine(const Ppu *ppu, PpuOverlaySource source,
                                    int screen_y) {
   if ((unsigned)source >= kPpuOverlaySource_Count ||
       !ppu->overlayRenderBuffer[source] ||
@@ -2296,6 +2349,7 @@ static void PpuFinishBackgroundOverlay(Ppu *ppu, uint y, bool sub,
 }
 
 static void PpuDrawBackgrounds(Ppu *ppu, int y, bool sub) {
+  PPU_T0_DECL
   // Top 4 bits contain the prio level, and bottom 4 bits the layer type.
   // SPRITE_PRIO_TO_PRIO can be used to convert from obj prio to this prio.
   //  15: BG3 tiles with priority 1 if bit 3 of $2105 is set
@@ -2564,10 +2618,76 @@ static NOINLINE void PpuDrawWholeLine(Ppu *ppu, uint y) {
   PpuWriteOverlayRenderLine(ppu, kPpuOverlaySource_Obj, y);
 }
 
+struct SnesHdCapture {
+  Ppu *owner;
+  SnesHdFrame *pending, *published;
+  unsigned height, width, last_line;
+  bool failed;
+};
+SnesHdCapture *SnesHdCaptureCreate(void) { return calloc(1, sizeof(SnesHdCapture)); }
+void SnesHdCaptureReset(SnesHdCapture *c) {
+  if (!c) return;
+  SnesHdFrameDestroy(c->pending); SnesHdFrameDestroy(c->published);
+  c->pending = c->published = NULL; c->last_line = 0; c->failed = false;
+}
+static void SnesHdCaptureDetach(SnesHdCapture *c, Ppu *p) {
+  if (c && c->owner == p) { SnesHdCaptureReset(c); c->owner = NULL; }
+}
+bool SnesHdCaptureBind(SnesHdCapture *c, Ppu *p, unsigned height) {
+  if (!c) return false;
+  if (!p) {
+    if (c->owner) c->owner->hdCapture = NULL;
+    c->owner = NULL; c->height = 0; SnesHdCaptureReset(c); return true;
+  }
+  if (!height || height > 240 || (p->hdCapture && p->hdCapture != c)) return false;
+  if (c->owner != p || c->height != height) {
+    if (c->owner) c->owner->hdCapture = NULL;
+    SnesHdCaptureReset(c); c->owner = p; c->height = height;
+  }
+  p->hdCapture = c; return true;
+}
+void SnesHdCaptureDestroy(SnesHdCapture *c) {
+  if (!c) return;
+  if (c->owner) c->owner->hdCapture = NULL;
+  SnesHdCaptureReset(c); free(c);
+}
+const SnesHdFrame *SnesHdCaptureFrame(const SnesHdCapture *c) { return c ? c->published : NULL; }
+static void SnesHdCaptureLine(SnesHdCapture *c, Ppu *p, unsigned line) {
+  if (!c || c->owner != p || !line || line > c->height) return;
+  unsigned width = 256u + p->extraLeftRight * 2u;
+  if (line == 1 || line <= c->last_line || width != c->width) {
+    SnesHdFrameDestroy(c->pending); c->pending = NULL;
+    c->failed = false; c->width = width;
+  }
+  c->last_line = line;
+  if (!p->renderBuffer || width > kSnesHdMaxWidth || p->renderPitch < width * 4) c->failed = true;
+  if (!c->failed && !c->pending && (p->bgmode & 7) == 7 && p->renderBuffer) {
+    c->pending = SnesHdFrameCreate(width, c->height);
+    if (!c->pending) c->failed = true;
+    for (unsigned y = 0; c->pending && y + 1 < line; ++y) {
+      SnesHdLine job = {0}; job.kind = kSnesHdNative;
+      memcpy(job.native, p->renderBuffer + (size_t)y * p->renderPitch, width * 4);
+      if (!SnesHdFrameSetLine(c->pending, y, &job)) c->failed = true;
+    }
+  }
+  if (c->pending && !c->failed && !SnesHdFrameCaptureLine(c->pending, line - 1, p, line, 0, false)) c->failed = true;
+  if (line == c->height) {
+    SnesHdFrameDestroy(c->published); c->published = NULL;
+    if (c->pending && !c->failed && c->pending->source_count && SnesHdFrameSeal(c->pending)) {
+      c->published = c->pending; c->pending = NULL;
+    }
+    SnesHdFrameDestroy(c->pending); c->pending = NULL;
+  }
+}
+
 static bool PpuHdWindowCondition(unsigned mode, bool inside) {
   return mode == 3 || (mode == 1 && !inside) || (mode == 2 && inside);
 }
 
+bool PpuSetHdFrameCapture(Ppu *p, SnesHdFrame *f) {
+  if (!p || (f && (f->sealed || f->failed))) return false;
+  p->hdFrame = f; return true;
+}
 /* Resolve colour after HD background sampling and native OBJ priority. An
  * opaque native BG pixel cannot serve as a mask: a fractional sample may be
  * transparent and reveal a sprite that the native sample had covered. */
@@ -2610,6 +2730,67 @@ static void PpuHdMarkWindow(uint8_t visibility[kPpuBufWidth],
   }
 }
 
+bool SnesHdFrameCaptureLine(SnesHdFrame *f, unsigned y, const Ppu *p,
+                            unsigned line, unsigned crop, bool overlays) {
+  unsigned native_width = p ? 256u + 2u * p->extraLeftRight : 0;
+  if (!f || f->sealed || f->failed || !p || y >= f->height || !line ||
+      line > 240 || !p->renderBuffer || crop > native_width ||
+      f->width > native_width - crop || p->renderPitch < native_width * 4)
+    return false;
+  SnesHdLine *j = &f->lines[y]; memset(j, 0, sizeof(*j));
+  memcpy(j->native, p->renderBuffer + (line - 1) * p->renderPitch + crop * 4,
+           f->width * 4);
+  j->kind = 1;
+  bool affine = PPU_mode(p) == 7 && !PPU_forcedBlank(p) &&
+      !PPU_m7extBg(p) && !PPU_directColor(p) && !PPU_interlace(p) &&
+      !PPU_pseudoHires(p) &&
+      !(PPU_mosaicEnabled(p, 0) && PPU_mosaicSize(p) > 1) &&
+      !p->widescreenLineEnhancer && !(p->wsHudSplitHeight & 0x80);
+  for (unsigned source = 0; affine && source < kPpuOverlaySource_Count; ++source)
+    if (PpuOverlayActiveOnLine(p, (PpuOverlaySource)source, (int)line - 1) &&
+        !(overlays && (source == kPpuOverlaySource_Bg2 ||
+                       source == kPpuOverlaySource_Obj))) affine = false;
+  if (!affine) return true;
+  uint8_t visibility[kPpuBufWidth] = {0}; PpuWindows window;
+  for (unsigned sub = 0; sub < 2; ++sub) {
+    for (unsigned object = 0; object < 2; ++object) {
+      unsigned layer = object ? 4 : 0;
+      if (!IS_SCREEN_ENABLED(p, sub, layer)) continue;
+      if (IS_SCREEN_WINDOWED(p, sub, layer))
+        PpuWindows_Calc(&window, (Ppu *)p, layer, (int)line);
+      else PpuWindows_Clear(&window, (Ppu *)p, layer, (int)line);
+      PpuHdMarkWindow(visibility, &window,
+                       (uint8_t)(1u << (sub + 2 * object)), false);
+    }
+  }
+  PpuWindows_Calc(&window, (Ppu *)p, 5, (int)line);
+  PpuHdMarkWindow(visibility, &window, 16, true);
+  const uint16_t *vram = PpuRenderVram(p); int source;
+  if (!p->renderVram && f->source_count && f->last_vram == vram &&
+      f->last_generation == p->vramWriteCount) source = (int)f->last_source;
+  else source = SnesHdFrameAddPicture(f, vram);
+  if (source < 0) return false;
+  f->last_vram = vram; f->last_generation = p->vramWriteCount;
+  f->last_source = (unsigned)source;
+  SnesMode7HdTransform t = SnesMode7HdMakeTransform(p->m7matrix, p->m7sel, line);
+  j->origin_x = (int32_t)(t.origin_x * 256); j->origin_y = (int32_t)(t.origin_y * 256);
+  j->step_x = (int32_t)(t.step_x * 256); j->step_y = (int32_t)(t.step_y * 256);
+  j->row_x = (int32_t)(t.row_x * 256); j->row_y = (int32_t)(t.row_y * 256);
+  j->screen_left = (int16_t)((int)crop - p->extraLeftRight);
+  j->active_left = -(int16_t)p->extraLeftCur;
+  j->active_right = 256 + p->extraRightCur;
+  j->control = t.control; j->source = (uint16_t)source;
+  j->fixed_color = p->fixedColor; j->brightness = PPU_brightness(p);
+  j->cgwsel = p->cgwsel; j->cgadsub = p->cgadsub;
+  memcpy(j->palette, p->cgram, sizeof(j->palette));
+  for (unsigned x = 0; x < f->width; ++x) {
+    unsigned i = x + crop + kPpuExtraLeftRight - p->extraLeftRight;
+    j->visibility[x] = visibility[i]; j->object[x] = p->objBuffer.data[i];
+    j->object_color[x] = PpuPixelColor(p, j->object[x], i);
+  }
+  j->kind = 2;
+  return true;
+}
 static void PpuDrawMode7HdLine(Ppu *ppu, unsigned line) {
   const PpuMode7HdSurface *surface = &ppu->mode7Hd;
   if (!line || line > surface->height) return;
@@ -3275,6 +3456,7 @@ static void raster_snapshot(PpuRasterField *f, const Ppu *ppu) {
 }
 
 void ppu_rasterBegin(Ppu *ppu) {
+  if(s_guest_scope)return;
   /* A host that renders has finished with the previous field's replay. */
   s_raster_rendering = 0;
   if (s_raster_armed)
@@ -3286,6 +3468,7 @@ void ppu_rasterBegin(Ppu *ppu) {
 }
 
 void ppu_rasterFieldBoundary(void) {
+  if(s_guest_scope)return;
   Ppu *ppu = raster_machine_ppu();
   if (!s_raster_armed || !ppu)
     return;
@@ -3296,6 +3479,7 @@ void ppu_rasterFieldBoundary(void) {
 }
 
 void ppu_rasterReset(void) {
+  if(s_guest_scope)return;
   s_raster_armed = 0;
   s_raster_have_completed = 0;
   s_raster_rendering = 0;
@@ -3304,6 +3488,7 @@ void ppu_rasterReset(void) {
 }
 
 void ppu_rasterRecord(uint16_t reg, uint16_t line, uint8_t val) {
+  if(s_guest_scope)return;
   PpuRasterField *f;
   if (!s_raster_armed || s_raster_rendering || !raster_reg_journaled(reg))
     return;

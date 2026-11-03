@@ -3,6 +3,7 @@
 #include <string.h>
 
 #include "cpu_state.h"
+#include "cpu_plain_rom_read.h"
 #include "snes/cart.h"
 #include "snes/snes.h"
 #include "snes/superfx.h"
@@ -13,6 +14,7 @@ uint8 g_memsel;
 int snes_frame_counter;
 const char *g_last_recomp_func = "cart_cpu_bus_latch_test";
 uint8 *g_sram;
+uint8 g_ram[0x20000];
 int g_sram_size;
 uint64_t g_main_cpu_cycles_estimate;
 uint64_t g_apu_pace_cycles_estimate;
@@ -23,6 +25,7 @@ const DispatchEntry g_dispatch_table[] = {{0}};
 const unsigned g_dispatch_table_count = 0;
 
 static int g_note_calls;
+static uint8_t *g_mapped_rom;
 static int g_failures;
 static uint32_t g_expected_latch;
 static int g_expect_slow_path_latch;
@@ -84,7 +87,7 @@ uint8 *cart_getRomPtr(Cart *cart, uint8 bank, uint16 addr) {
     (void)cart;
     (void)bank;
     (void)addr;
-    return NULL;
+    return g_mapped_rom;
 }
 
 SuperFx *superfx_create(uint8_t *rom, uint32_t rom_size, uint8_t *ram,
@@ -220,6 +223,47 @@ static void exercise_sa1(void) {
     check_int("SA-1 write16 cart_write calls", g_cart_write_calls, 2);
 }
 
+static void exercise_plain_rom(void) {
+    Snes snes = {0};
+    Cart cart = {0};
+    CpuState cpu;
+    uint8 ram[0x20000], byte = 0x96, value = 0x33;
+    reset_cpu(&cpu, ram);
+    g_snes = &snes;
+    snes.cart = &cart;
+    g_mapped_rom = &byte;
+    const uint8 types[] = {CART_LOROM, CART_HIROM};
+    for (unsigned i = 0; i < sizeof(types); ++i) {
+        cart.type = types[i];
+        check_int("plain ROM claimed", cpu_read8_plain_rom(&cpu, 0x80, 0x8000, &value), 1);
+        check_int("plain ROM value", value, 0x96);
+        check_int("plain ROM open bus", cpu.open_bus, 0x96);
+        check_u32("plain ROM cartridge address", cart.cpuBusAddress, 0x808000);
+        /* No cached pointer or copied bytes: a live content change is visible. */
+        byte = 0xa7;
+        check_int("plain ROM reread claimed", cpu_read8_plain_rom(&cpu, 0x80, 0xffff, &value), 1);
+        check_int("plain ROM live byte", value, 0xa7);
+        byte = 0x96;
+    }
+    const uint8 slow[] = {CART_SUPERFX, CART_SA1, CART_CX4, CART_DSP1,
+                         CART_DSP1_HIROM, CART_SDD1};
+    for (unsigned i = 0; i < sizeof(slow); ++i) {
+        cart.type = slow[i];
+        cpu.open_bus = 0x4d; cart.cpuBusAddress = 0xabcdef; value = 0x33;
+        check_int("coprocessor read unclaimed", cpu_read8_plain_rom(&cpu, 0x80, 0xffc0, &value), 0);
+        check_int("unclaimed read keeps output", value, 0x33);
+        check_int("unclaimed read keeps open bus", cpu.open_bus, 0x4d);
+        check_u32("unclaimed read keeps cart latch", cart.cpuBusAddress, 0xabcdef);
+    }
+    cart.type = CART_LOROM;
+    check_int("SRAM unclaimed", cpu_read8_plain_rom(&cpu, 0x70, 0x1234, &value), 0);
+    check_int("MMIO unclaimed", cpu_read8_plain_rom(&cpu, 0x00, 0x4212, &value), 0);
+    g_mapped_rom = NULL;
+    check_int("invalid ROM unclaimed", cpu_read8_plain_rom(&cpu, 0x80, 0x8000, &value), 0);
+    g_snes = NULL;
+    check_int("absent cart unclaimed", cpu_read8_plain_rom(&cpu, 0x80, 0x8000, &value), 0);
+}
+
 int main(void) {
     exercise_non_sa1();
 
@@ -227,6 +271,7 @@ int main(void) {
     g_cart_read_calls = 0;
     g_cart_write_calls = 0;
     exercise_sa1();
+    exercise_plain_rom();
 
     if (g_failures) return 1;
     puts("cart_cpu_bus_latch_test: PASS");
