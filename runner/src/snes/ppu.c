@@ -161,9 +161,21 @@ void PpuResetWidescreenOamHistory(Ppu *ppu) {
   memset(ppu->wsOamMotionGrace, 0, sizeof(ppu->wsOamMotionGrace));
 }
 
+#define PPU_PORT_FIELDS(F) \
+  F(vramPointer) F(vramReadBuffer) F(vramIncrementOnHigh) F(vramRemapMode) \
+  F(vramIncrement) F(cgramPointer) F(cgramSecondWrite) F(cgramBuffer) \
+  F(scrollPrev) F(scrollPrev2) F(m7prev) F(mosaicStartLine) \
+  F(m7startX) F(m7startY) F(hCount) F(vCount) F(hCountSecond) \
+  F(vCountSecond) F(countersLatched) F(timeOver) F(rangeOver) F(evenFrame) \
+  F(frameOverscan) F(frameInterlace)
+
 void ppu_rb_residue_get(const Ppu *ppu, PpuRollbackResidue *out) {
   if (!ppu || !out)
     return;
+  memset(out, 0, sizeof(*out));
+#define GET_PORT(field) out->field = ppu->field;
+  PPU_PORT_FIELDS(GET_PORT)
+#undef GET_PORT
   out->oamAdr = ppu->oamAdr;
   out->oamInHigh = ppu->oamInHigh ? 1u : 0u;
   out->oamSecondWrite = ppu->oamSecondWrite ? 1u : 0u;
@@ -178,6 +190,9 @@ void ppu_rb_residue_get(const Ppu *ppu, PpuRollbackResidue *out) {
 void ppu_rb_residue_set(Ppu *ppu, const PpuRollbackResidue *in) {
   if (!ppu || !in)
     return;
+#define SET_PORT(field) ppu->field = in->field;
+  PPU_PORT_FIELDS(SET_PORT)
+#undef SET_PORT
   ppu->oamAdr = in->oamAdr;
   ppu->oamInHigh = in->oamInHigh != 0u;
   ppu->oamSecondWrite = in->oamSecondWrite != 0u;
@@ -188,6 +203,7 @@ void ppu_rb_residue_set(Ppu *ppu, const PpuRollbackResidue *in) {
   memcpy(ppu->wsOamMotionSeen, in->wsOamMotionSeen, sizeof(in->wsOamMotionSeen));
   memcpy(ppu->wsOamMotionGrace, in->wsOamMotionGrace, sizeof(in->wsOamMotionGrace));
 }
+#undef PPU_PORT_FIELDS
 
 // Debug layer isolation: SNESRECOMP_LAYER_MASK is a bitmask of layers to keep
 // (bit0=BG1 .. bit3=BG4, bit4=OBJ). Host-only render filter — never serialized,

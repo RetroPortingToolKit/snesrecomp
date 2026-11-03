@@ -84,13 +84,13 @@ int main(void) {
   uint8_t bytes[sizeof(uint32_t)+sizeof(RtlRollbackResidue)+sizeof(uint64_t)]={0};
   uint32_t length=sizeof(RtlRollbackResidue);memcpy(bytes,&length,sizeof length);
   RtlRollbackResidue state={0};state.magic=RTL_RB_RESIDUE_MAGIC;
-  state.version=RTL_RB_RESIDUE_VERSION;state.interp[0]=17;
+  state.version=RTL_RB_RESIDUE_VERSION;state.interp[0]=17;state.ppu_rb.vramIncrement=1;
   size_t size=RtlExecutionStateSize();assert(size==sizeof bytes-8);
   memcpy(bytes+4,&state,sizeof state);
   assert(RtlExecutionStateValid(bytes,size));
   assert(!RtlExecutionStateValid(NULL,size));
   for(size_t n=0;n<size;n++)assert(!RtlExecutionStateValid(bytes,n));
-  for(unsigned fault=0;fault<9;fault++) {
+  for(unsigned fault=0;fault<12;fault++) {
     RtlRollbackResidue bad=state;
     switch(fault) {
       case 0:bad.magic=0;break;
@@ -102,6 +102,9 @@ int main(void) {
       case 6:bad.interp[0]=0;break;
       case 7:bad.cpu.m_flag=2;break;
       case 8:bad.memsel=2;break;
+      case 9:bad.ppu_rb.vramIncrement=0;break;
+      case 10:bad.ppu_rb.vramRemapMode=4;break;
+      case 11:bad.ppu_rb.cgramSecondWrite=2;break;
     }
     memcpy(bytes+4,&bad,sizeof bad);assert(!RtlExecutionStateValid(bytes,size));
   }

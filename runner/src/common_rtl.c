@@ -1166,7 +1166,7 @@ bool RtlLoadSnapshotFromMemory(const void *data, size_t size) {
  */
 
 #define RTL_RB_RESIDUE_MAGIC 0x53524252u /* 'RBRS' */
-#define RTL_RB_RESIDUE_VERSION 7u
+#define RTL_RB_RESIDUE_VERSION 8u
 
 typedef struct RtlRollbackResidue {
   uint32 magic;
@@ -1237,6 +1237,7 @@ typedef struct RtlRollbackResidue {
    * with forced mispredicts: identical port schedules, SPC clock three frames
    * (51,264 cycles) apart at the first APU-partition fork. */
   RtlApuFrameClock apu_frame_clock;
+  /* v8 extends ppu_rb with all hardware port/latch state. */
 } RtlRollbackResidue;
 
 size_t RtlRollbackSnapshotBound(void) {
@@ -1455,7 +1456,14 @@ bool RtlExecutionStateValid(const void *data, size_t size) {
       r.cpu.host_return_valid != 2 && r.cpu.host_return_valid != 3) ||
       r.apu_port.qTail - r.apu_port.qHead > APU_PORT_QUEUE_LEN ||
       r.apu_frame_time_valid > 1 || r.memsel > 1 || r.interp_apu_driving > 1 ||
-      r.ppu_rb.oamInHigh > 1 || r.ppu_rb.oamSecondWrite > 1) return false;
+      r.ppu_rb.oamInHigh > 1 || r.ppu_rb.oamSecondWrite > 1 ||
+      r.ppu_rb.vramIncrementOnHigh > 1 || r.ppu_rb.vramRemapMode > 3 ||
+      (r.ppu_rb.vramIncrement != 1 && r.ppu_rb.vramIncrement != 32 &&
+       r.ppu_rb.vramIncrement != 128) || r.ppu_rb.cgramSecondWrite > 1 ||
+      r.ppu_rb.hCountSecond > 1 || r.ppu_rb.vCountSecond > 1 ||
+      r.ppu_rb.countersLatched > 1 || r.ppu_rb.timeOver > 1 ||
+      r.ppu_rb.rangeOver > 1 || r.ppu_rb.evenFrame > 1 ||
+      r.ppu_rb.frameOverscan > 1 || r.ppu_rb.frameInterlace > 1) return false;
   return interp_bridge_rb_state_valid(r.interp, interp_bridge_rb_state_size());
 }
 
