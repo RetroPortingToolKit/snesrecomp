@@ -3,6 +3,7 @@ import os
 from pathlib import Path
 import shutil
 import subprocess
+import sys
 import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -18,7 +19,7 @@ def test_dsp_clock_snapshot(tmp_path):
     sources = ["tests/audio/dsp_clock_snapshot_test.c", "runner/src/snes/dsp.c",
         "runner/src/snes/dsp_clock.c", "runner/src/snes/dsp_shadow.c",
         "runner/src/snes/audio_shadow.c", "runner/src/audio_trace.c"]
-    gc = "-Wl,-dead_strip" if __import__("sys").platform == "darwin" else "-Wl,--gc-sections"
+    gc = "-Wl,-dead_strip" if sys.platform == "darwin" else "-Wl,--gc-sections"
     build = subprocess.run([compiler, "-std=c11", "-O1", "-DSNESRECOMP_TRACE=0",
         "-ffunction-sections", "-fdata-sections", "-Irunner/src", "-Irunner/src/snes",
         *sources, gc, "-lm", "-o", str(exe)], cwd=ROOT, capture_output=True,
