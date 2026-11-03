@@ -126,9 +126,33 @@ static void test_clipped_math(void) {
     SnesHdFrameDestroy(f);
   }
 }
+/* Actual quantized coefficient columns from the two SMK cameras at frame3000.
+ * Endpoints amplify quantization in the first table; averaging exceeds the
+ * residual bound in the second. Keep both validated fits, without weakening
+ * the singularity/nonperspective guards or selecting by game identity. */
+static void test_quantized_camera_tables(void) {
+  static const int16_t coefficients[2][83] = {
+    {-1520, -1139, -912, -760, -651, -651, -569, -507, -456, -414, -380, -351, -326, -304, -284, -269, -254, -240, -228, -217, -207, -198, -190, -183, -176, -169, -163, -157, -157, -152, -147, -142, -138, -134, -130, -127, -123, -120, -117, -114, -111, -108, -106, -103, -101, -99, -97, -95, -93, -92, -90, -90, -88, -86, -85, -83, -82, -80, -79, -78, -76, -75, -74, -73, -71, -70, -69, -68, -67, -66, -65, -64, -64, -63, -62, -62, -61, -60, -59, -59, -58, -57, -56},
+    {-76, -57, -46, -38, -33, -33, -29, -26, -23, -21, -19, -18, -17, -16, -15, -14, -13, -12, -12, -11, -11, -10, -10, -10, -9, -9, -9, -8, -8, -8, -8, -8, -7, -7, -7, -7, -7, -6, -6, -6, -6, -6, -6, -6, -6, -5, -5, -5, -5, -5, -5, -5, -5, -5, -5, -5, -5, -4, -4, -4, -4, -4, -4, -4, -4, -4, -4, -4, -4, -4, -4, -4, -4, -4, -4, -4, -3, -3, -3, -3, -3, -3, -3}
+  };
+  for(unsigned camera=0;camera<2;++camera) {
+    SnesHdFrame *f=SnesHdFrameCreate(1,83);static uint16_t vram[32768];
+    RECON_CHECK(SnesHdFrameAddPicture(f,vram)==0);
+    for(unsigned y=0;y<83;++y) {
+      SnesHdLine j={0};j.kind=kSnesHdReconstructed;j.raster_line=y+1;
+      j.active_right=1;j.matrix[0]=256;j.matrix[3]=256;
+      j.matrix[camera?2:0]=coefficients[camera][y];
+      RECON_CHECK(SnesHdFrameSetLine(f,y,&j));
+    }
+    RECON_CHECK(SnesHdFrameSeal(f));SnesHdView v;RECON_CHECK(SnesHdFrameView(f,&v));
+    for(unsigned y=0;y<83;++y)RECON_CHECK(v.lines[y].perspective);
+    SnesHdFrameDestroy(f);
+  }
+}
+
 int main(void) {
   test_clipped_math();
-  test_projection_geometry(); test_nonperspective(); test_flat_quantization_and_copy(); test_horizon_edges();
+  test_quantized_camera_tables(); test_projection_geometry(); test_nonperspective(); test_flat_quantization_and_copy(); test_horizon_edges();
   puts("Mode 7 reconstruction: analytic perspective, quantized coefficients, camera splits, zero/sign-changing coefficients passed");
   return 0;
 }
