@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import argparse
 import contextlib
+import hashlib
 import io
 import os
 import pathlib
@@ -67,6 +68,8 @@ def _generate(
     legacy_profile_rom_sha256: Optional[str] = None,
     generation_recipe_digest: Optional[str] = None,
     analysis_backend: str = "native",
+    instruction_blocks: bool = False,
+    region_paced: bool = False,
     expected_crc32: Optional[str] = None,
     expected_sha256: Optional[str] = None,
     progress: Optional[ProgressReporter] = None,
@@ -85,6 +88,8 @@ def _generate(
     from tools import v2_emit, v2_sync_funcs_h
 
     reporter = progress or ProgressReporter()
+    if region_paced and not instruction_blocks:
+        raise ValueError("region-paced emission requires instruction-blocks")
     rom = pathlib.Path(rom).resolve()
     cfg_dir = pathlib.Path(cfg_dir).resolve()
     out_dir = pathlib.Path(out_dir).resolve()
@@ -120,6 +125,10 @@ def _generate(
     ]
     if cfg_roots:
         emit_args.append("--cfg-roots")
+    if instruction_blocks:
+        emit_args.append("--instruction-blocks")
+    if region_paced:
+        emit_args.append("--region-paced")
     if no_host_root_scan:
         emit_args.append("--no-host-root-scan")
     for root in source_roots or ():
@@ -209,6 +218,8 @@ def _generate(
         "funcs_count": funcs_count,
         "cfg_roots": bool(cfg_roots),
         "analysis_backend": analysis_backend,
+        "instruction_blocks": bool(instruction_blocks),
+        "region_paced": bool(region_paced),
     }
     if _report_result:
         reporter.phase("done", pct=1.0, message="Generate complete")
@@ -249,13 +260,17 @@ def generate(**kwargs) -> dict:
         if supplied and supplied.lower() != verified["sha256"].lower():
             raise ValueError("legacy profile binding differs from verified recipe ROM")
         options["legacy_profile_rom_sha256"] = verified["sha256"]
-    for key in ("cfg_roots", "no_host_root_scan"):
+    for key in ("cfg_roots", "no_host_root_scan", "instruction_blocks", "region_paced"):
         options[key] = bool(options.get(key) or recipe.data.get(key))
+    if options["region_paced"] and not options["instruction_blocks"]:
+        raise ValueError("region-paced emission requires instruction-blocks")
     for key, recipe_key in (("profile_manifests", "profiles"),
                             ("historical_profile_manifests", "historical_profiles")):
         options[key] = list(dict.fromkeys(
             [*recipe.profiles(recipe_key), *(options.get(key) or [])]))
-    options["generation_recipe_digest"] = recipe.digest()
+    options["generation_recipe_digest"] = hashlib.sha256(
+        (recipe.digest() + "\0instruction_blocks=" + str(int(options["instruction_blocks"])) +
+         "\0region_paced=" + str(int(options["region_paced"]))).encode("ascii")).hexdigest()
     target = pathlib.Path(options["out_dir"]).resolve()
     header = pathlib.Path(options["funcs_h"]).resolve() if options.get("funcs_h") else None
     recipe.run("prepare", rom=rom, cfg_dir=cfg_dir, out_dir=target, reporter=reporter)
@@ -342,6 +357,8 @@ def generate_command(args: argparse.Namespace, progress: ProgressReporter) -> in
             ],
             legacy_profile_rom_sha256=getattr(args, "legacy_profile_rom_sha256", None),
             analysis_backend=args.analysis_backend,
+            instruction_blocks=bool(getattr(args, "instruction_blocks", False)),
+            region_paced=bool(getattr(args, "region_paced", False)),
             expected_crc32=args.expected_crc32,
             expected_sha256=args.expected_sha256,
             progress=progress,
@@ -427,6 +444,10 @@ def add_generate_parser(subparsers) -> None:
              "one (auto means native; python is an error)",
     )
     add_identity_args(generate_parser)
+    generate_parser.add_argument("--region-paced", action="store_true",
+                                 help="opt in to conservative per-access region timing (requires --instruction-blocks)")
+    generate_parser.add_argument("--instruction-blocks", action="store_true",
+                                 help="check host deadlines at every guest instruction boundary")
     generate_parser.add_argument(
         "--json-progress",
         action="store_true",

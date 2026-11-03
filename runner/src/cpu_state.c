@@ -764,16 +764,31 @@ void cpu_write16(CpuState *cpu, uint8 bank, uint16 addr, uint16 v) {
 /* ── Region-paced AOT bus (2026-08-31) ────────────────────────────────────
  * The LLE charges master clocks PER BUS TRANSFER at the region speed
  * (interp_bridge.c: master = Σ region_speed + internal×6). The AOT emitter's
- * block const covers fetch+internal cycles only; every data/stack/pointer
- * access in generated code calls these paced variants so the AOT master
- * advance matches the LLE exactly. The plain cpu_read8/16 / cpu_write8/16
+ * opt-in region-paced emitter accounts for fetch/internal clocks separately
+ * and uses these variants for supported data/stack accesses. Unsupported
+ * instructions stay interpreted; default aggregate emission does not use
+ * these helpers. The plain cpu_read8/16 / cpu_write8/16
  * stay UNPACED because the LLE's bridge shims call them inside their own
  * per-transfer accounting (pacing there would double-count the interp path).
  * The 16-bit forms charge both bytes at their own regions (they can straddle
  * a region boundary, e.g. $00:1FFF->$00:2000). */
+void (*g_cpu_aot_master_credit_hook)(CpuState *cpu, uint64 clocks) = NULL;
+void (*g_cpu_aot_instruction_boundary_hook)(CpuState *cpu) = NULL;
+
+void cpu_aot_instruction_boundary(CpuState *cpu) {
+    if (g_cpu_aot_instruction_boundary_hook)
+        g_cpu_aot_instruction_boundary_hook(cpu);
+}
+
+void cpu_add_aot_master_cycles(CpuState *cpu, uint64 clocks) {
+    cpu->master_cycles += clocks;
+    if (g_cpu_aot_master_credit_hook)
+        g_cpu_aot_master_credit_hook(cpu, clocks);
+}
+
 uint8_t cpu_read8_paced(CpuState *cpu, uint8_t bank, uint16_t addr) {
     uint32_t _sp = cpu_region_speed(((uint32_t)bank << 16) | addr);
-    cpu->master_cycles += _sp;
+    cpu_add_aot_master_cycles(cpu, _sp);
     {
         static int _pl = -1;
         if (_pl < 0) _pl = getenv("SNESRECOMP_PACELOG") ? 1 : 0;
@@ -795,7 +810,7 @@ uint8_t cpu_read8_paced(CpuState *cpu, uint8_t bank, uint16_t addr) {
 uint16_t cpu_read16_paced(CpuState *cpu, uint8_t bank, uint16_t addr) {
     uint32_t _sp = cpu_region_speed(((uint32_t)bank << 16) | addr) +
         cpu_region_speed(((uint32_t)bank << 16) | (uint16_t)(addr + 1));
-    cpu->master_cycles += _sp;
+    cpu_add_aot_master_cycles(cpu, _sp);
     {
         static int _pl = -1;
         if (_pl < 0) _pl = getenv("SNESRECOMP_PACELOG") ? 1 : 0;
@@ -816,7 +831,7 @@ uint16_t cpu_read16_paced(CpuState *cpu, uint8_t bank, uint16_t addr) {
 
 void cpu_write8_paced(CpuState *cpu, uint8_t bank, uint16_t addr, uint8_t v) {
     uint32_t _sp = cpu_region_speed(((uint32_t)bank << 16) | addr);
-    cpu->master_cycles += _sp;
+    cpu_add_aot_master_cycles(cpu, _sp);
     {
         static int _pl = -1;
         if (_pl < 0) _pl = getenv("SNESRECOMP_PACELOG") ? 1 : 0;
@@ -832,7 +847,7 @@ void cpu_write8_paced(CpuState *cpu, uint8_t bank, uint16_t addr, uint8_t v) {
 void cpu_write16_paced(CpuState *cpu, uint8_t bank, uint16_t addr, uint16_t v) {
     uint32_t _sp = cpu_region_speed(((uint32_t)bank << 16) | addr) +
         cpu_region_speed(((uint32_t)bank << 16) | (uint16_t)(addr + 1));
-    cpu->master_cycles += _sp;
+    cpu_add_aot_master_cycles(cpu, _sp);
     {
         static int _pl = -1;
         if (_pl < 0) _pl = getenv("SNESRECOMP_PACELOG") ? 1 : 0;
