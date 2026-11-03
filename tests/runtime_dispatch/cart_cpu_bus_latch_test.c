@@ -31,6 +31,8 @@ static uint32_t g_expected_latch;
 static int g_expect_slow_path_latch;
 static int g_cart_read_calls;
 static int g_cart_write_calls;
+static int g_expected_read_clocked;
+static int g_register_reads;
 
 static void check_int(const char *what, int got, int want) {
     if (got != want) {
@@ -50,6 +52,9 @@ static void check_u32(const char *what, uint32_t got, uint32_t want) {
 uint8 ReadReg(uint16 reg) { (void)reg; return 0; }
 uint16 ReadRegWord(uint16 reg) { (void)reg; return 0; }
 uint8 ReadRegOpenBus(uint16 reg, uint8 open_bus) {
+    check_int("register read clock scope", g_snes->cpuReadClocked,
+              g_expected_read_clocked);
+    g_register_reads++;
     (void)reg;
     return open_bus;
 }
@@ -264,6 +269,28 @@ static void exercise_plain_rom(void) {
     check_int("absent cart unclaimed", cpu_read8_plain_rom(&cpu, 0x80, 0x8000, &value), 0);
 }
 
+static void exercise_clocked_register_reads(void) {
+    Snes snes = {0};
+    Cart cart = {0};
+    CpuState cpu;
+    uint8 ram[0x20000];
+    reset_cpu(&cpu, ram);
+    g_snes = &snes; snes.cart = &cart;
+    g_expected_read_clocked = 1; g_register_reads = 0;
+    cpu_read8_paced(&cpu, 0x00, 0x4212);
+    check_int("paced byte restores raw scope", snes.cpuReadClocked, 0);
+    cpu_read16_paced(&cpu, 0x80, 0x4211);
+    check_int("paced word restores raw scope", snes.cpuReadClocked, 0);
+    check_int("paced byte/word bus clocks", cpu.master_cycles, 18);
+    snes_set_cpu_read_clocked(&snes, true);
+    cpu_read8_paced(&cpu, 0x00, 0x4212);
+    check_int("paced read preserves enclosing scope", snes.cpuReadClocked, 1);
+    snes_set_cpu_read_clocked(&snes, false);
+    g_expected_read_clocked = 0;
+    cpu_read8(&cpu, 0x00, 0x4212);
+    check_int("real register byte reads", g_register_reads, 5);
+}
+
 int main(void) {
     exercise_non_sa1();
 
@@ -272,6 +299,7 @@ int main(void) {
     g_cart_write_calls = 0;
     exercise_sa1();
     exercise_plain_rom();
+    exercise_clocked_register_reads();
 
     if (g_failures) return 1;
     puts("cart_cpu_bus_latch_test: PASS");

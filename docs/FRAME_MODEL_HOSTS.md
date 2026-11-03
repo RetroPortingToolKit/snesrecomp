@@ -31,6 +31,17 @@ work normally driven by the framework timeline, including:
 
 ## Beam-Aligned Driver and the Raster Journal
 
+Independently clocked native reads must not also take HVBJOY's legacy
+64-master-clock polling step. The `cpu_read8_paced` / `cpu_read16_paced`
+accessors establish a clocked read scope automatically; `ReadRegOpenBus`
+synchronizes `$4212` to that charged master clock. A custom per-access host
+using raw register dispatch can bracket the read with
+`snes_set_cpu_read_clocked(snes, true)`, synchronize its beam to the charged
+read clock, and restore the returned previous scope afterward. This host
+scope is excluded from snapshots and does not change APU ownership.
+Ordinary block-clocked raw reads retain their polling step. Selecting this
+scope alone does not establish compiled/interpreted instruction-cycle parity.
+
 `runner/src/beam_frame_driver.h` is the framework's driver for whole-program
 LLE ports, and what `tools/new_project` scaffolds call. One host frame is one
 PPU field, ending where the beam reaches V=225; interrupts (raster H/V matches
