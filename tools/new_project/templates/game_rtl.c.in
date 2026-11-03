@@ -62,4 +62,10 @@ const RtlGameInfo kGameInfo = {
     .draw_ppu_frame = &GameDrawPpuFrame,
     .save_name_prefix = "save",
     .session_reset = &GameSessionReset,
+    .hardware_reset = &GameSessionReset,
+    .state_save_extra = &snes_beam_frame_driver_state_save,
+    .state_load_extra = &snes_beam_frame_driver_state_load,
+    .on_state_loaded = &snes_beam_frame_driver_state_loaded,
+    .snapshot_guard_identity = &snes_beam_frame_driver_state_identity,
+    .snapshot_preflight = &snes_beam_frame_driver_state_preflight,
 };

@@ -608,6 +608,11 @@ void ppu_rasterApplyLine(Ppu *ppu, int line);
 void ppu_rasterFieldBoundary(void);
 /* Disarm, for a machine rebuild (session reset). */
 void ppu_rasterReset(void);
+/* Build-specific journal context, captured between CPU/render passes. */
+size_t ppu_rasterStateSize(void);
+bool ppu_rasterStateSave(SaveLoadInfo *sli);
+bool ppu_rasterStateLoad(SaveLoadInfo *sli);
+bool ppu_rasterStateValid(const void *data, size_t size);
 
 /* Scanout latch bypass — set by the debug server around render_inject so an
  * injected OAM/CGRAM state is rendered as given. A frame-model host that
@@ -677,6 +682,16 @@ void PpuResetWidescreenOamHistory(Ppu *ppu);
  * oamAdr forward and kept that walk after the restore, so the real frame then
  * wrote sprite attributes to the wrong OAM slots. */
 typedef struct PpuRollbackResidue {
+  /* Whole-program hosts can yield in the middle of a VRAM/CGRAM upload or
+   * a write-twice/latch read. These ports lie outside the device blob. */
+  uint16_t vramPointer, vramReadBuffer;
+  uint8_t vramIncrementOnHigh, vramRemapMode, vramIncrement;
+  uint8_t cgramPointer, cgramSecondWrite, cgramBuffer;
+  uint8_t scrollPrev, scrollPrev2, m7prev, mosaicStartLine;
+  int32_t m7startX, m7startY;
+  uint16_t hCount, vCount;
+  uint8_t hCountSecond, vCountSecond, countersLatched;
+  uint8_t timeOver, rangeOver, evenFrame, frameOverscan, frameInterlace;
   uint8_t  oamAdr;
   uint8_t  oamInHigh;
   uint8_t  oamSecondWrite;

@@ -161,9 +161,21 @@ void PpuResetWidescreenOamHistory(Ppu *ppu) {
   memset(ppu->wsOamMotionGrace, 0, sizeof(ppu->wsOamMotionGrace));
 }
 
+#define PPU_PORT_FIELDS(F) \
+  F(vramPointer) F(vramReadBuffer) F(vramIncrementOnHigh) F(vramRemapMode) \
+  F(vramIncrement) F(cgramPointer) F(cgramSecondWrite) F(cgramBuffer) \
+  F(scrollPrev) F(scrollPrev2) F(m7prev) F(mosaicStartLine) \
+  F(m7startX) F(m7startY) F(hCount) F(vCount) F(hCountSecond) \
+  F(vCountSecond) F(countersLatched) F(timeOver) F(rangeOver) F(evenFrame) \
+  F(frameOverscan) F(frameInterlace)
+
 void ppu_rb_residue_get(const Ppu *ppu, PpuRollbackResidue *out) {
   if (!ppu || !out)
     return;
+  memset(out, 0, sizeof(*out));
+#define GET_PORT(field) out->field = ppu->field;
+  PPU_PORT_FIELDS(GET_PORT)
+#undef GET_PORT
   out->oamAdr = ppu->oamAdr;
   out->oamInHigh = ppu->oamInHigh ? 1u : 0u;
   out->oamSecondWrite = ppu->oamSecondWrite ? 1u : 0u;
@@ -178,6 +190,9 @@ void ppu_rb_residue_get(const Ppu *ppu, PpuRollbackResidue *out) {
 void ppu_rb_residue_set(Ppu *ppu, const PpuRollbackResidue *in) {
   if (!ppu || !in)
     return;
+#define SET_PORT(field) ppu->field = in->field;
+  PPU_PORT_FIELDS(SET_PORT)
+#undef SET_PORT
   ppu->oamAdr = in->oamAdr;
   ppu->oamInHigh = in->oamInHigh != 0u;
   ppu->oamSecondWrite = in->oamSecondWrite != 0u;
@@ -188,6 +203,7 @@ void ppu_rb_residue_set(Ppu *ppu, const PpuRollbackResidue *in) {
   memcpy(ppu->wsOamMotionSeen, in->wsOamMotionSeen, sizeof(in->wsOamMotionSeen));
   memcpy(ppu->wsOamMotionGrace, in->wsOamMotionGrace, sizeof(in->wsOamMotionGrace));
 }
+#undef PPU_PORT_FIELDS
 
 // Debug layer isolation: SNESRECOMP_LAYER_MASK is a bitmask of layers to keep
 // (bit0=BG1 .. bit3=BG4, bit4=OBJ). Host-only render filter — never serialized,
@@ -3451,6 +3467,62 @@ void ppu_rasterRenderEnd(Ppu *ppu) {
   ppu->oamInHigh = s_raster_port.oamInHigh;
   ppu->oamSecondWrite = s_raster_port.oamSecondWrite;
   ppu->oamBuffer = s_raster_port.oamBuffer;
+}
+
+typedef struct {
+  uint32_t magic, size, current, armed, completed;
+  PpuRasterField field[2];
+} PpuRasterState;
+#define PPU_RASTER_STATE_MAGIC 0x31524a50u /* PJR1 */
+
+size_t ppu_rasterStateSize(void) { return sizeof(PpuRasterState); }
+
+bool ppu_rasterStateValid(const void *data, size_t size) {
+  if (!data || size != sizeof(PpuRasterState)) return false;
+  PpuRasterState state;
+  memcpy(&state, data, sizeof state);
+  if (state.magic != PPU_RASTER_STATE_MAGIC || state.size != sizeof state ||
+      state.current > 1 || state.armed > 1 || state.completed > 1) return false;
+  for (unsigned f = 0; f < 2; ++f) {
+    const PpuRasterField *field = &state.field[f];
+    if (field->count < 0 || field->count > PPU_RASTER_MAX) return false;
+    for (int i = 0; i < field->count; ++i)
+      if (field->e[i].key >= 262 || !raster_reg_journaled(field->e[i].reg))
+        return false;
+  }
+  return true;
+}
+
+bool ppu_rasterStateSave(SaveLoadInfo *sli) {
+  if (s_raster_rendering) return false;
+  PpuRasterState state = {0};
+  state.magic = PPU_RASTER_STATE_MAGIC;
+  state.size = sizeof state;
+  state.current = s_raster_armed ? s_raster_cur : 0;
+  state.armed = s_raster_armed;
+  state.completed = s_raster_armed ? s_raster_have_completed : 0;
+  if (s_raster_armed) for (unsigned f = 0; f < 2; ++f) {
+    if (!s_raster_have_completed && f != (unsigned)s_raster_cur) continue;
+    state.field[f] = s_field[f];
+    /* Unused entries belong to discarded fields, not this snapshot. */
+    memset(state.field[f].e + state.field[f].count, 0,
+           (PPU_RASTER_MAX - state.field[f].count) * sizeof(PpuRasterEntry));
+  }
+  sli->func(sli, &state, sizeof state);
+  return true;
+}
+
+bool ppu_rasterStateLoad(SaveLoadInfo *sli) {
+  PpuRasterState state;
+  sli->func(sli, &state, sizeof state);
+  if (!ppu_rasterStateValid(&state, sizeof state)) return false;
+  memcpy(s_field, state.field, sizeof s_field);
+  s_raster_cur = state.current;
+  s_raster_armed = state.armed;
+  s_raster_have_completed = state.completed;
+  s_raster_rendering = s_raster_next = s_raster_hdmaen_pending = 0;
+  s_raster_render = NULL;
+  return true;
 }
 
 /* Snapshot of the journal as the renderer will consume it, for the debug

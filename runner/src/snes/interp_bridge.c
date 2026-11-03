@@ -939,6 +939,25 @@ typedef struct {
 } InterpBridgeRbState;
 
 #define INTERP_BRIDGE_RB_MAGIC 0x49425253u /* 'IBRS' */
+_Static_assert(sizeof(InterpBridgeRbState) <= INTERP_BRIDGE_STATE_CAPACITY,
+               "increase the public bridge state capacity");
+
+bool interp_bridge_rb_state_valid(const void *in, size_t size) {
+    if (!in || size != sizeof(InterpBridgeRbState)) return false;
+    InterpBridgeRbState state;
+    memcpy(&state, in, sizeof state);
+    if (state.magic != INTERP_BRIDGE_RB_MAGIC ||
+        state.apu_pending_master > UINT32_MAX ||
+        state.bus_cycles > UINT16_MAX ||
+        (state.bus_timing_active != 0 && state.bus_timing_active != 1) ||
+        (state.lle_wai_yield != 0 && state.lle_wai_yield != 1) ||
+        state.lle_resume_pc24 > 0xffffffu) return false;
+    for (unsigned i = 0; i < 64; ++i)
+        if (state.dynamic_values[i].valid > 1 ||
+            (state.dynamic_values[i].valid &&
+             state.dynamic_values[i].address > 0xffffffu)) return false;
+    return true;
+}
 
 size_t interp_bridge_rb_state_size(void) { return sizeof(InterpBridgeRbState); }
 
