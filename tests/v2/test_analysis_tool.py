@@ -192,8 +192,10 @@ def test_proven_noreturn_callee_leaves_caller_to_lle():
     root_key = VariantKey(0x008000, 1, 1)
     wait_key = VariantKey(0x009000, 1, 1)
     assert manifest.exit_mode_sets[wait_key] == frozenset()
-    # A truncated caller publishes no exit fact of its own.
-    assert root_key not in manifest.exit_mode_sets
+    # The caller's empty proof is conditional on the proven-empty callee.
+    # Retaining that validated SCC requirement prevents publish/invalidate
+    # oscillation; an exit proof still does not authorize AOT emission.
+    assert manifest.exit_mode_sets[root_key] == frozenset()
     assert root_key not in manifest.exit_modes
     # The JSR has no decoded continuation, so AOT would have nothing to resume
     # if the callee ever yields back; LLE owns the caller (native analyzer
