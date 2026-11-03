@@ -170,8 +170,9 @@ def pb_save_restore_envelope(
 
     RecompReturn ABI (2026-05-02): callee returns RecompReturn.
     NORMAL → continue. SKIP_N → restore PB, then propagate via
-    `return SKIP_(N-1)`. PB restore MUST run before the propagation
-    return so the caller's PB is correct on the way out.
+    `return SKIP_(N-1)`. A pending LLE yield/deadline is a suspended guest
+    continuation: preserve its live PB through every ancestor envelope.
+    Testing bridge ownership avoids guessing from the decremented sentinel.
 
     NB: emit_function.py's per-line scanner auto-injects
     RecompStackPop() before any line whose stripped text starts with
@@ -185,8 +186,10 @@ def pb_save_restore_envelope(
         f"cpu->PB = {target_bank:#04x};",
     ]
     bank_leave = [] if target_bank is None else [
-        f"cpu_trace_pb_change(cpu, {trace_pc}, cpu->PB, _saved_pb, CPU_TR_RTL);",
-        "cpu->PB = _saved_pb;",
+        "if (!interp_bridge_lle_unwind_pending()) {",
+        f"  cpu_trace_pb_change(cpu, {trace_pc}, cpu->PB, _saved_pb, CPU_TR_RTL);",
+        "  cpu->PB = _saved_pb;",
+        "}",
     ]
     return [
         *bank_enter,
