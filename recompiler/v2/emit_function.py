@@ -126,21 +126,25 @@ def _block_cycle_const(pairs) -> int:
     Folds base + M/X-width + native adds via the shared cost model
     (snes_cycles.block_static_cycles); the M/X widths come from the per-insn
     flags the decoder already stamped. Runtime-only modifiers (D.l != 0,
-    index page-cross, branch taken) are NOT folded here — they are charged
-    dynamically in a later step C increment. Returns 0 for an empty/odd block
+    index page-cross, unknown branch direction) are charged dynamically.
+    A constant-Z-folded taken branch has no CondBranch left to charge its
+    taken cycle, so include that proven cost here. Returns 0 for an empty/odd block
     so the emitter can skip the add entirely.
     """
     items = []
+    folded_taken = 0
     for p in pairs:
         insn = p[0]
         op = getattr(insn, 'opcode', None)
         if op is None:
             return 0
         items.append((op, getattr(insn, 'm_flag', 1), getattr(insn, 'x_flag', 1)))
+        if getattr(insn, 'const_z_fold_taken', False):
+            folded_taken += instr_runtime_charges(op, getattr(insn, 'x_flag', 1)).get('branch', 0)
     if not items:
         return 0
     const, _dynamics = block_static_cycles(items)
-    return const
+    return const + folded_taken
 
 
 def _block_speed(bank: int, pc: int):

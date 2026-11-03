@@ -251,6 +251,7 @@ class Insn:
                   'dispatch_forced_x', 'dispatch_consumed_stack_bytes',
                   'dispatch_configured_stack_bytes',
                   'const_z_fold_unconditional', 'const_z_fold_dead_pc24',
+                  'const_z_fold_taken',
                   'data_region_exec', 'terminal_jsr', 'noreturn_jsr', 'brk_rti')
 
     def __init__(self, addr, opcode, mnem, mode, operand, length):
@@ -332,6 +333,7 @@ class Insn:
         # build report.
         self.const_z_fold_unconditional = False
         self.const_z_fold_dead_pc24 = None
+        self.const_z_fold_taken = False
         self.data_region_exec = False
 
     def __repr__(self):

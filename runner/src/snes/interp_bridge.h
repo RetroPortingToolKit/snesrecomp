@@ -241,6 +241,7 @@ void interp_bridge_reset_dynamic_cache(void);
  * architecturally interruptible instructions use this at their legal byte
  * boundaries before unwinding to the owning interpreter. */
 int interp_bridge_lle_master_deadline_reached(const CpuState *cpu);
+int interp_bridge_lle_unwind_pending(void);
 
 /* Execute an architectural interrupt handler through its terminal RTI. The
  * caller has already materialized the hardware interrupt frame. */
