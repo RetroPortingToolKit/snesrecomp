@@ -29,6 +29,21 @@ work normally driven by the framework timeline, including:
 - APU catch-up at a cadence that does not depend on one frame-sized catch-up
   call.
 
+Choose one owner for the read-clear `$4210.7` (RDNMI) edge as well. Beam-owned
+hosts keep the default `snes_set_rdnmi_beam_enabled(true)`. A custom frame host
+that supplies its own `snes->inNmi` pulse selects
+`snes_set_rdnmi_beam_enabled(false)` during setup. Otherwise a guest can consume
+the manual pulse, then observe a second beam-latched edge before the next
+host frame refreshes input. Manual hosts must supply their edge independently
+of NMITIMEN; that register controls interrupt delivery, not RDNMI visibility.
+
+This selects ownership rather than disabling beam progression. IRQ/HDMA,
+joypad timing and raster field observers retain their existing behavior.
+Reading RDNMI still clears both pending fields; a stale serialized beam latch
+is ignored under manual ownership. The choice is host configuration outside
+guest save states: select it when setting up a host and restore the proper
+policy when switching host models in the same process.
+
 ## Beam-Aligned Driver and the Raster Journal
 
 `runner/src/beam_frame_driver.h` is the framework's driver for whole-program

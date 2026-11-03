@@ -69,6 +69,10 @@ void snes_set_hdma_beam_enabled(Snes *snes, bool enabled) {
 }
 
 static bool s_raster_irq_beam_off;
+static bool s_rdnmi_beam_off;
+void snes_set_rdnmi_beam_enabled(bool enabled) {
+  s_rdnmi_beam_off = !enabled;
+}
 void snes_set_raster_irq_beam_enabled(bool enabled) {
   s_raster_irq_beam_off = !enabled;
 }
@@ -463,7 +467,10 @@ static uint32_t snes_advance_beam(Snes *snes, uint32_t clocks, bool check_irq) {
         consumed += upto;
         if (h >= 1364u) {
           h = 0; v++; if (v >= 262u) v = 0;
-          if (v == 225u) { snes->rdnmiPending = true; ppu_rasterFieldBoundary(); }
+          if (v == 225u) {
+            if (!s_rdnmi_beam_off) snes->rdnmiPending = true;
+            ppu_rasterFieldBoundary();
+          }
           if (v == 0u) snes->rdnmiPending = false;
         }
         snes->hPos = (uint16_t)h;
@@ -495,7 +502,10 @@ static uint32_t snes_advance_beam(Snes *snes, uint32_t clocks, bool check_irq) {
     if (h >= 1364u) {
       h = 0;
       v++;
-      if (v == 225u) { snes->rdnmiPending = true; ppu_rasterFieldBoundary(); }
+      if (v == 225u) {
+        if (!s_rdnmi_beam_off) snes->rdnmiPending = true;
+        ppu_rasterFieldBoundary();
+      }
       if (v >= 262u) {
         v = 0;
         snes->rdnmiPending = false;
@@ -626,7 +636,7 @@ uint8_t snes_readReg(Snes* snes, uint16_t adr) {
       uint8_t val = 0x2; // CPU version (4 bit)
       // Beam-driven hosts latch independently of NMITIMEN. Keep accepting
       // inNmi for existing frame hosts which explicitly deliver each NMI.
-      val |= (snes->rdnmiPending || snes->inNmi) << 7;
+      val |= ((!s_rdnmi_beam_off && snes->rdnmiPending) || snes->inNmi) << 7;
       // Real hardware clears the NMI-pending latch on read. Without this
       // a stale `inNmi=true` would persist across NMI handler exit and
       // produce a spurious second-read=true if anything re-reads $4210
