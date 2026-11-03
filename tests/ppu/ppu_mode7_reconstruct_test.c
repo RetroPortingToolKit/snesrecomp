@@ -102,7 +102,32 @@ static void test_horizon_edges(void) {
     SnesHdFrameDestroy(f);
   }
 }
+/* Clipping main color to black suppresses half-color math, as does a
+ * transparent subscreen addend. Expected colors are independent of the native
+ * renderer and shared CPU/GPU agreement. */
+static SnesHdFrame *clipped_math_fixture(unsigned flags) {
+  SnesHdFrame *f = SnesHdFrameCreate(2, 1);
+  static uint16_t vram[32768];
+  memset(vram, 0, sizeof(vram)); vram[0] = 0x0100;
+  RECON_CHECK(SnesHdFrameAddPicture(f, vram) == 0);
+  SnesHdLine j = {0}; j.kind = kSnesHdAffine; j.active_right = 2;
+  j.brightness = 15; j.palette[1] = 12 * 0x421; j.fixed_color = 4 * 0x421;
+  j.cgwsel = (flags & 1 ? 0xc0 : 0) | (flags & 2 ? 2 : 0);
+  j.cgadsub = 0x41; j.visibility[0] = j.visibility[1] = 1;
+  RECON_CHECK(SnesHdFrameSetLine(f, 0, &j) && SnesHdFrameSeal(f));
+  return f;
+}
+static void test_clipped_math(void) {
+  const uint32_t expected[] = {0x424242, 0x212121, 0x848484, 0x212121};
+  for (unsigned flags = 0; flags < 4; ++flags) {
+    SnesHdFrame *f = clipped_math_fixture(flags); uint32_t pixels[8];
+    RECON_CHECK(SnesHdFrameRenderRegion(f, 2, 0, 0, 4, 2, pixels, 16));
+    for (unsigned i = 0; i < 8; ++i) RECON_CHECK(pixels[i] == expected[flags]);
+    SnesHdFrameDestroy(f);
+  }
+}
 int main(void) {
+  test_clipped_math();
   test_projection_geometry(); test_nonperspective(); test_flat_quantization_and_copy(); test_horizon_edges();
   puts("Mode 7 reconstruction: analytic perspective, quantized coefficients, camera splits, zero/sign-changing coefficients passed");
   return 0;

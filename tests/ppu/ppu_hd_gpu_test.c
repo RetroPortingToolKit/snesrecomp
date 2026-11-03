@@ -67,6 +67,13 @@ int main(void) {
   CHECK(SnesHdGpuSupportsAffine(g));
   glGenFramebuffers(1, &framebuffer);
   unsigned comparisons = 0;
+  test_clipped_math();
+  for (unsigned flags = 0; flags < 4; ++flags) {
+    SnesHdFrame *f = clipped_math_fixture(flags);
+    make_target(4, 2); CHECK(SnesHdGpuDraw(g, f, 2, 4, 2));
+    compare_roi(g, f, 2, 0, 0, 4, 2);
+    SnesHdFrameDestroy(f);
+  }
   test_projection_geometry(); test_nonperspective();
   for (unsigned flags = 0; flags < 16; ++flags) {
     SnesHdFrame *f = projection_fixture(flags, true, true);
