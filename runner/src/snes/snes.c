@@ -141,10 +141,10 @@ void snes_free(Snes* snes) {
 
 /* RTLS v5 and earlier serialized beamMasterLast between vPos and
  * apuCatchupCycles (+8 bytes). v6+ keeps it host-only (before hPos). */
-static uint32_t s_saveload_version = 10;
+static uint32_t s_saveload_version = 11;
 
 void snes_saveload_set_version(uint32_t version) {
-  s_saveload_version = version ? version : 10;
+  s_saveload_version = version ? version : 11;
 }
 
 uint32_t snes_saveload_get_version(void) { return s_saveload_version; }

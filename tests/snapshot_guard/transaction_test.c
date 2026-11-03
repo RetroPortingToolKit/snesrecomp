@@ -1,3 +1,10 @@
+static size_t dsp_clock_offset;
+static void find_clock(SaveLoadInfo *info, void *data, size_t size) {
+    MemorySli *s = (MemorySli *)info;
+    if (data == &dsp.clk) dsp_clock_offset = s->position;
+    s->position += size;
+}
+
 int main(void) {
     machine.cpu=&cpu; machine.apu=&apu; machine.dma=&dma; machine.ppu=&ppu;
     machine.cart=&cart; machine.ram=ram; apu.dsp=&dsp; apu.spc=&spc;
@@ -5,6 +12,22 @@ int main(void) {
     cpu.a=0x1234; host_extra=17; ram[70]=8;
     unsigned char *snapshot=malloc(1024*1024); assert(snapshot);
     size_t size=RtlSaveSnapshotToMemory(snapshot,1024*1024); assert(size>0x20000);
+    /* Malformed new clock indices are rejected before any guest publication. */
+    MemorySli locate={{&find_clock},snapshot,1024*1024,8,true,false};
+    cpu_saveload(&cpu,&locate.base); apu_saveload(&apu,&locate.base);
+    assert(dsp_clock_offset);
+    const size_t bad_clock_fields[]={offsetof(DspClock,step),offsetof(DspClock,echoHistPos),
+        offsetof(DspClock,v)+offsetof(DspClockVoice,bufPos)};
+    for(unsigned i=0;i<sizeof(bad_clock_fields)/sizeof(*bad_clock_fields);++i) {
+        size_t at=dsp_clock_offset+bad_clock_fields[i]; uint8_t saved=snapshot[at];
+        snapshot[at]=255;
+        unsigned loads=extra_loads, resets=audio_resets;
+        DspClock saved_clock=dsp.clk; uint16_t saved_a=cpu.a;
+        assert(!RtlLoadSnapshotFromMemory(snapshot,size));
+        assert(!memcmp(&saved_clock,&dsp.clk,sizeof(saved_clock)) && cpu.a==saved_a);
+        assert(extra_loads==loads && audio_resets==resets);
+        snapshot[at]=saved;
+    }
     cpu.a=0x5678; cpu.e=true; ram[70]=9; host_extra=42;
     const Cpu before_cpu=cpu; const Snes before_snes=machine;
     static Apu before_apu; static Dsp before_dsp; static Ppu before_ppu;
@@ -130,7 +153,7 @@ int main(void) {
         snes_saveload_set_version(version); snes_saveload(&machine,&out.base);
         assert(!out.error); assert(RtlLoadSnapshotFromMemory(snapshot,out.position));
     }
-    /* Early v6/v7 used the compact DMA and SNES tail layouts. */
+    /* Pre-v11 snapshots lack required DSP timing state and are rejected. */
     for(uint32_t version=6;version<=7;version++) {
         uint32_t header[2]={RTL_SAV_MAGIC,version};
         MemorySli out={{&memory_sli_func},snapshot,1024*1024,0,true,false};
@@ -151,7 +174,7 @@ int main(void) {
             memory_sli_func(&out.base,&machine.joypad1Latched,sizeof(machine.joypad1Latched));
             memory_sli_func(&out.base,&machine.joypad2Latched,sizeof(machine.joypad2Latched));
         }
-        assert(RtlLoadSnapshotFromMemory(snapshot,out.position));
+        assert(!RtlLoadSnapshotFromMemory(snapshot,out.position));
         const Cpu saved_cpu=cpu; const Dma saved_dma=dma; const Snes saved_snes=machine;
         assert(!RtlLoadSnapshotFromMemory(snapshot,out.position-1));
         assert(!memcmp(&cpu,&saved_cpu,sizeof(cpu)) && !memcmp(&dma,&saved_dma,sizeof(dma)));

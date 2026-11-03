@@ -146,6 +146,10 @@ void apu_reset(Apu* apu) {
    * from power-on (MesenCE), which a 3-cycle reset gives this core. */
   apu->cpuCyclesLeft = apu_accessCycles() ? 3 : 7;
   apu->portClock = 0;
+  apu->holdActive = false;
+  apu->held = false;
+  apu->holdTarget = 0;
+  memset(apu->timerAhead, 0, sizeof(apu->timerAhead));
   apu->dspAhead = 0;
   apu_clearPortQueue(apu);
 }
@@ -383,6 +387,8 @@ void apu_port_sched_restore(Apu *apu, const ApuPortSched *in) {
 
 void apu_saveload(Apu *apu, SaveLoadInfo *sli) {
   sli->func(sli, apu->ram, offsetof(Apu, pad) + 6 - offsetof(Apu, ram));
+  sli->func(sli, apu->timerAhead, sizeof(apu->timerAhead));
+  sli->func(sli, &apu->dspAhead, sizeof(apu->dspAhead));
   dsp_saveload(apu->dsp, sli);
   spc_saveload(apu->spc, sli);
 }

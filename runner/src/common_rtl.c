@@ -415,11 +415,9 @@ static uint64_t fp_fnv1a(const uint8_t *p, size_t n) {
  * v8: multitap chunk (seats, IOBit lines, per-bank shift counters, latched
  *     automatic-read words). Older files load with no multitap configured,
  *     which is the pre-multitap two-pad machine exactly. */
-#define RTL_SAV_VERSION 10u /* RDNMI pending latch; v9 added Super FX state. */
-/* 4 and 5 described a Snes tail layout this struct no longer has; see
- * snes_saveload(). Loading one would mis-map the interrupt fields, so
- * they are rejected by the header check instead. */
-#define RTL_SAV_VERSION_MIN 6u
+#define RTL_SAV_VERSION 11u /* Canonical access-exact SPC/DSP timing state. */
+/* States are build-specific. Older blobs lack required live DSP phases. */
+#define RTL_SAV_VERSION_MIN 11u
 /* Independent of sizes supplied by an untrusted snapshot or title payload. */
 #define RTL_SAV_MAX_SIZE (16u * 1024u * 1024u)
 
@@ -523,10 +521,24 @@ size_t RtlStateBytesRemaining(SaveLoadInfo *sli) {
  * private containers for those writes. Peripheral walkers are stream-only. */
 static void snapshot_check_func(SaveLoadInfo *sli, void *data, size_t n) {
   MemorySli *m = (MemorySli *)sli;
-  (void)data;
   if (m->error || m->position > m->capacity || n > m->capacity - m->position) {
     m->error = true;
     return;
+  }
+  if (g_snes && g_snes->apu && g_snes->apu->dsp &&
+      data == &g_snes->apu->dsp->clk && n == sizeof(DspClock)) {
+    DspClock clock;
+    memcpy(&clock, m->data + m->position, sizeof(clock));
+    if (clock.step >= 32 || clock.echoHistPos >= 8) {
+      m->error = true;
+      return;
+    }
+    for (unsigned i = 0; i < 8; ++i) {
+      if (clock.v[i].bufPos > 8 || (clock.v[i].bufPos & 3)) {
+        m->error = true;
+        return;
+      }
+    }
   }
   m->position += n;
 }

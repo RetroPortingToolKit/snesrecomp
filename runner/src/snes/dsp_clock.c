@@ -295,9 +295,14 @@ static void echo_clock(Dsp *dsp, int clock) {
   }
 }
 
-static void emit_sample(Dsp *dsp) {
+static void emit_sample(Dsp *dsp, Dsp *filtered) {
   DspClock *c = &dsp->clk;
   int16_t l = (int16_t)c->out[0], r = (int16_t)c->out[1];
+  if (filtered) {
+    l = (int16_t)filtered->clk.out[0];
+    r = (int16_t)filtered->clk.out[1];
+    filtered->clk.out[0] = filtered->clk.out[1] = 0;
+  }
   if (c->regs[R_FLG] & 0x40) l = r = 0;
   c->out[0] = c->out[1] = 0;
   if (dsp->suppressOutput) return;
@@ -344,6 +349,8 @@ static void voice_step(Dsp *dsp, int v, int s) {
 void dsp_clock(Dsp *dsp) {
   DspClock *c = &dsp->clk;
   int clock = c->step;
+  uint8_t voices = 0xff;
+  Dsp *filtered = dsp->output_filter ? dsp_clock_output_filter(dsp, &voices) : NULL;
   c->step = (uint8_t)((c->step + 1) & 31);
   /* Clock 30: KON/KOF and the counter come before voice 0's step 3c; clock 22: voice 0's 3a before the echo
    * read (the order inside a clock matters only where they share a latch). */
@@ -356,10 +363,21 @@ void dsp_clock(Dsp *dsp) {
     if (rate_due(c, c->regs[R_FLG] & 31))
       c->noise = (((c->noise << 14) ^ (c->noise << 13)) & 0x4000) ^ (c->noise >> 1);
   }
-  for (int i = 0; i < 3; i++)
-    if (kSchedule[clock][i][0] < 8) voice_step(dsp, kSchedule[clock][i][0], kSchedule[clock][i][1]);
+  for (int i = 0; i < 3; i++) {
+    int v = kSchedule[clock][i][0], step = kSchedule[clock][i][1];
+    if (v < 8) {
+      voice_step(dsp, v, step);
+      /* Feed the same synthesized voice to a presentation-only mixer. Its
+       * echo RAM/FIR are private; canonical synthesis and echo keep running. */
+      if (filtered && (voices & (1u << v)) && (step == 4 || step == 5)) {
+        filtered->clk.voiceOut = c->voiceOut;
+        mix(filtered, v, step == 4 ? 0 : 1);
+      }
+    }
+  }
   echo_clock(dsp, clock);
-  if (clock == 27) emit_sample(dsp);
+  if (filtered) echo_clock(filtered, clock);
+  if (clock == 27) emit_sample(dsp, filtered);
 }
 
 /* An SPC write to a DSP register on this path. */

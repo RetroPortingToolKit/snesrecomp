@@ -107,6 +107,15 @@ void dsp_suspend_output_filter(Dsp *dsp, bool suspended) {
   if (filter) filter->suspended = suspended;
 }
 
+Dsp* dsp_clock_output_filter(Dsp *dsp, uint8_t *voices) {
+  DspOutputFilter *filter = dsp->output_filter;
+  if (!filter || filter->voices == 0xff || filter->suspended) return NULL;
+  *voices = filter->voices;
+  memcpy(filter->mirror.clk.regs, dsp->clk.regs, sizeof(dsp->clk.regs));
+  filter->mirror.clk.eon = dsp->clk.eon;
+  return &filter->mirror;
+}
+
 static void output_voices(Dsp *dsp, int *left, int *right) {
   DspOutputFilter *filter = dsp->output_filter;
   if (!filter || filter->voices == 0xff || filter->suspended) return;
@@ -251,6 +260,10 @@ uint32_t dsp_output_ring_write(const Dsp *dsp) {
 
 void dsp_saveload(Dsp *dsp, SaveLoadInfo *sli) {
   sli->func(sli, &dsp->ram, sizeof(Dsp) - offsetof(Dsp, ram));
+  sli->func(sli, dsp->konDelay, sizeof(dsp->konDelay));
+  sli->func(sli, &dsp->rateCounter, sizeof(dsp->rateCounter));
+  sli->func(sli, dsp->endPending, sizeof(dsp->endPending));
+  sli->func(sli, &dsp->clk, sizeof(dsp->clk));
 }
 
 void dsp_set_output_suppressed(Dsp *dsp, bool suppressed) {

@@ -111,10 +111,23 @@ void spc_reset(Spc* spc) {
   spc->b = false;
   spc->stopped = false;
   spc->cyclesUsed = 0;
+  spc->busIdx = 0;
+  spc->opPc = 0;
+  spc->op = 0;
+  spc->accessCycle = 0;
+  spc->dry = false;
+  spc->dryLastPort = -1;
+  spc->dryWrites = 0;
+  memset(spc->dryPortWrite, 0, sizeof(spc->dryPortWrite));
+  spc->dryPortWrites = 0;
 }
 
 void spc_saveload(Spc *spc, SaveLoadInfo *sli) {
   sli->func(sli, &spc->a, offsetof(Spc, cyclesUsed) - offsetof(Spc, a));
+  /* An opcode's bus effects can lead its remaining clocks. Retain its
+   * access cursor beside the APU's timer/DSP advance debt. Probe-only
+   * fields starting at dry are temporary and stay outside the snapshot. */
+  sli->func(sli, &spc->cyclesUsed, offsetof(Spc, dry) - offsetof(Spc, cyclesUsed));
 }
 
 /* Opt-in SPC instruction trace (SNESRECOMP_SPC_TRACE=1): ring of the last

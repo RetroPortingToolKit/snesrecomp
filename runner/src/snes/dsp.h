@@ -101,10 +101,8 @@ struct Dsp {
   void *shadow;
   // Host voice/echo routing, outside the serialized simulation like shadow.
   void *output_filter;
-  /* Timing-model state (SNESRECOMP_DSP_KON_DELAY, _GLOBAL_COUNTER, _ENDX_AT,
-   * _PER_CLOCK). Before `ram`, like shadow: outside dsp_saveload, so the
-   * savestate layout and the rollback digest are unchanged; a state load
-   * restarts it. */
+  /* Canonical timing-model state. Serialized separately from the historical
+   * ram-through-output region; a current-build load must resume these phases. */
   /* Samples left of each voice's key-on delay (hardware: 5 silent samples,
    * then playback from the sample's first block). */
   uint8_t konDelay[8];
@@ -167,6 +165,9 @@ bool dsp_perClock(void);
 void dsp_clock(Dsp* dsp);
 void dsp_clockReset(Dsp* dsp);
 void dsp_clockWrite(Dsp* dsp, uint8_t adr, uint8_t val);
+/* Internal DAC-only mirror for the clocked mixer; never executes voices or
+ * writes canonical APU memory. NULL means ordinary unfiltered publication. */
+Dsp *dsp_clock_output_filter(Dsp *dsp, uint8_t *voices);
 /* Presentation only. Select dry voices AND their native echo at the DAC;
  * every canonical voice, echo RAM write and clock still runs unchanged.
  * 0xff restores ordinary output (the default). Caller holds the APU lock.

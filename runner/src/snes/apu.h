@@ -47,8 +47,8 @@ struct Apu {
   Timer timer[3];
   uint8_t cpuCyclesLeft;
   uint8_t pad[6];
-  /* Port event state must stay after pad: apu_saveload snapshots [ram,pad+6),
-   * and that savestate layout is frozen. Callback lead is host state, so the
+  /* Port event state stays after the main [ram,pad+6) region. Canonical
+   * timer/DSP advance debt is serialized separately. Callback lead is host state, so the
    * queue and its mapping are deliberately reset rather than serialized. */
   ApuPortWrite portQueue[APU_PORT_QUEUE_LEN];
   uint32_t portQHead;

@@ -33,7 +33,7 @@ struct Spc {
   bool stopped;
   // internal use
   uint8_t cyclesUsed; // indicates how many cycles an opcode used
-  /* Access timing (not saved; reset at every opcode). The core runs an opcode
+  /* Access timing (saved with the remaining opcode clocks). The core runs an opcode
    * at its first clock; busIdx numbers its bus accesses so a port access can
    * be placed on its own cycle (apu.c: port lookahead and hold). */
   uint8_t busIdx;
