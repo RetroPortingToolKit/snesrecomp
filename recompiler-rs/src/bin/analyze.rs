@@ -103,6 +103,7 @@ impl NodeSummary {
     }
 }
 
+#[derive(Default)]
 struct Inputs {
     rom_image_size: usize,
     cfgs: Vec<BankCfg>,
@@ -913,6 +914,37 @@ struct ExitEquation {
     local_modes: BTreeSet<(u8, u8)>,
     dependencies: BTreeSet<ExitDependency>,
     assumptions: BTreeSet<ExitAssumption>,
+    // A call whose proven empty exit set pruned its continuation. Unlike a
+    // tail dependency, its modes must not become the caller's exit modes.
+    noreturn_requirements: BTreeSet<ExitDependency>,
+}
+
+fn truncated_noreturn_requirements(graph: &FunctionDecodeGraph) -> BTreeSet<ExitDependency> {
+    graph
+        .insns()
+        .iter()
+        .filter_map(|decoded| {
+            let ins = &decoded.insn;
+            if !matches!(ins.mnem, "JSR" | "JSL")
+                || ins.terminal_jsr
+                || !decoded.successors.is_empty()
+                || ins.dispatch_entries.is_some()
+                || ins.mode == Mode::IndirX
+                || graph
+                    .unknown_callee_exit_sites
+                    .iter()
+                    .any(|&(site, _, _, _)| site == ins.addr)
+            {
+                return None;
+            }
+            let target = if ins.mnem == "JSR" {
+                (ins.addr & 0xFF0000) | (ins.operand & 0xFFFF)
+            } else {
+                ins.operand & 0xFFFFFF
+            };
+            Some((target, ins.m_flag & 1, ins.x_flag & 1))
+        })
+        .collect()
 }
 
 fn equation_target(
@@ -987,6 +1019,11 @@ fn solve_exit_equation_sccs(
             }
         }
         for &(dependency, _, _) in &equation.assumptions {
+            if let Some(target) = equation_target(mapping, dependency, &tuple_to_key) {
+                adjacency.get_mut(&key).unwrap().insert(target);
+            }
+        }
+        for &dependency in &equation.noreturn_requirements {
             if let Some(target) = equation_target(mapping, dependency, &tuple_to_key) {
                 adjacency.get_mut(&key).unwrap().insert(target);
             }
@@ -1089,7 +1126,12 @@ fn solve_exit_equation_sccs(
                 if !complete {
                     break;
                 }
-                for &(dependency, _, _) in &equations[&key].assumptions {
+                for dependency in equations[&key]
+                    .assumptions
+                    .iter()
+                    .map(|&(dep, _, _)| dep)
+                    .chain(equations[&key].noreturn_requirements.iter().copied())
+                {
                     if equation_target(mapping, dependency, &tuple_to_key)
                         .is_some_and(|target| component.contains(&target))
                     {
@@ -1163,7 +1205,28 @@ fn solve_exit_equation_sccs(
                         })
                     })
             });
-            if !assumptions_hold {
+            let noreturn_requirements_hold = component.iter().all(|key| {
+                equations[key]
+                    .noreturn_requirements
+                    .iter()
+                    .all(|&dependency| {
+                        equation_target(mapping, dependency, &tuple_to_key)
+                            .filter(|target| component.contains(target))
+                            .and_then(|target| values.get(&target).cloned())
+                            .or_else(|| {
+                                known_equation_modes(
+                                    mapping,
+                                    dependency,
+                                    exact,
+                                    sets,
+                                    &tuple_to_key,
+                                    &solved,
+                                )
+                            })
+                            .is_some_and(|modes| modes.is_empty())
+                    })
+            });
+            if !assumptions_hold || !noreturn_requirements_hold {
                 continue;
             }
             solved.extend(values);
@@ -1444,6 +1507,7 @@ fn analyze(
                             local_modes: local_modes.into_iter().collect(),
                             dependencies: dependencies.into_iter().collect(),
                             assumptions: BTreeSet::new(),
+                            noreturn_requirements: truncated_noreturn_requirements(&graph),
                         },
                     );
                 } else {
@@ -1476,6 +1540,7 @@ fn analyze(
                                     local_modes: local_modes.into_iter().collect(),
                                     dependencies: dependencies.into_iter().collect(),
                                     assumptions,
+                                    noreturn_requirements: truncated_noreturn_requirements(&probe),
                                 },
                             );
                         }
@@ -1519,7 +1584,6 @@ fn analyze(
         let recursive_solutions =
             solve_exit_equation_sccs(mapping, &round_equations, &active_exact, &active_sets);
         let mut recursive_solution_keys = HashSet::new();
-        let mut recursive_nonempty_solution_keys = HashSet::new();
         for (key, modes) in recursive_solutions {
             let fact_key = (key.pc24, key.m, key.x);
             if inputs.declared_exit_modes.contains_key(&fact_key)
@@ -1529,9 +1593,6 @@ fn analyze(
                 continue;
             }
             recursive_solution_keys.insert(fact_key);
-            if !modes.is_empty() {
-                recursive_nonempty_solution_keys.insert(fact_key);
-            }
             if modes.len() == 1 {
                 round_exact
                     .entry(fact_key)
@@ -1636,7 +1697,7 @@ fn analyze(
             // solver truncated and therefore could never derive an exit for.
             if !inputs.declared_exit_modes.contains_key(&fact_key)
                 && !inputs.declared_exit_sets.contains_key(&fact_key)
-                && ((truncated && !recursive_nonempty_solution_keys.contains(&fact_key))
+                && ((truncated && !recursive_solution_keys.contains(&fact_key))
                     || (unresolved && !recursive_solution_keys.contains(&fact_key)))
             {
                 next_exact.remove(&fact_key);
@@ -1665,7 +1726,8 @@ fn analyze(
                         "new_set": next_sets.get(&key), "node": nodes.get(&variant).map(NodeSummary::json),
                         "equation": round_equations.get(&variant).map(|e| json!({
                             "local_modes": e.local_modes, "dependencies": e.dependencies,
-                            "assumptions": e.assumptions}))})
+                            "assumptions": e.assumptions,
+                            "noreturn_requirements": e.noreturn_requirements}))})
                 }).collect();
             writeln!(
                 log,
@@ -1934,6 +1996,7 @@ mod tests {
             local_modes: local.iter().copied().collect(),
             dependencies: deps.iter().copied().collect(),
             assumptions: assumptions.iter().copied().collect(),
+            noreturn_requirements: BTreeSet::new(),
         }
     }
 
@@ -2015,5 +2078,115 @@ mod tests {
         ]);
         assert_eq!(solved[&caller], BTreeSet::new());
         assert_eq!(solved[&helper], BTreeSet::from([(0, 0)]));
+    }
+
+    #[test]
+    fn noreturn_requirement_rejects_a_returning_callee() {
+        let caller = VariantKey::new(0x008000, 0, 0);
+        let callee = VariantKey::new(0x008100, 0, 0);
+        let mut caller_eq = equation(&[], &[], &[]);
+        caller_eq.noreturn_requirements.insert((callee.pc24, 0, 0));
+        let solved = solve(vec![
+            (caller, caller_eq),
+            (callee, equation(&[(0, 0)], &[], &[])),
+        ]);
+        assert!(!solved.contains_key(&caller));
+        assert_eq!(solved[&callee], BTreeSet::from([(0, 0)]));
+    }
+
+    fn check_recursive_noreturn_convergence(indirect: bool) {
+        // Entirely synthetic LoROM. A calls B then loops; B calls A then
+        // returns. Neither can reach an architectural return from the root.
+        // Before the fix, exact(B) and empty(A) were repeatedly published and
+        // invalidated, and this nine-byte program exhausted all 128 rounds.
+        let mut rom = vec![0u8; 0x8000];
+        rom[..5].copy_from_slice(&[0x20, 0x00, 0x81, 0x80, 0xFB]);
+        rom[0x100..0x104].copy_from_slice(&[0x20, 0x00, 0x80, 0x60]);
+        let mut inputs = Inputs {
+            rom_image_size: rom.len(),
+            roots: BTreeSet::from([VariantKey::new(0x008000, 0, 0)]),
+            ..Inputs::default()
+        };
+        if indirect {
+            rom[..3].copy_from_slice(&[0xFC, 0x20, 0x80]);
+            inputs.indirect_dispatch.insert(
+                0x008000,
+                IndirectDispatchSite {
+                    count: 1,
+                    idx_reg: 'X',
+                    table_bases: vec![],
+                    ptr_call: false,
+                    return_pc: None,
+                    frame_size: None,
+                    pointer_match: false,
+                    popped_call_frame: false,
+                    rts_stack: false,
+                    targets: vec![0x8100],
+                },
+            );
+        }
+        let (nodes, exact, sets, _, _) = analyze(&inputs, &rom, 32, 32)
+            .expect("closed recursive no-return component must converge");
+        assert!(nodes.contains_key(&VariantKey::new(0x008100, 0, 0)));
+        assert!(!exact.contains_key(&(0x008000, 0, 0)));
+        assert_eq!(sets.get(&(0x008000, 0, 0)), Some(&vec![]));
+        assert_eq!(sets.get(&(0x008100, 0, 0)), Some(&vec![]));
+        // Any call leaf still rejected by lowering stays in the interpreter;
+        // proving its exit contract must not override AOT safety checks.
+        assert_eq!(
+            nodes[&VariantKey::new(0x008100, 0, 0)].disposition,
+            "lle_only"
+        );
+    }
+
+    #[test]
+    fn recursive_noreturn_direct_call_converges() {
+        check_recursive_noreturn_convergence(false);
+    }
+
+    #[test]
+    fn recursive_noreturn_indirect_dispatch_converges() {
+        check_recursive_noreturn_convergence(true);
+    }
+
+    #[test]
+    fn recursive_component_with_reachable_return_keeps_exact_exit() {
+        let mut rom = vec![0u8; 0x8000];
+        // A has an architectural return in addition to the call/loop path.
+        rom[..8].copy_from_slice(&[0xD0, 0x05, 0x20, 0x00, 0x81, 0x80, 0xF9, 0x60]);
+        rom[0x100..0x104].copy_from_slice(&[0x20, 0x00, 0x80, 0x60]);
+        let inputs = Inputs {
+            rom_image_size: rom.len(),
+            roots: BTreeSet::from([VariantKey::new(0x008000, 0, 0)]),
+            ..Inputs::default()
+        };
+        let (_, exact, sets, _, _) = analyze(&inputs, &rom, 32, 32).expect("returning SCC");
+        for pc in [0x008000, 0x008100] {
+            assert_eq!(exact.get(&(pc, 0, 0)), Some(&(0, 0)));
+            assert!(!sets.contains_key(&(pc, 0, 0)));
+        }
+    }
+
+    #[test]
+    fn unknown_call_leaf_is_not_a_noreturn_requirement() {
+        let mut rom = vec![0u8; 0x8000];
+        rom[..4].copy_from_slice(&[0x20, 0x00, 0x90, 0x60]);
+        let env = DecodeEnv {
+            stop_on_unknown_callee_exit: true,
+            ..DecodeEnv::default()
+        };
+        let graph = decode_function(&rom, 0, 0x8000, 0, 0, None, &env);
+        assert!(has_truncated_call_continuation(&graph));
+        assert!(truncated_noreturn_requirements(&graph).is_empty());
+        let exit_sets = HashMap::from([((0x009000, 0, 0), vec![])]);
+        let env = DecodeEnv {
+            callee_exit_mx_modes: Some(&exit_sets),
+            ..env
+        };
+        let graph = decode_function(&rom, 0, 0x8000, 0, 0, None, &env);
+        assert_eq!(
+            truncated_noreturn_requirements(&graph),
+            BTreeSet::from([(0x009000, 0, 0)])
+        );
     }
 }
