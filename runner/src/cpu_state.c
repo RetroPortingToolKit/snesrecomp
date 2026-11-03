@@ -779,6 +779,12 @@ uint8_t cpu_read8_paced(CpuState *cpu, uint8_t bank, uint16_t addr) {
                     snes_frame_counter, bank, addr, _sp);
         }
     }
+    if (g_snes && is_hw_reg(bank, addr)) {
+        bool previous = snes_set_cpu_read_clocked(g_snes, true);
+        uint8_t value = cpu_read8(cpu, bank, addr);
+        snes_set_cpu_read_clocked(g_snes, previous);
+        return value;
+    }
     return cpu_read8(cpu, bank, addr);
 }
 
@@ -794,6 +800,12 @@ uint16_t cpu_read16_paced(CpuState *cpu, uint8_t bank, uint16_t addr) {
             fprintf(stderr, "[pace] f=%d r16 b=$%02X a=$%04X sp=%u\n",
                     snes_frame_counter, bank, addr, _sp);
         }
+    }
+    if (g_snes && is_hw_reg(bank, addr)) {
+        bool previous = snes_set_cpu_read_clocked(g_snes, true);
+        uint16_t value = cpu_read16(cpu, bank, addr);
+        snes_set_cpu_read_clocked(g_snes, previous);
+        return value;
     }
     return cpu_read16(cpu, bank, addr);
 }
