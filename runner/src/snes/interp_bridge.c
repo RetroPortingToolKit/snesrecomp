@@ -917,6 +917,7 @@ static int bridge_cooperative_yield(CpuState *cpu, const Interp816 *in,
     return 1;
 }
 uint32 interp_bridge_lle_resume_pc(void) { return s_lle_resume_pc24; }
+int interp_bridge_lle_unwind_pending(void) { return s_lle_unwind_active; }
 void interp_bridge_set_lle_resume_pc(uint32_t pc) {
     lle_resume_set(pc, INTERP_RESUME_SITE_EXTERNAL, 0);
 }

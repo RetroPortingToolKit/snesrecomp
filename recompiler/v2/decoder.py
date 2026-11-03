@@ -3723,6 +3723,7 @@ def _apply_constant_z_fold(graph: FunctionDecodeGraph,
         graph.insns[k] = DecodedInsn(key=k, insn=insn, successors=[live])
         insn.const_z_fold_unconditional = True
         insn.const_z_fold_dead_pc24 = dead.pc & 0xFFFFFF
+        insn.const_z_fold_taken = taken
 
         # Build a context-rich record for the report.
         graph.const_z_folds.append(ConstZFold(
