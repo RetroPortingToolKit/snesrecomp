@@ -47,6 +47,24 @@ int main(void) {
   g_snes = &s_snes;
   s_snes.ppu = &p;
 
+  /* Resume a half-written colour and a VRAM upload at their saved ports. */
+  p.vramPointer=0x123;p.vramReadBuffer=0x4567;p.vramIncrement=32;
+  p.vramIncrementOnHigh=true;p.cgramPointer=7;
+  ppu_write(&p,0x22,0x34);
+  p.scrollPrev=0x56;p.scrollPrev2=0x78;p.m7prev=0x9a;
+  p.hCount=123;p.vCount=234;p.hCountSecond=true;p.countersLatched=true;
+  PpuRollbackResidue ports;
+  ppu_rb_residue_get(&p,&ports);
+  p.vramPointer=0x7000;p.vramIncrement=1;p.cgramPointer=9;
+  p.cgramSecondWrite=false;p.vramIncrementOnHigh=false;p.scrollPrev=0;
+  ppu_rb_residue_set(&p,&ports);
+  ppu_write(&p,0x22,0x12);CHECK(p.cgram[7]==0x1234 && p.cgramPointer==8);
+  ppu_write(&p,0x18,0x57);ppu_write(&p,0x19,0xa5);
+  CHECK(p.vram[0x123]==0xa557 && p.vramPointer==0x143);
+  CHECK(p.vramReadBuffer==0x4567 && p.scrollPrev==0x56 && p.scrollPrev2==0x78 && p.m7prev==0x9a);
+  CHECK(p.hCount==123 && p.vCount==234 && p.hCountSecond && p.countersLatched);
+  ppu_reset(&p);
+
   /* Unarmed: writes are not journaled and a render leaves state alone. */
   write_at(100, 0x26, 0x33);
   ppu_rasterRenderBegin(&p);

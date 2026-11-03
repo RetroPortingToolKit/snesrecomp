@@ -682,6 +682,16 @@ void PpuResetWidescreenOamHistory(Ppu *ppu);
  * oamAdr forward and kept that walk after the restore, so the real frame then
  * wrote sprite attributes to the wrong OAM slots. */
 typedef struct PpuRollbackResidue {
+  /* Whole-program hosts can yield in the middle of a VRAM/CGRAM upload or
+   * a write-twice/latch read. These ports lie outside the device blob. */
+  uint16_t vramPointer, vramReadBuffer;
+  uint8_t vramIncrementOnHigh, vramRemapMode, vramIncrement;
+  uint8_t cgramPointer, cgramSecondWrite, cgramBuffer;
+  uint8_t scrollPrev, scrollPrev2, m7prev, mosaicStartLine;
+  int32_t m7startX, m7startY;
+  uint16_t hCount, vCount;
+  uint8_t hCountSecond, vCountSecond, countersLatched;
+  uint8_t timeOver, rangeOver, evenFrame, frameOverscan, frameInterlace;
   uint8_t  oamAdr;
   uint8_t  oamInHigh;
   uint8_t  oamSecondWrite;

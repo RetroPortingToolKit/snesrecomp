@@ -153,6 +153,41 @@ int main(void) {
                       pixel_is(optimized, 8, 0xff, 0, 0),
                       "mode 1: 8-pixel tiles, tile 1 fills pixels 0-15");
 
+    /* Frame-model hosts may start at visible line 1. Mosaic must initialize
+     * its table there, skip empty window spans and make progress in widened
+     * margins. Exercise both the 4bpp and 2bpp drawers with guard bytes. */
+    enum { kWidePitch=(kPpuXPixels+2*kPpuExtraLeftRight)*4 };
+    uint8_t guarded[kWidePitch+32];
+    for(int layer=0;layer<=2;layer+=2) for(int size=1;size<=16;++size)
+    for(int wide=0;wide<2;++wide)
+    for(int edge=0;edge<3;++edge) for(int invert=0;invert<2;++invert) {
+        int extra=wide?kPpuExtraLeftRight:0;
+        setup_two_tone_bg1(ppu,1);
+        if(layer==2) {
+            ppu->screenEnabled[0]=4;ppu->bgTileAdr=0x0100;
+            for(int row=0;row<8;++row)ppu->vram[0x1008+row]=0x00ff;
+        }
+        ppu->mosaic=(uint8_t)(((size-1)<<4)|(1<<layer));
+        ppu->screenWindowed[0]=(uint8_t)(1<<layer);
+        ppu->windowsel=(uint32_t)(2+invert)<<(layer*4);
+        ppu->window1left=edge==0?16:(edge==1?0:255);
+        ppu->window1right=edge==0?239:(edge==1?255:255);
+        PpuSetExtraSpace(ppu,(uint16_t)extra);
+        memset(guarded,0xa5,sizeof guarded);
+        size_t pitch=(kPpuXPixels+2*extra)*4;
+        PpuBeginDrawing(ppu,guarded+16,pitch,kPpuRenderFlags_NewRenderer);
+        ppu_runLine(ppu,1); /* deliberately no pre-render call */
+        for(int i=0;i<16;++i) {
+            failures+=check(guarded[i]==0xa5 && guarded[16+pitch+i]==0xa5,
+                            "mosaic stays inside its output span");
+        }
+        failures+=check(ppu->mosaicModulo[255]==255-255%size,
+                        "mosaic table is initialized without line zero");
+        if(edge==0) {
+            failures+=check(pixel_is(guarded+16,extra+32,invert?255:0,0,0),
+                            "mosaic respects the interior window mask");
+        }
+    }
     ppu_free(ppu);
     if (failures) {
         fprintf(stderr, "%d check(s) failed\n", failures);
