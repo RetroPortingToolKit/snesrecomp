@@ -1,5 +1,8 @@
 #ifndef SNESRECOMP_BEAM_FRAME_DRIVER_H
 #define SNESRECOMP_BEAM_FRAME_DRIVER_H
+#include <stdbool.h>
+#include <stdint.h>
+#include <stddef.h>
 
 /* Beam-aligned frame driver for whole-program LLE ports.
  *
@@ -28,5 +31,18 @@ void snes_beam_frame_driver_draw_ppu_frame_observed(
     SnesBeamRasterObserver *observer, void *context);
 /* Forget the booted machine: the next frame starts from the reset vector. */
 void snes_beam_frame_driver_reset(void);
+
+/* Execution position is host state, separate from the Snes device blob. */
+void snes_beam_frame_driver_get_position(uint32_t *pc, bool *wai);
+void snes_beam_frame_driver_set_position(uint32_t pc, bool wai);
+struct SaveLoadInfo;
+/* Wire all of these hooks into a whole-program host's RtlGameInfo. The
+ * guarded, build-specific chunk includes CPU registers/clocks and bridge
+ * scheduling context; older device-only snapshots are safely rejected. */
+void snes_beam_frame_driver_state_save(struct SaveLoadInfo *sli);
+void snes_beam_frame_driver_state_load(struct SaveLoadInfo *sli, uint32_t version);
+void snes_beam_frame_driver_state_loaded(uint32_t version);
+const char *snes_beam_frame_driver_state_identity(void);
+bool snes_beam_frame_driver_state_preflight(const void *data, size_t size);
 
 #endif /* SNESRECOMP_BEAM_FRAME_DRIVER_H */

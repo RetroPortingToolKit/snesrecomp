@@ -83,6 +83,15 @@ with `ppu_rasterRenderBegin`, `ppu_rasterApplyLine` per line and
 
 ## APU Pacing
 
+Whole-program hosts using the beam driver must wire its `state_save`,
+`state_load`, `state_loaded`, `state_identity` and `state_preflight` callbacks
+into `RtlGameInfo`, as the current scaffold does, and use its reset hook for
+both session and hardware reset. The device-only RTLS stream does not contain
+the recompiled CPU registers or execution cursor. The guarded beam-driver
+extension preserves those, the bridge's scheduling context and beam debt.
+Device-only or malformed states are rejected before restoration. The chunk
+is build-specific; old-state conversion is not part of this contract.
+
 `snes_catchupApu()` has a per-call runaway clamp. That guard assumes callers
 catch up regularly; a host that batches an entire frame into one call can discard
 part of the requested SPC time. Frame-model hosts should catch up the APU at

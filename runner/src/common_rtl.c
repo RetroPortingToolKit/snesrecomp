@@ -1432,6 +1432,33 @@ static bool s_loaded_execution_valid;
  * every savestate did before v7. */
 static bool s_loaded_execution_keeps_clock;
 
+size_t RtlExecutionStateSize(void) {
+  return sizeof(uint32) + sizeof(RtlRollbackResidue) +
+      (g_snes->cart->cx4 ? sizeof(uint64_t) : 0);
+}
+
+bool RtlExecutionStateValid(const void *data, size_t size) {
+  if (!data || size != RtlExecutionStateSize()) return false;
+  uint32 stored_size;
+  memcpy(&stored_size, data, sizeof stored_size);
+  if (stored_size != sizeof(RtlRollbackResidue)) return false;
+  RtlRollbackResidue r;
+  memcpy(&r, (const uint8 *)data + sizeof stored_size, sizeof r);
+  /* Check the bool representation through bytes before reading that member. */
+  const uint8 *raw = (const uint8 *)&r.apu_port;
+  if (raw[offsetof(ApuPortSched, timeValid)] > 1 ||
+      r.magic != RTL_RB_RESIDUE_MAGIC || r.version != RTL_RB_RESIDUE_VERSION ||
+      r.cpu.ram != NULL || r.cpu.m_flag > 1 || r.cpu.x_flag > 1 ||
+      r.cpu.emulation > 1 || r.cpu._flag_N > 1 || r.cpu._flag_V > 1 ||
+      r.cpu._flag_Z > 1 || r.cpu._flag_C > 1 || r.cpu._flag_I > 1 ||
+      r.cpu._flag_D > 1 || (r.cpu.host_return_valid != 0 &&
+      r.cpu.host_return_valid != 2 && r.cpu.host_return_valid != 3) ||
+      r.apu_port.qTail - r.apu_port.qHead > APU_PORT_QUEUE_LEN ||
+      r.apu_frame_time_valid > 1 || r.memsel > 1 || r.interp_apu_driving > 1 ||
+      r.ppu_rb.oamInHigh > 1 || r.ppu_rb.oamSecondWrite > 1) return false;
+  return interp_bridge_rb_state_valid(r.interp, interp_bridge_rb_state_size());
+}
+
 void RtlSaveExecutionState(SaveLoadInfo *sli) {
   RtlRollbackResidue r;
   rtl_rb_residue_capture(&r);
