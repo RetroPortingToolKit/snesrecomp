@@ -1,5 +1,9 @@
 # Agent entry point
 
+## Contributions
+
+Contributors are not required to create their own fork.
+
 ## Optimization scope (owner direction, 2026-10-28)
 
 Prioritize game-agnostic mechanisms in the shared snesrecomp engine. Each game
