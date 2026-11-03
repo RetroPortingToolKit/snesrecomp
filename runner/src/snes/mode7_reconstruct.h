@@ -4,7 +4,7 @@
 #include "mode7_hd.h"
 #include <string.h>
 
-/* Original reconstruction: fit inverse matrix coefficients to a line in
+/* Reconstruct reciprocal matrix coefficients between interior anchors in
  * raster Y. Quantized perspective tables then describe a continuous plane.
  * A failed fit retains local affine geometry, rather than inventing a plane
  * for rotating rooms, waves or deliberate raster distortions. */
@@ -37,17 +37,15 @@ static void hd_reconstruct(SnesHdFrame *f) {
       varying = true;
       mask |= 1u << c;
       if (min <= 0 && max >= 0) { valid = false; break; }
-      /* Least squares reduces quantization noise without depending on a
-       * single potentially anomalous endpoint. Center Y for stability. */
-      double mid = (f->lines[lo].raster_line + f->lines[hi-1].raster_line) * .5;
-      double sum = 0, cross = 0, square = 0;
-      for (unsigned y = lo; y < hi; ++y) {
-        double t = f->lines[y].raster_line - mid;
-        double inverse = 1.0 / f->lines[y].matrix[c];
-        sum += inverse; cross += t * inverse; square += t * t;
-      }
-      fit[c+4] = cross / square;
-      fit[c] = sum / (hi-lo) - fit[c+4] * mid;
+      /* Two interior anchors define a reciprocal-depth plane. This preserves
+       * the quantized endpoint observations instead of shifting every source
+       * texel to minimize an average coefficient residual. */
+      double first_y = f->lines[lo].raster_line;
+      double last_y = f->lines[hi-1].raster_line;
+      double first_inverse = 1.0 / f->lines[lo].matrix[c];
+      double last_inverse = 1.0 / f->lines[hi-1].matrix[c];
+      fit[c+4] = (last_inverse - first_inverse) / (last_y - first_y);
+      fit[c] = first_inverse - fit[c+4] * first_y;
       /* DSP tables may have horizon artifacts outside the fit interval.
        * Judge residuals inside it, but reject poles/unbounded extrapolation
        * throughout the complete band, including every subpixel row. */

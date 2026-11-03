@@ -210,3 +210,52 @@ qualified dependencies. The complete PPU suite and772 GPU comparisons pass on
 the combined engine. This clears the F-Zero visual handoff; the broader coverage
 and pre-existing snapshot caveats above remain recorded, without claiming tests
 that were not performed. Release tracking: beads-8wg.5.123.
+
+
+## 2026-11-03 quality burndown candidate
+
+The next quality pass replaces the least-squares reciprocal fit with a plane
+through two interior reciprocal-depth anchors. This is a generic reconstruction
+change; camera bands, pole/sign guards and portable/GPU interfaces remain.
+The independent reference is the same pinned bsnes-hd10.6 core above.
+At4x, no supersampling/filtering, seven aligned stock straight/corner captures
+improve in every full-image comparison:
+
+| Frame | Least-squares full RGB MAE | Anchor candidate full RGB MAE |
+| --- | ---: | ---: |
+|1200|2.844|0.771|
+|1630|9.355|2.962|
+|1660|6.275|3.168|
+|1690|5.794|1.740|
+|1720|4.437|0.474|
+|1750|13.069|0.535|
+|1780|11.693|0.559|
+
+RGB MAE uses 0..255 channels and includes the entire frame. Separate declared
+horizon (native rows47..85) and near-road (90..223) results are retained too;
+no horizon is masked out of the full score. Both variants in this comparison
+include the same F-Zero restoration of native additive distance haze. Native
+alignment is checked with HD disabled; core WRAM remains unavailable.
+
+The remaining distant texture difference has a concrete source-coordinate
+cause. The reference truncates negative floating coordinates toward zero;
+the portable/GPU production sampler floors them consistently with native
+sampling. A temporary truncation-only diagnostic at frame1630 lowers VRAM-only
+horizon RGB MAE from16.236 to1.658 and the fraction of channels differing by
+more than8 from14.684% to0.00355%. That diagnostic was reverted; its binary and
+results are retained. Full-course extension accounts for additional distant
+pixels and is evaluated separately. Original5-bit color math and native artwork
+remain the policy; matching a reference implementation's rounding differences
+is not by itself a reason to change them.
+
+The same pass fixes half-color math when CGWSEL clips main color to black
+(`28f260c4`, beads-8wg.2.194), with independent known-color tests for native,
+portable-HD and GPU paths. The seven-test PPU suite, F-Zero renderer/mod tests,
+772 GPU region comparisons and non-GPU compile check pass. HD detail and Edge
+smoothing now identify the two controls separately; the existing persisted IDs
+and choices are retained while useful scale/default qualification remains open.
+
+These are candidate results, not an overall quality, motion, shared-game or
+release acceptance. F-Zero's twelve-area matrix remains authoritative. Raw
+comparison inputs/settings, image metrics and binaries are retained in the
+owner's isolated quality workspace; the F-Zero evidence index records identities.
