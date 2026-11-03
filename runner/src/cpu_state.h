@@ -452,6 +452,11 @@ static inline void cpu_push_interrupt_frame_at(CpuState *cpu, uint32 pc24) {
     cpu_write8(cpu, 0x00, cpu->S, (uint8)(pc24 >> 8)); cpu->S = (uint16)(cpu->S - 1);  /* PCH */
     cpu_write8(cpu, 0x00, cpu->S, (uint8)pc24); cpu->S = (uint16)(cpu->S - 1);  /* PCL */
     cpu_write8(cpu, 0x00, cpu->S, cpu->P); cpu->S = (uint16)(cpu->S - 1);
+    /* Preserve the interrupted flags in the frame, then enter the handler
+     * with IRQ masked and binary arithmetic. RTI restores the saved P. */
+    cpu->_flag_I = 1;
+    cpu->_flag_D = 0;
+    cpu->P = (uint8)((cpu->P | 0x04u) & ~0x08u);
 }
 
 /* Generated host-C control flow has no runtime PC offset. Its generated RTI
