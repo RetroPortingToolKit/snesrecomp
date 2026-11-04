@@ -23,6 +23,9 @@
 #include "sdd1.h"
 #include "../ppu_dma_trace.h"
 
+/* Master clocks charged for general DMA since power-on (snes.h). */
+uint64_t g_snes_dma_charged;
+
 int snes_frame_counter;
 static const double apuCyclesPerMaster = (32040 * 32) / (1364 * 262 * 60.0);
 
@@ -63,6 +66,29 @@ static void snes_trace_direct_wram_write(uint32_t off, uint8_t old, uint8_t val)
                              (uint16_t)old, (uint16_t)val, 1);
 }
 #endif
+
+/* SLHV ($2137 read, or WRIO bit 7 falling): the beam at the access's own
+ * clock (2 clocks into its bus cycle, MesenCE's sample point), as a dot
+ * count with the two long dots (MesenCE's SnesPpu::GetCycle). */
+extern void (*g_ppu_latch_position_hook)(uint16_t *h_dot, uint16_t *v);
+static Snes *s_latch_snes;  /* the console snes_reset installed the hook for */
+static void snes_latch_position(uint16_t *h_dot, uint16_t *v_out) {
+  const Snes *snes = s_latch_snes;
+  extern uint64_t rtl_cpu_master_now(void);
+  extern uint32_t interp_bridge_access_lead(uint16_t adr, uint32_t fallback);
+  uint32_t lead = interp_bridge_access_lead(0x2137, 0xffffffffu);
+  if (lead == 0xffffffffu) lead = interp_bridge_access_lead(0x4201, 0);
+  const uint64_t at = rtl_cpu_master_now() + lead;
+  int64_t h = (int64_t)snes->hPos + (int64_t)(at - snes->beamMasterLast);
+  int v = snes->vPos;
+  while (h >= 1364) { h -= 1364; v = v + 1 >= 262 ? 0 : v + 1; }
+  while (h < 0) { h += 1364; v = v ? v - 1 : 261; }
+  *h_dot = (uint16_t)(h <= 1292 ? h >> 2 : h <= 1310 ? (h - 2) >> 2 : (h - 4) >> 2);
+  *v_out = (uint16_t)v;
+  static int hv_log = -1;
+  if (hv_log < 0) hv_log = getenv("SNESRECOMP_HV_LOG") != NULL;
+  if (hv_log) fprintf(stderr, "[hv] h=%lld v=%d dot=%u at=%llu\n", (long long)h, v, *h_dot, (unsigned long long)at);
+}
 
 void snes_set_hdma_beam_enabled(Snes *snes, bool enabled) {
   snes->hdmaBeamOff = !enabled;
@@ -119,10 +145,10 @@ void snes_free(Snes* snes) {
 
 /* RTLS v5 and earlier serialized beamMasterLast between vPos and
  * apuCatchupCycles (+8 bytes). v6+ keeps it host-only (before hPos). */
-static uint32_t s_saveload_version = 10;
+static uint32_t s_saveload_version = 11;
 
 void snes_saveload_set_version(uint32_t version) {
-  s_saveload_version = version ? version : 10;
+  s_saveload_version = version ? version : 11;
 }
 
 uint32_t snes_saveload_get_version(void) { return s_saveload_version; }
@@ -254,7 +280,9 @@ void snes_reset(Snes* snes, bool hard) {
   snes->joypad1Index = snes->joypad2Index = 0;
   snes->joypad1Latched = snes->joypad2Latched = 0;
   joypad_reset_state();
-  snes->ppuLatch = false;
+  snes->ppuLatch = true;  /* WRIO reads $FF after power-on and reset */
+  s_latch_snes = snes;
+  g_ppu_latch_position_hook = snes_latch_position;
   snes->multiplyA = 0xff;
   snes->multiplyResult = 0xfe01;
   snes->divideA = 0xffff;
@@ -270,6 +298,10 @@ double apucyc_prof_ms = 0.0;
 #endif
 
 void snes_catchupApu(Snes* snes) {
+  { extern bool rtl_apu_master_clock(void);
+    /* The master-clock timeline runs the SPC only at CPU port accesses and
+     * frame ends, to exact clocks; relative catch-up would run it ahead. */
+    if (rtl_apu_master_clock()) { snes->apuCatchupCycles = 0; return; } }
   /* Upper cap is a guard against accumulator runaway after a long
    * stall; SPC runs at ~1 MHz so 10000 cycles is about 10 ms of real
    * SPC time per catchup, plenty to absorb any spike. */
@@ -321,9 +353,11 @@ uint8_t snes_readBBus(Snes* snes, uint8_t adr) {
     // APU port read ($2140-$217F). Synchronize the SPC to this exact guest
     // timestamp before observing its output-port state.
     RtlApuLock();
-    rtl_sync_apu_to_cpu_locked();
+    { void rtl_sync_apu_for_access_locked(uint16_t a); rtl_sync_apu_for_access_locked((uint16_t)(0x2100 + adr)); }
     uint8_t v = snes->apu->outPorts[adr & 0x3];
     v = rtl_apu_port_observers_read(0x2100 + adr, v);
+    { void rtl_port_log_cpu(uint16_t adr, char rw, uint8_t v);
+      rtl_port_log_cpu(0x2100 + adr, 'R', v); }
     audio_trace_on_cpu_port_read((uint8_t)(adr & 0x3), v);
     RtlApuUnlock();
     return v;
@@ -678,7 +712,24 @@ uint8_t snes_readReg(Snes* snes, uint16_t adr) {
       // The synthetic advance shares the live beam helper, so IRQ and
       // auto-joypad edges remain coherent with the reported counters.
       uint8_t val = (snes->autoJoyTimer > 0);
-      val |= (snes->hPos >= 1024) << 6;
+      /* SNESRECOMP_HBLANK_EXACT (default: on with the master-clock APU
+       * timeline, RtlApuUseMasterClock): bit 6 is H-blank at the read's
+       * own clock (2 clocks into its bus cycle), H >= 1097 or H < 4, as
+       * MesenCE reads it (16,671 reads measured). 0: hPos >= 1024 at the
+       * beam's last sync. */
+      static int hb_env = -2;
+      if (hb_env == -2) { const char *e = getenv("SNESRECOMP_HBLANK_EXACT"); hb_env = e ? e[0] != '0' : -1; }
+      extern bool rtl_apu_master_clock(void);
+      const bool hb_exact = hb_env >= 0 ? hb_env : rtl_apu_master_clock();
+      if (hb_exact) {
+        extern uint64_t rtl_cpu_master_now(void);
+        extern uint32_t interp_bridge_access_lead(uint16_t adr, uint32_t fallback);
+        const uint64_t at = rtl_cpu_master_now() + interp_bridge_access_lead(0x4212, 20);
+        const uint64_t h = at > snes->beamMasterLast ? (snes->hPos + (at - snes->beamMasterLast)) % 1364u : snes->hPos;
+        val |= (h >= 1097 || h < 4) << 6;
+      } else {
+        val |= (snes->hPos >= 1024) << 6;
+      }
       val |= (snes->inVblank || snes->vPos >= 225) << 7;
       return val;
     }
@@ -869,17 +920,70 @@ void snes_writeReg(Snes* snes, uint16_t adr, uint8_t val) {
        * gundamwing-parity-root-cause. HDMA stays uncharged here (per-line,
        * far smaller; out of scope for this fix). */
       {
-        uint64_t dma_master = 12;
+        /* SNESRECOMP_DMA_ALIGN (default 1): hardware alignment. The transfer
+         * starts on the next 8-clock boundary after the next opcode fetch
+         * (1-8 clocks), spends 8 clocks of setup, 8 per channel and 8 per
+         * byte, then waits to the next whole CPU cycle (speed - n % speed,
+         * n the clocks so far). A write of 0 starts nothing. 0 keeps the old
+         * flat 12 + sum(8 + 8 n).
+         * SNESRECOMP_DMA_LEAD: master clocks from the instruction's start
+         * (the clock the CPU reports here) to the point the transfer waits
+         * from, the next instruction's opcode fetch: 30 for a FastROM STA abs
+         * (24 + 6); SNESRECOMP_DMA_END_SPEED (default 6). Measured on
+         * MesenCE: every general DMA of the Evermore attract run fits. */
+        static int dma_align = -1, dma_lead = 30, dma_end_speed = 6;
+        if (dma_align < 0) {
+          const char *e = getenv("SNESRECOMP_DMA_ALIGN");
+          dma_align = !(e && e[0] == '0');
+          if ((e = getenv("SNESRECOMP_DMA_LEAD"))) dma_lead = atoi(e);
+          if ((e = getenv("SNESRECOMP_DMA_END_SPEED"))) dma_end_speed = atoi(e);
+        }
+        uint64_t body = 0;
         for (int ch = 0; ch < 8; ch++) {
           if (val & (1 << ch)) {
             uint32_t n = snes->dma->channel[ch].size;
             if (n == 0) n = 0x10000;
-            dma_master += 8 + (uint64_t)n * 8;
+            body += 8 + (uint64_t)n * 8;
           }
         }
+        uint64_t dma_master = 12 + body;
+        if (dma_align && !val) {
+          dma_master = 0;  /* no channel: no transfer, no time */
+        } else if (dma_align) {
+          extern uint64_t rtl_cpu_master_now(void);
+          const uint64_t now = rtl_cpu_master_now();
+          uint64_t start = now + (uint64_t)dma_lead;
+          /* MesenCE's HDMA init event (line 0, H = 12 + (line start & 7))
+           * takes a CPU cycle start of its own, then another for the HDMA
+           * init itself, even with no HDMA channel on; a pending DMA waits
+           * for both. The write's cycle starts 12 clocks before `start` (the
+           * next opcode fetch 6, then the cycle the DMA would start in). */
+          {
+            const uint64_t line = snes->beamMasterLast - snes->hPos;
+            const uint64_t line0 = snes->vPos == 0 ? line : snes->vPos == 261 ? line + 1364u : 0;
+            if (line0) {
+              const uint64_t ev = line0 + 12u + (line0 & 7u);
+              const uint64_t write_cycle = start - 12u, next_fetch = start - 6u;
+              if (ev > write_cycle - 6u && ev <= next_fetch) start += 6u;
+              else if (ev > next_fetch && ev <= start) start += 12u;
+            }
+          }
+          /* The cycles it waits are the next instruction's own, charged as it
+           * runs; only the alignment from the later start differs. */
+          uint64_t t = (8 - (start & 7)) + 8 + body;
+          if (dma_end_speed > 0) t += (uint64_t)dma_end_speed - t % (uint64_t)dma_end_speed;
+          dma_master = t;
+        }
+        { static int dma_log = -1;
+          if (dma_log < 0) dma_log = getenv("SNESRECOMP_DMA_LOG") != NULL;
+          extern uint64_t rtl_cpu_master_now(void);
+          if (dma_log) fprintf(stderr, "[dma] now=%llu ch=%02X body=%llu charge=%llu\n",
+                               (unsigned long long)rtl_cpu_master_now(), val,
+                               (unsigned long long)body, (unsigned long long)dma_master); }
         /* SnesInit installs the CpuState-clock charge; a host that drives
          * the beam itself installs its own (see snes.h). With no hook the
          * device layer advances its own beam, so snes.c needs no CpuState. */
+        g_snes_dma_charged += dma_master;
         if (s_master_clock_charge_hook) {
           s_master_clock_charge_hook(snes, dma_master);
         } else {

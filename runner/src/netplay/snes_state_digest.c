@@ -72,11 +72,15 @@ static void crc_sli_init(CrcSli *c)
  * SDL audio thread, so it is host presentation state and can never agree
  * between two peers.
  *
- * apu_saveload order: [Apu.ram .. Apu.pad+6) then dsp_saveload then
- * spc_saveload. dsp_saveload emits [Dsp.ram .. end of Dsp), and the ring
- * (sampleBuffer, sampleWrite, sampleRead) is that region's tail.
+ * apu_saveload order: [Apu.ram .. Apu.pad+6), timer/DSP advance debt,
+ * dsp_saveload, then spc_saveload. dsp_saveload first emits
+ * [Dsp.ram .. end of Dsp), whose tail is the output ring, then the
+ * canonical timing-model state. Include the debt in the stream offset so
+ * excluding the ring cannot also exclude the final simulation fields.
  */
-#define APU_REGS_BYTES (offsetof(Apu, pad) + 6u - offsetof(Apu, ram))
+#define APU_REGS_BYTES (offsetof(Apu, pad) + 6u - offsetof(Apu, ram) \
+                        + sizeof(((Apu *)0)->timerAhead) \
+                        + sizeof(((Apu *)0)->dspAhead))
 #define DSP_REGION_BYTES (sizeof(Dsp) - offsetof(Dsp, ram))
 #define DSP_SIM_PREFIX_BYTES (offsetof(Dsp, sampleBuffer) - offsetof(Dsp, ram))
 

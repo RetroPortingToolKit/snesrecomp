@@ -11,6 +11,7 @@ $args = @(
     "$root\runner\src\snes\apu.c",
     "$root\runner\src\snes\spc.c",
     "$root\runner\src\snes\dsp.c",
+    "$root\runner\src\snes\dsp_clock.c",
     "-Wl,--gc-sections", "-o", $out
 )
 

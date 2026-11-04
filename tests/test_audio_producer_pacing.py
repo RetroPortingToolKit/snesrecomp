@@ -160,6 +160,10 @@ static unsigned slices;
 static bool g_apu_frame_time_valid = true;
 static void rtl_accumulate_apu_catchup(void) { assert(0); }
 static void snes_catchupApu(void *s) { (void)s; assert(0); }
+/* The master-clock APU timeline (RtlApuUseMasterClock) is off here. */
+static bool rtl_apu_master_clock(void) { return false; }
+static void rtl_apu_master_sync_locked(void) { assert(0); }
+static void rtl_apu_master_frame_end_locked(void) { assert(0); }
 static uint64_t rtl_apu_guest_cycle(void) {
   return rtl_apu_clock_now(&g_apu_frame_clock, g_cpu.master_cycles);
 }
