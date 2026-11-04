@@ -2,6 +2,7 @@
 #define SNESRECOMP_PPU_MODE7_LINE_H
 
 #include "raster_jobs.h"
+#include "ppu_brightness.h"
 
 /* Image-only replacement for the legacy Mode 7 line service. The caller has
  * prepared m7startX/Y and evaluated live OAM. No device, persistent cache,
@@ -90,7 +91,7 @@ static void ppu_draw_mode7_line_native(Ppu *p, int line) {
   }
   uint8_t brightness[32];
   for (unsigned c = 0; c < 32; ++c)
-    brightness[c] = ((c << 3) | (c >> 2)) * PPU_brightness(p) / 15;
+    brightness[c] = ppu_brightness_level(c, PPU_brightness(p));
   SnesRenderWindowPlan windows = SnesRenderWindows(p, p->window1left,
       p->window1right, p->window2left, p->window2right);
   /* Window geometry has at most four internal boundaries. Resolve all six

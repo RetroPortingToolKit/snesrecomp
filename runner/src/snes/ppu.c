@@ -824,7 +824,7 @@ static void PpuDrawVisibleLine(Ppu *ppu, int line, bool pixels, bool live) {
     ppu->lastBrightnessMult = ppu_brightness;
     for (int i = 0; i < 32; i++)
       ppu->brightnessMultHalf[i * 2] = ppu->brightnessMultHalf[i * 2 + 1] = ppu->brightnessMult[i] =
-      ((i << 3) | (i >> 2)) * ppu_brightness / 15;
+      ppu_brightness_level((unsigned)i, ppu_brightness);
     memset(&ppu->brightnessMult[32], ppu->brightnessMult[31], 31);
   }
 
