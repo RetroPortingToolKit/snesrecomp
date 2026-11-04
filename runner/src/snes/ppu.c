@@ -824,7 +824,7 @@ static void PpuDrawVisibleLine(Ppu *ppu, int line, bool pixels, bool live) {
     ppu->lastBrightnessMult = ppu_brightness;
     for (int i = 0; i < 32; i++)
       ppu->brightnessMultHalf[i * 2] = ppu->brightnessMultHalf[i * 2 + 1] = ppu->brightnessMult[i] =
-      ((i << 3) | (i >> 2)) * ppu_brightness / 15;
+      ppu_brightness_level((unsigned)i, ppu_brightness);
     memset(&ppu->brightnessMult[32], ppu->brightnessMult[31], 31);
   }
 
@@ -2352,6 +2352,17 @@ static void PpuFinishBackgroundOverlay(Ppu *ppu, uint y, bool sub,
   }
 }
 
+/* Modes 2 and 3 (and the hardware's 4-6) order the layers
+ *   OBJ3, BG1.hi, OBJ2, BG2.hi, OBJ1, BG1.lo, OBJ0, BG2.lo
+ * -- unlike mode 1, where BG1.hi/BG2.hi both sit above OBJ2 and BG1.lo/BG2.lo
+ * both above OBJ1. With mode 1's bases a priority-1 sprite vanished behind a
+ * low-priority BG1 tile. Sprite levels stay 14/10/6/2; the BG bases slot
+ * between them. */
+enum {
+  kMode23Bg1Hi = 0xc000, kMode23Bg2Hi = 0x8100,
+  kMode23Bg1Lo = 0x4000, kMode23Bg2Lo = 0x1100,
+};
+
 static void PpuDrawBackgrounds(Ppu *ppu, int y, bool sub) {
   PPU_T0_DECL
   // Top 4 bits contain the prio level, and bottom 4 bits the layer type.
@@ -2436,17 +2447,17 @@ static void PpuDrawBackgrounds(Ppu *ppu, int y, bool sub) {
   } else if (PPU_mode(ppu) == 2) {
     if (ppu->lineHasSprites)
       PpuDrawSprites(ppu, y, sub, true);
-    PpuDrawBackground_4bpp_opt(ppu, y, sub, 0, 0xc000, 0x8000);
-    PpuDrawBackground_4bpp_opt(ppu, y, sub, 1, 0xb100, 0x7100);
+    PpuDrawBackground_4bpp_opt(ppu, y, sub, 0, kMode23Bg1Hi, kMode23Bg1Lo);
+    PpuDrawBackground_4bpp_opt(ppu, y, sub, 1, kMode23Bg2Hi, kMode23Bg2Lo);
   } else if (PPU_mode(ppu) == 3) {
     if (ppu->lineHasSprites) { PPU_T0; PpuDrawSprites(ppu, y, sub, true); PPU_ACC(g_ppu_sec_spr_ms); }
-    PpuDrawBackground_8bpp(ppu, y, sub, 0, 0xc000, 0x8000);
+    PpuDrawBackground_8bpp(ppu, y, sub, 0, kMode23Bg1Hi, kMode23Bg1Lo);
     if (PPU_bigTiles(ppu, 1))
       PpuDrawBackgroundBig(ppu, &ppu->bgBuffers[sub], y, sub, 1, 4,
-                           0xb100, 0x7100, false);
+                           kMode23Bg2Hi, kMode23Bg2Lo, false);
     else
       PpuDrawBackground_4bpp(ppu, &ppu->bgBuffers[sub], y, sub, 1,
-                             0xb100, 0x7100);
+                             kMode23Bg2Hi, kMode23Bg2Lo);
   } else {
     // mode 7
     PpuPixelPrioBufs *layerbuf = PpuBeginBackgroundOverlay(ppu, y, sub, 0);
