@@ -270,16 +270,13 @@ bool apu_runToGuestCycle(Apu* apu, uint64_t guest_cycle,
   apu->holdTarget = target;
   for (;;) {
     if (apu->held) break;
-    bool due_event = false;
-    if (apu->portQHead != apu->portQTail) {
-      const ApuPortWrite *w =
-          &apu->portQueue[apu->portQHead & (APU_PORT_QUEUE_LEN - 1)];
-      due_event = w->target_cycle <= target;
-    }
-    if (apu->portClock >= target && !due_event)
+    /* Bus writes at the boundary precede that cycle's SPC work. Drain them
+     * directly without advancing the SPC beyond the requested clock. */
+    apu_drainPortQueue(apu);
+    if (apu->portClock >= target)
       break;
     if (!max_cycles) { apu->holdActive = false; return false; }
-    uint64_t distance = target > apu->portClock ? target - apu->portClock : 1u;
+    uint64_t distance = target - apu->portClock;
     uint32_t span = distance > max_cycles ? max_cycles : (uint32_t)distance;
     apu_runCycles(apu, span);
     max_cycles -= span;
