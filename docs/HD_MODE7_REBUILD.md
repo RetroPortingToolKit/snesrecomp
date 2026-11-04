@@ -210,3 +210,94 @@ qualified dependencies. The complete PPU suite and772 GPU comparisons pass on
 the combined engine. This clears the F-Zero visual handoff; the broader coverage
 and pre-existing snapshot caveats above remain recorded, without claiming tests
 that were not performed. Release tracking: beads-8wg.5.123.
+
+
+## 2026-11-03 quality burndown candidate
+
+The next quality pass replaces the least-squares reciprocal fit with a plane
+through two interior reciprocal-depth anchors. This is a generic reconstruction
+change; camera bands, pole/sign guards and portable/GPU interfaces remain.
+The independent reference is the same pinned bsnes-hd10.6 core above.
+At4x, no supersampling/filtering, seven aligned stock straight/corner captures
+improve in every full-image comparison:
+
+| Frame | Least-squares full RGB MAE | Anchor candidate full RGB MAE |
+| --- | ---: | ---: |
+|1200|2.844|0.771|
+|1630|9.355|2.962|
+|1660|6.275|3.168|
+|1690|5.794|1.740|
+|1720|4.437|0.474|
+|1750|13.069|0.535|
+|1780|11.693|0.559|
+
+RGB MAE uses 0..255 channels and includes the entire frame. Separate declared
+horizon (native rows47..85) and near-road (90..223) results are retained too;
+no horizon is masked out of the full score. Both variants in this comparison
+include the same F-Zero restoration of native additive distance haze. Native
+alignment is checked with HD disabled; core WRAM remains unavailable.
+
+The remaining distant texture difference has a concrete source-coordinate
+cause. The reference truncates negative floating coordinates toward zero;
+the portable/GPU production sampler floors them consistently with native
+sampling. A temporary truncation-only diagnostic at frame1630 lowers VRAM-only
+horizon RGB MAE from16.236 to1.658 and the fraction of channels differing by
+more than8 from14.684% to0.00355%. That diagnostic was reverted; its binary and
+results are retained. Full-course extension accounts for additional distant
+pixels and is evaluated separately. Original5-bit color math and native artwork
+remain the policy; matching a reference implementation's rounding differences
+is not by itself a reason to change them.
+
+The same pass fixes half-color math when CGWSEL clips main color to black
+(`28f260c4`, beads-8wg.2.194), with independent known-color tests for native,
+portable-HD and GPU paths. The seven-test PPU suite, F-Zero renderer/mod tests,
+772 GPU region comparisons and non-GPU compile check pass. HD detail and Edge
+smoothing now identify the two controls separately; the existing persisted IDs
+and choices are retained while useful scale/default qualification remains open.
+
+These are candidate results, not an overall quality, motion, shared-game or
+release acceptance. F-Zero's twelve-area matrix remains authoritative. Raw
+comparison inputs/settings, image metrics and binaries are retained in the
+owner's isolated quality workspace; the F-Zero evidence index records identities.
+
+### Validated band fallback and bounded motion acceptance
+
+Engine `07716db3` retains interior reciprocal anchors first and tries the
+previous whole-band regression only if that fit fails the same residual,
+pole/sign and subrow guards. Actual SMK coefficient tables cover both opposite
+quantization cases. Anchors alone reduced corrected rows664 versus historical
+1909; the corrected fit reaches2241 across27 sampled frames while retaining
+sampled native parity and historical final video/logic hashes/master cycles.
+The pinned SMK consumer `d302c30` was regenerated with the supported native
+analyzer and passed3600 strict DSP1LLE frames. This is not adoption into its
+custom HD host or a cross-game performance claim.
+
+All302 retained F-Zero4x SS1/SS2 images remain byte-identical. The owner accepts
+both151-frame stock cornering clips as comparable to bsnes-hd. F-Zero HD-03's
+straight/turning geometry checkpoint is resolved; its other ten areas remain
+open. Seven PPU suites,772 real-GPU comparisons, F-Zero renderer tests, Ubuntu
+GCC13.3 NDEBUG reconstruction and the GPU-disabled object compile pass.
+Current4P8x/SS2 and fresh2P actual GPU gates pass driving, contacts, resizing
+and transitions. Requested120Hz save/load retains sampled HD correctness;
+state browser/rewind open-cancel checks pass in a private enabled profile.
+Committed rewind and the pre-existing22-cycle snapshot replay defect are not
+cleared by that check. No broad quality, sustained-rate or release claim follows.
+
+### Exact nearest presentation
+
+Engine `86fb6c19` shares the passthrough shader with game-owned HD presenters.
+Nearest HD output uses integer framebuffer pixel centers; floating interpolated
+UVs selected adjacent texels at exact boundaries. A patterned2048x1792 texture
+at768x576 reproduces180,224 legacy mismatches, now0;1280x720 also matches0.
+The772 existing GPU comparisons and shared Windows presenter object compile
+pass. Native/linear paths keep their existing UV policy; presets are separate.
+
+F-Zero `0faad3c` now matches44/44 actual full-raster and visible-sample output
+files, while all default visible files remain byte-identical to the earlier
+accepted binary. Current save/load/overlay and4P8xSS2 runtime gates pass.
+Same-host2P4xSS2 A/B/B/A is37.419,37.460,37.555,36.424FPS: neutral within
+variation. A later full-raster run gives35.877FPS, not an interleaved speedup
+claim. Maximum target allocations are37,013,080bytes visible versus97,771,520
+full. Setup/resize stalls remain, so sustained cadence is still unqualified.
+Owner passes both the prepared jump/landing and interpolated camera-alias clip.
+F-Zero now resolves HD-01/03/04/07; other quality/default/runtime areas remain.

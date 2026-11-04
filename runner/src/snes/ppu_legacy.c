@@ -96,11 +96,10 @@ static void ppu_render_pixel(Ppu *ppu, int x, int y) {
   if (!PPU_forcedBlank(ppu)) {
     int mainLayer = ppu_resolve_pixel(ppu, x, y, false, &r, &g, &b);
     bool colorWindowState = ppu_window_contains(ppu, 5, x);
-    if (
-      PPU_clipMode(ppu) == 3 ||
+    bool colorClipped = PPU_clipMode(ppu) == 3 ||
       (PPU_clipMode(ppu) == 2 && colorWindowState) ||
-      (PPU_clipMode(ppu) == 1 && !colorWindowState)
-      ) {
+      (PPU_clipMode(ppu) == 1 && !colorWindowState);
+    if (colorClipped) {
       r = 0;
       g = 0;
       b = 0;
@@ -126,7 +125,7 @@ static void ppu_render_pixel(Ppu *ppu, int x, int y) {
         g += (PPU_addSubscreen(ppu) && secondLayer != 5) ? g2 : PPU_fixedColorG(ppu);
         b += (PPU_addSubscreen(ppu) && secondLayer != 5) ? b2 : PPU_fixedColorB(ppu);
       }
-      if (PPU_halfColor(ppu) && (secondLayer != 5 || !PPU_addSubscreen(ppu))) {
+      if (PPU_halfColor(ppu) && !colorClipped && (secondLayer != 5 || !PPU_addSubscreen(ppu))) {
         r >>= 1;
         g >>= 1;
         b >>= 1;

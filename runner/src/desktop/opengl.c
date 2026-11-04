@@ -40,6 +40,7 @@
 #include "config.h"
 #include "display_aspect.h"
 #include "hd_gpu.h"
+#include "present_shader.h"
 #if SNESRECOMP_SDL3
 #define DeleteGlContext SDL_GL_DestroyContext
 #else
@@ -221,15 +222,7 @@ static bool OpenGLRenderer_Init(SDL_Window *window) {
   }
 
   // fragment shader
-  const GLchar *fs_code = "#version 330 core\n" CODE(
-  out vec4 FragColor;
-  in vec2 TexCoord;
-  // texture samplers
-  uniform sampler2D texture1;
-  void main(void) {
-    FragColor = texture(texture1, TexCoord);
-  }
-);
+  const GLchar *fs_code = SnesGlPresentFragmentShader();
 
   unsigned int fs = glCreateShader(GL_FRAGMENT_SHADER);
   glShaderSource(fs, 1, &fs_code, NULL);
@@ -455,6 +448,8 @@ static void OpenGLRenderer_EndDraw(void) {
   if (g_glsl_shader == NULL) {
     glViewport(viewport.x, viewport.y, viewport.width, viewport.height);
     glUseProgram(g_program);
+    glUniform1i(glGetUniformLocation(g_program,"exactNearest"),enhanced && !g_config.linear_filtering);
+    glUniform4i(glGetUniformLocation(g_program,"nearestViewport"),viewport.x,viewport.y,viewport.width,viewport.height);
     int filter = g_config.linear_filtering ? GL_LINEAR : GL_NEAREST;
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, filter);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, filter);

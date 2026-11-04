@@ -129,7 +129,7 @@ static const char *fragment_source =
   "if((visible&4u)!=0u&&object.r>mainp)mainp=object.r;if((visible&8u)!=0u&&object.r>sub)sub=object.r;"
   "bool inside=(visible&16u)!=0u;bool clip=cond((c.z>>6)&3,inside);"
   "bool math=((mainp>>8)&15u)<6u&&!cond((c.z>>4)&3,inside)&&(uint(c.w)&(1u<<((mainp>>8)&15u)))!=0u;"
-  "uint v=color(mainp,object,n.y),other=uint(c.y);bool half=math&&(c.w&64)!=0;"
+  "uint v=color(mainp,object,n.y),other=uint(c.y);bool half=math&&(c.w&64)!=0&&!clip;"
   "if(math&&(c.z&2)!=0){if((sub&255u)!=0u)other=color(sub,object,n.y);else half=false;}"
   "uvec3 outc=uvec3(0);for(int channel=0;channel<3;++channel){int q=clip?0:int((v>>(5*channel))&31u);"
   "if(math){int s=int((other>>(5*channel))&31u);q=max(0,q+((c.w&128)!=0?-s:s));if(half)q/=2;q=min(q,31);}"

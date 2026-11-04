@@ -293,7 +293,7 @@ static uint32_t SnesHdSample(const SnesHdFrame *f, unsigned scale,
   bool math = layer < 6 && !SnesHdWindowCondition((j->cgwsel >> 4) & 3, inside) &&
       (j->cgadsub & (1u << layer));
   unsigned color = SnesHdPixelColor(j, x, main), other = j->fixed_color;
-  bool half = math && (j->cgadsub & 64);
+  bool half = math && (j->cgadsub & 64) && !clip;
   if (math && (j->cgwsel & 2)) {
     if (sub & 255) other = SnesHdPixelColor(j, x, sub); else half = false;
   }

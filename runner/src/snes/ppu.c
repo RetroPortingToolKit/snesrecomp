@@ -2571,7 +2571,7 @@ static NOINLINE void PpuDrawWholeLine(Ppu *ppu, uint y) {
         }
       } while (dst++, ++i < right);
     } else {
-      uint8 *half_color_map = PPU_halfColor(ppu) ? ppu->brightnessMultHalf : ppu->brightnessMult;
+      uint8 *half_color_map = (PPU_halfColor(ppu) && clip_color_mask) ? ppu->brightnessMultHalf : ppu->brightnessMult;
       // Store this in locals
       math_enabled_cur |= PPU_addSubscreen(ppu) << 8 | PPU_subtractColor(ppu) << 9;
       // Need to check for each pixel whether to use math or not based on the main screen layer.

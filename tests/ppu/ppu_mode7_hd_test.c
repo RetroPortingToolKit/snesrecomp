@@ -338,7 +338,23 @@ static void test_owned_composition(void) {
     SnesHdFrameDestroy(f);
   }
 }
+static void test_known_clipped_math(void) {
+  const uint32_t expected[] = {0x424242, 0x212121, 0x848484, 0x212121};
+  for (unsigned renderer = 0; renderer < 2; ++renderer)
+    for (unsigned flags = 0; flags < 4; ++flags) {
+      setup();
+      for (unsigned i = 0; i < 0x8000; ++i) p.vram[i] = 0x0100;
+      p.cgram[1] = 12 * 0x421; p.fixedColor = 4 * 0x421;
+      p.cgwsel = (flags & 1 ? 0xc0 : 0) | (flags & 2 ? 2 : 0);
+      p.cgadsub = 0x41; p.screenEnabled[1] = 0;
+      PpuBeginDrawing(&p, (uint8_t *)native, kPpuBufWidth * 4,
+          renderer ? kPpuRenderFlags_NewRenderer : 0);
+      run_line(&p, 0); run_line(&p, 1);
+      CHECK(native[10] == expected[flags]);
+    }
+}
 int main(void) {
+  test_known_clipped_math();
   test_detail_and_isolation();
   test_fallbacks_and_capacity();
   test_transparency_and_sprites();

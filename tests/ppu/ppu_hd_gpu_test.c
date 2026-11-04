@@ -6,6 +6,7 @@
 #include "ppu_mode7_reconstruct_test.c"
 #undef main
 #include "desktop/hd_gpu.h"
+#include "desktop/present_shader.h"
 #include "gl_core_3_1.h"
 #include "desktop/sdl_compat.h"
 #include <time.h>
@@ -53,6 +54,53 @@ static void compare_visible(SnesHdGpu *g,const SnesHdFrame *f,unsigned scale) {
     CHECK((gpu[y*w+x]&0xffffff)==(expected&0xffffff));
   }
 }
+
+/* Exact nearest resolve must agree with the visible-sample pixel centers.
+ * Interpolated floating UVs can choose the adjacent texel at exact integer
+ * boundaries, especially when the window is not a divisor of the HD raster. */
+static void test_nearest_presentation(void) {
+  static const char *vertex = "#version 330 core\n"
+      "out vec2 TexCoord; void main() {"
+      "vec2 p[3]=vec2[3](vec2(-1,-1),vec2(3,-1),vec2(-1,3));"
+      "gl_Position=vec4(p[gl_VertexID],0,1);"
+      "TexCoord=vec2((p[gl_VertexID].x+1)*.5,(1-p[gl_VertexID].y)*.5); }";
+  const char *fragment=SnesGlPresentFragmentShader();
+  GLuint vs=glCreateShader(GL_VERTEX_SHADER),fs=glCreateShader(GL_FRAGMENT_SHADER);
+  glShaderSource(vs,1,&vertex,NULL);glCompileShader(vs);
+  glShaderSource(fs,1,&fragment,NULL);glCompileShader(fs);
+  GLint ok;glGetShaderiv(vs,GL_COMPILE_STATUS,&ok);CHECK(ok);
+  glGetShaderiv(fs,GL_COMPILE_STATUS,&ok);CHECK(ok);
+  GLuint program=glCreateProgram();glAttachShader(program,vs);glAttachShader(program,fs);
+  glLinkProgram(program);glGetProgramiv(program,GL_LINK_STATUS,&ok);CHECK(ok);
+  GLuint vao,source;glGenVertexArrays(1,&vao);glGenTextures(1,&source);
+  static const unsigned cases[][6]={{2048,1792,768,576,5,7},{2728,1792,1280,720,0,0}};
+  for(unsigned n=0;n<countof(cases);++n) {
+    unsigned sw=cases[n][0],sh=cases[n][1],w=cases[n][2],h=cases[n][3],ox=cases[n][4],oy=cases[n][5];
+    uint32_t *input=malloc((size_t)sw*sh*4),*actual=malloc((size_t)w*h*4);CHECK(input && actual);
+    for(unsigned y=0;y<sh;++y)for(unsigned x=0;x<sw;++x)
+      input[(size_t)y*sw+x]=0xff000000u|((x*1103515245u ^ y*2654435761u)&0xffffffu);
+    make_target(w+ox,h+oy);
+    glActiveTexture(GL_TEXTURE0);glBindTexture(GL_TEXTURE_2D,source);
+    glTexImage2D(GL_TEXTURE_2D,0,GL_RGBA8,sw,sh,0,GL_BGRA,GL_UNSIGNED_BYTE,input);
+    glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MIN_FILTER,GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MAG_FILTER,GL_NEAREST);
+    glViewport(ox,oy,w,h);glUseProgram(program);
+    glUniform1i(glGetUniformLocation(program,"texture1"),0);
+    glUniform1i(glGetUniformLocation(program,"exactNearest"),1);
+    glUniform4i(glGetUniformLocation(program,"nearestViewport"),ox,oy,w,h);
+    glBindVertexArray(vao);glDrawArrays(GL_TRIANGLES,0,3);
+    glReadPixels(ox,oy,w,h,GL_BGRA,GL_UNSIGNED_BYTE,actual);
+    unsigned differences=0;
+    for(unsigned y=0;y<h;++y)for(unsigned x=0;x<w;++x) {
+      unsigned sx=(2*x+1)*sw/(2*w),sy=(2*(h-1-y)+1)*sh/(2*h);
+      differences+=(actual[(size_t)y*w+x]&0xffffff)!=(input[(size_t)sy*sw+sx]&0xffffff);
+    }
+    fprintf(stderr,"nearest presentation %ux%u ->%ux%u: %u mismatches\n",sw,sh,w,h,differences);
+    CHECK(!differences);free(input);free(actual);
+  }
+  glBindVertexArray(0);glUseProgram(0);glDeleteVertexArrays(1,&vao);
+  glDeleteTextures(1,&source);glDeleteProgram(program);glDeleteShader(vs);glDeleteShader(fs);
+}
 int main(void) {
   SDL_SetMainReady();
   CHECK(SDL_Init(SDL_INIT_VIDEO));
@@ -66,7 +114,15 @@ int main(void) {
   SnesHdGpu *g = SnesHdGpuCreate(); CHECK(g);
   CHECK(SnesHdGpuSupportsAffine(g));
   glGenFramebuffers(1, &framebuffer);
+  test_nearest_presentation();
   unsigned comparisons = 0;
+  test_clipped_math();
+  for (unsigned flags = 0; flags < 4; ++flags) {
+    SnesHdFrame *f = clipped_math_fixture(flags);
+    make_target(4, 2); CHECK(SnesHdGpuDraw(g, f, 2, 4, 2));
+    compare_roi(g, f, 2, 0, 0, 4, 2);
+    SnesHdFrameDestroy(f);
+  }
   test_projection_geometry(); test_nonperspective();
   for (unsigned flags = 0; flags < 16; ++flags) {
     SnesHdFrame *f = projection_fixture(flags, true, true);
