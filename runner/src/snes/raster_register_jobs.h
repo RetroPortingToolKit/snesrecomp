@@ -2,6 +2,7 @@
 #define SNESRECOMP_RASTER_REGISTER_JOBS_H
 
 #include "ppu_registers.h"
+#include "ppu_brightness.h"
 
 /* Pure jobs over captured SNES data. No guest writes, asset/scene knowledge,
  * allocation, backend dependency or persistent simulation state. Consumers
@@ -145,7 +146,7 @@ static inline const uint32_t *SnesRenderBrightness(SnesRenderColorCache *cache, 
       uint32_t pixel = 0;
       for (unsigned component = 0; component < 3; ++component) {
         unsigned c = (color >> (component * 5)) & 31;
-        pixel |= (((c << 3) | (c >> 2)) * level / 15) << (16 - component * 8);
+        pixel |= (uint32_t)ppu_brightness_level(c, level) << (16 - component * 8);
       }
       cache->rgb[level][color] = pixel;
     }

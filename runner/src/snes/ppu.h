@@ -12,6 +12,7 @@
 #include "saveload.h"
 #include "hd_jobs.h"
 #include "ppu_registers.h"
+#include "ppu_brightness.h"
 
 typedef struct Ppu Ppu;
 typedef void PpuWidescreenLineEnhancer(Ppu *ppu, uint y, bool sub,

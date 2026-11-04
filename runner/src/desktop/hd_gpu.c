@@ -133,7 +133,7 @@ static const char *fragment_source =
   "if(math&&(c.z&2)!=0){if((sub&255u)!=0u)other=color(sub,object,n.y);else half=false;}"
   "uvec3 outc=uvec3(0);for(int channel=0;channel<3;++channel){int q=clip?0:int((v>>(5*channel))&31u);"
   "if(math){int s=int((other>>(5*channel))&31u);q=max(0,q+((c.w&128)!=0?-s:s));if(half)q/=2;q=min(q,31);}"
-  "outc[channel]=uint(((q<<3)|(q>>2))*cfg.w/15);}"
+  "int lv=(2*q*cfg.w+15)/30;outc[channel]=uint((lv<<3)|(lv>>2));}"
   "uint over=texelFetch(overlay_plane,n,0).r,alpha=over>>24;"
   "uvec3 fg=uvec3((over>>16)&255u,(over>>8)&255u,over&255u);"
   "outc=min(uvec3(255),(outc*(255u-alpha)+fg*255u+127u)/255u);"
