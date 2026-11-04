@@ -62,6 +62,10 @@ portable bounded ROI consumer remains available as a reference/host fallback.
 
 Tests: `tests/ppu/ppu_mode7_hd_test.c`, `ppu_hd_gpu_test.c` and
 `hd_host_mod_test.c`. Retain portable/native fallbacks under the same interface.
+The optional `python tests/ppu/validate_hd_glsl.py --validator <glslangValidator>`
+check compiles and links the real GL3.3 register and GL4 camera shaders with
+Khronos's reference compiler. A permissive driver can accept invalid GLSL:
+the reserved identifier `half` previously disabled HD on stricter compilers.
 No new netplay feature or simulation-profile negotiation is introduced:
 presentation jobs do not affect the guest, and peers can present locally at
 different resolutions without changing simulation.
