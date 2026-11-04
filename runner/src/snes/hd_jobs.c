@@ -1,4 +1,5 @@
 #include "hd_jobs_internal.h"
+#include "ppu_brightness.h"
 #include "mode7_hd.h"
 #include <math.h>
 #include <stdlib.h>
@@ -307,7 +308,7 @@ static uint32_t SnesHdSample(const SnesHdFrame *f, unsigned scale,
       if (half) value /= 2;
       if (value > 31) value = 31;
     }
-    rgb |= (uint32_t)(((value << 3) | (value >> 2)) * j->brightness / 15) << (16 - 8 * c);
+    rgb |= (uint32_t)ppu_brightness_level((unsigned)value, j->brightness) << (16 - 8 * c);
   }
   uint32_t overlay = j->overlay[x], mixed = 0;
   unsigned opacity = overlay >> 24;
