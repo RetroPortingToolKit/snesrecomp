@@ -129,10 +129,10 @@ static const char *fragment_source =
   "if((visible&4u)!=0u&&object.r>mainp)mainp=object.r;if((visible&8u)!=0u&&object.r>sub)sub=object.r;"
   "bool inside=(visible&16u)!=0u;bool clip=cond((c.z>>6)&3,inside);"
   "bool math=((mainp>>8)&15u)<6u&&!cond((c.z>>4)&3,inside)&&(uint(c.w)&(1u<<((mainp>>8)&15u)))!=0u;"
-  "uint v=color(mainp,object,n.y),other=uint(c.y);bool half=math&&(c.w&64)!=0&&!clip;"
-  "if(math&&(c.z&2)!=0){if((sub&255u)!=0u)other=color(sub,object,n.y);else half=false;}"
+  "uint v=color(mainp,object,n.y),other=uint(c.y);bool halve_color=math&&(c.w&64)!=0&&!clip;"
+  "if(math&&(c.z&2)!=0){if((sub&255u)!=0u)other=color(sub,object,n.y);else halve_color=false;}"
   "uvec3 outc=uvec3(0);for(int channel=0;channel<3;++channel){int q=clip?0:int((v>>(5*channel))&31u);"
-  "if(math){int s=int((other>>(5*channel))&31u);q=max(0,q+((c.w&128)!=0?-s:s));if(half)q/=2;q=min(q,31);}"
+  "if(math){int s=int((other>>(5*channel))&31u);q=max(0,q+((c.w&128)!=0?-s:s));if(halve_color)q/=2;q=min(q,31);}"
   "outc[channel]=uint(((q<<3)|(q>>2))*cfg.w/15);}"
   "uint over=texelFetch(overlay_plane,n,0).r,alpha=over>>24;"
   "uvec3 fg=uvec3((over>>16)&255u,(over>>8)&255u,over&255u);"
@@ -174,7 +174,11 @@ static GLuint hd_program_source(const char *source, bool affine) {
   GLuint program = glCreateProgram(); glAttachShader(program, vs); glAttachShader(program, fs);
   glLinkProgram(program); glDeleteShader(vs); glDeleteShader(fs);
   GLint ok = 0; glGetProgramiv(program, GL_LINK_STATUS, &ok);
-  if (!ok) { glDeleteProgram(program); return 0; }
+  if (!ok) {
+    char log[2048]; glGetProgramInfoLog(program, sizeof(log), NULL, log);
+    fprintf(stderr, "SNES HD GPU %s program link: %s\n", affine ? "affine" : "register", log);
+    glDeleteProgram(program); return 0;
+  }
   return program;
 }
 static void hd_bind(SnesHdGpu *g, unsigned unit) {
