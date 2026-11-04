@@ -92,6 +92,43 @@ int main(void) {
   int failures = 0;
   Apu *apu = apu_init();
 
+  /* Writes already due at the requested boundary need no SPC execution.
+   * In particular, word bytes sharing a guest stamp must not push that
+   * boundary forward or rebase the next write. */
+  Apu *boundary = apu_init();
+  apu_reset(boundary);
+  uint32_t reset_cycles = boundary->cpuCyclesLeft;
+  failures += check(apu_schedulePortWrite(boundary, 0, 0x12, 1000) &&
+                    apu_runToGuestCycle(boundary, 1000, 16),
+                    "apply boundary write without consuming a cycle budget");
+  failures += check(boundary->inPorts[0] == 0x12 &&
+                    boundary->portClock == 0 && boundary->cycles == 0 &&
+                    boundary->cpuCyclesLeft == reset_cycles &&
+                    apu_portQueueDepth(boundary) == 0,
+                    "boundary write changes ports without executing the SPC");
+  failures += check(apu_schedulePortWrite(boundary, 1, 0x34, 1000) &&
+                    apu_runToGuestCycle(boundary, 1000, 0) &&
+                    boundary->inPorts[1] == 0x34 &&
+                    boundary->portGuestAnchor == 1000 &&
+                    boundary->portTargetAnchor == 0 && boundary->portClock == 0,
+                    "same-cycle second byte retains the original clock mapping");
+  failures += check(apu_schedulePortWrite(boundary, 2, 0x56, 1010),
+                    "queue a future boundary write");
+  failures += check(!apu_runToGuestCycle(boundary, 1010, 5) &&
+                    boundary->portClock == 5 &&
+                    boundary->inPorts[2] == 0 && apu_portQueueDepth(boundary) == 1,
+                    "a partial budget cannot expose a future write");
+  failures += check(apu_runToGuestCycle(boundary, 1010, 5) &&
+                    boundary->portClock == 10 && boundary->cycles == 10 &&
+                    boundary->inPorts[2] == 0x56 &&
+                    apu_portQueueDepth(boundary) == 0,
+                    "a write exactly at the budget limit needs no extra cycle");
+  failures += check(apu_runToGuestCycle(boundary, 1010, 0) &&
+                    boundary->portClock == 10,
+                    "repeated synchronization at a boundary is idempotent");
+  apu_free(boundary);
+  applied_count = 0;
+
 #if !SNESRECOMP_SPC_DIAGNOSTICS
   apu_cpuWrite(apu, 0x00, 0x77);
   failures += check(g_spc_write_counts[0] == 0 &&
