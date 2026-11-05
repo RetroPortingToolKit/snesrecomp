@@ -102,6 +102,30 @@ static inline bool snesrecomp_sdl_lock_mutex(SDL_mutex *mutex) {
 #endif
 }
 
+/* Create a named SDL render driver without allowing automatic driver
+ * selection to choose a different backend. The GLES2 build uses this so a
+ * missing driver fails explicitly instead of silently falling back. */
+static inline SDL_Renderer *snesrecomp_sdl_create_renderer_named(
+    SDL_Window *window, const char *name, int vsync) {
+#if SNESRECOMP_SDL3
+  (void)vsync;
+  return SDL_CreateRenderer(window, name);
+#else
+  SDL_ClearError();
+  for (int i = 0; i < SDL_GetNumRenderDrivers(); ++i) {
+    SDL_RendererInfo info;
+    if (SDL_GetRenderDriverInfo(i, &info) == 0 && info.name &&
+        SDL_strcasecmp(info.name, name) == 0) {
+      Uint32 flags = SDL_RENDERER_ACCELERATED;
+      if (vsync != 0) flags |= SDL_RENDERER_PRESENTVSYNC;
+      return SDL_CreateRenderer(window, i, flags);
+    }
+  }
+  SDL_SetError("Required SDL render driver '%s' is not available", name);
+  return NULL;
+#endif
+}
+
 /* vsync is a swap INTERVAL, not a flag: 0 immediate, 1 wait for the panel,
  * -1 late-swap-tearing (the launcher's "Adaptive"). SDL2's renderer has no
  * adaptive mode, and a driver may refuse -1 even on SDL3, so both fall back
