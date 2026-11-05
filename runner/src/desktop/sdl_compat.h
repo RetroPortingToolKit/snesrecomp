@@ -11,6 +11,10 @@
 #include <stdbool.h>
 #include <stdint.h>
 
+#ifndef SNESRECOMP_SDL_GLES2_ONLY
+#define SNESRECOMP_SDL_GLES2_ONLY 0
+#endif
+
 #if SNESRECOMP_SDL3
 #define SDL_ENABLE_OLD_NAMES
 #include <SDL3/SDL.h>
