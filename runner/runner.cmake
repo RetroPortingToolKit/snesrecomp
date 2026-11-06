@@ -151,6 +151,12 @@ endif()
 #
 # Keep discovery and target wiring in one helper so games do not grow their
 # own subtly different SDL package/link rules.
+option(SNESRECOMP_SDL_GLES2_ONLY
+    "Use SDL2's native OpenGL ES 2 renderer without the desktop OpenGL presenter" OFF)
+if(SNESRECOMP_SDL_GLES2_ONLY)
+    set(SNESRECOMP_SDL_BACKEND "SDL2" CACHE STRING
+        "Desktop SDL backend (SDL3 or SDL2)" FORCE)
+endif()
 set(SNESRECOMP_SDL_BACKEND "SDL3" CACHE STRING
     "Desktop SDL backend (SDL3 or SDL2)")
 set_property(CACHE SNESRECOMP_SDL_BACKEND PROPERTY STRINGS SDL3 SDL2)
@@ -217,6 +223,7 @@ function(snesrecomp_target_sdl target)
         target_link_libraries(${target} PRIVATE SDL3::SDL3)
         target_compile_definitions(${target} PRIVATE
             SNESRECOMP_SDL3=1
+            SNESRECOMP_SDL_GLES2_ONLY=0
             LNG_SDL3=1
             SDL_MAIN_HANDLED)
         if(WIN32 AND TARGET SDL3::SDL3-shared)
@@ -230,6 +237,7 @@ function(snesrecomp_target_sdl target)
         find_package(SDL2 REQUIRED)
         target_compile_definitions(${target} PRIVATE
             SNESRECOMP_SDL3=0
+            SNESRECOMP_SDL_GLES2_ONLY=$<BOOL:${SNESRECOMP_SDL_GLES2_ONLY}>
             SDL_MAIN_HANDLED)
         if(TARGET SDL2::SDL2)
             target_link_libraries(${target} PRIVATE SDL2::SDL2)
@@ -1333,7 +1341,7 @@ function(snesrecomp_target_desktop_host target)
     else()
         snesrecomp_target_post_mortem(${target})
     endif()
-    if(NOT ANDROID)
+    if(NOT ANDROID AND NOT SNESRECOMP_SDL_GLES2_ONLY)
         snesrecomp_target_opengl(${target})
     endif()
     # Run-ahead and rewind are the host's (snes_runahead.c, snes_rewind.c,
