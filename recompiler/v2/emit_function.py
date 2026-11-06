@@ -536,6 +536,8 @@ def emit_function(rom: bytes, bank: int, start: int,
                   live_operand_sites=None,
                   entry_hooks=None,
                   brk_rti_sites=None,
+                  instruction_blocks: bool = False,
+                  region_paced: bool = False,
                   entry_s_offset: int = 0) -> str:
     """Emit a complete v2 C function source for one 65816 function.
 
@@ -547,6 +549,8 @@ def emit_function(rom: bytes, bank: int, start: int,
             emit_op(op)  → C lines
         block-end op → goto / fall-through wiring
     """
+    if region_paced and not instruction_blocks:
+        raise ValueError("region-paced emission requires instruction-blocks")
     base_func_name = func_name if func_name is not None else _default_func_name(bank, start)
     # HLE bypass: if cfg declared this function's PC as the SPC upload
     # entry (`hle_spc_upload <pc>` in the bank cfg), replace the entire
@@ -689,7 +693,7 @@ def emit_function(rom: bytes, bank: int, start: int,
     hook_by_pc24 = {pc24 & 0xFFFFFF: name
                     for pc24, name in (entry_hooks or {}).items()
                     if ((pc24 >> 16) & 0xFF) == bank}
-    cfg = build_cfg(graph, instruction_blocks=get_rom_mapping() == ROM_MAP_SA1,
+    cfg = build_cfg(graph, instruction_blocks=instruction_blocks or get_rom_mapping() == ROM_MAP_SA1,
                     extra_leader_pcs={pc24 & 0xFFFF for pc24 in hook_by_pc24})
 
     # A tight, side-effect-free memory poll cannot execute atomically under
@@ -1425,6 +1429,8 @@ def emit_function(rom: bytes, bank: int, start: int,
         # Axis-5: master-clocks-per-CPU-cycle for this block's code region, used
         # to weight the dynamic (D.l/page-cross/branch-taken) master charges.
         _blk_spd_expr, _blk_spd_const = _block_speed(bank, key.pc)
+        if region_paced:
+            _blk_spd_expr, _blk_spd_const = "6", 6
 
         # Iterate the pre-lowered (Insn, [IROp]) pairs. Calling lower()
         # again here would mint fresh Value-ids and break codegen's
@@ -2175,6 +2181,10 @@ def emit_function(rom: bytes, bank: int, start: int,
             f'RecompStackPop(); return interp_tier_dispatch_balanced('
             f'cpu, {_transfer_target_expr(fn_entry_pc, False)}, 0x{fn_entry_pc:06X}u, _entry_s, _hrv, false); }}')
     src.append(f'  uint32 _host_return_pc24 = 0xFFFFFFFFu;')
+    if region_paced:
+        src.append('  if (cpu->emulation || (cpu->S >= 0x1FFBu && cpu->S < 0x6005u)) { RecompStackPop();')
+        src.append(f'    return interp_tier_dispatch_tail(cpu, {_transfer_target_expr(fn_entry_pc, False)}, '
+                   f'0x{fn_entry_pc:06X}u, _entry_s, _hrv); }} /* native-mode pacing only */')
     src.append(f'  if (_hrv == 2 || _hrv == 3) {{')
     src.append(f'    uint16 _host_rpcl = cpu_read8(cpu, 0x00, (uint16)(_entry_s + 1u));')
     src.append(f'    uint16 _host_rpch = cpu_read8(cpu, 0x00, (uint16)(_entry_s + 2u));')
@@ -2237,6 +2247,8 @@ def emit_function(rom: bytes, bank: int, start: int,
         # across a frame boundary. Every CFG block starts at an architectural
         # instruction boundary, so it is safe to unwind here and resume this
         # exact PC through the owning interpreter after host events run.
+        if region_paced:
+            src.append('    cpu_aot_instruction_boundary(cpu);')
         src.append(
             f'    if (interp_bridge_lle_master_deadline_reached(cpu)) {{')
         src.append('      RecompStackPopYield();')
@@ -2262,14 +2274,42 @@ def emit_function(rom: bytes, bank: int, start: int,
         # Axis-5: also charge the region-weighted MASTER clocks (CPU cycles x
         # code-region speed) into cpu->master_cycles, which paces the SPC700.
         _cyc_const = _block_cycle_const(block_per_insn_ir.get(key, []))
+        _paced_plan = None
+        if region_paced:
+            from v2.region_pacing import plan, mmio_guard
+            _pairs = block_per_insn_ir.get(key, [])
+            if len(_pairs) == 1:
+                _insn = _pairs[0][0]
+                _paced_plan = plan(_insn, block_lines[key], _cyc_const,
+                                   live_operand=bool(live_operand_sites and block_pc24 in live_operand_sites))
+            if _paced_plan is None:
+                src.append('    RecompStackPop();')
+                src.append(f'    return interp_tier_dispatch_tail(cpu, {_transfer_target_expr(block_pc24, False)}, '
+                           f'0x{block_pc24:06X}u, _entry_s, _hrv); /* unmodeled region-paced instruction */')
+                continue
+            _pointer_fallback = (
+                f'RecompStackPop(); return interp_tier_dispatch_tail(cpu, '
+                f'{_transfer_target_expr(block_pc24, False)}, '
+                f'0x{block_pc24:06X}u, _entry_s, _hrv);')
+            for _prefix_line in _paced_plan[2]:
+                src.append('    ' + _prefix_line.replace('@FALLBACK@', _pointer_fallback))
+            _guard = mmio_guard(_insn)
+            if _guard:
+                src.append(f'    if ({_guard}) {{ RecompStackPop();')
+                src.append(f'      return interp_tier_dispatch_tail(cpu, {_transfer_target_expr(block_pc24, False)}, '
+                           f'0x{block_pc24:06X}u, _entry_s, _hrv); }} /* MMIO remains authoritative LLE */')
+            _fetch_last = rom_offset(bank, (_insn.addr + _insn.length - 1) & 0xFFFF)
+            src.append(f'    cpu->open_bus = 0x{rom[_fetch_last]:02X}u; /* last opcode/operand fetch */')
         if _cyc_const:
             src.append(f'    cpu->cycles += {_cyc_const};')
             _spd_expr, _spd_const = _block_speed(bank, key.pc)
-            if _spd_const is not None:
+            if _paced_plan is not None:
+                src.append(f'    cpu_add_aot_master_cycles(cpu, {_paced_plan[0]});')
+            elif _spd_const is not None:
                 src.append(f'    cpu->master_cycles += {_cyc_const * _spd_const};')
             else:
                 src.append(f'    cpu->master_cycles += {_cyc_const} * {_spd_expr};')
-        for ln in block_lines[key]:
+        for ln in (_paced_plan[1] if _paced_plan is not None else block_lines[key]):
             # Inject a stack-auditor pop before any return so the shadow
             # stack stays balanced. An LLE yield unwind is NOT a return: the
             # bounce site resumes the interpreter mid-routine with pushed
