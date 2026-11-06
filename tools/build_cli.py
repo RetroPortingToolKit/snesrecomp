@@ -105,6 +105,7 @@ def main() -> int:
         (ROOT / "recompiler-rs" / "Cargo.toml", "recompiler-rs"),
         (ROOT / "recompiler-rs" / "Cargo.lock", "recompiler-rs"),
         (ROOT / "LICENSE", "framework"),
+        (ROOT / "PERMISSIONS.md", "framework"),
         (ROOT / "THIRD_PARTY_ATTRIBUTION.md", "framework"),
     ]
     command = [
@@ -139,6 +140,7 @@ def main() -> int:
         archive.unlink()
     shutil.copytree(pyinstaller_dist / "snesrecomp", stage)
     shutil.copy2(ROOT / "LICENSE", stage)
+    shutil.copy2(ROOT / "PERMISSIONS.md", stage)
     shutil.copy2(ROOT / "README.md", stage)
     shutil.copy2(ROOT / "THIRD_PARTY_ATTRIBUTION.md", stage)
     shutil.make_archive(str(archive.with_suffix("")), "zip", dist_dir, package)

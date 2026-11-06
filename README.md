@@ -482,6 +482,16 @@ reverse-engineering and emulation work:
 
 ## License
 
+For this project's code covered by the [PolyForm Noncommercial License](LICENSE),
+[PERMISSIONS.md](PERMISSIONS.md) grants standing permission for voluntary
+donations, sponsorships, and advertising revenue, including support for broader
+development initiatives. Payment must not buy access to the software, games
+built with it, or their updates, features, or game content, including early access.
+
+Matthew Stanley has authority from the relevant copyright holders to grant
+these permissions for the project's PolyForm-covered code. Third-party
+components and code explicitly licensed under other terms retain those terms.
+
 SNESRecomp's original code is licensed under the
 [PolyForm Noncommercial License 1.0.0](LICENSE). Copyright © 2026 Matthew
 Stanley; commercial licensing inquiries go to him at <https://1379.tech>.
