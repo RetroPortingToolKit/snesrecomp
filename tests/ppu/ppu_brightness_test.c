@@ -95,6 +95,23 @@ int main(void) {
                      f ? "optimized" : "compatibility", kCases[i].c, kCases[i].l, kCases[i].want, got);
             failures += check(got == kCases[i].want, msg);
         }
+    /* MesenCE's rule, for parity runs: truncated in the 5-bit domain. */
+    static const struct { unsigned c, l; int want; } kTruncated[] = {
+        {  1, 10,   0 },   /* 1*10/15 = 0 (rounded: 1 -> 8) */
+        {  8,  1,   0 },   /* 8/15 = 0 (rounded: 8) */
+        { 31,  7, 115 },   /* 217/15 = 14 -> 115 either way */
+        { 31, 15, 255 },
+    };
+    g_ppu_brightness_truncate = 1;
+    for (size_t f = 0; f < 2; f++)
+        for (size_t i = 0; i < sizeof kTruncated / sizeof kTruncated[0]; i++) {
+            char msg[112];
+            int got = red_at(ppu, kTruncated[i].c, kTruncated[i].l, kFlags[f]);
+            snprintf(msg, sizeof msg, "%s renderer, truncated: colour %u at brightness %u -> %d (got %d)",
+                     f ? "optimized" : "compatibility", kTruncated[i].c, kTruncated[i].l, kTruncated[i].want, got);
+            failures += check(got == kTruncated[i].want, msg);
+        }
+    g_ppu_brightness_truncate = 0;
     /* Raster jobs: every 5-bit component at every level. */
     static SnesRenderColorCache cache;
     for (unsigned l = 0; l < 16; l++) {
