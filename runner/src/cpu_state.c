@@ -424,11 +424,15 @@ static uint16 cpu_latch_read16(CpuState *cpu, uint16 value) {
 
 bool cpu_read8_plain_rom(CpuState *cpu, uint8 bank, uint16 addr, uint8 *out) {
     Cart *cart = g_snes ? g_snes->cart : NULL;
-    /* Restrict to the high ROM window. Below $8000, SRAM/WRAM and MMIO take
-     * precedence over ROM-shaped mappings; coprocessors can own even vectors.
-     * Always resolve the live mapping: no retained pointer/invalidation state. */
-    if (addr < 0x8000 || !cart ||
-        (cart->type != CART_LOROM && cart->type != CART_HIROM)) return false;
+    /* Restrict to the ROM windows cpu_read8 hands to RomPtr: $8000-$FFFF, and
+     * below $8000 only in the non-system banks ($40-$7D, $C0-$FF: HiROM full
+     * banks, LoROM mirrors) unless SRAM claims the address. In the system
+     * banks WRAM, MMIO and SRAM take precedence; coprocessors can own even
+     * vectors. Always resolve the live mapping: no retained pointer state. */
+    if (!cart || (cart->type != CART_LOROM && cart->type != CART_HIROM) ||
+        bank == 0x7E || bank == 0x7F) return false;
+    if (addr < 0x8000 && ((bank & 0x7F) < 0x40 || cpu_sram_offset(bank, addr) >= 0))
+        return false;
     uint8 *p = cart_getRomPtr(cart, bank, addr);
     if (!p) return false; /* Preserve RomPtr's invalid-pointer diagnostics. */
     cart_note_cpu_bus(cart, bank, addr);

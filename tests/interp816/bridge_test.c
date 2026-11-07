@@ -23,6 +23,9 @@
 #include <string.h>
 #include "interp_bridge.h"   /* -> cpu_state.h (types, inline frame helpers) */
 #include "cpu_plain_rom_read.h"
+#ifndef SNESRECOMP_INTERP_FUSED_ROM_READ
+#define SNESRECOMP_INTERP_FUSED_ROM_READ 0
+#endif
 #include "tier2_capture.h"
 #include "snes.h"            /* Snes storage for the bridge's APU clock hook */
 #include "apu.h"
@@ -150,8 +153,9 @@ void cart_sync_coprocessors(Cart *cart, uint64_t master_clock) {
  * ROM. The stable-poll detector asks the cart which reads are ROM. */
 static Cart g_test_cart;
 uint8_t *cart_getRomPtr(Cart *cart, uint8_t bank, uint16_t adr) {
-    (void)cart;
-    if (bank == 0x7E || bank == 0x7F || adr < 0x8000) return NULL;
+    if (bank == 0x7E || bank == 0x7F) return NULL;
+    /* HiROM: the full 64K of banks $40-$7D/$C0-$FF are ROM. */
+    if (adr < 0x8000 && !(cart && cart->type == CART_HIROM && (bank & 0x40))) return NULL;
     return &RAM[((uint32_t)bank << 16) | adr];
 }
 /* cpu_state.c isn't linked here; the bridge's constructor installs its
@@ -162,10 +166,12 @@ uint8 cpu_read8(CpuState *cpu, uint8 bank, uint16 addr) {
 }
 /* Model the claimed immutable read through this harness's flat-memory bus.
  * The actual cpu_state implementation/latches have their own bus test. */
+static uint32_t g_plain_rom_low_claim = 0xFFFFFFFFu;  /* last claim below $8000 */
 bool cpu_read8_plain_rom(CpuState *cpu, uint8 bank, uint16 addr, uint8 *out) {
-    if (addr < 0x8000 || !g_snes || !g_snes->cart ||
+    if ((addr < 0x8000 && (bank & 0x7F) < 0x40) || !g_snes || !g_snes->cart ||
         (g_snes->cart->type != CART_LOROM && g_snes->cart->type != CART_HIROM) ||
         !cart_getRomPtr(g_snes->cart, bank, addr)) return false;
+    if (addr < 0x8000) g_plain_rom_low_claim = ((uint32_t)bank << 16) | addr;
     *out = cpu_read8(cpu, bank, addr);
     return true;
 }
@@ -597,6 +603,23 @@ int main(void) {
       g_test_snes.apu = NULL;
       g_frame_timeline = g_extended_frames = false;
     }
+
+    /* S0b: LDA $C01234 ; RTS on HiROM. The low half of a full ROM bank is
+     * offered to the fused claim like $8000-$FFFF; the reference build never
+     * calls it. Either way the value comes from ROM. */
+    { memset(RAM, 0, MEMSZ); init_cpu(); g_test_cart.type = CART_HIROM;
+      uint8_t c[] = {0xAF,0x34,0x12,0xC0, 0x60};
+      load(0x8000, c, sizeof c);
+      RAM[0xC01234] = 0x5A;
+      cpu_push_jsr_return_frame(&g_c);
+      g_plain_rom_low_claim = 0xFFFFFFFFu;
+      int rc = interp_bridge_run(&g_c, 0x008000);
+      printf("S0b HiROM low-half ROM read\n");
+      CHECK(rc == 1, "rc=%d exp 1", rc);
+      CHECK((g_c.A & 0xFF) == 0x5A, "A=%04X exp xx5A", g_c.A);
+      CHECK(g_plain_rom_low_claim == (SNESRECOMP_INTERP_FUSED_ROM_READ ? 0xC01234u : 0xFFFFFFFFu),
+            "low-half claim %06X", (unsigned)g_plain_rom_low_claim);
+      g_test_cart.type = CART_LOROM; }
 
     /* S1: LDA #$01 ; JSR $8100 (compiled) ; RTS */
     { memset(RAM, 0, MEMSZ); init_cpu(); g_aot_called = 0;

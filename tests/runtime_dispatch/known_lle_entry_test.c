@@ -247,6 +247,23 @@ int main(void) {
     fails += check(cart_getRomPtr(&cart, 0x20, 0x6000) == NULL,
                    "converted SMK keeps the DSP-1 SRAM window");
 
+    /* ROM mirroring wraps by the image size: power-of-two images by mask,
+     * others (3 MiB, 1.5 MiB) by the remainder, as before. */
+    cart.type = CART_HIROM;
+    cart.romSize = 0x200000;
+    fails += check(cart_getRomPtr(&cart, 0xe0, 0x1234) == g_test_rom + 0x1234,
+                   "2 MiB HiROM mirrors bank $E0 onto $C0");
+    cart.romSize = 0x300000;
+    fails += check(cart_getRomPtr(&cart, 0xf0, 0x1234) == g_test_rom + 0x1234,
+                   "3 MiB HiROM wraps by remainder, not by mask");
+    fails += check(cart_getRomPtr(&cart, 0xef, 0xffff) == g_test_rom + 0x2fffff,
+                   "3 MiB HiROM last byte stays in place");
+    cart.type = CART_LOROM;
+    cart.romSize = 0x180000;
+    fails += check(cart_getRomPtr(&cart, 0xb0, 0x8000) == g_test_rom,
+                   "1.5 MiB LoROM wraps by remainder");
+    cart.romSize = (int)sizeof g_test_rom;
+
     cpu_state_init(&cpu, ram);
     cpu.S = 0x01f0;
     cpu.emulation = false;
