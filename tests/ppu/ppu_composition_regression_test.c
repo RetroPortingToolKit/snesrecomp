@@ -13,21 +13,24 @@
 Snes *g_snes;
 int snes_frame_counter;
 unsigned char g_snesrecomp_last_hdmaen;
+static bool test_shadow_active;
+static unsigned test_shadow_calls, test_shadow_hscroll, test_shadow_y;
 
 uint16_t WsShadowTile(int layer, int screen_x, uint32_t wrapped_y,
                       uint16_t h_scroll, uint16_t map_word_adr,
                       uint16_t real_tile) {
   (void)layer;
-  (void)screen_x;
-  (void)wrapped_y;
-  (void)h_scroll;
   (void)map_word_adr;
+  if (test_shadow_active && (screen_x < 0 || screen_x >= 256)) {
+    ++test_shadow_calls; test_shadow_hscroll=h_scroll; test_shadow_y=wrapped_y;
+    return 2;
+  }
   return real_tile;
 }
 
 bool WsShadowLayerActive(int layer) {
   (void)layer;
-  return false;
+  return test_shadow_active;
 }
 
 uint32_t WsShadowWorldX(int layer) {
@@ -65,6 +68,39 @@ void WsShadowOnVramWrite(uint16_t word_adr, uint16_t value) {
 #define PPU_COMPOSITION_PPU_INCLUDE "../../runner/src/snes/ppu.c"
 #endif
 #include PPU_COMPOSITION_PPU_INCLUDE
+
+static int test_mode2_world_provider(Ppu *ppu) {
+  ppu_reset(ppu); memset(ppu->vram,0,sizeof(ppu->vram));
+  ppu->bgmode=2; ppu->screenEnabled[0]=1;
+  ppu->bgXsc[0]=0x04; ppu->bgXsc[2]=0x0c;
+  ppu->hScroll[0]=3; ppu->vScroll[0]=5; ppu->vScroll[2]=1;
+  for (unsigned i=0;i<0x400;i++) ppu->vram[0x400+i]=1;
+  for (unsigned i=0;i<32;i++) {
+    ppu->vram[0xc00+i]=0x2020; ppu->vram[0xc20+i]=0x2027;
+  }
+  for (unsigned i=0;i<8;i++) {
+    ppu->vram[16+i]=0x00ff; /* native tile: palette pixel1 */
+    ppu->vram[32+i]=0xff00; /* supplied tile: palette pixel2 */
+  }
+  PpuSetExtraSpaceCentered(ppu,24);
+  ppu->extraLeftCur=ppu->extraRightCur=24;
+  memset(&ppu->bgBuffers[0],0,sizeof(ppu->bgBuffers[0]));
+  test_shadow_calls=0; test_shadow_active=true;
+  PpuDrawBackground_4bpp_opt(ppu,1,false,0,0xc000,0x8000);
+  test_shadow_active=false;
+  if (!test_shadow_calls || test_shadow_hscroll!=0x2023 || test_shadow_y!=0x29 ||
+      ppu->bgBuffers[0].data[kPpuLineBorder+100]!=0x8001 ||
+      ppu->bgBuffers[0].data[kPpuLineBorder-10]!=0x8002 ||
+      ppu->bgBuffers[0].data[kPpuLineBorder+260]!=0x8002) {
+    fprintf(stderr,"Mode2 world provider: calls=%u h=%x y=%x pixels=%x/%x/%x\n",
+            test_shadow_calls,test_shadow_hscroll,test_shadow_y,
+            ppu->bgBuffers[0].data[kPpuLineBorder+100],
+            ppu->bgBuffers[0].data[kPpuLineBorder-10],
+            ppu->bgBuffers[0].data[kPpuLineBorder+260]);
+    return 1;
+  }
+  return 0;
+}
 
 static uint32_t rng_next(uint32_t *state) {
   uint32_t x = *state;
@@ -187,6 +223,7 @@ static uint64_t render_case_digest(Ppu *ppu, int case_id) {
     default:
       break;
   }
+  if (case_id >= 8) ppu->bgmode=2;
 
   ppu_runLine(ppu, 0);
   for (int line = 1; line <= 64; line++)
@@ -202,7 +239,7 @@ static uint64_t render_case_digest(Ppu *ppu, int case_id) {
 
 static int print_render_digest(Ppu *ppu) {
   uint64_t h = 1469598103934665603ull;
-  for (int i = 0; i < 8; i++) {
+  for (int i = 0; i < 16; i++) {
     uint64_t case_hash = render_case_digest(ppu, i);
     h = hash_bytes(h, &case_hash, sizeof(case_hash));
   }
@@ -214,7 +251,7 @@ static int run_render_bench(Ppu *ppu, int loops) {
   volatile uint64_t sink = 0;
   clock_t start = clock();
   for (int iter = 0; iter < loops; iter++) {
-    for (int case_id = 0; case_id < 8; case_id++) {
+    for (int case_id = 0; case_id < 16; case_id++) {
       uint64_t case_hash = render_case_digest(ppu, case_id);
       sink = (sink * 1099511628211ull) ^ case_hash ^ (uint64_t)iter;
     }
@@ -245,6 +282,7 @@ int main(int argc, char **argv) {
     return failures ? 1 : 0;
   }
   failures += test_color_window_edges_strict(ppu);
+  failures += test_mode2_world_provider(ppu);
   if (failures == 0)
     failures += print_render_digest(ppu);
   ppu_free(ppu);

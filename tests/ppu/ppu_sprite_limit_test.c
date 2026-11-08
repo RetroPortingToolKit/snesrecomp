@@ -239,14 +239,14 @@ int main(void) {
     ppu_runLine(ppu, 0);
     ppu_runLine(ppu, 1);
     failures += check(ppu->timeOver, "34-sliver overflow is reported");
-    failures += check((ppu->objBuffer.data[kPpuExtraLeftRight] & 0xff) == 0,
+    failures += check((ppu->objBuffer.data[kPpuLineBorder] & 0xff) == 0,
                       "reverse fetch drops low slot after sliver overflow");
 
     PpuBeginDrawing(ppu, pixels, kPitch,
                     kPpuRenderFlags_NewRenderer |
                     kPpuRenderFlags_NoSpriteLimits);
     render_one_line(ppu);
-    failures += check((ppu->objBuffer.data[kPpuExtraLeftRight] & 0xff) != 0,
+    failures += check((ppu->objBuffer.data[kPpuLineBorder] & 0xff) != 0,
                       "disabling sprite limits renders the low slot");
 
     /* Mode 2 OPT must still treat x=0 as the hardware left edge when
@@ -309,7 +309,7 @@ int main(void) {
         ppu_runLine(ppu, 1);
         failures += check(count_argb_pixels(obj_pixels, 8) == 8,
                           "default OBJ capture exports selected pixels");
-        failures += check((ppu->objBuffer.data[kPpuExtraLeftRight] & 0xff) == 0,
+        failures += check((ppu->objBuffer.data[kPpuLineBorder] & 0xff) == 0,
                           "RemoveFromGame drops captured OBJ from frame");
 
         memset(frame_pixels, 0, sizeof frame_pixels);
@@ -334,7 +334,7 @@ int main(void) {
         ppu_runLine(ppu, 1);
         failures += check(count_argb_pixels(obj_pixels, 8) == 0,
                           "narrowed OBJ capture excludes other slots");
-        failures += check((ppu->objBuffer.data[kPpuExtraLeftRight] & 0xff) != 0,
+        failures += check((ppu->objBuffer.data[kPpuLineBorder] & 0xff) != 0,
                           "excluded OBJ remains in frame");
         failures += check(PpuBindOverlaySurface(
                               ppu, kPpuOverlaySource_Obj, NULL, 0),
@@ -805,6 +805,139 @@ color_math_clamped_done:
         ;
     }
 
+    /* Extra margin work must not consume the authentic32/34 OBJ quotas.
+     * Both renderers share the evaluator, and genuine native overflow stays. */
+    for (unsigned flags=0;flags<=1;flags++) {
+        uint32_t wide[512];
+        ppu_reset(ppu);setup_one_sprite_line(ppu,0);
+        for (unsigned slot=0;slot<32;slot++)setup_solid_obj(ppu,slot,-32,0);
+        setup_solid_obj(ppu,32,64,0);
+        PpuBeginDrawing(ppu,(uint8_t *)wide,342*4,flags);
+        PpuSetExtraSpace(ppu,43);render_one_line(ppu);
+        failures+=check((wide[43+64]&0xffffff)==0xffffff,
+                        "32 margin sprites cannot discard a native sprite");
+        failures+=check((wide[43-32]&0xffffff)==0xffffff,
+                        "margin sprites still render without consuming native range quota");
+        failures+=check(!ppu->rangeOver,"margin range does not assert native overflow");
+
+        ppu_reset(ppu);setup_one_sprite_line(ppu,0);ppu->obsel=2<<5;
+        for (unsigned slot=1;slot<=5;slot++) {
+            setup_solid_obj(ppu,slot,-96,0);
+            ppu->highOam[slot>>2]|=1u<<((slot&3)*2+1);
+        }
+        PpuBeginDrawing(ppu,(uint8_t *)wide,sizeof wide,flags);
+        PpuSetExtraSpace(ppu,128);render_one_line(ppu);
+        failures+=check((wide[128]&0xffffff)==0xffffff,
+                        "40 margin slivers cannot discard a native sliver");
+        failures+=check((wide[128-96]&0xffffff)==0xffffff,
+                        "margin slivers remain visible with native limits enabled");
+        failures+=check(!ppu->timeOver,"margin fetch does not assert native overflow");
+
+        ppu_reset(ppu);setup_one_sprite_line(ppu,64);
+        for (unsigned slot=0;slot<32;slot++)setup_solid_obj(ppu,slot,64,0);
+        setup_solid_obj(ppu,32,0,0);
+        PpuBeginDrawing(ppu,(uint8_t *)wide,342*4,flags);
+        PpuSetExtraSpace(ppu,43);render_one_line(ppu);
+        failures+=check((wide[43]&0xffffff)==0 && ppu->rangeOver,
+                        "genuine32-native-sprite overflow remains enforced");
+    }
+
+    /* Original producer coordinates survive the nine-bit OAM wrap. Verify
+     * actual pixels with both renderers, at either full-width view anchor. */
+    for (unsigned flags=0; flags<=1; flags++) {
+        const int positions[]={-900,-530,-300,-16,0,255,512,700,790,900};
+        for (unsigned side=0; side<2; side++) {
+            for (unsigned i=0; i<sizeof positions/sizeof positions[0]; i++) {
+                uint32_t wide[800];
+                const int x=positions[i], origin=side?0:544;
+                ppu_reset(ppu);
+                setup_one_sprite_line(ppu,x&511);
+                PpuBeginDrawing(ppu,(uint8_t *)wide,sizeof wide,flags);
+                PpuSetExtraSpace(ppu,272);
+                PpuSetWidescreenViewAnchor(ppu,true);
+                PpuSetExtraSideSpace(ppu,origin,544-origin,0);
+                PpuWsSetOamFullX(ppu,0,(int16_t)x);
+                PpuWsEnableOamFullX(ppu,true);
+                render_one_line(ppu);
+                for (int col=0;col<800;col++) {
+                    bool lit=col>=x+origin && col<x+origin+8;
+                    failures+=check((wide[col]&0xffffff)==(lit?0xffffffu:0),
+                                    "full signed OAM X renders only at its true position");
+                }
+                failures+=check((ppu->oam[0]&255)==(x&255),
+                                "full X preserves guest OAM");
+            }
+        }
+        ppu_reset(ppu);
+        setup_one_sprite_line(ppu,700&511);
+        PpuWsSetOamFullX(ppu,0,700);
+        ppu_write(ppu,2,0);ppu_write(ppu,3,0);
+        ppu_write(ppu,4,120);ppu_write(ppu,4,0);
+        failures+=check(!(ppu->wsOamFullXValid[0]&1),
+                        "an ordinary XY write invalidates the previous full X");
+        PpuWsEnableOamFullX(ppu,true);
+        PpuSetExtraSpace(ppu,43);
+        failures+=check(!ppu->wsOamFullXOn,
+                        "frame policy reset disables full-coordinate decoding");
+    }
+
+
+    /* Bounded travel rooms clip world OAM at each raster's reference scroll,
+     * retaining native pixels, HUD relocation and the original OBJ quotas. */
+    for (unsigned flags=0; flags<=1; ++flags) {
+        const int extras[]={0,43,272};
+        const int positions[]={-32,-24,-8,0,248,256,272,280,288};
+        for (unsigned e=0;e<sizeof extras/sizeof extras[0];++e) {
+            const int extra=extras[e],width=256+2*extra;
+            uint32_t pixels[800*3];
+            for (unsigned policy=0;policy<5;++policy) {
+                ppu_reset(ppu);setup_one_sprite_line(ppu,8);
+                PpuBeginDrawing(ppu,(uint8_t *)pixels,width*4,flags);
+                PpuSetExtraSpace(ppu,extra);
+                PpuSetWsHudOamBand(ppu,224,48,208);
+                PpuSetWsHudOamShiftRange(ppu,0,1);
+                for (unsigned n=0;n<sizeof positions/sizeof positions[0];++n) {
+                    setup_solid_obj(ppu,n+1,positions[n]&511,0);
+                    PpuWsSetOamFullX(ppu,n+1,positions[n]);
+                }
+                PpuWsEnableOamFullX(ppu,true);
+                PpuSetWidescreenLayerWorldClipBandSlot(ppu,1,4,1,8,0,620,920);
+                if (policy==1) /* invalid reference replaces a live policy */
+                    PpuSetWidescreenLayerWorldClipBandSlot(ppu,1,4,1,8,4,620,920);
+                if (policy==2) /* per-frame policy reset */
+                    PpuSetExtraSpace(ppu,extra);
+                PpuWsEnableOamFullX(ppu,true); /* independently restored producer policy */
+                if (policy==3) /* invalid span replaces a live policy */
+                    PpuSetWidescreenLayerWorldClipBandSlot(ppu,1,4,1,8,0,920,620);
+                if (policy==4) /* clipping is independent of BG mode */
+                    ppu->bgmode=7;
+                ppu_runLine(ppu,0);
+                for (int y=0;y<3;++y) {
+                    const int scroll=y==2?649:640;
+                    ppu->hScroll[0]=scroll;
+                    ppu_runLine(ppu,y+1);
+                    for (int col=0;col<width;++col) {
+                        const int x=col-extra;
+                        bool lit=x>=8-extra && x<16-extra;
+                        for (unsigned n=0;n<sizeof positions/sizeof positions[0];++n) {
+                            bool in_room=policy==1 || policy==2 || policy==3 ||
+                                !extra || y==0 ||
+                                ((x>=620-scroll || x>=0) &&
+                                 (x<920-scroll || x<256));
+                            lit|=x>=positions[n] && x<positions[n]+8 && in_room;
+                        }
+                        if ((pixels[y*width+col]&0xffffff)!=(lit?0xffffffu:0)) {
+                            fprintf(stderr,"world clip flags%u extra%d policy%u y%d x%d actual%x expected%d\n",
+                                    flags,extra,policy,y,x,pixels[y*width+col]&0xffffff,lit);
+                            failures++;break;
+                        }
+                    }
+                }
+                failures+=check(!ppu->rangeOver && !ppu->timeOver,
+                    "world OAM presentation does not change native overflow flags");
+            }
+        }
+    }
     ppu_free(ppu);
     if (failures) return 1;
     puts("ppu_sprite_limit_test: PASS");

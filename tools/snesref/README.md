@@ -131,6 +131,7 @@ Environment variables select non-interactive capture outputs:
 | `SNESREF_DSPREG_TRACE_FILE=path` | Trace S-DSP registers when supported by a patched core. |
 | `SNESREF_SCRIPT=path` | Scene-keyed script (grammar below). Exit 0 on `quit`, 3 on an `until` timeout, 6 on a malformed script. Headless runs without `quit`/`SNESREF_FRAMES` exit at end of script. |
 | `SNESREF_DUMP_DIR=path` | Directory for script `dump` outputs (default: cwd). |
+| `SNESREF_DUMP_SERIALIZED=1` | Also write `<tag>.core-state.bin` on script dumps when the core supports serialization (up to 16 MiB). This is an opaque, core/version-specific diagnostic snapshot, useful for inspecting device state absent from a stock core's debug exports. |
 | `SNESREF_SRAM_IN=path` | Load into `RETRO_MEMORY_SAVE_RAM` after `retro_load_game`, before frame 1. |
 | `SNESREF_LAYERS=hex` | Layer mask, bit0=BG1 bit1=BG2 bit2=BG3 bit3=BG4 bit4=OBJ (default `1F`). Maps to snes9x `snes9x_layer_1..5` (5 = sprites). |
 | `SNESREF_NO_COLORMATH=1` | `snes9x_gfx_transp=disabled`. |

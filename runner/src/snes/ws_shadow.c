@@ -21,12 +21,18 @@ typedef struct WsShadowLayer {
   bool wide;
   bool fold;      /* periodic fold enabled (composes with world history) */
   bool worldSet;  /* WsShadowSetWorld called this frame */
+  bool haveWorldAnchor;
   int dir;        /* last nonzero worldX motion: +1 right, -1 left */
   uint8_t tileShift; /* 3 = 8x8 map entries, 4 = 16x16 big tiles */
   uint32_t worldX;
   uint32_t worldY;
   uint32_t scrollX;
   uint32_t scrollY;
+  WsShadowWorldProvider provider;
+  void *providerContext;
+  bool providerNativeOverrides;
+  WsShadowVramMarginFilter vramMarginFilter;
+  void *vramMarginContext;
   uint16_t mapBaseWord;
   uint16_t *entries;
   uint8_t *valid;
@@ -174,6 +180,11 @@ void WsShadowReset(void) {
     layer->active = false;
     layer->fold = false;
     layer->worldSet = false;
+    layer->haveWorldAnchor = false;
+    layer->dir = 0;
+    layer->provider = NULL;
+    layer->providerContext = NULL;
+    layer->providerNativeOverrides = false;
     layer->haveLastOrigin = false;
     layer->haveRetainMapBase = false;
     layer->havePrevLive = false;
@@ -216,12 +227,47 @@ void WsShadowSetWorld(int layerIndex, uint32_t worldX, uint32_t worldY) {
   }
   layer->registered = true;
   layer->worldSet = true;
-  if (worldX != layer->worldX)
+  layer->provider = NULL;
+  layer->providerContext = NULL;
+  layer->providerNativeOverrides = false;
+  if (layer->haveWorldAnchor && worldX != layer->worldX)
     layer->dir = ((int32_t)(worldX - layer->worldX) > 0) ? 1 : -1;
+  layer->haveWorldAnchor = true;
   layer->worldX = worldX;
   layer->worldY = worldY;
   layer->scrollX = worldX;
   layer->scrollY = worldY;
+}
+
+void WsShadowSetWorldProvider(int layerIndex, WsShadowWorldProvider provider,
+                              void *context, bool nativeOverrides) {
+  if (layerIndex < 0 || layerIndex >= kLayers) return;
+  s_layers[layerIndex].provider = provider;
+  s_layers[layerIndex].providerContext = context;
+  s_layers[layerIndex].providerNativeOverrides = provider && nativeOverrides;
+}
+
+void WsShadowUseVram(int layerIndex) {
+  if (layerIndex < 0 || layerIndex >= kLayers) return;
+  WsShadowLayer *layer = &s_layers[layerIndex];
+  layer->active = layer->registered = layer->worldSet = layer->fold = false;
+  layer->provider = NULL;
+  layer->providerContext = NULL;
+  layer->providerNativeOverrides = false;
+  layer->vramMarginFilter = NULL;
+  layer->vramMarginContext = NULL;
+}
+
+void WsShadowUseFilteredVram(int layerIndex, const Ppu *ppu,
+                             WsShadowVramMarginFilter filter, void *context) {
+  if (layerIndex < 0 || layerIndex >= kLayers) return;
+  WsShadowUseVram(layerIndex);
+  if (!ppu || !filter) return;
+  WsShadowLayer *layer = &s_layers[layerIndex];
+  layer->tileShift = PPU_bigTiles(ppu, layerIndex) ? 4 : 3;
+  layer->vramMarginFilter = filter;
+  layer->vramMarginContext = context;
+  layer->active = true;
 }
 
 void WsShadowSetScroll(int layerIndex, uint32_t scrollX, uint32_t scrollY) {
@@ -961,6 +1007,8 @@ static int EstimateOccMassDy(const uint8_t *prev_occ, int prev_cols,
 void WsShadowFrame(const struct Ppu *ppu) {
   for (int i = 0; i < kLayers; i++) {
     WsShadowLayer *layer = &s_layers[i];
+    layer->vramMarginFilter = NULL;
+    layer->vramMarginContext = NULL;
     layer->active = layer->registered;
     layer->registered = false;
     if (!layer->active)
@@ -1285,8 +1333,13 @@ uint16_t WsShadowTile(int layerIndex, int screenX, uint32_t wrappedY,
    * an exact one-tile seam before margin rendering begins.
    */
   const int tile_pixels = 1 << (layer->tileShift ? layer->tileShift : 3);
+  const bool native = screenX < 256 && screenX + tile_pixels > 0;
+  if (layer->vramMarginFilter)
+    return native ? realTile : layer->vramMarginFilter(
+        layer->vramMarginContext, mapWordAdr, realTile);
   if (!layer->active ||
-      (screenX >= 0 && screenX + tile_pixels <= 256))
+      (screenX >= 0 && screenX + tile_pixels <= 256 &&
+       !layer->providerNativeOverrides))
     return realTile;
 
   /* Layered margin sources, exact-first: (1) the world-keyed history —
@@ -1307,10 +1360,41 @@ uint16_t WsShadowTile(int layerIndex, int screenX, uint32_t wrappedY,
                       (layer->scrollY & ((1u << shift) - 1)))
           : (int32_t)(layer->worldY +
                       ((wrappedY - layer->scrollY) & 0x3ff));
+  bool exact = false;
+  uint16_t exactEntry = 0;
+  if (layer->provider && !layer->retainHistory) {
+    /* One tile can straddle the native edge under fine scroll. Its native
+     * pixels remain authoritative even during an in-flight column upload. */
+    if (native && !layer->providerNativeOverrides) return realTile;
+    const int32_t map_width = (layer->wide ? 64 : 32) << shift;
+    int32_t dx = (hScroll - layer->scrollX) & (map_width - 1);
+    /* wrappedY includes the output scanline (up to223), so folding this
+     * delta to half a256px map would wrap the bottom half into the prior
+     * world screen. OPT scroll aliases are normalized before adding y. */
+    int32_t dy = (wrappedY - layer->scrollY) & 0x3ff;
+    if (dx >= map_width / 2) dx -= map_width;
+    if (dy >= 512) dy -= 1024;
+    worldX += dx;
+    worldY = (int32_t)layer->worldY + dy;
+    if (worldX >= 0 && worldY >= 0) {
+      WsShadowSource source = layer->provider(layer->providerContext,
+                             (uint32_t)worldX >> shift,
+                             (uint32_t)worldY >> shift, &exactEntry);
+      if (source == kWsShadowOverride ||
+          (source == kWsShadowMarginOverride && !native)) return exactEntry;
+      if (native) return realTile;
+      exact = source == kWsShadowExact;
+      if (exact) WsShadowForceTile(layerIndex, (uint32_t)worldX >> shift,
+                                  (uint32_t)worldY >> shift, exactEntry);
+    }
+    if (native) return realTile;
+  }
   if (layer->entries && worldX >= 0 && worldY >= 0) {
     uint16_t entry;
-    const bool hit = GetEntry(layer, (uint32_t)worldX >> shift,
-                              (uint32_t)worldY >> shift, &entry);
+    bool hit = GetEntry(layer, (uint32_t)worldX >> shift,
+                        (uint32_t)worldY >> shift, &entry);
+    /* An exact source is not constrained by the bounded history store. */
+    if (!hit && exact) { entry = exactEntry; hit = true; }
     /* Always-on margin hit/miss accounting, split by side. Cheap counters, no
      * arming: without them "the gutter looks the same" is indistinguishable
      * from "history was never consulted" from "history was consulted and
@@ -1363,7 +1447,8 @@ uint16_t WsShadowTile(int layerIndex, int screenX, uint32_t wrappedY,
 bool WsShadowLayerActive(int layerIndex) {
   return layerIndex >= 0 && layerIndex < kLayers &&
          s_layers[layerIndex].active &&
-         (s_layers[layerIndex].fold || s_layers[layerIndex].entries);
+         (s_layers[layerIndex].vramMarginFilter ||
+          s_layers[layerIndex].fold || s_layers[layerIndex].entries);
 }
 
 uint32_t WsShadowWorldX(int layerIndex) {

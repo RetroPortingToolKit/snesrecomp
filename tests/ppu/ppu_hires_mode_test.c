@@ -161,7 +161,7 @@ int main(void) {
     for(int layer=0;layer<=2;layer+=2) for(int size=1;size<=16;++size)
     for(int wide=0;wide<2;++wide)
     for(int edge=0;edge<3;++edge) for(int invert=0;invert<2;++invert) {
-        int extra=wide?kPpuExtraLeftRight:0;
+        int extra=wide?kPpuMaxFrameExtra:0;
         setup_two_tone_bg1(ppu,1);
         if(layer==2) {
             ppu->screenEnabled[0]=4;ppu->bgTileAdr=0x0100;

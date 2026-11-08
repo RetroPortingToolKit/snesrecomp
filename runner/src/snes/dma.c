@@ -15,6 +15,7 @@
 
 extern Ppu *g_ppu;
 static DmaVramNotifyHook g_vram_notify_hook;
+static DmaOamXyNotifyHook g_oam_xy_notify_hook;
 
 /* Debug logging gate: set SNESRECOMP_DMA_DEBUG=1 to enable the DMA config /
  * CGRAM / S-DD1 arm trace. Off by default — the trace fires for every DMA
@@ -27,6 +28,10 @@ static int dma_debug_enabled(void) {
 
 void dma_set_vram_notify_hook(DmaVramNotifyHook hook) {
   g_vram_notify_hook = hook;
+}
+
+void dma_set_oam_xy_notify_hook(DmaOamXyNotifyHook hook) {
+  g_oam_xy_notify_hook = hook;
 }
 
 static const int bAdrOffsets[8][4] = {
@@ -335,7 +340,13 @@ static void dma_transferByte(Dma* dma, uint16_t aAdr, uint8_t aBank, uint8_t bAd
       }
     }
     debug_server_on_reg_write((uint16_t)(0x2100u + bAdr), val);
+    Ppu *ppu = dma->snes->ppu;
+    const int xy_slot = bAdr == 4 && g_oam_xy_notify_hook &&
+        !ppu->oamInHigh && ppu->oamSecondWrite && !(ppu->oamAdr & 1)
+        ? ppu->oamAdr >> 1 : -1;
     snes_writeBBus(dma->snes, bAdr, val);
+    if (xy_slot >= 0)
+      g_oam_xy_notify_hook(aBank, aAdr, (uint8_t)xy_slot);
   }
 #ifdef SNESRECOMP_INTERP_PROFILE
   { extern uint64_t dma_prof_bytes; extern double dma_prof_ms;
