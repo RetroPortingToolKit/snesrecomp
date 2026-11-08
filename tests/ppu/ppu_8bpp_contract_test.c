@@ -19,9 +19,9 @@ static int known_planes(Ppu *p) {
     PpuDrawBackground_8bpp(p, 0, false, 0, 0xc000, 0x8000);
     for (int x = 0; x < 8; x++) {
       unsigned want = 0x8000 + (1u << (flip ? 7 - x : x));
-      if (p->bgBuffers[0].data[kPpuExtraLeftRight + x] != want)
+      if (p->bgBuffers[0].data[kPpuLineBorder + x] != want)
         return fail_at("known_planes", flip, x,
-            p->bgBuffers[0].data[kPpuExtraLeftRight + x], want);
+            p->bgBuffers[0].data[kPpuLineBorder + x], want);
     }
   }
   return 0;

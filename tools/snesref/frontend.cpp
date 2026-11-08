@@ -876,6 +876,16 @@ static void do_dump(const char* tag) {
     dump_memory(tag, "wram.bin", RETRO_MEMORY_SYSTEM_RAM, &wram_n);
     dump_memory(tag, "vram.bin", RETRO_MEMORY_VIDEO_RAM, &vram_n);
     dump_memory(tag, "sram.bin", RETRO_MEMORY_SAVE_RAM, &sram_n);
+    /* Optional core snapshot provides raw device state when a stock libretro
+     * core has no snesref_dbg_* exports (notably OAM/CGRAM investigations). */
+    if (getenv("SNESREF_DUMP_SERIALIZED")) {
+        size_t n = p_retro_serialize_size();
+        if (n && n <= (16u << 20)) {
+            std::vector<uint8_t> state(n);
+            if (p_retro_serialize(state.data(), n))
+                write_file(tag, "core-state.bin", state.data(), n);
+        }
+    }
 
     bool have_dbg = p_dbg_cgram && p_dbg_oam && p_dbg_regs_json;
     if (have_dbg) {

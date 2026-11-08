@@ -14,6 +14,12 @@ typedef void (*DmaVramNotifyHook)(uint8_t aBank, uint16_t aAdr,
                                   uint16_t vmadd, uint16_t size);
 void dma_set_vram_notify_hook(DmaVramNotifyHook hook);
 
+/* Called after an OAM XY word is committed, with the source of its Y byte.
+ * This observes actual DMA/HDMA transfers, including partial/relocated uploads;
+ * the hook must not change guest memory or DMA state. */
+typedef void (*DmaOamXyNotifyHook)(uint8_t aBank, uint16_t yAdr, uint8_t slot);
+void dma_set_oam_xy_notify_hook(DmaOamXyNotifyHook hook);
+
 #include "snes.h"
 
 typedef struct DmaChannel {
