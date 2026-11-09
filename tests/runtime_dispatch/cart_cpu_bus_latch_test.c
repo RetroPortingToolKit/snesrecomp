@@ -260,8 +260,28 @@ static void exercise_plain_rom(void) {
         check_int("unclaimed read keeps open bus", cpu.open_bus, 0x4d);
         check_u32("unclaimed read keeps cart latch", cart.cpuBusAddress, 0xabcdef);
     }
+    /* ROM below $8000 in the non-system banks ($40-$7D, $C0-$FF): HiROM full
+     * banks and LoROM mirrors. cpu_read8 reaches RomPtr there as well. */
+    uint8 sram[0x2000] = {0};
+    g_sram = sram;
+    g_sram_size = (int)sizeof(sram);
+    cart.type = CART_HIROM;
+    check_int("HiROM full bank low half claimed", cpu_read8_plain_rom(&cpu, 0xc0, 0x1234, &value), 1);
+    check_int("HiROM full bank low half value", value, 0x96);
+    check_u32("HiROM full bank low half address", cart.cpuBusAddress, 0xc01234);
+    check_int("HiROM bank $40 low half claimed", cpu_read8_plain_rom(&cpu, 0x40, 0x0000, &value), 1);
+    check_int("HiROM SRAM unclaimed", cpu_read8_plain_rom(&cpu, 0x20, 0x6000, &value), 0);
+    check_int("HiROM system bank $5FFF unclaimed", cpu_read8_plain_rom(&cpu, 0x80, 0x5fff, &value), 0);
+    check_int("WRAM bank unclaimed", cpu_read8_plain_rom(&cpu, 0x7e, 0x1234, &value), 0);
+    check_int("WRAM bank $7F unclaimed", cpu_read8_plain_rom(&cpu, 0x7f, 0x8000, &value), 0);
+    check_int("WRAM mirror unclaimed", cpu_read8_plain_rom(&cpu, 0x00, 0x1234, &value), 0);
     cart.type = CART_LOROM;
+    check_int("LoROM mirror low half claimed", cpu_read8_plain_rom(&cpu, 0x40, 0x1234, &value), 1);
+    check_int("LoROM open-bus window unclaimed", cpu_read8_plain_rom(&cpu, 0x00, 0x6000, &value), 0);
     check_int("SRAM unclaimed", cpu_read8_plain_rom(&cpu, 0x70, 0x1234, &value), 0);
+    check_int("SRAM high bank unclaimed", cpu_read8_plain_rom(&cpu, 0xf0, 0x7fff, &value), 0);
+    g_sram = NULL;
+    g_sram_size = 0;
     check_int("MMIO unclaimed", cpu_read8_plain_rom(&cpu, 0x00, 0x4212, &value), 0);
     g_mapped_rom = NULL;
     check_int("invalid ROM unclaimed", cpu_read8_plain_rom(&cpu, 0x80, 0x8000, &value), 0);

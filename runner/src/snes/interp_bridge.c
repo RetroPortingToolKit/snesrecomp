@@ -336,8 +336,10 @@ static uint8_t bridge_bus_read(void *mem, uint32_t adr) {
     /* A ROM fetch used to decode the same mapping twice: once to establish
      * stable-poll eligibility, then again inside cpu_read8 -> RomPtr. Claim
      * the immutable plain-cart case once. Device and invalid reads retain the
-     * reference classifier/bus, including synchronization and diagnostics. */
-    if ((uint16_t)adr >= 0x8000)
+     * reference classifier/bus, including synchronization and diagnostics.
+     * Below $8000 only the non-system banks can hold ROM (HiROM full banks,
+     * LoROM mirrors); the claim itself rejects WRAM and SRAM there. */
+    if ((uint16_t)adr >= 0x8000 || (adr & 0x400000))
         stable_rom = cpu_read8_plain_rom(cpu, (uint8_t)(adr >> 16),
                                          (uint16_t)adr, &value);
 #endif
