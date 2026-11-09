@@ -275,7 +275,8 @@ RecompReturn cpu_dispatch_pc_paired(CpuState *cpu, uint32 pc24,
         cpu->S = (uint16)(cpu->S - 2);       /* root JSRs compiled child */
         g_cpu_entry_s[base + 1] = cpu->S;
         const uint16 ret_s = (uint16)(cpu->S + 4); /* expose inner's frame */
-        cpu->S = (uint16)(ret_s + 2);        /* final RTS pops inner frame */
+        cpu->S = (uint16)(ret_s +
+            (g_aot_skips_interp_owner == 3 ? 3 : 2)); /* final RTS/RTL */
         g_owner_target_result =
             interp_bridge_return_targets_owner(ret_s, cpu->S);
         g_recomp_stack_top = base;
@@ -1159,6 +1160,33 @@ int main(void) {
       CHECK(g_c.S == 0x01FF, "S=%04X exp 01FF (ancestor consumed once)", g_c.S);
       CHECK(g_recomp_stack_top == 0, "recomp depth=%d exp 0", g_recomp_stack_top);
       g_aot_crosses_interp_owner = 0; }
+
+    /* A compiled child can also consume the finite interpreter owner's own
+     * return frame. Complete that host call without interpreting its popped
+     * continuation or manufacturing a skip into an unrelated compiled host. */
+    for (int frame_size = 2; frame_size <= 3; ++frame_size) {
+      memset(RAM, 0, MEMSZ); init_cpu(); g_aot_called = 0;
+      g_aot_skips_interp_owner = frame_size; g_owner_target_result = 0;
+      uint8_t owner[] = {0x20,0x00,0x81, 0xE6,0x22, 0xDB};
+      load(0x8000, owner, sizeof owner);
+      /* Model an ordinary generated host outside this finite bridge. */
+      g_recomp_stack_top = 1; g_cpu_entry_s[0] = 0x01FF;
+      if (frame_size == 2) cpu_push_jsr_return_frame(&g_c);
+      else cpu_push_jsl_return_frame(&g_c);
+      int rc = interp_bridge_run(&g_c, 0x008000);
+      printf("S9c finite interpreter owner returns via %d-byte frame\n", frame_size);
+      CHECK(rc == 1, "rc=%d exp 1 (owner completed)", rc);
+      CHECK(g_owner_target_result, "popped owner frame must target its bridge");
+      CHECK(RAM[0x22] == 0, "discarded owner continuation executed");
+      CHECK(g_c.S == 0x01FF, "S=%04X exp 01FF", g_c.S);
+      CHECK(g_recomp_stack_top == 1, "unrelated compiled host was consumed");
+      g_aot_skips_interp_owner = 0; g_recomp_stack_top = 0;
+      uint8_t next[] = {0xA9,0x5A,0x60}; load(0x8500,next,sizeof next);
+      cpu_push_jsr_return_frame(&g_c);
+      rc = interp_bridge_run(&g_c,0x008500);
+      CHECK(rc == 1 && g_c.S == 0x01FF && (g_c.A & 0xFF) == 0x5A,
+            "completed owner left a stale unwind for the next call");
+    }
 
     /* S10: a synchronous message box waits for fresh automatic-joypad data
      * by polling $4218/$4219. With no input it must yield to the host and
