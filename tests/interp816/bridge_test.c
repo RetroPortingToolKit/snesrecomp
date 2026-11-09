@@ -33,6 +33,16 @@
 #include "snes_cycles.h"
 
 CpuState g_cpu;
+void (*g_cpu_aot_master_credit_hook)(CpuState *cpu, uint64 clocks);
+void (*g_cpu_aot_instruction_boundary_hook)(CpuState *cpu);
+
+/* This fixture supplies the CPU runtime surface itself. Keep the nullable
+ * boundary relay identical to cpu_state.c so the real bridge callback still
+ * runs, without linking the unrelated production bus/dispatcher. */
+void cpu_aot_instruction_boundary(CpuState *cpu) {
+    if (g_cpu_aot_instruction_boundary_hook)
+        g_cpu_aot_instruction_boundary_hook(cpu);
+}
 
 #define MEMSZ 0x1000000u
 static uint8_t *RAM;

@@ -969,3 +969,7 @@ void dsp1_saveload(Dsp1 *d, struct SaveLoadInfo *sli) {
   sli->func(sli, &d->frac, sizeof(d->frac));
   sli->func(sli, &d->hle, sizeof(d->hle));
 }
+
+void dsp1_saveload_clock(Dsp1 *d, struct SaveLoadInfo *sli) {
+  if (d && sli) sli->func(sli, &d->last_master, sizeof(d->last_master));
+}

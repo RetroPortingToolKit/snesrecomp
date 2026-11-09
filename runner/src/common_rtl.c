@@ -34,6 +34,7 @@
 #include "snapshot_identity.h"
 #include "snes/dma.h"
 #include "snes/cx4.h"
+#include "snes/dsp1.h"
 #include "snes/sa1.h"
 #include "snes/msu1.h"
 #include "mod_audio.h"
@@ -1520,7 +1521,8 @@ static bool s_loaded_execution_keeps_clock;
 
 size_t RtlExecutionStateSize(void) {
   return sizeof(uint32) + sizeof(RtlRollbackResidue) +
-      (g_snes->cart->cx4 ? sizeof(uint64_t) : 0);
+      (g_snes->cart->cx4 ? sizeof(uint64_t) : 0) +
+      (g_snes->cart->dsp1 ? sizeof(uint64_t) : 0);
 }
 
 bool RtlExecutionStateValid(const void *data, size_t size) {
@@ -1560,6 +1562,7 @@ void RtlSaveExecutionState(SaveLoadInfo *sli) {
   sli->func(sli, &size, sizeof(size));
   sli->func(sli, &r, sizeof(r));
   cx4_saveload_clock(g_snes->cart->cx4, sli);
+  dsp1_saveload_clock(g_snes->cart->dsp1, sli);
 }
 
 bool RtlLoadExecutionState(SaveLoadInfo *sli) {
@@ -1571,6 +1574,7 @@ bool RtlLoadExecutionState(SaveLoadInfo *sli) {
   memset(&s_loaded_execution, 0, sizeof(s_loaded_execution));
   sli->func(sli, &s_loaded_execution, size);
   cx4_saveload_clock(g_snes->cart->cx4, sli);
+  dsp1_saveload_clock(g_snes->cart->dsp1, sli);
   s_loaded_execution_keeps_clock = size == v6_size;
   return s_loaded_execution_valid =
       s_loaded_execution.magic == RTL_RB_RESIDUE_MAGIC &&

@@ -37,17 +37,31 @@ interpreted. Prologue reads that sample the paired host-return frame are ABI
 bookkeeping and stay unpaced.
 
 Every region-mode fetch/internal/dynamic addition and each paced data helper
-uses `cpu_add_aot_master_cycles`. It updates the master clock and invokes the
-nullable `g_cpu_aot_master_credit_hook`. The separate nullable
-`g_cpu_aot_instruction_boundary_hook` observes completion before the next
-instruction/deadline check. These extension points report origins and completed
-instructions; they never infer elapsed native time around a mixed-tier call.
+uses `cpu_add_aot_master_cycles`. That API updates the master clock and invokes
+the nullable `g_cpu_aot_master_credit_hook`. The active interpreter bridge
+installs a callback that queues native instruction time in the existing APU
+pending accumulator under the same scheduling predicate as interpretation.
+The callback ignores calls outside an active bridge, missing machines,
+shared-clock co-sim, and non-extended absolute ownership. Extended absolute
+mode retains a pending marker for scheduled syncs; the flush's existing absolute
+branch clears it without adding relative catch-up. Crediting itself does not
+flush the APU midway through an instruction.
 
-This emission change supplies the generic clock/boundary extension points, not
-the interpreter bridge's native APU scheduling policy. The matching bridge
-integration must be applied before qualifying a consumer's sound/device timing.
-With null hooks, no additional APU credit or flushing occurs. The canonical
-interpreter and default aggregate generator remain available.
+Credits originate at actual increments. They are never inferred from elapsed
+time around a call, which could include nested interpretation, nested native
+execution, DRAM refresh, DMA, or parked time. Existing interpreter opcode
+credit remains separate. The pending accumulator already belongs to bridge
+rollback state; the callback adds no independent clock counter to save.
+
+The separate nullable `g_cpu_aot_instruction_boundary_hook` observes completion
+of the preceding instruction. Paced labels call it after refresh finalization
+and before the deadline check. Paired returns with a nonempty native scheduling marker also call it after
+finalizing refresh, covering a last native return instruction without another
+label. An aggregate body without origin credit leaves this path inactive.
+The bridge applies its existing pending-clock batch threshold there, synchronizes
+the beam, and flushes the existing accumulator. It adds no credit. Flushing in
+the per-access credit callback would run the SPC midway through an instruction;
+omitting boundary flushes can defer a logged SPC event into the next host frame.
 
 ## Fallback and ownership
 
@@ -92,7 +106,7 @@ that decreases as host frames unwind.
 The ROM-free [region fixture](../tests/v2/test_region_pacing.py) executes emitted
 C against the actual interpreter core and current runtime paced-helper
 definitions. It compares CPU/master totals, registers, flags, stack, memory,
-and open bus across slow/FastROM cases, origin-clock totals and ownership guards.
+and open bus across slow/FastROM cases, plus credit-policy and ownership guards.
 The [deadline fixture](../tests/v2/test_instruction_block_deadline.py) demonstrates
 aggregate-block overshoot, and the [JSL fixture](../tests/v2/test_jsl_live_pb.py)
 checks live-bank preservation through nested unwinds.

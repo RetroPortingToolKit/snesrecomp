@@ -42,5 +42,7 @@ uint64_t dsp1_host_writes(const Dsp1 *d);
 uint64_t dsp1_command_count(const Dsp1 *d, uint8_t command);
 
 void dsp1_saveload(Dsp1 *d, struct SaveLoadInfo *sli);
+/* Execution snapshots also restore the master-clock synchronization origin. */
+void dsp1_saveload_clock(Dsp1 *d, struct SaveLoadInfo *sli);
 
 #endif /* SNES_DSP1_H */
