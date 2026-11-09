@@ -22,6 +22,10 @@ void ppu_setGuestScope(bool active) {s_guest_scope=active;}
 #include "snes_regs.h"
 #include "ws_shadow.h"
 
+/* SLHV's beam position at the latching access's own clock (snes.c installs
+ * it); without it the latch takes the beam as it stands. */
+void (*g_ppu_latch_position_hook)(uint16_t *h_dot, uint16_t *v);
+
 #ifndef SNESRECOMP_PPU_8BPP_HLE
 #define SNESRECOMP_PPU_8BPP_HLE 0
 #endif
@@ -3410,11 +3414,18 @@ uint8_t ppu_read(Ppu* ppu, uint8_t adr) {
     case 0x37: {
       /* SLHV latches the live beam. LLE advances Snes::hPos/vPos from the
        * shared master-clock timeline; hard-coding a convenient scanline made
-       * games waiting for any other line loop forever. */
-      ppu->hCount = g_snes->hPos / 4;
-      ppu->vCount = g_snes->vPos;
-      ppu->hCountSecond = false;
-      ppu->vCountSecond = false;
+       * games waiting for any other line loop forever.
+       * Only while WRIO ($4201) bit 7 is set: the read pulls the latch line
+       * that bit drives (MesenCE's SnesPpu::Read, $2137). */
+      if (!g_snes->ppuLatch) return 0;
+      /* The flip-flops of $213C/$213D are left as they are: only a $213F read
+       * resets them (MesenCE: a latch does not touch _hLocToggle/_vLocToggle). */
+      if (g_ppu_latch_position_hook) {
+        g_ppu_latch_position_hook(&ppu->hCount, &ppu->vCount);
+      } else {
+        ppu->hCount = g_snes->hPos / 4;
+        ppu->vCount = g_snes->vPos;
+      }
       ppu->countersLatched = true;
       return 0;
     }

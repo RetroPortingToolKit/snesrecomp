@@ -10,7 +10,7 @@ if (!$OutputDirectory) { $OutputDirectory = Join-Path $root 'build\native-runtim
 $common = @('-std=c11', '-O3', '-UNDEBUG', '-DSNESRECOMP_TRACE=0',
     '-ffunction-sections', '-fdata-sections', "-I$root\runner\src")
 $audioSources = @("$root\tests\audio\apu_native_test.c",
-    "$root\runner\src\snes\spc.c", "$root\runner\src\snes\dsp.c",
+    "$root\runner\src\snes\spc.c", "$root\runner\src\snes\dsp.c", "$root\runner\src\snes\dsp_clock.c",
     "$root\runner\src\snes\dsp_shadow.c", "$root\runner\src\snes\audio_shadow.c",
     "$root\runner\src\audio_trace.c")
 foreach ($native in @(0, 1)) {

@@ -28,7 +28,8 @@ add_executable(cmake_apu_port_guest_time
     "${SNESRECOMP_ROOT}/tests/runtime_dispatch/apu_port_guest_time_test.c"
     "${SNESRECOMP_ROOT}/runner/src/snes/apu.c"
     "${SNESRECOMP_ROOT}/runner/src/snes/spc.c"
-    "${SNESRECOMP_ROOT}/runner/src/snes/dsp.c")
+    "${SNESRECOMP_ROOT}/runner/src/snes/dsp.c"
+    "${SNESRECOMP_ROOT}/runner/src/snes/dsp_clock.c")
 target_include_directories(cmake_apu_port_guest_time PRIVATE
     ${SNESRECOMP_RUNNER_INCLUDE_DIRS})
 target_compile_options(cmake_apu_port_guest_time PRIVATE

@@ -49,6 +49,13 @@ static uint64_t s_joy_strobe_writes;
 void RtlApuLock(void)   {}
 void RtlApuUnlock(void) {}
 void rtl_sync_apu_to_cpu_locked(void) {}
+void rtl_sync_apu_for_access_locked(uint16_t adr) { (void)adr; }
+void rtl_port_log_cpu(uint16_t adr, char rw, uint8_t v) { (void)adr; (void)rw; (void)v; }
+/* The access-exact timing hooks: no master-clock APU timeline here, no
+ * interpreter access clock beyond the reference's own instruction start. */
+bool rtl_apu_master_clock(void) { return false; }
+uint64_t rtl_cpu_master_now(void) { return g_ref_master_cycles; }
+uint32_t interp_bridge_access_lead(uint16_t adr, uint32_t fallback) { (void)adr; return fallback; }
 /* No host audio replacement in the reference: APU port reads pass through. */
 uint8 rtl_apu_port_observers_read(uint16 reg, uint8 value) { (void)reg; return value; }
 /* Accurate reference: latch the CPU->APU port immediately (hardware behaviour),

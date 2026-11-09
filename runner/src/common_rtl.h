@@ -498,6 +498,15 @@ int  RtlGetMultitap(int port);
 /* Seats reachable in the current configuration: 2, 5, or 8. */
 int  RtlPlayerCount(void);
 
+/* Master-clock APU timeline (see common_rtl.c); lead: master clocks from an
+ * instruction's start to its port access. */
+void RtlApuUseMasterClock(bool on, uint32_t lead);
+/* The master clock of a port access by the instruction starting at `start`,
+ * `lead` clocks in: a host that places stalls (DRAM refresh) adds those that
+ * fall before the access. */
+typedef uint64_t (*RtlCpuAccessClockHook)(uint64_t start, uint32_t lead);
+void RtlSetCpuAccessClockHook(RtlCpuAccessClockHook hook);
+bool rtl_apu_master_clock(void);
 void RtlApuWrite(uint16 adr, uint8 val);
 
 /* APU port write observers: called for every guest write to $2140-$217F
