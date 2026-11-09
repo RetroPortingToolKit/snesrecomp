@@ -129,7 +129,7 @@ static bool g_custom_frame;
 static bool g_hd_osd_active;
 static uint32_t *g_hd_osd;
 static size_t g_hd_osd_capacity;
-#ifndef __ANDROID__
+#if !defined(__ANDROID__) && !SNESRECOMP_SDL_GLES2_ONLY
 void snesrecomp_opengl_set_hd(const SnesHdFrame *, const uint32_t *, size_t);
 #endif
 /* Stay true through transport shutdown, so disconnect cannot turn an online
@@ -177,7 +177,7 @@ static void HandleInput(int keyCode, int keyMod, bool pressed);
 static void HandleCommand(uint32 j, bool pressed);
 static void PollKeyboardControls(const uint8_t *keys);
 static void RequestScreenshot(void);
-#ifndef __ANDROID__
+#if !defined(__ANDROID__) && !SNESRECOMP_SDL_GLES2_ONLY
 void OpenGLRenderer_Create(struct RendererFuncs *funcs);
 #include "opengl.h"   /* snesrecomp_opengl_set_vsync */
 #endif
@@ -505,7 +505,7 @@ void snesrecomp_set_vsync(int mode)
     if (mode > 2) mode = 2;
     g_config.vsync = (uint8)mode;
     g_config_dirty = true; /* forces config write */
-#ifndef __ANDROID__
+#if !defined(__ANDROID__) && !SNESRECOMP_SDL_GLES2_ONLY
     snesrecomp_opengl_set_vsync(VSyncInterval());
 #endif
     if (g_renderer_funcs.Reconfigure) g_renderer_funcs.Reconfigure();
@@ -635,6 +635,13 @@ static const char *RendererPretty(const char *id) {
 }
 static void RendererEnumerate(void) {
   if (g_renderer_count) return;
+#if SNESRECOMP_SDL_GLES2_ONLY
+  /* This build intentionally exposes only SDL2's native GLES2 renderer. */
+  snprintf(g_renderer_id[0], kRendererNameMax, "opengles2");
+  snprintf(g_renderer_label[0], kRendererNameMax, "OpenGL ES 2");
+  g_renderer_label_ptr[0] = g_renderer_label[0];
+  g_renderer_count = 1;
+#else
   snprintf(g_renderer_id[0], kRendererNameMax, "auto");
   snprintf(g_renderer_label[0], kRendererNameMax, "Auto");
   g_renderer_count = 1;
@@ -658,15 +665,21 @@ static void RendererEnumerate(void) {
   }
   for (int i = 0; i < g_renderer_count; ++i)
     g_renderer_label_ptr[i] = g_renderer_label[i];
+#endif
 }
 /* The current choice as a list index. An empty [Graphics] Renderer follows
  * the older OutputMethod key, so an existing config keeps its presenter. */
 static int RendererChoice(void) {
   RendererEnumerate();
   const char *want = g_config.renderer;
-  if (!want[0])
+  if (!want[0]) {
+#if SNESRECOMP_SDL_GLES2_ONLY
+    want = "opengles2";
+#else
     want = g_config.output_method == kOutputMethod_OpenGL ? "opengl" :
            g_config.output_method == kOutputMethod_SDLSoftware ? "software" : "auto";
+#endif
+  }
   for (int i = 0; i < g_renderer_count; ++i)
     if (!strcmp(g_renderer_id[i], want)) return i;
   if (strcmp(want, "auto"))
@@ -684,7 +697,7 @@ static void RendererApply(int choice) {
   else if (!strcmp(id, "software")) g_config.output_method = kOutputMethod_SDLSoftware;
   else {
     g_config.output_method = kOutputMethod_SDL;
-#ifndef __ANDROID__
+#if !defined(__ANDROID__) && !SNESRECOMP_SDL_GLES2_ONLY
     /* Auto selects the shared GPU presenter. Explicit SDL drivers remain
      * explicit; unavailable desktop GL falls back at initialization. */
     if (!strcmp(id, "auto") && g_config.mode7.enabled)
@@ -1577,7 +1590,7 @@ static void DrawPpuFrameWithPerf(void) {
     memcpy(g_hd_osd + y * hd_view.width, hd_view.lines[y].overlay, hd_view.width * 4);
   ComposeOsd(pixel_buffer, pitch, g_snes_width * render_scale,
              g_snes_height * render_scale, 2);
-#ifndef __ANDROID__
+#if !defined(__ANDROID__) && !SNESRECOMP_SDL_GLES2_ONLY
   if (g_config.output_method == kOutputMethod_OpenGL && g_hd_osd_active)
     snesrecomp_opengl_set_hd(hd, g_hd_osd, g_snes_width * 4);
 #endif
@@ -2411,14 +2424,28 @@ static bool SdlRenderer_Init(SDL_Window *window) {
   /* SDL3 dropped the renderer flags argument (software vs accelerated is
    * chosen by driver name, vsync is set separately) and removed
    * SDL_RendererInfo entirely. snesrecomp_sdl_create_renderer() hides both. */
+#if SNESRECOMP_SDL_GLES2_ONLY
+  SDL_Renderer *renderer = snesrecomp_sdl_create_renderer_named(
+      g_window, "opengles2", /*vsync=*/VSyncInterval());
+#else
   bool want_software = g_config.output_method == kOutputMethod_SDLSoftware;
   SDL_Renderer *renderer = snesrecomp_sdl_create_renderer(
       g_window, want_software,
       /*vsync=*/VSyncInterval());
+#endif
   if (renderer == NULL) {
     printf("Failed to create renderer: %s\n", SDL_GetError());
     return false;
   }
+#if SNESRECOMP_SDL_GLES2_ONLY
+  const char *selected_driver = snesrecomp_sdl_renderer_name(renderer);
+  if (!selected_driver || strcmp(selected_driver, "opengles2") != 0) {
+    fprintf(stderr, "Required SDL2 OpenGL ES 2 renderer unavailable (selected: %s)\n",
+            selected_driver ? selected_driver : "(unknown)");
+    SDL_DestroyRenderer(renderer);
+    return false;
+  }
+#endif
   if (kDebugFlag || HostGetenv("HOST_PROFILE") || HostGetenv("FRAME_TIMING")) {
     const char *name = snesrecomp_sdl_renderer_name(renderer);
     printf("Renderer: %s (vsync=%d display_hz=%.3f simulation_hz=%.6f)\n",
@@ -3168,7 +3195,7 @@ static void ApplyLiveSettings(const Config *before) {
       g_current_window_scale = IntMin(g_config.window_scale, kMaxWindowScale);
     ChangeWindowScale(0);
   }
-#ifndef __ANDROID__
+#if !defined(__ANDROID__) && !SNESRECOMP_SDL_GLES2_ONLY
   snesrecomp_opengl_set_vsync(VSyncInterval());
 #endif
   if (g_renderer_funcs.Reconfigure) g_renderer_funcs.Reconfigure();
@@ -3364,7 +3391,7 @@ int snesrecomp_desktop_main(const SnesDesktopHostGame *game, int argc, char **ar
   g_simulation_hz = game->simulation_hz > 0 ? game->simulation_hz : SNES_HOST_NTSC_HZ;
   g_snes_width = game->frame_width > 0 ? game->frame_width : 256;
   g_snes_height = game->frame_height > 0 ? game->frame_height : 224;
-#ifndef __ANDROID__
+#if !defined(__ANDROID__) && !SNESRECOMP_SDL_GLES2_ONLY
   snesrecomp_opengl_set_viewport(game->compute_viewport);
 #endif
   const char *build_version = game->build_version ? game->build_version : "dev";
@@ -3830,7 +3857,7 @@ int snesrecomp_desktop_main(const SnesDesktopHostGame *game, int argc, char **ar
       g_current_window_scale * WindowBaseHeight();
 
   RendererApply(RendererChoice());
-#ifndef __ANDROID__
+#if !defined(__ANDROID__) && !SNESRECOMP_SDL_GLES2_ONLY
   if (g_config.output_method == kOutputMethod_OpenGL) {
     SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_CORE);
     SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 3);
@@ -3946,7 +3973,7 @@ error_reading:;
   /* SDL3 dropped the x/y arguments from SDL_CreateWindow. */
   SDL_Window *window = snesrecomp_sdl_create_window(
       g_window_title, window_width, window_height, g_win_flags);
-#ifndef __ANDROID__
+#if !defined(__ANDROID__) && !SNESRECOMP_SDL_GLES2_ONLY
   if (!window && g_config.output_method == kOutputMethod_OpenGL) {
     g_win_flags &= ~SDL_WINDOW_OPENGL;
     g_config.output_method = kOutputMethod_SDL;
@@ -3965,7 +3992,7 @@ error_reading:;
                          window_width, window_height, g_win_flags);
 
   if (!g_renderer_funcs.Initialize(window)) {
-#ifndef __ANDROID__
+#if !defined(__ANDROID__) && !SNESRECOMP_SDL_GLES2_ONLY
     if (g_config.output_method == kOutputMethod_OpenGL) {
       host_report_breadcrumb("desktop GL unavailable; native SDL presentation");
       SDL_DestroyWindow(window);
@@ -4908,7 +4935,7 @@ static void RequestScreenshot(void) {
     return;
   s_last_screenshot_time = now;
 
-#ifdef __ANDROID__
+#if defined(__ANDROID__) || SNESRECOMP_SDL_GLES2_ONLY
   fprintf(stderr, "Screenshots require the desktop OpenGL backend.\n");
 #else
   if (g_config.output_method != kOutputMethod_OpenGL) {
