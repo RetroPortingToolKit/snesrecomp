@@ -101,7 +101,7 @@ def load_recipe(cfg_dir: Path) -> Recipe | None:
             raise ValueError(f"{path}: Python < 3.11 requires tomli "
                              "(python -m pip install tomli)") from exc
     data = tomllib.loads(path.read_text(encoding="utf-8"))
-    allowed = {"schema", "identity_file", "cfg_roots", "no_host_root_scan",
+    allowed = {"schema", "identity_file", "cfg_roots", "no_host_root_scan", "instruction_blocks", "region_paced",
                "profiles", "historical_profiles", "bind_legacy_profiles",
                "prepare", "postprocess"}
     if type(data.get("schema")) is not int or data.get("schema") != 1 or data.keys() - allowed:
@@ -109,7 +109,7 @@ def load_recipe(cfg_dir: Path) -> Recipe | None:
     recipe = Recipe(path, cfg_dir.parent.resolve(), data)
     if "identity_file" in data and not isinstance(data["identity_file"], str):
         raise ValueError("recipe identity_file must be a path")
-    for key in ("cfg_roots", "no_host_root_scan", "bind_legacy_profiles"):
+    for key in ("cfg_roots", "no_host_root_scan", "bind_legacy_profiles", "instruction_blocks", "region_paced"):
         if key in data and not isinstance(data[key], bool):
             raise ValueError(f"recipe {key} must be a boolean")
     for key in ("profiles", "historical_profiles"):
