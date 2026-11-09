@@ -242,6 +242,14 @@ echo "=== DSP-1 bus/core shell ==="
     -o "$OUT/dsp1_firmware_test"
 "$OUT/dsp1_firmware_test"
 
+echo "=== console region from the header and its overrides ==="
+"$CC" -std=c11 -Wall -Wextra -Werror -O1 \
+    -I "$ROOT/runner/src" -I "$ROOT/runner/src/snes" \
+    "$ROOT/tests/region/region_header_test.c" \
+    "$ROOT/runner/src/snes/snes_other.c" \
+    -o "$OUT/region_header_test"
+"$OUT/region_header_test"
+
 echo "=== SA-1 CPU, mapping and peripherals ==="
 "$CC" -std=c11 -Wall -Wextra -Werror -O1 \
     -I "$ROOT/runner/src" -I "$ROOT/runner/src/snes" \

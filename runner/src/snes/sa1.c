@@ -13,6 +13,7 @@
 #include "sa1.h"
 
 #include "interp816.h"
+#include "snes_region.h"
 #include "tier2_capture.h"
 
 #include <limits.h>
@@ -88,6 +89,9 @@ struct Sa1 {
   uint64_t instructions;
   uint32_t h_counter;
   uint16_t v_counter;
+  /* Console region: the H/V timer counts 262 or 312 lines. Host
+   * configuration that survives reset; not serialized. */
+  bool pal_timing;
   uint8_t char_dma_line;
   bool bwram_char_dma;
   uint8_t open_bus;
@@ -335,7 +339,8 @@ static void timer_advance_reference(Sa1 *sa1, uint32_t clocks) {
     if (!sa1->io.timer_linear) {
       if (++sa1->h_counter >= 1364) {
         sa1->h_counter = 0;
-        if (++sa1->v_counter >= 262) sa1->v_counter = 0;
+        if (++sa1->v_counter >= snes_region_lines_per_field(sa1->pal_timing))
+          sa1->v_counter = 0;
       }
     } else {
       if (++sa1->h_counter >= 2048) {
@@ -438,7 +443,8 @@ static inline void timer_advance_span(Sa1 *sa1, uint32_t clocks,
 
 static void timer_advance_native(Sa1 *sa1, uint32_t clocks) {
   if (sa1->io.timer_linear) timer_advance_span(sa1, clocks, 2048, 512);
-  else timer_advance_span(sa1, clocks, 1364, 262);
+  else timer_advance_span(sa1, clocks, 1364,
+                          snes_region_lines_per_field(sa1->pal_timing));
 }
 #endif
 
@@ -986,6 +992,10 @@ void sa1_destroy(Sa1 *sa1) {
   if (!sa1) return;
   interp816_free(sa1->cpu);
   free(sa1);
+}
+
+void sa1_set_pal_timing(Sa1 *sa1, bool pal) {
+  if (sa1) sa1->pal_timing = pal;
 }
 
 void sa1_reset(Sa1 *sa1) {
