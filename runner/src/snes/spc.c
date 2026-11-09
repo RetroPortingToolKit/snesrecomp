@@ -46,11 +46,42 @@ static void spc_doOpcode(Spc* spc, uint8_t opcode);
 
 // addressing modes and opcode functions not declared, only used after defintions
 
+/* The core's access order differs from the S-SMP's in two families; map its
+ * access number to the hardware cycle. dp,dp operations read the source
+ * before fetching the destination operand (core: both operands first), and
+ * word reads idle a cycle between the low and the high byte. */
+static uint8_t spc_hwCycle(const Spc* spc, uint8_t idx) {
+  switch (spc->op) {
+    case 0x09: case 0x29: case 0x49: case 0x69: case 0x89: case 0xa9: case 0xfa:
+      return idx == 2 ? 3 : idx == 3 ? 2 : idx;
+    case 0x5a: case 0x7a: case 0x9a: case 0xba:
+      return idx == 3 ? 4 : idx;
+  }
+  return idx;
+}
+
 static uint8_t spc_read(Spc* spc, uint16_t adr) {
+  uint8_t cycle = spc_hwCycle(spc, spc->busIdx++);
+  if (spc->dry) {
+    if (adr >= 0xf4 && adr <= 0xf7) {
+      if ((int)cycle > spc->dryLastPort) spc->dryLastPort = (int8_t)cycle;
+      return spc->apu->inPorts[adr - 0xf4];
+    }
+    if (adr >= 0xfd && adr <= 0xff) return 0;  /* timer reads clear the counter */
+    return apu_cpuRead(spc->apu, adr);  /* plain memory: no side effect */
+  }
+  spc->accessCycle = cycle;
   return apu_cpuRead(spc->apu, adr);
 }
 
 static void spc_write(Spc* spc, uint16_t adr, uint8_t val) {
+  spc->accessCycle = spc->busIdx++;
+  if (spc->dry) {
+    if (adr >= 0xf4 && adr <= 0xf7 && spc->dryPortWrites < 4)
+      spc->dryPortWrite[spc->dryPortWrites++] = (int8_t)spc->dryWrites;
+    spc->dryWrites++;
+    return;
+  }
   apu_cpuWrite(spc->apu, adr, val);
 }
 
@@ -80,10 +111,23 @@ void spc_reset(Spc* spc) {
   spc->b = false;
   spc->stopped = false;
   spc->cyclesUsed = 0;
+  spc->busIdx = 0;
+  spc->opPc = 0;
+  spc->op = 0;
+  spc->accessCycle = 0;
+  spc->dry = false;
+  spc->dryLastPort = -1;
+  spc->dryWrites = 0;
+  memset(spc->dryPortWrite, 0, sizeof(spc->dryPortWrite));
+  spc->dryPortWrites = 0;
 }
 
 void spc_saveload(Spc *spc, SaveLoadInfo *sli) {
   sli->func(sli, &spc->a, offsetof(Spc, cyclesUsed) - offsetof(Spc, a));
+  /* An opcode's bus effects can lead its remaining clocks. Retain its
+   * access cursor beside the APU's timer/DSP advance debt. Probe-only
+   * fields starting at dry are temporary and stay outside the snapshot. */
+  sli->func(sli, &spc->cyclesUsed, offsetof(Spc, dry) - offsetof(Spc, cyclesUsed));
 }
 
 /* Opt-in SPC instruction trace (SNESRECOMP_SPC_TRACE=1): ring of the last
@@ -96,9 +140,40 @@ static uint32_t s_spc_trace_head = 0;
 static uint32_t s_spc_trace_count = 0;
 static int s_spc_trace_on = -1;
 
+/* A store's write is its last cycle (the read before it, if any, is the
+ * hardware's dummy read), a word store's two writes its last two: the n-th of
+ * N writes lands on cycle cycles - N + n. Reads land on their access number. */
+int spc_probePortCycle(Spc* spc) {
+  if (spc->stopped) return -1;
+  Spc saved = *spc;
+  spc->dry = true;
+  spc->busIdx = 0;
+  spc->dryLastPort = -1;
+  spc->dryWrites = 0;
+  spc->dryPortWrites = 0;
+  spc->op = spc_read(spc, spc->pc);  /* spc_hwCycle needs the opcode */
+  spc->busIdx = 0;
+  uint8_t opcode = spc_readOpcode(spc);
+  spc->cyclesUsed = cyclesPerOpcode[opcode];
+  spc_doOpcode(spc, opcode);
+  int last = spc->dryLastPort;
+  int cycles = spc->cyclesUsed;
+  if (last >= cycles) last = cycles - 1;
+  for (int i = 0; i < spc->dryPortWrites; i++) {
+    int c = cycles - spc->dryWrites + spc->dryPortWrite[i];
+    if (c > last) last = c;
+  }
+  *spc = saved;
+  return last;
+}
+
 int spc_runOpcode(Spc* spc) {
   spc->cyclesUsed = 0;
+  spc->busIdx = 0;
+  spc->accessCycle = 0;
   if(spc->stopped) return 1;
+  spc->opPc = spc->pc;
+  spc->op = apu_cpuRead(spc->apu, spc->pc);  /* plain memory: spc_hwCycle needs it first */
   uint8_t opcode = spc_readOpcode(spc);
   if (s_spc_trace_on < 0)
     s_spc_trace_on = getenv("SNESRECOMP_SPC_TRACE") ? 1 : 0;

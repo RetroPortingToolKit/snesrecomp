@@ -47,8 +47,8 @@ struct Apu {
   Timer timer[3];
   uint8_t cpuCyclesLeft;
   uint8_t pad[6];
-  /* Port event state must stay after pad: apu_saveload snapshots [ram,pad+6),
-   * and that savestate layout is frozen. Callback lead is host state, so the
+  /* Port event state stays after the main [ram,pad+6) region. Canonical
+   * timer/DSP advance debt is serialized separately. Callback lead is host state, so the
    * queue and its mapping are deliberately reset rather than serialized. */
   ApuPortWrite portQueue[APU_PORT_QUEUE_LEN];
   uint32_t portQHead;
@@ -59,6 +59,19 @@ struct Apu {
   uint64_t portLastGuest;
   uint64_t portLastTarget;
   bool portTimeValid;
+  /* Access-exact port timing (SNESRECOMP_SPC_ACCESS_CYCLES, default on).
+   * The SPC core runs an opcode at its first clock; a CPU sync to holdTarget
+   * leaves an opcode unstarted when one of its $F4-$F7 accesses falls after
+   * that clock, and a port read first takes the CPU writes due by its own
+   * cycle. Host state, not serialized. */
+  bool holdActive;
+  bool held;
+  uint64_t holdTarget;
+  /* Cycles each timer has already been advanced past portClock, by a timer
+   * access on its own cycle inside the running opcode (apu.c). */
+  uint8_t timerAhead[3];
+  /* The same for the per-clock S-DSP (dsp_clock.c), stepped to a $F3 access's cycle. */
+  uint8_t dspAhead;
 };
 
 /*
@@ -122,6 +135,13 @@ bool apu_waitForTransferReady(Apu* apu, uint8_t request_port,
                               uint8_t request_value, uint32_t max_cycles);
 bool apu_finishHleTransfer(Apu* apu, uint16_t final_pc,
                            uint32_t max_cycles);
+/* Master-clock timeline (common_rtl.c, RtlApuUseMasterClock): queue a CPU
+ * write that the SPC sees from SPC cycle `target` on, with no guest mapping.
+ * False means the queue is full; advance the APU and retry. */
+bool apu_enqueuePortWriteAt(Apu* apu, uint8_t port, uint8_t val, uint64_t target);
+/* Run the SPC through cycle `last`: every opcode whose port accesses all land
+ * by then runs, the first that would touch a port later waits. */
+bool apu_runThroughCycle(Apu* apu, uint64_t last, uint32_t max_cycles);
 /* Drop pending events and reset the guest-to-SPC mapping. */
 void apu_clearPortQueue(Apu* apu);
 

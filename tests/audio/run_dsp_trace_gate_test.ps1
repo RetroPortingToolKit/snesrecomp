@@ -11,6 +11,7 @@ $baseArgs = @(
     "-I$root\runner\src", "-I$root\runner\src\snes",
     "$root\tests\audio\dsp_trace_gate_test.c",
     "$root\runner\src\snes\dsp.c",
+    "$root\runner\src\snes\dsp_clock.c",
     "$root\runner\src\snes\dsp_shadow.c",
     "$root\runner\src\snes\audio_shadow.c",
     "$root\runner\src\audio_trace.c",

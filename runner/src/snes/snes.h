@@ -199,4 +199,9 @@ uint32_t snes_master_clocks_until_line(const Snes *snes, uint32_t line);
 void snes_beam_hold(int hold);
 
 extern int snes_frame_counter;
+/* Master clocks charged for general DMA since power-on: a frame driver that
+ * needs to tell an instruction's own cycles from the DMA it started (the DMA
+ * runs in the next instruction's first cycle on hardware) reads the change. */
+extern uint64_t g_snes_dma_charged;
+
 #endif

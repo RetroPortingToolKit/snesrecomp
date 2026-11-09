@@ -320,6 +320,7 @@ set(SNESRECOMP_RUNNER_SOURCES
     ${SNESRECOMP_RUNNER_ROOT}/src/snes/cpu.c
     ${SNESRECOMP_RUNNER_ROOT}/src/snes/dma.c
     ${SNESRECOMP_RUNNER_ROOT}/src/snes/dsp.c
+    ${SNESRECOMP_RUNNER_ROOT}/src/snes/dsp_clock.c
     ${SNESRECOMP_RUNNER_ROOT}/src/snes/dsp1.c
     ${SNESRECOMP_RUNNER_ROOT}/src/snes/dsp1_hle.c
     ${SNESRECOMP_RUNNER_ROOT}/src/snes/joypad.c

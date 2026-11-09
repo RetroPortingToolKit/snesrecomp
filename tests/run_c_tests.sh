@@ -335,6 +335,7 @@ echo "=== rollback state digest ==="
     "$ROOT/runner/src/snes/apu.c" \
     "$ROOT/runner/src/snes/spc.c" \
     "$ROOT/runner/src/snes/dsp.c" \
+    "$ROOT/runner/src/snes/dsp_clock.c" \
     "$ROOT/runner/src/crc32.c" \
     -o "$OUT/rb_state_digest_test"
 "$OUT/rb_state_digest_test"
@@ -348,6 +349,7 @@ echo "=== APU guest-time pacing ==="
     "$ROOT/runner/src/snes/apu.c" \
     "$ROOT/runner/src/snes/spc.c" \
     "$ROOT/runner/src/snes/dsp.c" \
+    "$ROOT/runner/src/snes/dsp_clock.c" \
     $GC_SECTIONS_LINKER -o "$OUT/apu_port_guest_time_test"
 "$OUT/apu_port_guest_time_test"
 
@@ -653,7 +655,7 @@ RTL_UNIT_FLAGS="$(pkg-config --cflags sdl2) -std=c11 -O2 -flto -fwhole-program -
 
 echo "=== audio delivery + console reset ==="
 "$CC" $RTL_UNIT_FLAGS "$ROOT/tests/audio_delivery_test.c" \
-    "$ROOT/runner/src/snes/dsp.c" "$ROOT/runner/src/audio_trace.c" \
+    "$ROOT/runner/src/snes/dsp.c" "$ROOT/runner/src/snes/dsp_clock.c" "$ROOT/runner/src/audio_trace.c" \
     -Wl,--gc-sections -lm -o "$OUT/audio_delivery_test"
 "$OUT/audio_delivery_test"
 

@@ -113,6 +113,17 @@ int main(void)
 
     /* --- everything else in the APU is simulation and must fold in --- */
 
+    for (unsigned i = 0; i < 3; ++i) {
+        apu->timerAhead[i] ^= 1u;
+        check(snes_state_digest_apu_of(apu) != base,
+              "APU timer advance debt is included");
+        apu->timerAhead[i] ^= 1u;
+    }
+    apu->dspAhead ^= 1u;
+    check(snes_state_digest_apu_of(apu) != base,
+          "APU DSP advance debt is included");
+    apu->dspAhead ^= 1u;
+
     apu->dsp->ram[0x0C] ^= 0xFFu; /* MVOLL mirror */
     after = snes_state_digest_apu_of(apu);
     check(after != base, "DSP register file is included");
@@ -130,6 +141,23 @@ int main(void)
     apu->dsp->firBufferR[7] ^= 0x1234;
     check(snes_state_digest_apu_of(apu) == base,
           "digest returns to baseline after restore");
+
+    apu->dsp->konDelay[7] ^= 1u;
+    check(snes_state_digest_apu_of(apu) != base,
+          "DSP key-on delay after the ring stream is included");
+    apu->dsp->konDelay[7] ^= 1u;
+    apu->dsp->rateCounter ^= 0x1234;
+    check(snes_state_digest_apu_of(apu) != base,
+          "DSP shared rate phase is included");
+    apu->dsp->rateCounter ^= 0x1234;
+    apu->dsp->endPending[7] = !apu->dsp->endPending[7];
+    check(snes_state_digest_apu_of(apu) != base,
+          "DSP pending end state is included");
+    apu->dsp->endPending[7] = !apu->dsp->endPending[7];
+    apu->dsp->clk.v[7].buf[11] ^= 0x1234;
+    check(snes_state_digest_apu_of(apu) != base,
+          "per-clock DSP continuation state is included");
+    apu->dsp->clk.v[7].buf[11] ^= 0x1234;
 
     apu->ram[0x0100] ^= 0xFFu;
     check(snes_state_digest_apu_of(apu) != base, "APU RAM is included");
