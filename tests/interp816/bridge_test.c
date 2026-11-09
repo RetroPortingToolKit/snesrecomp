@@ -62,6 +62,8 @@ static int      g_aot_tail_chain_probe;
 static int      g_aot_skips_root;
 static int      g_tail_chain_direct;
 static int      g_nested_chain_direct;
+static int      g_aot_pc_wrap_probe;
+static uint32_t g_aot_popped_pc;
 #define FAKE_AOT 0x008100u
 #define FAKE_AOT_2 0x008200u
 
@@ -246,6 +248,18 @@ RecompReturn cpu_dispatch_pc(CpuState *cpu, uint32 pc24, uint16 miss_restore) {
 RecompReturn cpu_dispatch_pc_paired(CpuState *cpu, uint32 pc24,
                                     uint8 frame_size) {
     cpu->host_return_valid = frame_size;
+    if (g_aot_pc_wrap_probe && pc24 == FAKE_AOT) {
+        ++g_aot_called;
+        const uint16_t lo = cpu_read8(cpu, 0, ++cpu->S);
+        const uint16_t hi = cpu_read8(cpu, 0, ++cpu->S);
+        if (frame_size == 3) cpu->PB = cpu_read8(cpu, 0, ++cpu->S);
+        g_aot_popped_pc = ((uint32_t)cpu->PB << 16) |
+            (uint16_t)((lo | (hi << 8)) + 1);
+        /* Only force a bounded stop after the paired return. This fake
+         * charge is not a silicon instruction-timing expectation. */
+        cpu->master_cycles += 64;
+        return RECOMP_RETURN_NORMAL;
+    }
     if (g_aot_nested_deadline && pc24 == FAKE_AOT) {
         RecompReturn result = interp_tier_dispatch_balanced(
             cpu, 0x008300, FAKE_AOT, cpu->S, frame_size, false);
@@ -1725,6 +1739,42 @@ int main(void) {
         CHECK(resume == cases[k].resume, "%s: resume=$%06X exp $%06X",
               cases[k].what, (unsigned)resume, (unsigned)cases[k].resume);
         CHECK(g_c.master_cycles >= 1000 + cases[k].owed, "%s: tax not settled", cases[k].what);
+      }
+    }
+    /* S21: sequential PC wraps within the caller's PB. A full24-bit add
+     * incorrectly resumes at01:0000 for the two boundary calls (#267). */
+    printf("[S21] paired JSR/JSL continuation wraps16-bit PC, preserving PB\n");
+    {
+      const struct { unsigned op, pc; } cases[] = {
+        {0x20, 0x8000}, {0x22, 0x8000},
+        {0x20, 0xFFFD}, {0x22, 0xFFFC},
+      };
+      for (unsigned k = 0; k < sizeof cases / sizeof cases[0]; ++k) {
+        memset(RAM, 0, MEMSZ); init_cpu();
+        memset(&g_test_snes, 0, sizeof g_test_snes);
+        g_test_snes.cart = &g_test_cart;
+        g_test_cart.type = CART_HIROM;
+        g_test_cart.rom = RAM; g_test_cart.romSize = MEMSZ;
+        g_c.emulation = 0; g_c.m_flag = g_c.x_flag = 1;
+        cpu_mirrors_to_p(&g_c);
+        const unsigned pc = cases[k].pc, op = cases[k].op;
+        RAM[pc] = op; RAM[pc + 1] = 0; RAM[pc + 2] = 0x81;
+        if (op == 0x22) RAM[pc + 3] = 0;
+        g_aot_called = 0; g_aot_popped_pc = 0xFFFFFF;
+        g_aot_pc_wrap_probe = 1;
+        interp_bridge_set_master_deadline(1);
+        const int rc = interp_bridge_run_until_quiescent(&g_c, pc);
+        const uint32_t resume = interp_bridge_lle_resume_pc();
+        interp_bridge_set_master_deadline(0);
+        g_aot_pc_wrap_probe = 0;
+        const uint32_t expected = (pc + (op == 0x20 ? 3 : 4)) & 0xFFFF;
+        CHECK(rc == 1 && g_aot_called == 1, "op=%02X pc=%06X rc=%d bounces=%d",
+              op, pc, rc, g_aot_called);
+        CHECK(g_c.S == 0x1FF && g_aot_popped_pc == expected,
+              "op=%02X pc=%06X S=%04X popped=%06X expected=%06X",
+              op, pc, g_c.S, g_aot_popped_pc, expected);
+        CHECK(resume == expected, "op=%02X pc=%06X resume=%06X expected=%06X",
+              op, pc, resume, expected);
       }
     }
     printf("\n==== interp_bridge Phase-1: %d/%d checks passed ====\n", g_check - g_fail, g_check);
