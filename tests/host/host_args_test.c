@@ -95,6 +95,33 @@ int main(void) {
     check(!snesrecomp_host_args_parse(&argc, &av, &a), "invalid capture value is rejected");
     check(!tier2_capture_enabled(), "invalid capture value preserves runtime state");
   }
+  {
+    char *argv[] = { "game", "game.sfc", NULL };
+    int argc = 2;
+    char **av = argv;
+    check(snesrecomp_host_args_parse(&argc, &av, &a), "a launch without --region parses");
+    check(a.region == kSnesRegionAuto, "no --region leaves the header in charge");
+  }
+  {
+    char *argv[] = { "game", "--region=pal", "game.sfc", NULL };
+    int argc = 3;
+    char **av = argv;
+    check(snesrecomp_host_args_parse(&argc, &av, &a), "--region=pal parses");
+    check(a.region == kSnesRegionPal && argc == 1, "--region=pal is consumed");
+  }
+  {
+    char *argv[] = { "game", "--region=ntsc", NULL };
+    int argc = 2;
+    char **av = argv;
+    check(snesrecomp_host_args_parse(&argc, &av, &a), "--region=ntsc parses");
+    check(a.region == kSnesRegionNtsc, "--region=ntsc");
+  }
+  {
+    char *argv[] = { "game", "--region=secam", NULL };
+    int argc = 2;
+    char **av = argv;
+    check(!snesrecomp_host_args_parse(&argc, &av, &a), "an unknown region is rejected");
+  }
 
   if (fails) return 1;
   printf("ok: host_args\n");

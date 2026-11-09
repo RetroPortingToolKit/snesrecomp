@@ -84,7 +84,8 @@ typedef struct SnesDesktopHostGame {
   int debug_port;                /* TCP debug server; 0 = 4377 */
   int widescreen_supported;      /* launcher: show the Widescreen controls */
   int msu1_supported;            /* launcher: show the MSU-1 panel */
-  double simulation_hz;          /* 0 = NTSC (60.0988 Hz) */
+  double simulation_hz;          /* 0 = the ROM's region: NTSC 60.0988 Hz,
+                                    PAL 50.0070 Hz */
   /* Guest-side polling that decides the default frame width. Left at 0 the
    * host presents 256x224. */
   int frame_width, frame_height;

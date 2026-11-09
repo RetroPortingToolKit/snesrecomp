@@ -243,10 +243,14 @@ int cosim_apu_shared_clock(void) {
 uint64_t g_apu_last_sync_master = 0;
 /* Production's frame loop is the stable guest-time ruler: one frame is
  * 357368 SNES master cycles and 17088 SPC cycles in this runtime's 60 Hz
- * model. g_cpu.master_cycles supplies only the within-frame position because
+ * model (PAL: 425568 and 20505.6 at 50 Hz; see apu_frame_clock.h).
+ * g_cpu.master_cycles supplies only the within-frame position because
  * its total per frame varies with recompilation coverage. */
 static uint64_t g_apu_frame_start_master;
 static RtlApuFrameClock g_apu_frame_clock;
+/* The loaded machine's frame period, refreshed at every frame start. */
+static RtlApuFramePeriod g_apu_frame_period = {
+    RTL_MASTER_CYCLES_PER_FRAME, RTL_APU_CYCLES_PER_FRAME, 1};
 static bool g_extended_frame_timing;
 static bool g_apu_frame_time_valid;
 
@@ -256,7 +260,9 @@ bool rtl_apu_frame_timeline_active(void) {
 
 double RtlLastFramePeriods(void) {
   return g_extended_frame_timing && g_apu_frame_clock.last_duration
-      ? (double)g_apu_frame_clock.last_duration / RTL_APU_CYCLES_PER_FRAME : 1.0;
+      ? (double)g_apu_frame_clock.last_duration * g_apu_frame_period.apu_den /
+            g_apu_frame_period.apu_per_frame
+      : 1.0;
 }
 
 void RtlEnableExtendedFrameTiming(void) {
@@ -307,6 +313,10 @@ static void rtl_sync_apu_frame_boundary(void);
  * SNESRECOMP_APU_KR / _KW (half-cycles) move the two edges for experiments. */
 #define RTL_SMP_HALF_PER_SEC 2050560ull
 #define RTL_MASTER_PER_SEC 21477270ull
+/* A PAL console's master clock (snes_region.h); the SMP crystal is the same. */
+static uint64_t rtl_master_per_sec(void) {
+  return g_snes && g_snes->palTiming ? SNES_PAL_MASTER_HZ : RTL_MASTER_PER_SEC;
+}
 static int s_apu_master = -1;
 static uint32_t s_apu_lead;
 static int s_apu_kr, s_apu_kw;
@@ -342,8 +352,9 @@ static uint64_t rtl_apu_half_ticks(void) {
   if (s_apu_access_write) lead += 4;
   uint64_t m = s_cpu_access_clock ? s_cpu_access_clock(g_cpu.master_cycles, lead)
                                   : g_cpu.master_cycles + lead;
-  return (m / RTL_MASTER_PER_SEC) * RTL_SMP_HALF_PER_SEC +
-         (m % RTL_MASTER_PER_SEC) * RTL_SMP_HALF_PER_SEC / RTL_MASTER_PER_SEC;
+  const uint64_t per_sec = rtl_master_per_sec();
+  return (m / per_sec) * RTL_SMP_HALF_PER_SEC +
+         (m % per_sec) * RTL_SMP_HALF_PER_SEC / per_sec;
 }
 /* SPC cycle c starts at half-cycle 2c. A state load or reset leaves portClock
  * elsewhere: re-anchor when the two are far apart. */
@@ -369,13 +380,13 @@ static uint64_t rtl_apu_read_last(void) {
 
 static uint64_t rtl_apu_guest_cycle(void) {
   if (g_extended_frame_timing)
-    return rtl_apu_clock_now(&g_apu_frame_clock, g_cpu.master_cycles);
+    return rtl_apu_clock_now(&g_apu_frame_clock, &g_apu_frame_period,
+                             g_cpu.master_cycles);
   uint64_t within = g_cpu.master_cycles - g_apu_frame_start_master;
-  if (within >= RTL_MASTER_CYCLES_PER_FRAME)
-    within = RTL_MASTER_CYCLES_PER_FRAME - 1;
-  return (uint64_t)snes_frame_counter * RTL_APU_CYCLES_PER_FRAME +
-         within * RTL_APU_CYCLES_PER_FRAME /
-             RTL_MASTER_CYCLES_PER_FRAME;
+  if (within >= g_apu_frame_period.master)
+    within = g_apu_frame_period.master - 1;
+  return rtl_apu_cycles_at(&g_apu_frame_period, (uint64_t)snes_frame_counter,
+                           within);
 }
 // $420D bit 0 (FastROM / MEMSEL): 1 => $80-$FF:$8000-$FFFF code runs fast (6
 // master clocks/access) instead of slow (8). Tracked here so emitted blocks in
@@ -936,6 +947,7 @@ bool RtlRunFrame(uint32 inputs) {
    * duration. */
   g_apu_frame_start_master = g_cpu.master_cycles;
   g_apu_frame_time_valid = true;
+  g_apu_frame_period = rtl_apu_frame_period(g_snes && g_snes->palTiming);
   rtl_apu_clock_begin(&g_apu_frame_clock, g_cpu.master_cycles);
   WatchdogFrameStart();
   // Watchdog guard: WatchdogCheck() (called per-block in v2 gen) longjmps
@@ -963,7 +975,8 @@ bool RtlRunFrame(uint32 inputs) {
     if (s_audio && !rtl_netplay_locks_audio()) {
       static double s_acc = 0.0;
       static int16 s_buf[1024 * 2];
-      s_acc += 32040.0 / 60.0988;           /* SNES native audio samples per frame */
+      /* SNES native audio samples per frame; PAL fields are 50.0070 Hz */
+      s_acc += g_snes->palTiming ? 32040.0 / 50.0070 : 32040.0 / 60.0988;
       int want = (int)s_acc; s_acc -= (double)want;
       while (want > 0) {
         int chunk = want > 1024 ? 1024 : want;
@@ -2084,11 +2097,10 @@ void rtl_accumulate_apu_catchup(void) {
   if (s_accurate < 0) { const char *e = getenv("SNES_COSIM_ACCURATE_APU");
                         s_accurate = (e && e[0] && e[0] != '0') ? 1 : 0; }
   if (s_accurate) {
-    static const double kApuPerMaster = (32040.0 * 32.0) / (1364.0 * 262.0 * 60.0);
     uint64_t md = g_cpu.master_cycles - g_apu_last_sync_master;
     g_apu_last_sync_master = g_cpu.master_cycles;
     g_apu_last_sync_cycles = g_apu_pace_cycles_estimate;   /* keep sync ptr current */
-    g_snes->apuCatchupCycles += (double)md * kApuPerMaster;
+    g_snes->apuCatchupCycles += (double)md * snes_apu_cycles_per_master(g_snes);
     return;
   }
 #endif
@@ -2301,7 +2313,8 @@ static void rtl_apu_master_sync_locked(void) {
  * minimum frame of SPC time. */
 static void rtl_apu_master_frame_end_locked(void) {
   if (g_extended_frame_timing)
-    (void)rtl_apu_clock_finish(&g_apu_frame_clock, g_cpu.master_cycles);
+    (void)rtl_apu_clock_finish(&g_apu_frame_clock, &g_apu_frame_period,
+                               g_cpu.master_cycles);
   if (!apu_runThroughCycle(g_snes->apu, rtl_apu_read_last(), 1u << 24))
     fprintf(stderr, "[apu] frame-boundary master-clock sync timed out\n");
 }
@@ -2523,8 +2536,9 @@ static void rtl_sync_apu_frame_boundary(void) {
    * boundary after the completed frame; adding its stale within-frame master
    * offset here would count the frame body twice. */
   uint64_t boundary = g_extended_frame_timing
-      ? rtl_apu_clock_finish(&g_apu_frame_clock, g_cpu.master_cycles)
-      : (uint64_t)snes_frame_counter * RTL_APU_CYCLES_PER_FRAME;
+      ? rtl_apu_clock_finish(&g_apu_frame_clock, &g_apu_frame_period,
+                             g_cpu.master_cycles)
+      : rtl_apu_cycles_at(&g_apu_frame_period, (uint64_t)snes_frame_counter, 0);
   /* An NMI-disabled loader can consume many video periods in one host
    * iteration (SM's unpause restoration takes 42-44 on the original ROM).
    * Publishing all of that PCM under one lock overflows the bounded FIFO,
@@ -2621,8 +2635,9 @@ void RtlAudioSetFastForward(bool active) {
 /* ---- Native-rate delivery with an occupancy servo ----------------------
  *
  * Two independent clocks meet here and nowhere else: the guest produces
- * exactly 534 natives per emulated frame (RTL_APU_CYCLES_PER_FRAME / 32,
- * paced by rtl_sync_apu_frame_boundary), and the host audio device drains at
+ * exactly 534 natives per emulated frame (RTL_APU_CYCLES_PER_FRAME / 32; a
+ * PAL frame averages 640.8, paced by rtl_sync_apu_frame_boundary), and the
+ * host audio device drains at
  * its own crystal rate. They never agree exactly:
  *
  *   - the frame loop runs at 60.0988 fps (SMK/SMRPG) or 60.000 (block hosts),
