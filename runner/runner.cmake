@@ -858,7 +858,10 @@ function(snesrecomp_target_mod_catalog target preloaded_dir)
         # but a catalog that arrives incomplete (a package removed from the
         # source tree between configure and build, a destination someone else's
         # POST_BUILD wiped) looks exactly like a title with fewer mods.
-        list(JOIN _ids "|" _ids_arg)
+        # A pipe remains a shell operator through Ninja's nested Windows
+        # POST_BUILD cmd wrappers, even with VERBATIM. Package ids cannot
+        # contain commas, so use a delimiter without shell semantics.
+        list(JOIN _ids "," _ids_arg)
         add_custom_command(TARGET ${target} POST_BUILD
             COMMAND ${CMAKE_COMMAND}
                 "-DSNES_MOD_DEST=$<TARGET_FILE_DIR:${target}>/${SNESRECOMP_MOD_CATALOG_DEST}"
