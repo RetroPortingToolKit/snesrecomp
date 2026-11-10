@@ -106,7 +106,8 @@ echo "=== PPU bounded view anchoring ==="
 "$CC" -std=c11 -Wall -Wextra -O1 -DSNESRECOMP_REVERSE_DEBUG=0 \
     -I "$ROOT/runner/src" -I "$ROOT/runner/src/snes" \
     "$ROOT/tests/ppu/ppu_view_anchor_test.c" \
-    "$ROOT/runner/src/snes/ppu.c" "$ROOT/runner/src/snes/ppu_legacy.c" \
+    "$ROOT/runner/src/snes/hd_jobs.c" "$ROOT/runner/src/snes/ppu.c" \
+    "$ROOT/runner/src/snes/ppu_legacy.c" \
     -lm -o "$OUT/ppu_view_anchor_test"
 "$OUT/ppu_view_anchor_test"
 
