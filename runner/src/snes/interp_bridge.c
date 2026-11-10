@@ -1219,9 +1219,10 @@ int interp_bridge_return_targets_owner(uint16 ret_s, uint16 post_s) {
      * Require both boundaries:
      *   1. ret_s is shallower than the generated bounce root, proving that the
      *      popped frame is not owned by any frame in this bounce; and
-     *   2. post_s has not crossed above the interpreter run's exit watermark,
-     *      proving the continuation still belongs to this interpreter rather
-     *      than to a compiled ancestor outside it.
+     *   2. the return stays inside this interpreter, or consumes precisely
+     *      its own entry frame. The latter completes a finite host call;
+     *      its popped PC must not be interpreted as a compiled ancestor's
+     *      continuation.
      *
      * The 65816 stack grows downward; a small positive unsigned delta means
      * "shallower", while zero/large deltas remain at or below the watermark. */
@@ -1229,7 +1230,7 @@ int interp_bridge_return_targets_owner(uint16 ret_s, uint16 post_s) {
     if (root_delta == 0 || root_delta >= 0x8000u)
         return 0;
 
-    return !interp_owner_crossed(post_s);
+    return !interp_owner_crossed(post_s) || ret_s == s_interp_owner_exit_s;
 }
 
 void interp_bridge_set_lle_bounce_exclusions(const uint32 *targets,
@@ -3078,6 +3079,20 @@ static int _interp_run_core(CpuState *cpu, uint32_t entry_pc24,
                             s_lle_unwind_owner_depth = 0;
                             s_lle_unwind_is_deadline = 0;
                             sync_cpu_to_interp(cpu, &in);
+                            /* A compiled non-local return may have consumed
+                             * this finite interpreter owner's own call frame.
+                             * Apply the same return-past-entry boundary as an
+                             * interpreted RTS/RTL before following its popped
+                             * PC. Scheduler/interrupt owners retain their
+                             * existing continuation rules. */
+                            if (!yield_pc && !stop_on_rti &&
+                                (uint16_t)in.sp > s_enter) {
+                                if (out_return_pc)
+                                    *out_return_pc = s_lle_unwind_pc24;
+                                sync_interp_to_cpu(&in, cpu);
+                                bridge_apu_flush(cpu);
+                                return 1;
+                            }
                             in.k  = (uint8)((s_lle_unwind_pc24 >> 16) & 0xFF);
                             in.pc = (uint16)(s_lle_unwind_pc24 & 0xFFFF);
                             interp_edge_note(pc_before, s_lle_unwind_pc24,
