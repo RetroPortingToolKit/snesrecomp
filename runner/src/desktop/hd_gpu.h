@@ -16,8 +16,12 @@ typedef struct SnesHdGpuStats {
 /* Requires a current desktop OpenGL3.3 context. Missing GPU support returns
  * NULL; all platforms retain the portable frame/ROI consumer. */
 SnesHdGpu *SnesHdGpuCreate(void);
-/* Interpolated double-precision camera rows need GL4; register jobs use3.3. */
+/* Camera rows draw on GL3.3; register jobs too. */
 bool SnesHdGpuSupportsAffine(const SnesHdGpu *gpu);
+/* Camera rows match the portable consumer exactly only in double precision
+ * (GL4, not Apple). In single precision a sample within 2/65536 of a texel
+ * edge may take the neighbouring texel. */
+bool SnesHdGpuAffineExact(const SnesHdGpu *gpu);
 void SnesHdGpuDestroy(SnesHdGpu *gpu);
 void SnesHdGpuReset(SnesHdGpu *gpu);
 /* No full-resolution staging image. Allocation belongs to the host; this
