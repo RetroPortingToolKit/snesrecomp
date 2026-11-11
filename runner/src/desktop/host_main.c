@@ -3971,6 +3971,9 @@ error_reading:;
 #endif
 
   /* SDL3 dropped the x/y arguments from SDL_CreateWindow. */
+  const char *test_hidden = HostGetenv("TEST_HIDDEN");
+  if (test_hidden && *test_hidden && *test_hidden != '0')
+    g_win_flags |= SDL_WINDOW_HIDDEN;
   SDL_Window *window = snesrecomp_sdl_create_window(
       g_window_title, window_width, window_height, g_win_flags);
 #ifndef __ANDROID__
