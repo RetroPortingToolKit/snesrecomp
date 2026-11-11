@@ -91,6 +91,16 @@ static uint64_t beam_debt(void) {
              : 0;
 }
 
+/* The master clock at which the beam walk latches the next H/V match, 0 when
+ * none is ahead: +1 because the walk stops one clock past the match, the
+ * park step's rule below. The interpreter sees the latch at the first
+ * boundary at or after this clock; region-paced compiled code yields there
+ * too (interp_bridge_set_irq_deadline). */
+static uint64_t next_irq_latch(void) {
+  uint32_t to_irq = snes_master_clocks_until_irq(g_snes);
+  return to_irq ? g_snes->beamMasterLast + to_irq + 1u : 0;
+}
+
 /* Parked time: the beam, APU and coprocessors advance; the CPU does not. */
 static void advance_parked(uint64_t until) {
   g_cpu.master_cycles = until;
@@ -171,7 +181,9 @@ void snes_beam_frame_driver_run_frame(void) {
       s_wai_halted = false;
     if (!s_wai_halted && !irq_wanted()) {
       interp_bridge_set_master_deadline(frame_end);
+      interp_bridge_set_irq_deadline(next_irq_latch);
       (void)interp_bridge_run_until_quiescent(&g_cpu, s_resume_pc);
+      interp_bridge_set_irq_deadline(NULL);
       interp_bridge_set_master_deadline(0);
       update_resume_pc();
       if (interp_bridge_lle_took_wai())

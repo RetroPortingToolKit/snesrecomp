@@ -653,6 +653,11 @@ static int      s_interp_pctrace    = 0;
 static int      s_lle_wai_yield     = 0;
 static int      s_lle_quiescent_yield = 0;
 static uint64_t s_lle_master_deadline = 0;
+/* H/V IRQ deadline source armed by the host (NULL = off), and the master
+ * clock of the last instruction boundary region-paced code reported. */
+static uint64_t (*s_irq_next_latch)(void) = 0;
+static uint64_t s_aot_boundary_master = 0;
+static int      s_aot_boundary_marked = 0;
 /* Depth of nested interpreter runs and the run that owns the current paired
  * AOT bounce. A rewritten/non-local return from that AOT root must resume the
  * owning interpreter's guest call chain. */
@@ -686,6 +691,16 @@ static void bridge_aot_instruction_boundary(CpuState *cpu) {
     if (s_apu_pending_master < bridge_bounce_flush_thresh()) return;
     snes_sync_master_clock(g_snes, cpu->master_cycles);
     bridge_apu_flush(cpu);
+}
+/* Region-paced code reports each boundary immediately before it polls
+ * interp_bridge_lle_master_deadline_reached. Mark its clock for the H/V IRQ
+ * deadline, which only such a poll may take. */
+static void bridge_aot_boundary_hook(CpuState *cpu) {
+    bridge_aot_instruction_boundary(cpu);
+    if (s_irq_next_latch) {
+        s_aot_boundary_master = cpu->master_cycles;
+        s_aot_boundary_marked = 1;
+    }
 }
 /* Count of AOT bodies entered through the paired ABI. Exposed so a host
  * can tell a genuinely-compiled run from one that quietly interpreted
@@ -1078,6 +1093,29 @@ int interp_bridge_lle_took_quiescent(void) {
 void interp_bridge_set_master_deadline(uint64_t master_clock) {
     s_lle_master_deadline = master_clock;
 }
+void interp_bridge_set_irq_deadline(uint64_t (*next_latch)(void)) {
+    s_irq_next_latch = next_latch;
+    s_aot_boundary_marked = 0;
+}
+
+/* H/V IRQ deadline (interp_bridge.h). Only the poll that directly follows a
+ * region-paced instruction boundary takes it: there master_cycles is the
+ * exact clock of that boundary. The bridge's own boundary call after a paired
+ * bounce is followed by interpreted opcodes, which charge clocks before any
+ * compiled poll, so its mark never matches. */
+static int irq_deadline_hit(const CpuState *cpu) {
+    if (!s_irq_next_latch)
+        return 0;
+    const int at_boundary = s_aot_boundary_marked &&
+                            cpu->master_cycles == s_aot_boundary_master;
+    s_aot_boundary_marked = 0;
+    if (!at_boundary || !g_snes || cpu->_flag_I)
+        return 0;
+    if (g_snes->inIrq)
+        return 1;
+    const uint64_t latch = s_irq_next_latch();
+    return latch != 0 && cpu->master_cycles >= latch;
+}
 
 int interp_bridge_lle_master_deadline_reached(const CpuState *cpu) {
     /* SNESRECOMP_DEADLINE_DIAG=1: report why the bound is not firing.
@@ -1104,8 +1142,9 @@ int interp_bridge_lle_master_deadline_reached(const CpuState *cpu) {
     }
     const int reached =
         cpu && s_lle_sched_depth > 0 && s_interp_bounce_owner_depth > 0 &&
-        s_lle_master_deadline != 0 &&
-        cpu->master_cycles >= s_lle_master_deadline;
+        ((s_lle_master_deadline != 0 &&
+          cpu->master_cycles >= s_lle_master_deadline) ||
+         irq_deadline_hit(cpu));
     if (reached) {
         s_lle_next_unwind_is_deadline = 1;
         static int fired = -1;
@@ -3353,7 +3392,7 @@ static int interp_bridge_run_ex2(CpuState *cpu, uint32_t entry_pc24,
                                  const uint32_t *stop_pcs, int n_stop,
                                  int stop_on_rti) {
     g_cpu_aot_master_credit_hook = bridge_aot_credit_master;
-    g_cpu_aot_instruction_boundary_hook = bridge_aot_instruction_boundary;
+    g_cpu_aot_instruction_boundary_hook = bridge_aot_boundary_hook;
     int _saved = g_interp_apu_driving;
 #ifdef SNES_COSIM
     /* Shared APU clock: leave the flag clear so interpreted HW touches pace

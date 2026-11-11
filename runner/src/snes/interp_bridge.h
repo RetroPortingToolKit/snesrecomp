@@ -239,6 +239,22 @@ int interp_bridge_lle_took_quiescent(void);
 void interp_bridge_set_master_deadline(uint64_t master_clock);
 void interp_bridge_reset_dynamic_cache(void);
 
+/* Optional H/V IRQ deadline for region-paced compiled code. The interpreter
+ * syncs the beam after every opcode and yields at the first instruction
+ * boundary after the comparator latches (INTERP_RESUME_SITE_IRQ_PENDING).
+ * Compiled code only polls the master deadline, so without this it takes a
+ * raster IRQ at the next frame-deadline yield instead, at a later boundary.
+ *
+ * While `next_latch` is set and I is clear, the deadline poll that follows a
+ * region-paced instruction boundary (cpu_aot_instruction_boundary) is also
+ * true once g_snes->inIrq is set or the master clock reaches next_latch():
+ * the master clock at which the beam walk latches the next comparator match,
+ * 0 when none is ahead. It is asked at every such poll, so writes to $4200,
+ * $4207-$420A and the $4211 acknowledge take effect at the next boundary.
+ * Aggregate emission reports no instruction boundary and is unaffected.
+ * NULL disarms. The host that owns the comparator arms it around its run. */
+void interp_bridge_set_irq_deadline(uint64_t (*next_latch)(void));
+
 /* True only while a paired AOT bounce is executing inside an auto-quiescent
  * scheduler whose current frame deadline has been reached. Long,
  * architecturally interruptible instructions use this at their legal byte
