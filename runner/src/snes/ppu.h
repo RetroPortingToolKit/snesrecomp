@@ -450,7 +450,7 @@ extern uint8_t g_snes_ppu_dbg_layer_mask;
 #define PPU_bgTilemapWider(ppu, layer) (ppu->bgXsc[layer] & 0x1)
 #define PPU_bgTilemapHigher(ppu, layer) (ppu->bgXsc[layer] & 0x2)
 #define PPU_bgTilemapAdr(ppu, layer) ((ppu->bgXsc[layer] & 0xfc) << 8)
-#define PPU_bgTileAdr(ppu, layer) ((ppu->bgTileAdr >> (layer * 4) & 0xf) << 12)
+#define PPU_bgTileAdr(ppu, layer) ((((ppu)->bgTileAdr >> ((layer) * 4)) & 0xf) << 12)
 
 #define PPU_m7xFlip(ppu) (ppu->m7sel & 0x1)
 #define PPU_m7yFlip(ppu) (ppu->m7sel & 0x2)
