@@ -3888,6 +3888,7 @@ int snesrecomp_desktop_main(const SnesDesktopHostGame *game, int argc, char **ar
 
   RtlRegisterGame(game->game_info);
   msu1_set_rom_path(rom_path_buf);
+  snes_set_region_override(args.region);
   Snes *snes = SnesInit(kRom, kRom_SIZE);
   host_report_breadcrumb("SnesInit: %s", snes ? "ok" : "FAILED");
   if (snes == NULL) {
@@ -3897,6 +3898,10 @@ error_reading:;
     Die(buf);
     return 1;
   }
+  /* The region is known once the ROM has loaded. A port that fixed its own
+   * rate keeps it. */
+  if (!(game->simulation_hz > 0))
+    g_simulation_hz = snes->palTiming ? SNES_HOST_PAL_HZ : SNES_HOST_NTSC_HZ;
 #if SNESRECOMP_ENABLE_MODS
   /* Plugins act on a machine that exists: after SnesInit, before frame 1. */
   if (g_mods_ready)

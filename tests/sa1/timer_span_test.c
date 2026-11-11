@@ -151,6 +151,37 @@ int main(void) {
     if (memcmp(&reference, &native, sizeof(reference))) return 3;
     if (io_read_sa1(&reference, 0x2302) != io_read_sa1(&native, 0x2302)) return 4;
   }
+
+  /* PAL: the H/V timer counts 312 lines. Line 261 runs on into 262 and line
+   * 311 wraps. Both implementations agree around the new boundary. */
+  Sa1 pal = {0};
+  sa1_set_pal_timing(&pal, true);
+  pal.h_counter = 1363; pal.v_counter = 261;
+  timer_advance_reference(&pal, 1);
+  if (pal.h_counter != 0 || pal.v_counter != 262) return 13;
+  pal.h_counter = 1363; pal.v_counter = 311;
+  timer_advance_reference(&pal, 1);
+  if (pal.h_counter != 0 || pal.v_counter != 0) return 14;
+  static const uint16_t pal_vs[] = {0,1,261,262,263,310,311,312,313,511,65535};
+  static const uint16_t pal_vt[] = {0,1,261,262,300,310,311,312};
+  Sa1 pal_state = {0};
+  sa1_set_pal_timing(&pal_state, true);
+  for (unsigned mode = 0; mode < 2; ++mode)
+    for (unsigned enables = 0; enables < 4; ++enables)
+      for (unsigned h = 0; h < sizeof(hs)/sizeof(*hs); ++h)
+        for (unsigned v = 0; v < sizeof(pal_vs)/sizeof(*pal_vs); ++v)
+          for (unsigned target = 0; target < sizeof(ht)/sizeof(*ht); ++target) {
+            pal_state.io.timer_linear = mode;
+            pal_state.io.timer_h_enable = enables & 1;
+            pal_state.io.timer_v_enable = enables & 2;
+            pal_state.h_counter = hs[h]; pal_state.v_counter = pal_vs[v];
+            pal_state.io.h_count_target = ht[target];
+            pal_state.io.v_count_target = pal_vt[(h+v+target)%8];
+            pal_state.io.timer_irq_flag = (target & 1) != 0;
+            pal_state.io.timer_irq_enable = (target & 2) != 0;
+            for (unsigned c = 0; c < sizeof(cs)/sizeof(*cs); ++c)
+              compare(&pal_state, cs[c]);
+          }
   printf("SA-1 timer span differential: %llu cases passed\n",
          (unsigned long long)cases);
   interrupt_boundary();

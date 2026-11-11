@@ -75,6 +75,37 @@ int main(void) {
   s.hPos = 1360; s.vPos = 261;
   snes_advance_master_cycles(&s, 12);
   assert(s.hPos == 8 && s.vPos == 0 && !s.inVblank && !s.rdnmiPending);
+
+  /* PAL: a field is 312 lines. Line 261 runs on into 262 and vblank still
+   * starts at 225. The field wraps after line 311. */
+  s.palTiming = true;
+  s.hPos = 1360; s.vPos = 224;
+  snes_advance_master_cycles(&s, 12);
+  assert(s.hPos == 8 && s.vPos == 225 && s.inVblank && s.rdnmiPending);
+  s.hPos = 1360; s.vPos = 261;
+  snes_advance_master_cycles(&s, 12);
+  assert(s.hPos == 8 && s.vPos == 262 && s.inVblank && s.rdnmiPending);
+  s.hPos = 1360; s.vPos = 311;
+  snes_advance_master_cycles(&s, 12);
+  assert(s.hPos == 8 && s.vPos == 0 && !s.inVblank && !s.rdnmiPending);
+  /* Scheduling follows the field: the next V=225 is a whole PAL field away,
+   * and a V comparator below line 312 is reachable and latches. */
+  s.hPos = 0; s.vPos = 225;
+  assert(snes_master_clocks_until_line(&s, 225) == 0);
+  s.hPos = 4;
+  assert(snes_master_clocks_until_line(&s, 225) == 312u * 1364u - 4u);
+  assert(snes_master_clocks_until_line(&s, 312) == 0);
+  s.hPos = 0; s.vPos = 0; s.inIrq = false;
+  s.vIrqEnabled = true; s.vTimer = 300;
+  assert(snes_master_clocks_until_irq(&s) == 300u * 1364u);
+  s.vPos = 299; s.beamMasterLast = 0;
+  snes_advance_master_cycles(&s, 2 * 1364);
+  assert(s.inIrq && s.vPos == 300 && s.hPos == 1 && s.beamMasterLast == 1365);
+  s.inIrq = false;
+  /* The same comparator is out of range on NTSC. */
+  s.palTiming = false; s.vPos = 0; s.hPos = 0;
+  assert(snes_master_clocks_until_irq(&s) == 0);
+  s.vIrqEnabled = false;
   puts("beam events: mid-span clocks, HBlank-side IRQs/resume, joypad timer and field latches PASS");
   return 0;
 }

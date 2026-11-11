@@ -30,6 +30,7 @@ void snesrecomp_host_args_usage(const char *program, const char *extra) {
           "                        the executable's directory.\n"
           "  --expose-coverage-mod show the optional Coverage Capture mod.\n"
           "  --coverage-capture=on|off override capture for this run.\n"
+          "  --region=auto|ntsc|pal console timing; auto follows the ROM header.\n"
           "  --paused              start paused.\n"
           "  --script <path>       run an input script.\n"
           "  --framedump <dir>     write frames to this directory.\n"
@@ -91,6 +92,14 @@ int snesrecomp_host_args_parse(int *argc_io, char ***argv_io,
       if (!strcmp(value, "on")) out->coverage_capture = 1;
       else if (!strcmp(value, "off")) out->coverage_capture = 0;
       else { fprintf(stderr, "--coverage-capture requires on or off\n"); return 0; }
+      continue;
+    }
+    if (!strncmp(a, "--region=", 9)) {
+      const char *value = a + 9;
+      if (!strcmp(value, "auto")) out->region = kSnesRegionAuto;
+      else if (!strcmp(value, "ntsc")) out->region = kSnesRegionNtsc;
+      else if (!strcmp(value, "pal")) out->region = kSnesRegionPal;
+      else { fprintf(stderr, "--region requires auto, ntsc or pal\n"); return 0; }
       continue;
     }
 

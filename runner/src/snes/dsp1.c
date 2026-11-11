@@ -10,13 +10,15 @@
 #include "dsp1.h"
 #include "dsp1_hle.h"
 #include "saveload.h"
+#include "snes_region.h"
 
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
+/* The DSP-1's oscillator. The SNES master clock it is measured against
+ * depends on the console region (snes_region.h). */
 enum {
-  kSnesMasterHz = 21477272,
   kDsp1Hz = 7600000,
   kProgramWords = 2048,
   kDataRomWords = 1024,
@@ -88,6 +90,7 @@ struct Dsp1 {
   int hle_active;
   int warned_missing;
   int in_dsp;
+  bool pal_timing; /* console region; host configuration, not saved */
   uint64_t last_master;
   uint32_t frac;
   int64_t budget;
@@ -415,8 +418,9 @@ static void dsp1_hle_account_aot_access_spacing(Dsp1 *d) {
       d->hle.last_access_master == d->last_master &&
       d->hle.delay_cycles) {
     const uint32_t master_clocks = 16;
+    const uint32_t master_hz = snes_region_master_hz(d->pal_timing);
     const uint32_t dsp_cycles =
-        (master_clocks * kDsp1Hz + kSnesMasterHz - 1u) / kSnesMasterHz;
+        (master_clocks * kDsp1Hz + master_hz - 1u) / master_hz;
     if (dsp_cycles >= d->hle.delay_cycles) {
       d->hle.delay_cycles = 0;
       d->r.sr.rqm = 1;
@@ -673,6 +677,10 @@ Dsp1 *dsp1_create(void) {
 
 void dsp1_destroy(Dsp1 *d) { free(d); }
 
+void dsp1_set_pal_timing(Dsp1 *d, bool pal) {
+  if (d) d->pal_timing = pal;
+}
+
 void dsp1_reset(Dsp1 *d) {
   if (!d) return;
   Dsp1Regs r;
@@ -688,6 +696,7 @@ void dsp1_reset(Dsp1 *d) {
 
 void dsp1_sync(Dsp1 *d, uint64_t master_clock) {
   if (!d || d->in_dsp) return;
+  const uint64_t master_hz = snes_region_master_hz(d->pal_timing);
   if (d->hle_active) {
     if (master_clock <= d->last_master) {
       d->last_master = master_clock;
@@ -696,8 +705,8 @@ void dsp1_sync(Dsp1 *d, uint64_t master_clock) {
     uint64_t delta = master_clock - d->last_master;
     d->last_master = master_clock;
     uint64_t num = delta * (uint64_t)kDsp1Hz + d->frac;
-    uint64_t cycles = num / (uint64_t)kSnesMasterHz;
-    d->frac = (uint32_t)(num % (uint64_t)kSnesMasterHz);
+    uint64_t cycles = num / master_hz;
+    d->frac = (uint32_t)(num % master_hz);
     if (d->hle.delay_cycles) {
       if (cycles >= d->hle.delay_cycles) {
         d->hle.delay_cycles = 0;
@@ -713,8 +722,8 @@ void dsp1_sync(Dsp1 *d, uint64_t master_clock) {
   uint64_t delta = master_clock - d->last_master;
   d->last_master = master_clock;
   uint64_t num = delta * (uint64_t)kDsp1Hz + d->frac;
-  d->budget += (int64_t)(num / (uint64_t)kSnesMasterHz);
-  d->frac = (uint32_t)(num % (uint64_t)kSnesMasterHz);
+  d->budget += (int64_t)(num / master_hz);
+  d->frac = (uint32_t)(num % master_hz);
   if (d->budget <= 0) return;
 
   d->in_dsp = 1;

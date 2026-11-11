@@ -26,13 +26,14 @@
 extern CpuState g_cpu;
 extern Ppu *g_ppu;
 
-/* One NTSC field: 262 scanlines x 1364 master clocks. */
-#define BFD_MASTER_CYCLES_PER_FIELD 357368ull
+/* A field is 262 scanlines (PAL 312) of 1364 master clocks; vblank starts at
+ * V=225 on both. snes_master_clocks_per_field gives the field length. */
 #define BFD_MASTER_CYCLES_PER_LINE 1364u
 #define BFD_VBLANK_LINE 225u
 
-/* Bounds the run/park loop: a field holds 262 one-line park steps plus the
- * slices and interrupts between them. Only a pathological guest reaches it. */
+/* Bounds the run/park loop: a field holds 262 (PAL 312) one-line park steps
+ * plus the slices and interrupts between them. Only a pathological guest
+ * reaches it. */
 #define BFD_MAX_SLICES_PER_FIELD 1024
 
 /* 0 until the first frame has booted from the reset vector. */
@@ -129,7 +130,7 @@ void snes_beam_frame_driver_run_frame(void) {
   {
     uint32_t to_vblank = snes_master_clocks_until_line(g_snes, BFD_VBLANK_LINE);
     frame_end = g_snes->beamMasterLast +
-                (to_vblank ? to_vblank : BFD_MASTER_CYCLES_PER_FIELD);
+                (to_vblank ? to_vblank : snes_master_clocks_per_field(g_snes));
   }
 
   if (booting) {

@@ -43,6 +43,33 @@ typedef struct CartHeader {
 
 static void readHeader(const uint8_t* data, int length, int location, CartHeader* header);
 
+static SnesRegion s_region_override = kSnesRegionAuto;
+
+void snes_set_region_override(SnesRegion region) {
+  s_region_override = region;
+}
+
+/* The header decides unless the host or the environment says otherwise. The
+ * override exists for dumps whose header disagrees with the console they were
+ * sold for. It also runs a cartridge on the other console on purpose. */
+static bool select_pal_timing(const CartHeader *header, const char **source) {
+  SnesRegion region = s_region_override;
+  *source = "override";
+  if (region == kSnesRegionAuto) {
+    const char *e = getenv("SNESRECOMP_REGION");
+    if (e && !strcmp(e, "ntsc")) region = kSnesRegionNtsc;
+    else if (e && !strcmp(e, "pal")) region = kSnesRegionPal;
+    else if (e && e[0] && strcmp(e, "auto"))
+      printf("Warning! SNESRECOMP_REGION=%s is not ntsc, pal or auto; "
+             "using the header\n", e);
+    *source = "SNESRECOMP_REGION";
+  }
+  if (region == kSnesRegionNtsc) return false;
+  if (region == kSnesRegionPal) return true;
+  *source = "header";
+  return header->pal;
+}
+
 bool snes_loadRom(Snes* snes, const uint8_t* data, int length) {
   // if smaller than smallest possible, don't load
   if(length < 0x8000) {
@@ -205,6 +232,14 @@ else if (headers[used].cartType == CART_SA1)
       cart_ram_size = (int)synthetic_sram_size;
   }
 #endif
+
+  /* Before cart_load: the coprocessors it creates take their timing from it. */
+  {
+    const char *source;
+    snes->palTiming = select_pal_timing(&headers[used], &source);
+    printf("[snes_load] region=%s ($FFD9=%02x, from %s)\n",
+           snes_region_name(snes->palTiming), headers[used].region, source);
+  }
 
   cart_load(
     snes->cart, headers[used].cartType,
