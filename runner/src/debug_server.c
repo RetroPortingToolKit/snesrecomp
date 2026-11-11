@@ -2081,8 +2081,10 @@ static void send_line(const char *line) {
     send_all_bounded("\n", 1);
 }
 
+#define DEBUG_RESPONSE_CAPACITY 8192
+
 static void send_fmt(const char *fmt, ...) {
-    char buf[8192];
+    char buf[DEBUG_RESPONSE_CAPACITY];
     va_list ap;
     va_start(ap, fmt);
     vsnprintf(buf, sizeof(buf), fmt, ap);
@@ -5087,6 +5089,27 @@ void debug_server_note_composed_frame(const void *argb, unsigned pitch,
     unlock_mutex();
 }
 
+/* Same escaping rules as host_report.c, but reject overflow rather than
+ * silently shortening a path or letting send_fmt truncate the JSON object. */
+static int debug_json_escape(const char *src, char *out, size_t cap) {
+    size_t o = 0;
+    if (cap == 0) return 0;
+    for (const unsigned char *p = (const unsigned char *)src; *p; p++) {
+        unsigned char c = *p;
+        size_t needed = c < 0x20 ? 6 : (c == '\\' || c == '"' ? 2 : 1);
+        if (needed >= cap - o) { out[0] = 0; return 0; }
+        if (c < 0x20) {
+            snprintf(out + o, cap - o, "\\u%04x", (unsigned)c);
+            o += 6;
+        } else {
+            if (needed == 2) out[o++] = '\\';
+            out[o++] = (char)c;
+        }
+    }
+    out[o] = 0;
+    return 1;
+}
+
 static void cmd_screenshot(const char *args) {
     if (!g_ppu) { send_fmt("{\"error\":\"ppu not available\"}"); return; }
 
@@ -5138,10 +5161,16 @@ static void cmd_screenshot(const char *args) {
 
     // Determine output path
     const char *path = args[0] ? args : "debug_screenshot.bmp";
+    /* Reserve room for the fixed response fields as well as the escaped path. */
+    char escaped_path[DEBUG_RESPONSE_CAPACITY - 256];
+    if (!debug_json_escape(path, escaped_path, sizeof(escaped_path))) {
+        send_fmt("{\"error\":\"screenshot path exceeds reply capacity\"}");
+        return;
+    }
 
     // Write 24-bit BMP (no alpha)
     FILE *f = fopen(path, "wb");
-    if (!f) { send_fmt("{\"error\":\"cannot open file\",\"path\":\"%s\"}", path); return; }
+    if (!f) { send_fmt("{\"error\":\"cannot open file\",\"path\":\"%s\"}", escaped_path); return; }
 
     int row_bytes = w * 3;
     int pad = (4 - (row_bytes % 4)) % 4;
@@ -5184,7 +5213,7 @@ static void cmd_screenshot(const char *args) {
      * from a correct-looking image. */
     send_fmt("{\"ok\":true,\"path\":\"%s\",\"width\":%d,\"height\":%d,"
              "\"ws_extra\":%d,\"source\":\"%s\",\"frame\":%d}",
-             path, w, h, (int)g_ppu->extraLeftRight, source, snes_frame_counter);
+             escaped_path, w, h, (int)g_ppu->extraLeftRight, source, snes_frame_counter);
 }
 
 /* raster_journal — the per-line register waveform the renderer will replay.
