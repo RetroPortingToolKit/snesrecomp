@@ -35,6 +35,11 @@ struct SnesHdGpu {
   int32_t *metadata;
   double *affine;
   unsigned affine_height;
+  bool fp64;
+  int32_t *coordinates;
+  size_t coordinate_capacity;
+  uint32_t *affine32;
+  unsigned affine32_height;
   unsigned plane_width[kHdTextures], plane_height[kHdTextures];
   HdResident resident[kResidentPictures];
   SnesHdTilemap *maps[kSnesHdMaxTilemaps];
@@ -83,7 +88,7 @@ static const char *vertex_source =
   "#version 330 core\n"
   "void main(){vec2 p=vec2((gl_VertexID<<1)&2,gl_VertexID&2);gl_Position=vec4(p*2.0-1.0,0.0,1.0);}\n";
 static const char *fragment_source =
-  "#ifdef HD_AFFINE\ndouble canonical(double v){double n=floor(v+0.5LF);return abs(v-n)<=max(1048576.0LF,abs(v))*1.7763568394002505e-15LF?n:v;}\n#endif\n"
+  "#ifdef HD_FP64\ndouble canonical(double v){double n=floor(v+0.5LF);return abs(v-n)<=max(1048576.0LF,abs(v))*1.7763568394002505e-15LF?n:v;}\n#endif\n"
   "uniform usampler2D native_plane,object_plane,palette_plane;\n"
   "uniform isampler2D metadata;uniform usampler2DArray picture,tilemaps;\n"
   "uniform usampler2D affine_plane,overlay_plane;uniform isampler2D coordinate_plane;\n"
@@ -115,12 +120,17 @@ static const char *fragment_source =
   "ivec2 rem=numerator-q*den;t=lo.xy+q;uncertain=bvec2(rem.x<=2*scale||rem.x>=den-2*scale,rem.y<=2*scale||rem.y>=den-2*scale);"
   "if((map.w&2)!=0)uncertain=bvec2(false);"
   "if((lo.z&65536)!=0){t.x=lo.x;uncertain.x=false;}if((lo.w&65536)!=0){t.y=lo.y;uncertain.y=false;}}"
+  "\n#ifdef HD_FP64\n"
   "if(any(uncertain)){uvec4 d0=texelFetch(affine_plane,ivec2(0,pixel.y),0),d1=texelFetch(affine_plane,ivec2(1,pixel.y),0);"
   "precise double px=double(x)+double(sx)/double(scale);"
   "precise double ox=packDouble2x32(d0.xy),oy=packDouble2x32(d0.zw);"
   "precise double dx=packDouble2x32(d1.xy),dy=packDouble2x32(d1.zw);"
   "precise double tx=(ox+px*dx)/256.0LF,ty=(oy+px*dy)/256.0LF;"
   "if(uncertain.x)t.x=int(floor(canonical(tx)));if(uncertain.y)t.y=int(floor(canonical(ty)));}}\n"
+  "#else\n"
+  "if((map.w&1)==0){vec4 d=uintBitsToFloat(texelFetch(affine_plane,ivec2(0,pixel.y),0));"
+  "float px=float(x)+float(sx)/float(scale);t=ivec2(floor((d.xy+px*d.zw)/256.0));}}\n"
+  "#endif\n"
   "#endif\n"
   "index=fetch_index(t,cfg.z,cfg.y,texelFetch(metadata,ivec2(4,n.y),0),texelFetch(metadata,ivec2(5,n.y),0));}"
   "uint bg=index!=0u?0x5000u|index:0x500u;uint mainp=(visible&1u)!=0u?bg:0x500u,sub=(visible&2u)!=0u?bg:0x500u;"
@@ -156,9 +166,13 @@ static const char *coordinate_source =
   "tx=canonical(tx);ty=canonical(ty);int wx=int(floor(tx)),wy=int(floor(ty));"
   "int fx=int(floor((tx-double(wx))*65536.0LF)),fyq=int(floor((ty-double(wy))*65536.0LF));"
   "coordinates=ivec4(wx,wy,fx|(dx==0.0LF?65536:0),fyq|(dy==0.0LF?65536:0));}\n";
-static GLuint hd_shader(GLenum kind, const char *source, bool affine) {
-  const char *parts[2] = {affine ? "#version 400 core\n#define HD_AFFINE 1\n" :
-      "#version 330 core\n", source};
+/* Shader variants: the register path, the affine path in single precision
+ * (CPU coordinate plane) and the affine path in double precision. */
+static const char *const kHdPrefix[3] = {"#version 330 core\n",
+    "#version 330 core\n#define HD_AFFINE 1\n",
+    "#version 400 core\n#define HD_AFFINE 1\n#define HD_FP64 1\n"};
+static GLuint hd_shader(GLenum kind, const char *source, int variant) {
+  const char *parts[2] = {kHdPrefix[variant], source};
   GLuint shader = glCreateShader(kind);
   glShaderSource(shader, kind == GL_VERTEX_SHADER ? 1 : 2,
       kind == GL_VERTEX_SHADER ? &source : parts, NULL); glCompileShader(shader);
@@ -167,16 +181,16 @@ static GLuint hd_shader(GLenum kind, const char *source, bool affine) {
     fprintf(stderr, "SNES HD GPU shader: %s\n", log); glDeleteShader(shader); return 0; }
   return shader;
 }
-static GLuint hd_program_source(const char *source, bool affine) {
-  GLuint vs = hd_shader(GL_VERTEX_SHADER, vertex_source, false);
-  GLuint fs = hd_shader(GL_FRAGMENT_SHADER, source, affine);
+static GLuint hd_program_source(const char *source, int variant) {
+  GLuint vs = hd_shader(GL_VERTEX_SHADER, vertex_source, 0);
+  GLuint fs = hd_shader(GL_FRAGMENT_SHADER, source, variant);
   if (!vs || !fs) { if (vs) glDeleteShader(vs); if (fs) glDeleteShader(fs); return 0; }
   GLuint program = glCreateProgram(); glAttachShader(program, vs); glAttachShader(program, fs);
   glLinkProgram(program); glDeleteShader(vs); glDeleteShader(fs);
   GLint ok = 0; glGetProgramiv(program, GL_LINK_STATUS, &ok);
   if (!ok) {
     char log[2048]; glGetProgramInfoLog(program, sizeof(log), NULL, log);
-    fprintf(stderr, "SNES HD GPU %s program link: %s\n", affine ? "affine" : "register", log);
+    fprintf(stderr, "SNES HD GPU %s program link: %s\n", variant ? "affine" : "register", log);
     glDeleteProgram(program); return 0;
   }
   return program;
@@ -203,14 +217,29 @@ SnesHdGpu *SnesHdGpuCreate(void) {
   if (max_texture < 1024 || layers < kSnesHdMaxTilemaps || units < kHdTextures) { free(g); return NULL; }
   g->max_texture = (unsigned)max_texture;
   g->max_layers = layers < kResidentPictures ? (unsigned)layers : kResidentPictures;
-  g->program = hd_program_source(fragment_source, false);
+  g->program = hd_program_source(fragment_source, 0);
   if (!g->program) { free(g); return NULL; }
   /* Prepared double-precision camera jobs are optional. Register jobs retain
-   * the GL3.3 integer path; lacking GL4 keeps the portable consumer usable. */
-  if (ogl_IsVersionGEQ(4, 0)) {
-    g->affine_program = hd_program_source(fragment_source, true);
-    if (g->affine_program) g->coordinate_program = hd_program_source(coordinate_source, true);
+   * the GL3.3 integer path. Apple's OpenGL compiles GL4 double shaders but
+   * cannot build them for Metal and falls back to a software path that draws
+   * black, reporting no error; there, and without GL4, the coordinate plane is
+   * computed on the CPU and the shader stays in single precision. */
+  const char *no_fp64 = getenv("SNESRECOMP_HD_NO_FP64");
+#ifdef __APPLE__
+  g->fp64 = false;
+#else
+  g->fp64 = ogl_IsVersionGEQ(4, 0) && !(no_fp64 && *no_fp64 && *no_fp64 != '0');
+#endif
+  (void)no_fp64;
+  if (g->fp64) {
+    g->affine_program = hd_program_source(fragment_source, 2);
+    if (g->affine_program) g->coordinate_program = hd_program_source(coordinate_source, 2);
+    if (!g->affine_program || !g->coordinate_program) {
+      if (g->affine_program) glDeleteProgram(g->affine_program);
+      g->affine_program = g->coordinate_program = 0; g->fp64 = false;
+    }
   }
+  if (!g->fp64) g->affine_program = hd_program_source(fragment_source, 1);
   HdState saved; hd_save(&saved); glBindBuffer(GL_PIXEL_UNPACK_BUFFER, 0);
   glPixelStorei(GL_UNPACK_ALIGNMENT, 1); glPixelStorei(GL_UNPACK_ROW_LENGTH, 0);
   glGenTextures(kHdTextures, g->textures); glGenVertexArrays(1, &g->vao); hd_bind(g, 4);
@@ -225,14 +254,19 @@ SnesHdGpu *SnesHdGpuCreate(void) {
       kSnesHdMapHeight, kSnesHdMaxTilemaps, 0, GL_RED_INTEGER, GL_UNSIGNED_BYTE, NULL);
   g->query_counter = (HdQueryCounter)SDL_GL_GetProcAddress("glQueryCounter");
   g->query_result = (HdQueryResult64)SDL_GL_GetProcAddress("glGetQueryObjectui64v");
+  /* Zero counter bits means no timestamps (Apple's OpenGL returns zeros). */
+  GLint timestamp_bits = 0;
+  if (g->query_counter && g->query_result) glGetQueryiv(GL_TIMESTAMP, GL_QUERY_COUNTER_BITS, &timestamp_bits);
+  if (timestamp_bits <= 0) g->query_counter = NULL, g->query_result = NULL;
   if (g->query_counter && g->query_result) glGenQueries(kQueryFrames * 3, &g->queries[0][0]);
   g->stats.gpu_timestamps = g->query_counter && g->query_result;
   g->stats.source_gpu_bytes = (size_t)g->max_layers * 65536 +
       (size_t)kSnesHdMapWidth * kSnesHdMapHeight * kSnesHdMaxTilemaps;
   bool ok = glGetError() == GL_NO_ERROR; hd_restore(&saved);
   if (!ok) { SnesHdGpuDestroy(g); return NULL; }
-  fprintf(stderr, "SNES HD GPU available: %s, max texture%u, source layers%u\n",
-            glGetString(GL_RENDERER), g->max_texture, g->max_layers);
+  fprintf(stderr, "SNES HD GPU available: %s, max texture%u, source layers%u, affine %s\n",
+            glGetString(GL_RENDERER), g->max_texture, g->max_layers,
+            !g->affine_program ? "off" : g->fp64 ? "double" : "single + CPU plane");
   return g;
 }
 void SnesHdGpuReset(SnesHdGpu *g) {
@@ -245,12 +279,14 @@ void SnesHdGpuReset(SnesHdGpu *g) {
   }
 }
 bool SnesHdGpuSupportsAffine(const SnesHdGpu *g) { return g && g->affine_program; }
+bool SnesHdGpuAffineExact(const SnesHdGpu *g) { return g && g->affine_program && g->fp64; }
 void SnesHdGpuDestroy(SnesHdGpu *g) {
   if (!g) return;
   SnesHdGpuReset(g); glDeleteTextures(kHdTextures, g->textures); glDeleteVertexArrays(1, &g->vao);
   if (g->program) glDeleteProgram(g->program);
   if (g->affine_program) glDeleteProgram(g->affine_program);
   if (g->coordinate_program) glDeleteProgram(g->coordinate_program);
+  free(g->coordinates); free(g->affine32);
   if (g->coordinate_fbo) glDeleteFramebuffers(1, &g->coordinate_fbo);
   if (g->sample_program) glDeleteProgram(g->sample_program);
   if (g->sample_fbo) glDeleteFramebuffers(1, &g->sample_fbo);
@@ -286,6 +322,46 @@ bool SnesHdGpuReadStats(SnesHdGpu *g, bool wait, SnesHdGpuStats *stats) {
     }
   }
   *stats = g->stats; return true;
+}
+/* The coordinate program's expression, evaluated on the CPU: endpoints of
+ * every native column for every enhanced row, as texel and Q16 fraction. */
+static double hd_canonical(double v) {
+  double n = floor(v + 0.5);
+  return fabs(v - n) <= fmax(1048576.0, fabs(v)) * 1.7763568394002505e-15 ? n : v;
+}
+static int32_t hd_coordinate(double t, double step, int32_t *fraction) {
+  double w = floor(t);
+  *fraction = (int32_t)floor((t - w) * 65536.0) | (step == 0.0 ? 65536 : 0);
+  return (int32_t)w;
+}
+static bool hd_cpu_planes(SnesHdGpu *g, const SnesHdView *v, unsigned height,
+                          unsigned scale, unsigned sampling) {
+  size_t columns = v->width + 1, need = columns * height * 4;
+  if (g->coordinate_capacity < need) {
+    int32_t *c = realloc(g->coordinates, need * sizeof(*c)); if (!c) return false;
+    g->coordinates = c; g->coordinate_capacity = need;
+  }
+  if (g->affine32_height != height) {
+    uint32_t *a = realloc(g->affine32, (size_t)height * 32); if (!a) return false;
+    g->affine32 = a; g->affine32_height = height;
+  }
+  uint32_t requested = v->height * scale;
+  for (unsigned row = 0; row < height; ++row) {
+    uint32_t py = (uint32_t)((row / sampling) * 2u + 1u) * (requested / sampling) /
+        ((height / sampling) * 2u) * sampling + row % sampling;
+    unsigned y = py / scale;
+    int32_t left = y < v->height ? g->metadata[y * 24 + 10] : 0;
+    const double *t = g->affine + row * 4;
+    float f[4] = {(float)t[0], (float)t[1], (float)t[2], (float)t[3]};
+    memcpy(g->affine32 + row * 8, f, 16); memset(g->affine32 + row * 8 + 4, 0, 16);
+    for (size_t c = 0; c < columns; ++c) {
+      double x = (double)(left + (int32_t)c), mx = x * t[2], my = x * t[3];
+      double tx = hd_canonical((t[0] + mx) / 256.0), ty = hd_canonical((t[1] + my) / 256.0);
+      int32_t *o = g->coordinates + (row * columns + c) * 4;
+      o[0] = hd_coordinate(tx, t[2], &o[2]); o[1] = hd_coordinate(ty, t[3], &o[3]);
+    }
+  }
+  return true;
 }
 static bool HdDrawSamples(SnesHdGpu *g, const SnesHdFrame *frame, unsigned scale,
                    unsigned width, unsigned height, const uint32_t *native_override,
@@ -382,7 +458,7 @@ static bool HdDrawSamples(SnesHdGpu *g, const SnesHdFrame *frame, unsigned scale
     const SnesHdTilemap *map = j->tilemap ? v.tilemaps[j->tilemap - 1] : NULL;
     m[16] = map ? (int)map_layers[j->tilemap - 1] + 1 : 0;
     m[17] = map ? (int)map->width : 0; m[18] = map ? (int)map->height : 0; m[19] = 0;
-    if (g->coordinate_program && (j->kind == kSnesHdAffine || j->kind == kSnesHdReconstructed)) {
+    if (g->affine_program && (j->kind == kSnesHdAffine || j->kind == kSnesHdReconstructed)) {
       if (j->kind == kSnesHdReconstructed ||
           (fabs(j->affine[2]) + fabs(j->affine[6]) < 65536 &&
            fabs(j->affine[3]) + fabs(j->affine[7]) < 65536)) m[19] = 1;
@@ -390,6 +466,7 @@ static bool HdDrawSamples(SnesHdGpu *g, const SnesHdFrame *frame, unsigned scale
     }
     m[20] = j->map_offset_x; m[21] = j->map_offset_y; m[22] = j->composition; m[23] = 0;
   }
+  if (affine && !g->fp64 && !hd_cpu_planes(g, &v, height, scale, sampling)) return false;
   HdState saved; hd_save(&saved); glBindBuffer(GL_PIXEL_UNPACK_BUFFER, 0);
   glPixelStorei(GL_UNPACK_ALIGNMENT, 1); glPixelStorei(GL_UNPACK_ROW_LENGTH, 0);
   unsigned query = (unsigned)g->stats.frames % kQueryFrames;
@@ -423,7 +500,8 @@ static bool HdDrawSamples(SnesHdGpu *g, const SnesHdFrame *frame, unsigned scale
   hd_image(g, 1, GL_RGBA16UI, v.width, v.height, GL_RGBA_INTEGER, GL_UNSIGNED_SHORT, g->objects);
   hd_image(g, 2, GL_R16UI, 256, v.height, GL_RED_INTEGER, GL_UNSIGNED_SHORT, g->palette);
   hd_image(g, 3, GL_RGBA32I, 6, v.height, GL_RGBA_INTEGER, GL_INT, g->metadata);
-  hd_image(g, 6, GL_RGBA32UI, 2, height, GL_RGBA_INTEGER, GL_UNSIGNED_INT, g->affine);
+  hd_image(g, 6, GL_RGBA32UI, 2, height, GL_RGBA_INTEGER, GL_UNSIGNED_INT,
+      affine && !g->fp64 ? (const void *)g->affine32 : (const void *)g->affine);
   hd_image(g, 7, GL_R32UI, v.width, v.height, GL_RED_INTEGER, GL_UNSIGNED_INT, g->overlay);
   g->texture_width = g->width; g->texture_height = g->height;
   uploaded += (uint64_t)v.width * v.height * 16 + v.height * (512 + 96) + height * 32;
@@ -431,7 +509,16 @@ static bool HdDrawSamples(SnesHdGpu *g, const SnesHdFrame *frame, unsigned scale
   glBindVertexArray(g->vao); glDisable(GL_SCISSOR_TEST); glDisable(GL_BLEND);
   glDisable(GL_DEPTH_TEST); glDisable(GL_CULL_FACE); glDisable(GL_FRAMEBUFFER_SRGB);
   glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
-  if (affine && g->coordinate_program) {
+  if (affine && !g->fp64) {
+    hd_bind(g, 8);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+    if (g->coordinate_width != v.width + 1 || g->coordinate_height != height) {
+      glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA32I, v.width + 1, height, 0, GL_RGBA_INTEGER, GL_INT, g->coordinates);
+      g->coordinate_width = v.width + 1; g->coordinate_height = height;
+    } else glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, v.width + 1, height, GL_RGBA_INTEGER, GL_INT, g->coordinates);
+    uploaded += (uint64_t)(v.width + 1) * height * 16;
+  } else if (affine && g->coordinate_program) {
     hd_bind(g, 8);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
@@ -571,6 +658,7 @@ bool SnesHdGpuRender(SnesHdGpu *g,const SnesHdFrame *f,unsigned scale,
 struct SnesHdGpu { int unused; };
 SnesHdGpu *SnesHdGpuCreate(void) { return NULL; }
 bool SnesHdGpuSupportsAffine(const SnesHdGpu *g) { (void)g; return false; }
+bool SnesHdGpuAffineExact(const SnesHdGpu *g) { (void)g; return false; }
 void SnesHdGpuDestroy(SnesHdGpu *g) { (void)g; }
 void SnesHdGpuReset(SnesHdGpu *g) { (void)g; }
 bool SnesHdGpuAdmit(SnesHdGpu *g,unsigned w,unsigned h,unsigned s,size_t b,unsigned *x,unsigned *y) {
