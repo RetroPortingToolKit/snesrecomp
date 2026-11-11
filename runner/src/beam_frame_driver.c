@@ -10,6 +10,7 @@
 
 #include <stdbool.h>
 #include <stdint.h>
+#include <stdlib.h>
 
 #include "common_cpu_infra.h"
 #include "common_rtl.h"
@@ -30,6 +31,19 @@ extern Ppu *g_ppu;
 #define BFD_MASTER_CYCLES_PER_FIELD 357368ull
 #define BFD_MASTER_CYCLES_PER_LINE 1364u
 #define BFD_VBLANK_LINE 225u
+
+/* The 65816's reset sequence: the first instruction starts at master clock
+ * 186 while the beam starts at 0 (MesenCE, from power-on). SNESRECOMP_RESET_CLOCK;
+ * default: on with the master-clock APU timeline (RtlApuUseMasterClock). */
+#define BFD_RESET_CLOCKS 186u
+static bool reset_clock_rule(void) {
+  static int env = -2;
+  if (env == -2) {
+    const char *e = getenv("SNESRECOMP_RESET_CLOCK");
+    env = e ? e[0] != '0' : -1;
+  }
+  return env >= 0 ? env : rtl_apu_master_clock();
+}
 
 /* Bounds the run/park loop: a field holds 262 one-line park steps plus the
  * slices and interrupts between them. Only a pathological guest reaches it. */
@@ -134,6 +148,8 @@ void snes_beam_frame_driver_run_frame(void) {
 
   if (booting) {
     s_resume_pc = reset_vector();
+    if (reset_clock_rule() && g_cpu.master_cycles < BFD_RESET_CLOCKS)
+      advance_parked(BFD_RESET_CLOCKS);
   } else {
     /* Vblank-edge PPU work a frame-model host owns: OAMADDR re-latches. */
     ppu_checkOverscan(g_ppu);

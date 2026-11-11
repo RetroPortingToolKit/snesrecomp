@@ -47,6 +47,11 @@ struct Snes {
   // its master clock; HVBJOY must not add the legacy polling advance too.
   bool cpuReadClocked;
 
+  // Field parity: toggles each time the beam wraps to V=0, false after reset.
+  // Line 240 of a field with it set is the short line (snes.c). Serialized
+  // explicitly in RTLS v12, outside the frozen hPos..divideResult blob.
+  bool fieldParity;
+
   // Host timing anchor; excluded from savestates and reconciled after load.
   uint64_t beamMasterLast;
 

@@ -416,7 +416,9 @@ static uint64_t fp_fnv1a(const uint8_t *p, size_t n) {
  * v8: multitap chunk (seats, IOBit lines, per-bank shift counters, latched
  *     automatic-read words). Older files load with no multitap configured,
  *     which is the pre-multitap two-pad machine exactly. */
-#define RTL_SAV_VERSION 11u /* Canonical access-exact SPC/DSP timing state. */
+/* v12: the field parity (the short line's field) after the RDNMI latch.
+ *      v11 files load with the parity of a fresh reset. */
+#define RTL_SAV_VERSION 12u /* Field parity for the short line. */
 /* States are build-specific. Older blobs lack required live DSP phases. */
 #define RTL_SAV_VERSION_MIN 11u
 /* Independent of sizes supplied by an untrusted snapshot or title payload. */
