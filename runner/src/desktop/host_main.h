@@ -221,6 +221,13 @@ typedef struct SnesDesktopHostGame {
    * raster-state capture. The host owns this writable surface. A separate
    * draw_frame may retain a wider image for presentation. */
   void (*publish_native_field)(uint8_t *field, unsigned number);
+  /* The title may grant exact bundled presentation packages in its own room.
+   * The runtime still verifies the feature has only trusted cosmetic plugins. */
+  const char *(*netplay_cosmetic_allow)(void);
+  /* Some titles qualify only their full seated rollback configuration. */
+  int netplay_requires_seated_rollback;
+  /* Optional trace-build input source; pad bits enter normal local admission. */
+  uint16_t (*netplay_diagnostic_pad)(uint32_t tick, int seat, uint16_t live);
 } SnesDesktopHostGame;
 
 /* The whole program. Returns the process exit code. */

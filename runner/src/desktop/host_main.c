@@ -2630,6 +2630,8 @@ static void host_lobby_ensure_init(void) {
   memset(&opts, 0, sizeof(opts));
   opts.rematch_set_ready = 1;
   opts.max_players = g_game->num_players;
+  if (g_game->netplay_cosmetic_allow)
+    opts.cosmetic_allow = g_game->netplay_cosmetic_allow();
   if (snes_host_lobby_init(&id, &opts) != 0)
     fprintf(stderr, "netplay: snes_host_lobby_init failed\n");
 }
@@ -2735,9 +2737,13 @@ static uint16_t netplay_capture_pad(void *ctx) {
   (void)ctx;
   PollKeyboardControls(snesrecomp_sdl_get_keyboard_state());
   const unsigned player = snes_netplay_input_player() == 1 ? 1 : 0;
-  return (uint16_t)snes_savestate_menu_filter_guest_input(
-      (((g_input_state | g_pad_buttons) >> (player * 12)) |
-       g_gamepad[player].axis_buttons) & 0x0fffu);
+  uint16_t live = (uint16_t)((((g_input_state | g_pad_buttons) >> (player * 12)) |
+                              g_gamepad[player].axis_buttons) & 0x0fffu);
+#if SNESRECOMP_TRACE
+  if (g_game->netplay_diagnostic_pad)
+    live = g_game->netplay_diagnostic_pad(snes_netplay_sim_tick(), snes_netplay_local_slot(), live) & 0x0fffu;
+#endif
+  return (uint16_t)snes_savestate_menu_filter_guest_input(live);
 }
 
 static void netplay_poll_events(void *ctx, int *want_soft_exit) {
@@ -3750,6 +3756,13 @@ int snesrecomp_desktop_main(const SnesDesktopHostGame *game, int argc, char **ar
     snes_netplay_apply_env(&g_netplay_cfg);
     g_netplay_pending = g_netplay_cfg.enabled;
     g_netplay_from_lobby = 0;
+  }
+  if (g_netplay_pending && game->netplay_requires_seated_rollback &&
+      (!g_netplay_cfg.rollback || g_netplay_cfg.spectator ||
+       g_netplay_cfg.slot_count != game->num_players)) {
+    fprintf(stderr, "netplay: this title requires a %d-player rollback session with both seats occupied\n",
+            game->num_players);
+    return 1;
   }
   if (g_netplay_pending && game->prepare_netplay) {
     char reason[512] = {0};
