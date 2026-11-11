@@ -2486,10 +2486,12 @@ def _emit_return(op: Return) -> List[str]:
         return [
             "cpu_trace_event(cpu, 0, CPU_TR_RTI, 0, 0);",
             "{ cpu->S = (uint16)(cpu->S + 1); cpu->P = cpu_read8(cpu, 0x00, cpu->S); cpu_p_to_mirrors(cpu);",
-            "  cpu->S = (uint16)(cpu->S + 2);  /* pull + discard PC */",
-            "  if (!cpu->emulation) cpu->S = (uint16)(cpu->S + 1);  /* native: pull + discard PB */",
+            "  uint16 _rti_pc = (uint16)(cpu_read8(cpu, 0x00, (uint16)(cpu->S + 1)) | (cpu_read8(cpu, 0x00, (uint16)(cpu->S + 2)) << 8));",
+            "  cpu->S = (uint16)(cpu->S + 2);  /* pull PC */",
+            "  uint8 _rti_pb = cpu->PB;",
+            "  if (!cpu->emulation) { cpu->S = (uint16)(cpu->S + 1); _rti_pb = cpu_read8(cpu, 0x00, cpu->S); }  /* native: pull PB */",
             "  cpu_trace_px_record(cpu, 0, 3 /*RTI*/, cpu->P, cpu->P);",
-            "  return RECOMP_RETURN_NORMAL; /* RTI: popped interrupt frame */ }",
+            "  return interp_bridge_aot_rti(cpu, ((uint32)_rti_pb << 16) | _rti_pc); /* RTI: host boundary, or on at the popped PC */ }",
         ]
     # ── Option-1 cpu->S return-frame ABI (RTS / RTL) ──────────────────
     # ALWAYS pop the hardware return frame the matching JSR/JSL pushed

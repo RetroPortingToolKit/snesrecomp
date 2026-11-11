@@ -111,7 +111,8 @@ def _analysis_input_digest(*, rom: bytes, generator_digest: str,
                            module_id: str = "main",
                            module_prefix: str | None = None,
                            instruction_blocks: bool = False,
-                           region_paced: bool = False) -> str:
+                           region_paced: bool = False,
+                           aot_resume: bool = False) -> str:
     value = {
         "format": CACHE_FORMAT_VERSION,
         "rom": hashlib.sha256(rom).hexdigest(),
@@ -129,6 +130,7 @@ def _analysis_input_digest(*, rom: bytes, generator_digest: str,
         "max_nodes": int(max_nodes),
         "instruction_blocks": bool(instruction_blocks),
         "region_paced": bool(region_paced),
+        "aot_resume": bool(aot_resume),
         "sharding": [int(shard_threshold_bytes), int(shard_pc_span)],
     }
     encoded = json.dumps(
@@ -228,6 +230,9 @@ def main() -> int:
              "a funcs.h beside the cfg files; default: no prefix")
     parser.add_argument("--region-paced", action="store_true",
                         help="opt in to conservative native-mode per-access region timing (requires --instruction-blocks)")
+    parser.add_argument("--aot-resume", action="store_true",
+                        help="every compiled instruction is also an entry, so code a deadline stopped in "
+                             "goes on compiled (requires --region-paced)")
     parser.add_argument("--no-host-root-scan", action="store_true")
     parser.add_argument("--host-alias-header", default=None,
                         help="funcs.h whose alias declarations name host entry "
@@ -267,6 +272,8 @@ def main() -> int:
     args = parser.parse_args()
     if args.region_paced and not args.instruction_blocks:
         parser.error("--region-paced requires --instruction-blocks")
+    if args.aot_resume and not args.region_paced:
+        parser.error("--aot-resume requires --region-paced")
     if args.analysis_backend == "python":
         parser.error("the Python analyzer was retired; the native analyzer "
                      "is the only one (drop --analysis-backend python)")
@@ -388,6 +395,7 @@ def _generate(args, parser, cfg_dir, *, symbol_roots=()):
         module_id=args.module_id, module_prefix=args.module_prefix,
         instruction_blocks=args.instruction_blocks,
         region_paced=args.region_paced,
+        aot_resume=args.aot_resume,
     )
     cached = _verified_cached_stats(out_dir, analysis_input_digest)
     if cached is not None and not args.no_link_closure_check:
@@ -445,6 +453,7 @@ def _generate(args, parser, cfg_dir, *, symbol_roots=()):
         enable_hle=not args.no_hle,
         instruction_blocks=args.instruction_blocks,
         region_paced=args.region_paced,
+        aot_resume=args.aot_resume,
         shard_threshold_bytes=shard_threshold_bytes,
         shard_pc_span=shard_pc_span,
         check_link_closure=not args.no_link_closure_check,

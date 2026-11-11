@@ -1916,8 +1916,13 @@ uint8 ReadRegOpenBus(uint16 reg, uint8 open_bus) {
   if (reg >= 0x2000 && reg < 0x2008) {
     return !s_guest_scope_active && msu1_enabled() ? msu1_read(reg) : open_bus;
   }
-  if (reg == 0x2137 ||
-      (reg == 0x4212 && g_snes && g_snes->cpuReadClocked))
+  /* The beam at the instruction's start, where the interpreter leaves it
+   * (it syncs after every opcode): the H/V latch, PPU reads during rendering
+   * ($2138/$213B fetch-dependent), $4210-$4212 and the joypad ports all read
+   * beam state. Compiled code reaches here at its own clock, which the
+   * beam has not walked to yet. */
+  if (g_snes && ((reg >= 0x2100 && reg < 0x2140) || reg == 0x4016 || reg == 0x4017 ||
+                 (reg >= 0x4200 && reg < 0x4220)))
     snes_sync_master_clock(g_snes, g_cpu.master_cycles);
   if (reg >= 0x3000 && reg < 0x3300 && g_snes->cart->type == CART_SUPERFX) {
     cart_sync_coprocessors(g_snes->cart, g_cpu.master_cycles);
