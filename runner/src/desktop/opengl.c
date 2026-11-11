@@ -458,6 +458,11 @@ static void OpenGLRenderer_EndDraw(void) {
     int filter = g_config.linear_filtering ? GL_LINEAR : GL_NEAREST;
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, filter);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, filter);
+    /* Linear taps at the image boundary must extend the edge pixel rather
+     * than sample the opposite edge. Reapply after shader presets, which
+     * may set a different addressing mode on this same input texture. */
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
     glBindVertexArray(g_VAO);
     glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
   } else {
