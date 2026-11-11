@@ -59,6 +59,33 @@ static uint64_t snes_clocks_to_line_ahead(const Snes *snes, uint32_t lines) {
   return d;
 }
 
+/* DRAM refresh points (SNESRECOMP_REFRESH_AT_BEAM; default: on with the
+ * master-clock APU timeline). The CPU and DMA stall 40 master clocks at a
+ * fixed place on every line: H = 538 - (the line's start clock & 7), 538 or
+ * 534 as lines alternate (MesenCE memoryManager.dramRefreshPosition). */
+bool snes_refresh_at_beam(void) {
+  static int env = -2;
+  if (env == -2) { const char *e = getenv("SNESRECOMP_REFRESH_AT_BEAM"); env = e ? e[0] != '0' : -1; }
+  extern bool rtl_apu_master_clock(void);
+  return env >= 0 ? env : rtl_apu_master_clock();
+}
+
+static void snes_beam_at_clock(const Snes *snes, uint64_t at, int64_t *h_out, int *v_out,
+                               bool *short_out);
+
+/* The first refresh point after master clock `after` (snes.h). */
+uint64_t snes_next_refresh(const Snes *snes, uint64_t after) {
+  int64_t h;
+  int v;
+  bool short_line;
+  snes_beam_at_clock(snes, after + 1u, &h, &v, &short_line);
+  uint64_t line = after + 1u - (uint64_t)h;
+  uint64_t point = line + 538u - (line & 7u);
+  if (point > after) return point;
+  line += short_line ? 1360u : 1364u;
+  return line + 538u - (line & 7u);
+}
+
 /* The beam (H in master clocks, V, whether its line is the short one) at
  * master clock `at`, either side of its last sync. */
 static void snes_beam_at_clock(const Snes *snes, uint64_t at, int64_t *h_out, int *v_out,

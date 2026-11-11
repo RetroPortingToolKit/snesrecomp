@@ -203,6 +203,12 @@ uint32_t snes_master_clocks_until_line(const Snes *snes, uint32_t line);
  * is snes->fieldParity from its V=225 until the beam wraps to V=0. */
 uint32_t snes_line_clocks(const Snes *snes, uint32_t v, bool parity);
 
+/* DRAM refresh at the beam (SNESRECOMP_REFRESH_AT_BEAM): 40 master clocks at
+ * a fixed H of every line, charged per point the CPU crosses. */
+bool snes_refresh_at_beam(void);
+/* The first refresh point after master clock `after`. */
+uint64_t snes_next_refresh(const Snes *snes, uint64_t after);
+
 /* Freeze (1) / release (0) the beam across an IRQ handler dispatch — see the
  * comment on the implementation. The host's frame loop brackets
  * interp_bridge_run_interrupt with this for raster IRQs. */
