@@ -54,3 +54,20 @@ def test_render_hdma_first_slot(tmp_path):
         'runner/src/snes/dma.c','runner/src/snes/sdd1.c','-lm','-o',str(exe)],cwd=ROOT,check=True)
     subprocess.run([str(exe)],check=True)
 
+
+@pytest.mark.parametrize('test,extra', [
+    ('dma/hvbjoy_refresh_test.c', []),
+    ('dma/last_cycle_test.c', ['runner/src/snes/last_cycle.c']),
+    ('frame_driver/exact_rules_test.c', []),
+])
+def test_exact_rules(tmp_path, test, extra):
+    cc = shutil.which('gcc') or shutil.which('cc')
+    if cc is None:
+        pytest.skip('C compiler unavailable')
+    exe = tmp_path / 'exact.exe'
+    subprocess.run([cc, '-std=c11', '-O1', '-DSNESRECOMP_REVERSE_DEBUG=0',
+        '-ffunction-sections', '-fdata-sections', '-Irunner/src',
+        '-Irunner/src/snes', '-Itests/dma', 'tests/' + test, *extra,
+        'runner/src/snes/snes.c', 'runner/src/snes/dma.c',
+        'runner/src/snes/sdd1.c', '-lm', '-o', str(exe)], cwd=ROOT, check=True)
+    subprocess.run([str(exe)], check=True)
