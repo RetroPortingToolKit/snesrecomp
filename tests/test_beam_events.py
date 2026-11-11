@@ -71,3 +71,22 @@ def test_exact_rules(tmp_path, test, extra):
         'runner/src/snes/snes.c', 'runner/src/snes/dma.c',
         'runner/src/snes/sdd1.c', '-lm', '-o', str(exe)], cwd=ROOT, check=True)
     subprocess.run([str(exe)], check=True)
+
+
+@pytest.mark.parametrize('mode', ['on', 'off'])
+def test_refresh_charge(tmp_path, mode):
+    cc = shutil.which('gcc') or shutil.which('cc')
+    if cc is None:
+        pytest.skip('C compiler unavailable')
+    source = (ROOT / 'runner/src/common_cpu_infra.c').read_text(encoding='utf-8')
+    start = source.index('uint64_t g_refresh_charged_upto;')
+    end = source.index('\n}\n', source.index('void snes_refresh_charge(void) {')) + 3
+    charge = tmp_path / 'refresh_charge.c'
+    charge.write_text('#include "cpu_state.h"\n#include "snes/snes.h"\nextern CpuState g_cpu;\nextern Snes *g_snes;\n'
+                      + source[start:end], encoding='utf-8')
+    exe = tmp_path / 'refresh.exe'
+    subprocess.run([cc, '-std=c11', '-O1', '-DSNESRECOMP_REVERSE_DEBUG=0',
+        '-Irunner/src', '-Irunner/src/snes', '-Itests/dma',
+        'tests/dma/refresh_charge_test.c', str(charge), 'runner/src/snes/snes.c',
+        'runner/src/snes/dma.c', 'runner/src/snes/sdd1.c', '-lm', '-o', str(exe)], cwd=ROOT, check=True)
+    subprocess.run([str(exe), mode], check=True)
