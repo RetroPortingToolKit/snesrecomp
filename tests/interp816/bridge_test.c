@@ -61,6 +61,9 @@ static int      g_owner_target_result;
 static int      g_aot_tail_chain_probe;
 static int      g_aot_skips_root;
 static int      g_tail_chain_direct;
+static int      g_paired_return_probe;
+static uint8_t  g_paired_inline_bytes;
+static uint32_t g_paired_target, g_paired_popped_pc;
 static int      g_nested_chain_direct;
 #define FAKE_AOT 0x008100u
 #define FAKE_AOT_2 0x008200u
@@ -212,11 +215,12 @@ void cpu_interrupt_context_enter(void) {}
 void cpu_interrupt_context_leave(void) {}
 int cpu_interrupt_context_active(void) { return 0; }
 uint8 cpu_dispatch_inline_arg_bytes(uint32 pc24) {
-    (void)pc24; return 0;
+    return g_paired_return_probe && pc24 == g_paired_target ? g_paired_inline_bytes : 0;
 }
 int cpu_dispatch_has_entry(CpuState *cpu, uint32 pc24) {
     (void)cpu;
     pc24 &= 0xFFFFFF;
+    if (g_paired_return_probe) return pc24 == g_paired_target;
     return pc24 == FAKE_AOT ||
            ((g_aot_double_rewrite || g_aot_crosses_interp_owner || g_aot_nested_deadline) &&
             pc24 == FAKE_AOT_2);
@@ -246,6 +250,18 @@ RecompReturn cpu_dispatch_pc(CpuState *cpu, uint32 pc24, uint16 miss_restore) {
 RecompReturn cpu_dispatch_pc_paired(CpuState *cpu, uint32 pc24,
                                     uint8 frame_size) {
     cpu->host_return_valid = frame_size;
+    if (g_paired_return_probe && pc24 == g_paired_target) {
+        ++g_aot_called;
+        uint16_t lo = cpu_read8(cpu, 0, ++cpu->S);
+        uint16_t hi = cpu_read8(cpu, 0, ++cpu->S);
+        if (frame_size == 3) cpu->PB = cpu_read8(cpu, 0, ++cpu->S);
+        g_paired_popped_pc = ((uint32_t)cpu->PB << 16) |
+            (uint16_t)((lo | (hi << 8)) + 1u + g_paired_inline_bytes);
+        /* Only bound the bridge run after this real guest-frame pop.
+         * The arbitrary charge is not a hardware timing assertion. */
+        cpu->master_cycles += 64;
+        return RECOMP_RETURN_NORMAL;
+    }
     if (g_aot_nested_deadline && pc24 == FAKE_AOT) {
         RecompReturn result = interp_tier_dispatch_balanced(
             cpu, 0x008300, FAKE_AOT, cpu->S, frame_size, false);
@@ -564,6 +580,50 @@ static S19Run s19_run(const uint8_t *code, int len, int x16) {
     return r;
 }
 
+/* The paired caller resumes within PB even when the sequential PC or
+ * a callee's inline argument bytes cross $FFFF. Exercise real interpreted
+ * JSR, JSL and JSR (abs,X) calls against a frame-consuming paired body. */
+static void paired_continuation_bank_cases(void) {
+    const uint8_t banks[] = {0x00, 0x40, 0x80, 0xc0, 0xff};
+    const uint8_t ops[] = {0x20, 0x22, 0xfc};
+    printf("Paired call continuation stays in the caller bank\n");
+    g_paired_return_probe = 1;
+    g_test_cart.type = CART_HIROM;
+    g_test_cart.rom = RAM; g_test_cart.romSize = MEMSZ;
+    for (unsigned b=0; b<sizeof banks; ++b)
+      for (unsigned o=0; o<sizeof ops; ++o)
+        for (unsigned scenario=0; scenario<3; ++scenario) {
+          memset(RAM, 0, MEMSZ); init_cpu();
+          const unsigned length = ops[o] == 0x22 ? 4 : 3;
+          g_paired_inline_bytes = scenario == 2 ? 3 : 0;
+          const uint16_t pc = scenario == 0 ? 0x8000 :
+              (uint16_t)(0x10000u - length - g_paired_inline_bytes);
+          const uint32_t start = ((uint32_t)banks[b] << 16) | pc;
+          g_c.emulation=0; cpu_mirrors_to_p(&g_c);
+          RAM[start]=ops[o];
+          RAM[start+1]=0; RAM[start+2]=ops[o] == 0xfc ? 0x82 : 0x81;
+          if (ops[o] == 0x22) RAM[start+3]=0x83;
+          RAM[((uint32_t)banks[b]<<16)|0x8200]=0;
+          RAM[((uint32_t)banks[b]<<16)|0x8201]=0x81;
+          g_paired_target=((uint32_t)(ops[o] == 0x22 ? 0x83 : banks[b])<<16)|0x8100;
+          g_aot_called=0; g_paired_popped_pc=0xffffffffu;
+          interp_bridge_set_master_deadline(1);
+          int rc=interp_bridge_run_until_quiescent(&g_c,start);
+          uint32_t expected=((uint32_t)banks[b]<<16)|
+              (uint16_t)(pc+length+g_paired_inline_bytes);
+          uint32_t resume=interp_bridge_lle_resume_pc();
+          CHECK(rc==1 && g_aot_called==1 && g_c.S==0x01ff &&
+                g_paired_popped_pc==expected && resume==expected,
+                "op=%02X start=%06X inline=%u popped=%06X resume=%06X expected=%06X S=%04X calls=%d rc=%d",
+                ops[o],(unsigned)start,g_paired_inline_bytes,
+                (unsigned)g_paired_popped_pc,(unsigned)resume,(unsigned)expected,
+                g_c.S,g_aot_called,rc);
+          interp_bridge_set_master_deadline(0);
+        }
+    g_paired_return_probe=0; g_paired_inline_bytes=0;
+    g_test_cart.type=CART_LOROM;
+}
+
 int main(void) {
     const char *journal = "tier2_bridge_test.jsonl";
     remove(journal);
@@ -575,6 +635,8 @@ int main(void) {
     RAM = malloc(MEMSZ);
     g_test_cart.type = CART_LOROM;
     g_test_snes.cart = &g_test_cart;
+
+    paired_continuation_bank_cases();
 
     printf("S0 APU timeline policy remains cartridge-scoped\n");
     CHECK(!interp_bridge_use_absolute_apu_timeline(false, false, false),
