@@ -1282,7 +1282,8 @@ typedef struct RtlRollbackResidue {
    *                 apuCatchupCycles and autoJoyTimer move while guest memory
    *                 stays byte-identical.
    *   last_hdmaen   $420C shadow the raster journal reads.
-   *   interp_apu_driving  suppresses the per-touch APU catch-up.
+   *   interp_apu_driving is retained as a zero byte for this layout. Its live
+   *   value belongs to the caller execution scope, not the guest timeline.
    * cosim_state.c already hashes g_memsel as guest state; the rollback path
    * simply never did. */
   uint8    memsel;
@@ -1383,14 +1384,19 @@ static void rtl_mmio_shadow_resync_get(uint8 *memsel, uint8 *hdmaen,
                                        uint8 *apu_driving) {
   *memsel = g_memsel;
   *hdmaen = g_snesrecomp_last_hdmaen;
-  *apu_driving = (uint8)(g_interp_apu_driving ? 1 : 0);
+  /* An in-flight capture can observe the interpreter scope set. Recreating
+   * that native call stack is the resume API's job; persisting it as a live
+   * caller role leaks APU catch-up suppression after the resumed call exits. */
+  *apu_driving = 0;
 }
 
 static void rtl_mmio_shadow_resync_set(uint8 memsel, uint8 hdmaen,
                                        uint8 apu_driving) {
   g_memsel = memsel;
   g_snesrecomp_last_hdmaen = hdmaen;
-  g_interp_apu_driving = apu_driving ? 1 : 0;
+  /* Preserve either an AOT caller or an already-active interpreter/bounce
+   * scope. Guest clocks and MMIO shadows above still restore normally. */
+  (void)apu_driving;
 }
 
 /*
