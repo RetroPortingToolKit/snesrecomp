@@ -3561,6 +3561,7 @@ uint8_t ppu_read(Ppu* ppu, uint8_t adr) {
  *                                   the field ended, so the guest resumes
  *                                   with the register file it last wrote */
 int g_ppu_scanout_latch_bypass = 0;
+int g_ppu_brightness_truncate = 0;
 
 static PpuVramWriteLogHook s_vram_write_log_hook;
 
