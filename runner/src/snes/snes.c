@@ -29,6 +29,83 @@ uint64_t g_snes_dma_charged;
 int snes_frame_counter;
 static const double apuCyclesPerMaster = (32040 * 32) / (1364 * 262 * 60.0);
 
+/* The short scanline (SNESRECOMP_SHORT_LINE; default: on with the master-
+ * clock APU timeline, RtlApuUseMasterClock). On NTSC without interlace, line
+ * 240 of every other field lasts 1360 master clocks, not 1364, and has no
+ * long dots (fullsnes; MesenCE SnesPpu), so fields alternate 357,368 and
+ * 357,364 clocks. The first field after reset has the long line: on MesenCE
+ * from power-on the Nth V=225 starts at 225 x 1364 + N x 357,366, plus 2
+ * when N is odd. */
+static bool snes_short_line_rule(void) {
+  static int env = -2;
+  if (env == -2) { const char *e = getenv("SNESRECOMP_SHORT_LINE"); env = e ? e[0] != '0' : -1; }
+  extern bool rtl_apu_master_clock(void);
+  return env >= 0 ? env : rtl_apu_master_clock();
+}
+
+/* Master clocks line v lasts in a field of the given parity (snes.h). */
+uint32_t snes_line_clocks(const Snes *snes, uint32_t v, bool parity) {
+  return v == 240u && parity && snes_short_line_rule() &&
+         !(snes->ppu && PPU_interlace(snes->ppu)) ? 1360u : 1364u;
+}
+
+/* Master clocks from the beam to the start of the line `lines` lines ahead
+ * (0: back to the start of its own line, as a negative modulo 2^64). */
+static uint64_t snes_clocks_to_line_ahead(const Snes *snes, uint32_t lines) {
+  uint64_t d = (uint64_t)lines * 1364u - snes->hPos;
+  bool parity = snes->fieldParity != (snes->vPos > 240u);
+  for (uint32_t a = (240u + 262u - snes->vPos) % 262u; a < lines; a += 262u, parity = !parity)
+    d -= 1364u - snes_line_clocks(snes, 240u, parity);
+  return d;
+}
+
+/* DRAM refresh points (SNESRECOMP_REFRESH_AT_BEAM; default: on with the
+ * master-clock APU timeline). The CPU and DMA stall 40 master clocks at a
+ * fixed place on every line: H = 538 - (the line's start clock & 7), 538 or
+ * 534 as lines alternate (MesenCE memoryManager.dramRefreshPosition). */
+bool snes_refresh_at_beam(void) {
+  static int env = -2;
+  if (env == -2) { const char *e = getenv("SNESRECOMP_REFRESH_AT_BEAM"); env = e ? e[0] != '0' : -1; }
+  extern bool rtl_apu_master_clock(void);
+  return env >= 0 ? env : rtl_apu_master_clock();
+}
+
+static void snes_beam_at_clock(const Snes *snes, uint64_t at, int64_t *h_out, int *v_out,
+                               bool *short_out);
+
+/* The first refresh point after master clock `after` (snes.h). */
+uint64_t snes_next_refresh(const Snes *snes, uint64_t after) {
+  int64_t h;
+  int v;
+  bool short_line;
+  snes_beam_at_clock(snes, after + 1u, &h, &v, &short_line);
+  uint64_t line = after + 1u - (uint64_t)h;
+  uint64_t point = line + 538u - (line & 7u);
+  if (point > after) return point;
+  line += short_line ? 1360u : 1364u;
+  return line + 538u - (line & 7u);
+}
+
+/* The beam (H in master clocks, V, whether its line is the short one) at
+ * master clock `at`, either side of its last sync. */
+static void snes_beam_at_clock(const Snes *snes, uint64_t at, int64_t *h_out, int *v_out,
+                               bool *short_out) {
+  int64_t h = (int64_t)snes->hPos + (int64_t)(at - snes->beamMasterLast);
+  int v = snes->vPos;
+  bool parity = snes->fieldParity;
+  for (int64_t len; h >= (len = snes_line_clocks(snes, (uint32_t)v, parity));) {
+    h -= len;
+    if (++v >= 262) { v = 0; parity = !parity; }
+  }
+  while (h < 0) {
+    if (v) v--; else { v = 261; parity = !parity; }
+    h += snes_line_clocks(snes, (uint32_t)v, parity);
+  }
+  *h_out = h;
+  *v_out = v;
+  if (short_out) *short_out = snes_line_clocks(snes, (uint32_t)v, parity) != 1364u;
+}
+
 bool snes_next_irq_master(const Snes *snes, uint64_t now, uint64_t *out) {
   if (!snes || !out) return false;
   if (!snes->hIrqEnabled && !snes->vIrqEnabled) return false;
@@ -40,16 +117,19 @@ bool snes_next_irq_master(const Snes *snes, uint64_t now, uint64_t *out) {
 
   uint32_t h = snes->hPos;
   uint32_t v = snes->vPos;
+  bool parity = snes->fieldParity;
   uint64_t delta = 0;
   for (uint32_t scanned = 0; scanned <= 262u; scanned++) {
+    const uint32_t len = snes_line_clocks(snes, v, parity);
     const bool line_matches = !snes->vIrqEnabled || v == snes->vTimer;
-    if (line_matches && target_h >= h) {
+    if (line_matches && target_h >= h && target_h < len) {
       *out = now + delta + (uint64_t)(target_h - h);
       return true;
     }
-    delta += 1364u - h;
+    delta += len - h;
     h = 0;
     v = (v + 1u) % 262u;
+    if (v == 0u) parity = !parity;
   }
   return false;
 }
@@ -79,11 +159,11 @@ static void snes_latch_position(uint16_t *h_dot, uint16_t *v_out) {
   uint32_t lead = interp_bridge_access_lead(0x2137, 0xffffffffu);
   if (lead == 0xffffffffu) lead = interp_bridge_access_lead(0x4201, 0);
   const uint64_t at = rtl_cpu_master_now() + lead;
-  int64_t h = (int64_t)snes->hPos + (int64_t)(at - snes->beamMasterLast);
-  int v = snes->vPos;
-  while (h >= 1364) { h -= 1364; v = v + 1 >= 262 ? 0 : v + 1; }
-  while (h < 0) { h += 1364; v = v ? v - 1 : 261; }
-  *h_dot = (uint16_t)(h <= 1292 ? h >> 2 : h <= 1310 ? (h - 2) >> 2 : (h - 4) >> 2);
+  int64_t h;
+  int v;
+  bool short_line;
+  snes_beam_at_clock(snes, at, &h, &v, &short_line);
+  *h_dot = (uint16_t)(short_line || h <= 1292 ? h >> 2 : h <= 1310 ? (h - 2) >> 2 : (h - 4) >> 2);
   *v_out = (uint16_t)v;
   static int hv_log = -1;
   if (hv_log < 0) hv_log = getenv("SNESRECOMP_HV_LOG") != NULL;
@@ -145,10 +225,10 @@ void snes_free(Snes* snes) {
 
 /* RTLS v5 and earlier serialized beamMasterLast between vPos and
  * apuCatchupCycles (+8 bytes). v6+ keeps it host-only (before hPos). */
-static uint32_t s_saveload_version = 11;
+static uint32_t s_saveload_version = 12;
 
 void snes_saveload_set_version(uint32_t version) {
-  s_saveload_version = version ? version : 11;
+  s_saveload_version = version ? version : 12;
 }
 
 uint32_t snes_saveload_get_version(void) { return s_saveload_version; }
@@ -247,6 +327,10 @@ void snes_saveload(Snes *snes, SaveLoadInfo *sli) {
     sli->func(sli, &snes->rdnmiPending, sizeof(snes->rdnmiPending));
   else
     snes->rdnmiPending = false; // old states had only the inNmi host flag
+  if (s_saveload_version >= 12)
+    sli->func(sli, &snes->fieldParity, sizeof(snes->fieldParity));
+  else
+    snes->fieldParity = false;
 
   snes->cpu->e = 0;
 }
@@ -271,6 +355,7 @@ void snes_reset(Snes* snes, bool hard) {
   snes->vTimer = 0x1ff;
   snes->inNmi = false;
   snes->rdnmiPending = false;
+  snes->fieldParity = false;
   snes->cpuReadClocked = false;
   snes->inIrq = false;
   snes->inVblank = false;
@@ -433,7 +518,8 @@ uint16_t SwapInputBits(uint16_t x) {
  * masked while polling a later beam position. Hosts which need to hold the
  * beam during an interrupt handler use snes_beam_hold explicitly. */
 static uint32_t snes_advance_beam(Snes *snes, uint32_t clocks, bool check_irq) {
-  /* One NTSC scanline is 1364 master clocks, 262 scanlines per frame. Keep
+  /* One NTSC scanline is 1364 master clocks (line 240 of every other field
+   * 1360: snes_line_clocks), 262 scanlines per frame. Keep
    * the live beam counters moving while LLE code executes so SLHV/OPHCT/OPVCT
    * polling observes hardware time rather than a frame-frozen PPU.
    *
@@ -443,9 +529,11 @@ static uint32_t snes_advance_beam(Snes *snes, uint32_t clocks, bool check_irq) {
    * H+V IRQ on scanline 228 and blocks until that IRQ completes an NMI task. */
   uint32_t h = snes->hPos;
   uint32_t v = snes->vPos;
+  bool parity = snes->fieldParity;
+  uint32_t len = snes_line_clocks(snes, v, parity);
   uint32_t consumed = 0;
   while (clocks) {
-    uint32_t span = 1364u - h;
+    uint32_t span = len - h;
     if (span > clocks) span = clocks;
     /* Only beam-owned HDMA needs an HBlank boundary. Frame-model hosts walk
      * those tables themselves, so their beam can cross HBlank in one span.
@@ -485,7 +573,7 @@ static uint32_t snes_advance_beam(Snes *snes, uint32_t clocks, bool check_irq) {
        *
        * Deduplicated per (field, target): the span loop can visit one line in
        * several iterations, and a repeat is the same miss, not a new one. */
-      if (line_matches && target < 1364u && target < h &&
+      if (line_matches && target < len && target < h &&
           !snes->dbgLatchedThisField &&
           snes->dbgMissDedupe != (uint32_t)((v << 16) | target)) {
         snes->dbgMissDedupe = (uint32_t)((v << 16) | target);
@@ -493,15 +581,16 @@ static uint32_t snes_advance_beam(Snes *snes, uint32_t clocks, bool check_irq) {
         snes->dbgLastOvershotLine = (uint16_t)v;
         snes->dbgLastOvershotBy = (uint16_t)(h - target);
       }
-      if (line_matches && target < 1364u && target >= h && target < h + span) {
+      if (line_matches && target < len && target >= h && target < h + span) {
         uint32_t upto = target - h + 1u;   /* stop one clock past the match */
         snes->inIrq = true;
         snes->dbgIrqLatches++;
         snes->dbgLatchedThisField = 1;
         h += upto;
         consumed += upto;
-        if (h >= 1364u) {
-          h = 0; v++; if (v >= 262u) v = 0;
+        if (h >= len) {
+          h = 0; v++; if (v >= 262u) { v = 0; parity = !parity; }
+          len = snes_line_clocks(snes, v, parity);
           if (v == 225u) {
             if (!s_rdnmi_beam_off) snes->rdnmiPending = true;
             ppu_rasterFieldBoundary();
@@ -510,6 +599,7 @@ static uint32_t snes_advance_beam(Snes *snes, uint32_t clocks, bool check_irq) {
         }
         snes->hPos = (uint16_t)h;
         snes->vPos = (uint16_t)v;
+        snes->fieldParity = parity;
         snes->inVblank = v >= 225u;
         return consumed;
       }
@@ -534,7 +624,7 @@ static uint32_t snes_advance_beam(Snes *snes, uint32_t clocks, bool check_irq) {
      * master clock and the beam advance runs HDMA. One call, gated. */
     if (check_irq && !snes->hdmaBeamOff && v < 225u && h == 1024u)
       dma_doHdma(snes->dma);
-    if (h >= 1364u) {
+    if (h >= len) {
       h = 0;
       v++;
       if (v == 225u) {
@@ -543,6 +633,7 @@ static uint32_t snes_advance_beam(Snes *snes, uint32_t clocks, bool check_irq) {
       }
       if (v >= 262u) {
         v = 0;
+        parity = !parity;
         snes->rdnmiPending = false;
         if (check_irq && !snes->hdmaBeamOff)
           dma_initHdma(snes->dma);
@@ -556,10 +647,12 @@ static uint32_t snes_advance_beam(Snes *snes, uint32_t clocks, bool check_irq) {
         }
         snes->dbgLatchedThisField = 0;
       }
+      len = snes_line_clocks(snes, v, parity);
     }
   }
   snes->hPos = (uint16_t)h;
   snes->vPos = (uint16_t)v;
+  snes->fieldParity = parity;
   snes->inVblank = v >= 225u;
   return consumed;
 }
@@ -589,7 +682,7 @@ uint32_t snes_master_clocks_until_line(const Snes *snes, uint32_t line) {
   v = snes->vPos;
   if (v == line && h == 0u) return 0;
   lines = (line > v) ? (line - v) : (262u - v + line);
-  return lines * 1364u - h;
+  return (uint32_t)snes_clocks_to_line_ahead(snes, lines);
 }
 
 uint32_t snes_master_clocks_until_irq(const Snes *snes) {
@@ -604,7 +697,8 @@ uint32_t snes_master_clocks_until_irq(const Snes *snes) {
 
   if (!snes->vIrqEnabled) {
     /* H-only: fires every line — later this line, or on the next. */
-    return target_h > h ? (target_h - h) : (1364u - h + target_h);
+    return target_h > h ? (target_h - h)
+                        : (uint32_t)snes_clocks_to_line_ahead(snes, 1) + target_h;
   }
 
   {
@@ -618,7 +712,7 @@ uint32_t snes_master_clocks_until_irq(const Snes *snes) {
     else                   lines = (target_h > h) ? 0u : 262u;
     /* lines==0 implies target_h>h, so this stays positive; every other branch
        adds at least a whole line, so the subtraction cannot underflow. */
-    d = (uint64_t)lines * 1364u + (uint64_t)target_h - (uint64_t)h;
+    d = snes_clocks_to_line_ahead(snes, lines) + (uint64_t)target_h;
     return d > 0xFFFFFFFFull ? 0xFFFFFFFFu : (uint32_t)d;
   }
 }
@@ -721,12 +815,35 @@ uint8_t snes_readReg(Snes* snes, uint16_t adr) {
       if (hb_env == -2) { const char *e = getenv("SNESRECOMP_HBLANK_EXACT"); hb_env = e ? e[0] != '0' : -1; }
       extern bool rtl_apu_master_clock(void);
       const bool hb_exact = hb_env >= 0 ? hb_env : rtl_apu_master_clock();
-      if (hb_exact) {
+      /* SNESRECOMP_HVBJOY_EXACT (default: on with the master-clock APU
+       * timeline): bits 7 and 0 at the read's own clock as well, so no host
+       * has to walk the beam ahead of the CPU to show an edge early. Bit 7:
+       * the beam is on lines 225-261. Bit 0: the automatic joypad read runs
+       * from the first master clock that is 128 past a multiple of 256 and
+       * at least 3 after line 225 began, for 4352 clocks (17 x 256; MesenCE
+       * InternalRegisters::autoReadClockStart). */
+      static int vj_env = -2;
+      if (vj_env == -2) { const char *e = getenv("SNESRECOMP_HVBJOY_EXACT"); vj_env = e ? e[0] != '0' : -1; }
+      const bool vj_exact = vj_env >= 0 ? vj_env : rtl_apu_master_clock();
+      if (hb_exact || vj_exact) {
         extern uint64_t rtl_cpu_master_now(void);
         extern uint32_t interp_bridge_access_lead(uint16_t adr, uint32_t fallback);
         const uint64_t at = rtl_cpu_master_now() + interp_bridge_access_lead(0x4212, 20);
-        const uint64_t h = at > snes->beamMasterLast ? (snes->hPos + (at - snes->beamMasterLast)) % 1364u : snes->hPos;
-        val |= (h >= 1097 || h < 4) << 6;
+        int64_t h;
+        int v;
+        snes_beam_at_clock(snes, at, &h, &v, NULL);
+        if (hb_exact) val |= (h >= 1097 || h < 4) << 6;
+        else val |= (snes->hPos >= 1024) << 6;
+        if (vj_exact) {
+          bool busy = false;
+          if (snes->autoJoyRead && v >= 225 && v <= 230) {
+            const uint64_t from = at - (uint64_t)h - (uint64_t)(v - 225) * 1364u + 3u;
+            const uint64_t start = from + (128u - from % 256u + 256u) % 256u;
+            busy = at >= start && at < start + 4352u;
+          }
+          val = (uint8_t)((val & ~1u) | busy | (v >= 225) << 7);
+          return val;
+        }
       } else {
         val |= (snes->hPos >= 1024) << 6;
       }

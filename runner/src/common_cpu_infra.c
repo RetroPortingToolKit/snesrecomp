@@ -900,6 +900,27 @@ void snes_refresh_charge(void) {
     g_refresh_charged_upto = m;
     return;
   }
+  /* At the beam (snes_refresh_at_beam): one stall per refresh point crossed
+   * since the last charge, each of which can push the clock over the next. */
+  if (g_snes && snes_refresh_at_beam()) {
+    if (m - g_refresh_charged_upto > 4096u * 1364u) {   /* teleport */
+      g_refresh_charged_upto = m;
+      return;
+    }
+    /* The next point is kept while nothing else moved the watermark: most
+     * charges (one per opcode or block) cross none. */
+    static uint64_t s_next, s_next_from = UINT64_MAX;
+    if (s_next_from != g_refresh_charged_upto)
+      s_next = snes_next_refresh(g_snes, g_refresh_charged_upto);
+    while (s_next <= m) {
+      m += 40u;
+      s_next = snes_next_refresh(g_snes, s_next);
+    }
+    g_cpu.master_cycles = m;
+    g_refresh_charged_upto = m;
+    s_next_from = m;
+    return;
+  }
   uint64_t delta = m - g_refresh_charged_upto;
   s_refresh_phase += delta;
   uint64_t lines = s_refresh_phase / 1364u;

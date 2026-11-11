@@ -47,6 +47,11 @@ struct Snes {
   // its master clock; HVBJOY must not add the legacy polling advance too.
   bool cpuReadClocked;
 
+  // Field parity: toggles each time the beam wraps to V=0, false after reset.
+  // Line 240 of a field with it set is the short line (snes.c). Serialized
+  // explicitly in RTLS v12, outside the frozen hPos..divideResult blob.
+  bool fieldParity;
+
   // Host timing anchor; excluded from savestates and reconciled after load.
   uint64_t beamMasterLast;
 
@@ -192,6 +197,17 @@ uint32_t snes_master_clocks_until_irq(const Snes *snes);
 /* Clocks to the start of scanline `line`, for a host that needs to place its
  * frame boundary on the PPU's field boundary. See the implementation. */
 uint32_t snes_master_clocks_until_line(const Snes *snes, uint32_t line);
+
+/* Master clocks line v lasts in a field whose fieldParity is `parity`: 1364,
+ * or 1360 for the short line 240 (SNESRECOMP_SHORT_LINE). A field's parity
+ * is snes->fieldParity from its V=225 until the beam wraps to V=0. */
+uint32_t snes_line_clocks(const Snes *snes, uint32_t v, bool parity);
+
+/* DRAM refresh at the beam (SNESRECOMP_REFRESH_AT_BEAM): 40 master clocks at
+ * a fixed H of every line, charged per point the CPU crosses. */
+bool snes_refresh_at_beam(void);
+/* The first refresh point after master clock `after`. */
+uint64_t snes_next_refresh(const Snes *snes, uint64_t after);
 
 /* Freeze (1) / release (0) the beam across an IRQ handler dispatch — see the
  * comment on the implementation. The host's frame loop brackets

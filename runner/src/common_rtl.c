@@ -340,8 +340,11 @@ static uint64_t rtl_apu_half_ticks(void) {
   uint32_t lead = s_apu_access_adr ? interp_bridge_access_lead(s_apu_access_adr, s_apu_lead) : s_apu_lead;
   /* A write lands at the end of its 6-clock bus cycle, 4 after the sample point. */
   if (s_apu_access_write) lead += 4;
-  uint64_t m = s_cpu_access_clock ? s_cpu_access_clock(g_cpu.master_cycles, lead)
-                                  : g_cpu.master_cycles + lead;
+  const uint64_t start = g_cpu.master_cycles;
+  uint64_t m = s_cpu_access_clock ? s_cpu_access_clock(start, lead) : start + lead;
+  /* A refresh point from the instruction's start up to its access stalls
+   * the access; the clock pays for it at the next charge. */
+  if (snes_refresh_at_beam() && snes_next_refresh(g_snes, start - 1u) <= start + lead) m += 40u;
   return (m / RTL_MASTER_PER_SEC) * RTL_SMP_HALF_PER_SEC +
          (m % RTL_MASTER_PER_SEC) * RTL_SMP_HALF_PER_SEC / RTL_MASTER_PER_SEC;
 }
@@ -416,7 +419,9 @@ static uint64_t fp_fnv1a(const uint8_t *p, size_t n) {
  * v8: multitap chunk (seats, IOBit lines, per-bank shift counters, latched
  *     automatic-read words). Older files load with no multitap configured,
  *     which is the pre-multitap two-pad machine exactly. */
-#define RTL_SAV_VERSION 11u /* Canonical access-exact SPC/DSP timing state. */
+/* v12: the field parity (the short line's field) after the RDNMI latch.
+ *      v11 files load with the parity of a fresh reset. */
+#define RTL_SAV_VERSION 12u /* Field parity for the short line. */
 /* States are build-specific. Older blobs lack required live DSP phases. */
 #define RTL_SAV_VERSION_MIN 11u
 /* Independent of sizes supplied by an untrusted snapshot or title payload. */
