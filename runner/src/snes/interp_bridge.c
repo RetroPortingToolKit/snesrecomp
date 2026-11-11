@@ -3060,9 +3060,11 @@ static int _interp_run_core(CpuState *cpu, uint32_t entry_pc24,
                             "sp_pre=$%04X aot_ret=%d sp_post=$%04X\n",
                             op, (unsigned)pc_before, (unsigned)target,
                             (unsigned)_sp_pre, (int)_air, (unsigned)in.sp);
-                const uint32_t ret =
-                    (pc_before + (uint32_t)call_len +
-                     (uint32_t)cpu_dispatch_inline_arg_bytes(target)) & 0xFFFFFF;
+                /* Sequential code and inline arguments advance the 16-bit
+                 * PC within the caller's program bank. */
+                const uint32_t ret = (pc_before & 0xFF0000u) |
+                    ((pc_before + (uint32_t)call_len +
+                      (uint32_t)cpu_dispatch_inline_arg_bytes(target)) & 0xFFFFu);
                 edge_expect = ret;
                 if (_air != RECOMP_RETURN_NORMAL) {
                     if (s_lle_unwind_active) {

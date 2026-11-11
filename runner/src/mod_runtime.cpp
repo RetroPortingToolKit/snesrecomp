@@ -4,6 +4,7 @@
 
 #include "crc32.h"
 #include "sha256.h"
+#include "mod_paths.h"
 
 #include <algorithm>
 #include <array>
@@ -554,9 +555,9 @@ bool parse_boot_pokes(const std::string& text,
 }
 
 bool read_manifest(const fs::path& path, Package& out, std::string* error) {
-    std::ifstream file(path);
+    std::ifstream file(ModPaths::for_io(path));
     if (!file) {
-        set_error(error, "cannot open manifest: " + path.string());
+        set_error(error, "cannot open manifest: " + path.u8string());
         return false;
     }
 
@@ -1216,12 +1217,21 @@ bool package_is_manifest_only(Runtime& runtime, const Package& package) {
 
     bool only = true;
     std::error_code ec;
-    for (fs::recursive_directory_iterator it(package.root, ec), end;
-         it != end; it.increment(ec)) {
+    std::vector<fs::path> pending{package.root};
+    while (only && !pending.empty()) {
+        const fs::path directory = std::move(pending.back());
+        pending.pop_back();
+        const auto entries = ModPaths::entries(directory, ec);
         if (ec) { only = false; break; }   /* cannot see it: do not vouch */
-        if (!it->is_regular_file(ec) || ec) continue;
-        const std::string name = it->path().filename().string();
-        if (name != "manifest.toml") { only = false; break; }
+        for (const auto& path : entries) {
+            const fs::path io = ModPaths::for_io(path);
+            if (fs::is_regular_file(io, ec)) {
+                if (path.filename() != "manifest.toml") { only = false; break; }
+            } else if (!ec && fs::is_directory(io, ec) && !fs::is_symlink(io, ec)) {
+                pending.push_back(path);
+            }
+            if (ec) { only = false; break; }
+        }
     }
     runtime.manifest_only_cache[key] = only;
     return only;
@@ -1591,34 +1601,34 @@ bool scan(Runtime& runtime, std::string* error) {
     runtime.packages.clear();
     const fs::path packages_root = runtime.root / "packages";
     std::error_code ec;
-    fs::create_directories(packages_root, ec);
+    fs::create_directories(ModPaths::for_io(packages_root), ec);
     if (ec) {
         set_error(error, "cannot create mods directory: " + ec.message());
         return false;
     }
-    for (const fs::directory_entry& package_dir :
-         fs::directory_iterator(packages_root, ec)) {
+    const auto package_dirs = ModPaths::entries(packages_root, ec);
+    for (const fs::path& package_dir : package_dirs) {
         if (ec) break;
-        if (!package_dir.is_directory()) continue;
-        for (const fs::directory_entry& version_dir :
-             fs::directory_iterator(package_dir.path(), ec)) {
+        if (!fs::is_directory(ModPaths::for_io(package_dir))) continue;
+        const auto version_dirs = ModPaths::entries(package_dir, ec);
+        for (const fs::path& version_dir : version_dirs) {
             if (ec) break;
-            if (!version_dir.is_directory()) continue;
-            const fs::path manifest = version_dir.path() / "manifest.toml";
-            if (!fs::is_regular_file(manifest)) continue;
+            if (!fs::is_directory(ModPaths::for_io(version_dir))) continue;
+            const fs::path manifest = version_dir / "manifest.toml";
+            if (!fs::is_regular_file(ModPaths::for_io(manifest))) continue;
             Package package;
             if (!read_manifest(manifest, package, error)) return false;
-            if (package.id != package_dir.path().filename().string() ||
-                package.version != version_dir.path().filename().string()) {
+            if (package.id != package_dir.filename().u8string() ||
+                package.version != version_dir.filename().u8string()) {
                 set_error(error, "package directory does not match manifest: " +
-                                 manifest.string());
+                                 manifest.u8string());
                 return false;
             }
             if (package.id == kCoveragePackage) {
                 set_error(error, "Coverage Capture is an engine-owned mod; it cannot be replaced by a package.");
                 return false;
             }
-            package.root = version_dir.path();
+            package.root = version_dir;
             runtime.packages[package.id][package.version] = std::move(package);
         }
         if (ec) break;
@@ -1650,8 +1660,8 @@ bool load_state(Runtime& runtime, std::string* error) {
     runtime.selections.clear();
     runtime.shared_resources.clear();
     const fs::path path = runtime.root / "state.toml";
-    if (!fs::exists(path)) return true;
-    std::ifstream file(path);
+    if (!fs::exists(ModPaths::for_io(path))) return true;
+    std::ifstream file(ModPaths::for_io(path));
     if (!file) {
         set_error(error, "cannot read mod state");
         return false;
@@ -1800,10 +1810,10 @@ bool save_state(Runtime& runtime, std::string* error) {
                 saved[id].features[fid].resources = feature.resources;
     }
     std::error_code ec;
-    fs::create_directories(runtime.root, ec);
+    fs::create_directories(ModPaths::for_io(runtime.root), ec);
     const fs::path temp = runtime.root / "state.toml.tmp";
     const fs::path output = runtime.root / "state.toml";
-    std::ofstream file(temp, std::ios::trunc);
+    std::ofstream file(ModPaths::for_io(temp), std::ios::trunc);
     if (!file) {
         set_error(error, "cannot write mod state");
         return false;
@@ -1842,11 +1852,11 @@ bool save_state(Runtime& runtime, std::string* error) {
         set_error(error, "cannot finish writing mod state");
         return false;
     }
-    fs::rename(temp, output, ec);
+    fs::rename(ModPaths::for_io(temp), ModPaths::for_io(output), ec);
     if (ec) {
-        fs::remove(output, ec);
+        fs::remove(ModPaths::for_io(output), ec);
         ec.clear();
-        fs::rename(temp, output, ec);
+        fs::rename(ModPaths::for_io(temp), ModPaths::for_io(output), ec);
     }
     if (ec) {
         set_error(error, "cannot publish mod state: " + ec.message());
@@ -1857,9 +1867,9 @@ bool save_state(Runtime& runtime, std::string* error) {
 
 bool read_file(const fs::path& path, std::vector<uint8_t>& out,
                std::string* error) {
-    std::ifstream in(path, std::ios::binary);
+    std::ifstream in(ModPaths::for_io(path), std::ios::binary);
     if (!in) {
-        set_error(error, "cannot open " + path.string());
+        set_error(error, "cannot open " + path.u8string());
         return false;
     }
     in.seekg(0, std::ios::end);
@@ -1871,7 +1881,7 @@ bool read_file(const fs::path& path, std::vector<uint8_t>& out,
     in.seekg(0);
     out.resize((size_t)size);
     if (!out.empty() && !in.read((char*)out.data(), size)) {
-        set_error(error, "cannot read " + path.string());
+        set_error(error, "cannot read " + path.u8string());
         return false;
     }
     return true;
@@ -3337,7 +3347,7 @@ extern "C" int snes_mod_runtime_initialize_c(
     SNES_MOD_C_BEGIN
     std::string error;
     return SNESRecomp::mod_runtime_initialize(
-        root ? fs::path(root) : fs::path("mods"),
+        root ? fs::u8path(root) : fs::path("mods"),
         game_id ? game_id : "",
         rom_sha256 ? rom_sha256 : "", &error) ? 1 : 0;
     SNES_MOD_C_END(0)
@@ -3801,7 +3811,7 @@ extern "C" int snes_mod_runtime_package_root_c(const char* package_id,
     }
     if (!package) return 0;
 
-    const std::string root = package->root.string();
+    const std::string root = package->root.u8string();
     if (root.size() + 1 > cap) return 0;
     std::memcpy(out, root.c_str(), root.size() + 1);
     return 1;
