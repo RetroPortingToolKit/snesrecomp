@@ -43,8 +43,8 @@ static bool snes_short_line_rule(void) {
   return env >= 0 ? env : rtl_apu_master_clock();
 }
 
-/* Master clocks line v lasts in a field of the given parity. */
-static uint32_t snes_line_clocks(const Snes *snes, uint32_t v, bool parity) {
+/* Master clocks line v lasts in a field of the given parity (snes.h). */
+uint32_t snes_line_clocks(const Snes *snes, uint32_t v, bool parity) {
   return v == 240u && parity && snes_short_line_rule() &&
          !(snes->ppu && PPU_interlace(snes->ppu)) ? 1360u : 1364u;
 }
@@ -788,14 +788,35 @@ uint8_t snes_readReg(Snes* snes, uint16_t adr) {
       if (hb_env == -2) { const char *e = getenv("SNESRECOMP_HBLANK_EXACT"); hb_env = e ? e[0] != '0' : -1; }
       extern bool rtl_apu_master_clock(void);
       const bool hb_exact = hb_env >= 0 ? hb_env : rtl_apu_master_clock();
-      if (hb_exact) {
+      /* SNESRECOMP_HVBJOY_EXACT (default: on with the master-clock APU
+       * timeline): bits 7 and 0 at the read's own clock as well, so no host
+       * has to walk the beam ahead of the CPU to show an edge early. Bit 7:
+       * the beam is on lines 225-261. Bit 0: the automatic joypad read runs
+       * from the first master clock that is 128 past a multiple of 256 and
+       * at least 3 after line 225 began, for 4352 clocks (17 x 256; MesenCE
+       * InternalRegisters::autoReadClockStart). */
+      static int vj_env = -2;
+      if (vj_env == -2) { const char *e = getenv("SNESRECOMP_HVBJOY_EXACT"); vj_env = e ? e[0] != '0' : -1; }
+      const bool vj_exact = vj_env >= 0 ? vj_env : rtl_apu_master_clock();
+      if (hb_exact || vj_exact) {
         extern uint64_t rtl_cpu_master_now(void);
         extern uint32_t interp_bridge_access_lead(uint16_t adr, uint32_t fallback);
         const uint64_t at = rtl_cpu_master_now() + interp_bridge_access_lead(0x4212, 20);
-        int64_t h = snes->hPos;
-        int v_at;
-        if (at > snes->beamMasterLast) snes_beam_at_clock(snes, at, &h, &v_at, NULL);
-        val |= (h >= 1097 || h < 4) << 6;
+        int64_t h;
+        int v;
+        snes_beam_at_clock(snes, at, &h, &v, NULL);
+        if (hb_exact) val |= (h >= 1097 || h < 4) << 6;
+        else val |= (snes->hPos >= 1024) << 6;
+        if (vj_exact) {
+          bool busy = false;
+          if (snes->autoJoyRead && v >= 225 && v <= 230) {
+            const uint64_t from = at - (uint64_t)h - (uint64_t)(v - 225) * 1364u + 3u;
+            const uint64_t start = from + (128u - from % 256u + 256u) % 256u;
+            busy = at >= start && at < start + 4352u;
+          }
+          val = (uint8_t)((val & ~1u) | busy | (v >= 225) << 7);
+          return val;
+        }
       } else {
         val |= (snes->hPos >= 1024) << 6;
       }

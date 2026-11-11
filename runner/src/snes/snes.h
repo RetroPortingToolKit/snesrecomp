@@ -198,6 +198,11 @@ uint32_t snes_master_clocks_until_irq(const Snes *snes);
  * frame boundary on the PPU's field boundary. See the implementation. */
 uint32_t snes_master_clocks_until_line(const Snes *snes, uint32_t line);
 
+/* Master clocks line v lasts in a field whose fieldParity is `parity`: 1364,
+ * or 1360 for the short line 240 (SNESRECOMP_SHORT_LINE). A field's parity
+ * is snes->fieldParity from its V=225 until the beam wraps to V=0. */
+uint32_t snes_line_clocks(const Snes *snes, uint32_t v, bool parity);
+
 /* Freeze (1) / release (0) the beam across an IRQ handler dispatch — see the
  * comment on the implementation. The host's frame loop brackets
  * interp_bridge_run_interrupt with this for raster IRQs. */
