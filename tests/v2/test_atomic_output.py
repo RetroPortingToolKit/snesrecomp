@@ -1,5 +1,6 @@
 """Transactional generated-output publication tests."""
 
+import os
 import pathlib
 import subprocess
 import sys
@@ -22,11 +23,15 @@ def _run_minimal_regen(root: pathlib.Path, opcode: int):
     (cfg_dir / 'bank00.cfg').write_text(
         'bank = 00\nfunc Entry 8000 end:8001\n', encoding='utf-8')
     out_dir = root / 'gen'
+    # The child writes its diagnostics in its own stdio encoding (cp1252 on
+    # Windows unless UTF-8 mode is on), while a UTF-8-mode parent decodes the
+    # pipes as UTF-8. Pin both sides to UTF-8 so the diagnostic survives.
     result = subprocess.run([
         sys.executable, str(REPO / 'tools' / 'v2_regen.py'),
         '--rom', str(rom_path), '--cfg-dir', str(cfg_dir),
         '--out-dir', str(out_dir), '--jobs', '1',
-    ], capture_output=True, text=True)
+    ], capture_output=True, encoding='utf-8',
+        env={**os.environ, 'PYTHONUTF8': '1'})
     return result, out_dir
 
 
@@ -108,4 +113,6 @@ def test_failed_regen_leaves_previous_generation_untouched():
 
         result, _ = _run_minimal_regen(root, 0x00)  # BRK -> stub lint
         assert result.returncode != 0
+        assert result.stdout and 'STUB LINT \u2014' in result.stdout
+        assert 'BRK: software interrupt' in result.stdout
         assert live.read_text(encoding='utf-8') == 'known-good\n'
