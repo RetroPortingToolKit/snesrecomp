@@ -106,7 +106,8 @@ echo "=== PPU bounded view anchoring ==="
 "$CC" -std=c11 -Wall -Wextra -O1 -DSNESRECOMP_REVERSE_DEBUG=0 \
     -I "$ROOT/runner/src" -I "$ROOT/runner/src/snes" \
     "$ROOT/tests/ppu/ppu_view_anchor_test.c" \
-    "$ROOT/runner/src/snes/ppu.c" "$ROOT/runner/src/snes/ppu_legacy.c" \
+    "$ROOT/runner/src/snes/hd_jobs.c" "$ROOT/runner/src/snes/ppu.c" \
+    "$ROOT/runner/src/snes/ppu_legacy.c" \
     -lm -o "$OUT/ppu_view_anchor_test"
 "$OUT/ppu_view_anchor_test"
 
@@ -509,6 +510,13 @@ echo "=== mod runtime: presentation_only is not compared by netplay ==="
 rm -rf "$OUT/mod_presentation_only_fixture"
 "$OUT/mod_presentation_only_test" "$OUT/mod_presentation_only_fixture"
 
+echo "=== PPU tile-address accessor expressions ==="
+"$CC" -std=c11 -Wall -Wextra -Werror -O1 \
+    -I "$ROOT/runner/src" \
+    "$ROOT/tests/ppu/ppu_bg_tile_adr_test.c" \
+    -o "$OUT/ppu_bg_tile_adr_test"
+"$OUT/ppu_bg_tile_adr_test"
+
 echo "=== mod runtime: exceptions stay inside the C boundary ==="
 "${CXX:-g++}" -std=c++17 -Wall -Wextra -O1 \
     -I "$ROOT/runner/src" \
@@ -519,6 +527,17 @@ echo "=== mod runtime: exceptions stay inside the C boundary ==="
     "$ROOT/runner/src/rom_identity.c" "$ROOT/runner/src/sha1.c" \
     -o "$OUT/mod_c_boundary_test"
 (cd "$OUT" && ./mod_c_boundary_test)
+
+echo "=== mod runtime: long and UTF-8 catalog paths ==="
+"${CXX:-g++}" -std=c++17 -Wall -Wextra -O1 \
+    -I "$ROOT/runner/src" \
+    "$ROOT/tests/mod_resources/long_path_test.cpp" \
+    -x c++ "$ROOT/runner/src/mod_runtime.cpp" \
+    "$ROOT/runner/src/sha256.c" "$ROOT/runner/src/snes/tier2_capture.c" \
+    "$ROOT/runner/src/crc32.c" \
+    "$ROOT/runner/src/rom_identity.c" "$ROOT/runner/src/sha1.c" \
+    -o "$OUT/mod_long_path_test"
+"$OUT/mod_long_path_test" "$OUT"
 
 echo "=== mod runtime: feature requirements enable and drop together ==="
 # The launcher provider needs recomp-ui's header, which a game checkout
