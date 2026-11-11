@@ -23,10 +23,12 @@ def _run_minimal_regen(root: pathlib.Path, opcode: int):
         'bank = 00\nfunc Entry 8000 end:8001\n', encoding='utf-8')
     out_dir = root / 'gen'
     result = subprocess.run([
-        sys.executable, str(REPO / 'tools' / 'v2_regen.py'),
+        # The parent's -X utf8 is not inherited by another Python process.
+        # Set both ends: a Windows child would otherwise emit CP1252 diagnostics.
+        sys.executable, '-X', 'utf8', str(REPO / 'tools' / 'v2_regen.py'),
         '--rom', str(rom_path), '--cfg-dir', str(cfg_dir),
         '--out-dir', str(out_dir), '--jobs', '1',
-    ], capture_output=True, text=True)
+    ], capture_output=True, text=True, encoding='utf-8')
     return result, out_dir
 
 
@@ -109,3 +111,5 @@ def test_failed_regen_leaves_previous_generation_untouched():
         result, _ = _run_minimal_regen(root, 0x00)  # BRK -> stub lint
         assert result.returncode != 0
         assert live.read_text(encoding='utf-8') == 'known-good\n'
+        assert result.stdout and 'STUB LINT \u2014' in result.stdout
+        assert 'BRK: software interrupt' in result.stdout
