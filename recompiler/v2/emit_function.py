@@ -538,6 +538,7 @@ def emit_function(rom: bytes, bank: int, start: int,
                   brk_rti_sites=None,
                   instruction_blocks: bool = False,
                   region_paced: bool = False,
+                  aot_resume: bool = False,
                   entry_s_offset: int = 0) -> str:
     """Emit a complete v2 C function source for one 65816 function.
 
@@ -2169,6 +2170,15 @@ def emit_function(rom: bytes, bank: int, start: int,
     src.append(f'  if (cpu_take_tailcall_return_context(&_entry_s, &_hrv)) {{')
     src.append(f'    cpu->host_return_valid = _hrv;')
     src.append(f'  }}')
+    # Compiled resume: a frame suspended at a deadline comes back through this
+    # prologue with its own entry S and return contract, then jumps to the
+    # instruction it stopped at (the switch after the entry-S record below).
+    # Not for variants that yield to the LLE scheduler at entry: they would
+    # yield before taking the resume. Interrupt handlers resume too: under the
+    # scheduler their RTI goes on at the popped PC (interp_bridge_aot_rti).
+    resume = aot_resume and region_paced and not has_lle_memory_poll
+    if resume:
+        src.append(f'  const uint32 _aot_resume = cpu_take_aot_resume(&_entry_s, &_hrv);')
     # Debug bisection guard (codegen-flag gated): after the prologue has
     # established the ACTUAL invocation's _entry_s/_hrv (incl. tail-call
     # context), tier the whole body to the interpreter if this node's PC is in
@@ -2183,6 +2193,10 @@ def emit_function(rom: bytes, bank: int, start: int,
     src.append(f'  uint32 _host_return_pc24 = 0xFFFFFFFFu;')
     if region_paced:
         src.append('  if (cpu->emulation || (cpu->S >= 0x1FFBu && cpu->S < 0x6005u)) { RecompStackPop();')
+        if resume:
+            # A resumed frame goes on at the instruction it stopped at, not at
+            # the variant's entry, which it has already run past.
+            src.append('    if (_aot_resume) return interp_tier_dispatch_tail(cpu, _aot_resume, _aot_resume, _entry_s, _hrv);')
         src.append(f'    return interp_tier_dispatch_tail(cpu, {_transfer_target_expr(fn_entry_pc, False)}, '
                    f'0x{fn_entry_pc:06X}u, _entry_s, _hrv); }} /* native-mode pacing only */')
     src.append(f'  if (_hrv == 2 || _hrv == 3) {{')
@@ -2219,6 +2233,19 @@ def emit_function(rom: bytes, bank: int, start: int,
     # resolved to a SKIP_N non-local return (cpu_resolve_ancestor_skip).
     # Index by the just-pushed g_recomp_stack_top; pop is implicit (top--).
     src.append(f'  if (g_recomp_stack_top >= 1) g_cpu_entry_s[g_recomp_stack_top - 1] = _entry_s;')
+    if resume:
+        # One case per instruction, keyed by (pc16, m, x) as the label is; the
+        # trailing comment is what program_emit collects into g_aot_resume_table.
+        src.append('  if (_aot_resume) {')
+        src.append('    switch ((((_aot_resume & 0xFFFFu) << 2) | ((cpu->m_flag & 1u) << 1) | (cpu->x_flag & 1u))) {')
+        for key in block_order:
+            pc16 = key.pc & 0xFFFF
+            src.append(f'      case 0x{(pc16 << 2) | (key.m << 1) | key.x:X}u: goto {_label_for(key)};'
+                       f'  /* aot-resume ${(bank << 16) | pc16:06X} m{key.m}x{key.x} */')
+        src.append('      default: cpu_aot_resume_miss(cpu, ((_aot_resume & 0xFFFFu) << 2) | '
+                   '((cpu->m_flag & 1u) << 1) | (cpu->x_flag & 1u));')
+        src.append('    }')
+        src.append('  }')
     # `entry_hook`: observational host callbacks (docs/ENTRY_HOOK.md).
     for hook_name in sorted({hook_by_pc24[(bank << 16) | (key.pc & 0xFFFF)]
                              for key in block_order
@@ -2304,6 +2331,9 @@ def emit_function(rom: bytes, bank: int, start: int,
                            f'0x{block_pc24:06X}u, _entry_s, _hrv); }} /* MMIO remains authoritative LLE */')
             _fetch_last = rom_offset(bank, (_insn.addr + _insn.length - 1) & 0xFFFF)
             src.append(f'    cpu->open_bus = 0x{rom[_fetch_last]:02X}u; /* last opcode/operand fetch */')
+            # Compiled from here on: reported as the interpreter reports each
+            # instruction (the bridge's PC hook).
+            src.append(f'    cpu_aot_insn_begin(cpu, 0x{block_pc24 & 0xFFFF:04X}u);')
         if _cyc_const:
             src.append(f'    cpu->cycles += {_cyc_const};')
             _spd_expr, _spd_const = _block_speed(bank, key.pc)

@@ -186,7 +186,7 @@ def pb_save_restore_envelope(
         f"cpu->PB = {target_bank:#04x};",
     ]
     bank_leave = [] if target_bank is None else [
-        "if (!interp_bridge_lle_unwind_pending()) {",
+        "if (_r == RECOMP_RETURN_NORMAL || !interp_bridge_lle_unwind_pending()) {",
         f"  cpu_trace_pb_change(cpu, {trace_pc}, cpu->PB, _saved_pb, CPU_TR_RTL);",
         "  cpu->PB = _saved_pb;",
         "}",

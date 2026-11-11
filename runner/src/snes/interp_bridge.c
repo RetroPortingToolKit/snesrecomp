@@ -769,6 +769,8 @@ uint32_t g_interp_wlog_pc24 = 0;
 static uint32_t s_lle_bounce_exclusions[16];
 static size_t   s_lle_bounce_exclusion_count;
 
+static int s_aot_resume_n; /* compiled-resume records pending (AotResumeRec, below) */
+
 bool interp_bridge_guest_scope_idle(void) {
     return !s_interp_bridge_depth && !s_lle_sched_depth &&
            !s_interp_bounce_owner_depth && !s_lle_unwind_active;
@@ -783,6 +785,7 @@ void interp_bridge_guest_scope_unwind(void) {
     s_lle_unwind_active = s_lle_unwind_owner_depth = 0;
     s_lle_unwind_pc24 = 0;
     s_lle_unwind_is_deadline = s_lle_next_unwind_is_deadline = 0;
+    s_aot_resume_n = 0;
     g_interp_wlog_pc24 = 0;
 }
 
@@ -1056,6 +1059,7 @@ void interp_bridge_rb_state_load(const void *in) {
     s_lle_resume_pc24             = s->lle_resume_pc24;
     s_lle_wai_yield               = s->lle_wai_yield;
     s_lle_master_deadline         = s->lle_master_deadline;
+    s_aot_resume_n                = 0; /* host-side frames; the restored guest may not have them */
     memcpy(s_bridge_dynamic_values, s->dynamic_values,
            sizeof(s_bridge_dynamic_values));
 }
@@ -1077,6 +1081,162 @@ int interp_bridge_lle_took_quiescent(void) {
 }
 void interp_bridge_set_master_deadline(uint64_t master_clock) {
     s_lle_master_deadline = master_clock;
+}
+
+/* Compiled resume (generate --aot-resume; SNESRECOMP_AOT_RESUME=0
+ * at run time turns it off). A deadline unwinds every compiled frame of the
+ * bounce it hits, and the scheduler used to interpret the rest of each: the
+ * suspended routine and, after its RTS, its callers, until the next call
+ * bounced. Instead the unwind records each abandoned frame (innermost last):
+ * the S at which it continues and its own entry S and return contract. When
+ * the scheduler's run reaches a record's S -- at once for the innermost, after
+ * the callee's return for the others -- it re-enters that frame in compiled
+ * code at the instruction it is at (cpu_dispatch_resume_paired), and the
+ * frame's RTS/RTL host-returns to the scheduler as a bounced call's does.
+ * Compiled code charges and checks the deadline per instruction exactly as the
+ * interpreter does (region-paced code), so which tier runs an instruction does not
+ * change the run. Records whose frame is gone (S above them) are dropped. */
+typedef struct AotResumeRec {
+    uint32_t pc;      /* the instruction to resume at; 0 = wherever the return lands */
+    uint16_t s;       /* S at which the frame continues */
+    uint16_t entry_s; /* the frame's entry S: its return frame is at entry_s + 1 */
+    uint8_t hrv;      /* its return contract: 2 = JSR frame, 3 = JSL frame */
+} AotResumeRec;
+#define AOT_RESUME_RECS 64
+static AotResumeRec s_aot_resume[AOT_RESUME_RECS];
+static int s_aot_resume_n;
+
+static int lle_yield_bounce_enabled(void);
+static int aot_resume_on(void) {
+    static int on = -1;
+    if (on < 0) {
+        const char *e = getenv("SNESRECOMP_AOT_RESUME");
+        const char *t = getenv("SNESRECOMP_LLE_INTERP_TARGET_FILE");
+        /* Off with the interpreter levers too: a run that keeps compiled entries
+         * interpreted (bounce off, a target list) must not reach them mid-way. */
+        on = g_aot_resume_count && !(e && e[0] == '0') &&
+             lle_yield_bounce_enabled() && !(t && t[0]);
+    }
+    return on;
+}
+
+/* SNESRECOMP_AOT_RESUME=2: suspended frames only, never a frameless entry. */
+static int aot_resume_frameless_on(void) {
+    static int on = -1;
+    if (on < 0) {
+        const char *e = getenv("SNESRECOMP_AOT_RESUME");
+        on = !(e && e[0] == '2');
+    }
+    return on;
+}
+
+/* At an unwind from compiled code: record the frames of this bounce,
+ * from the one that yielded (just popped, its slot is the stack top) out to
+ * the bounce root. A frame that is not paired (dispatch ABI) ends the chain:
+ * where its return lands is not known. */
+static void aot_resume_push(const AotResumeRec *chain, int k);
+static void aot_resume_walk(int slot, uint32_t pc, uint16_t at_s,
+                            AotResumeRec *chain, int k) {
+    const int base = s_interp_bounce_recomp_base < 0 ? 0 : s_interp_bounce_recomp_base;
+    int tail;
+    uint16_t entry_s;
+    uint8_t hrv;
+    while (k < AOT_RESUME_RECS && slot >= base &&
+           cpu_entry_frame(slot, &entry_s, &hrv, &tail) && (hrv == 2 || hrv == 3)) {
+        /* A frame whose RTS/RTL already ran (S above its entry: a return to
+         * the interpreter owner) continues nowhere; its caller does. */
+        if (at_s <= entry_s)
+            chain[k++] = (AotResumeRec){ pc, at_s, entry_s, hrv };
+        /* A tail-entered frame shares its tail caller's guest frame, and the
+         * tail caller has nothing left to run: skip to the frame that owns it. */
+        while (tail && --slot >= base) {
+            uint16_t e; uint8_t h;
+            if (!cpu_entry_frame(slot, &e, &h, &tail)) { slot = base - 1; break; }
+        }
+        slot--;
+        at_s = (uint16_t)(entry_s + hrv);
+        pc = 0;
+    }
+    aot_resume_push(chain, k);
+}
+
+static void aot_resume_capture(const CpuState *cpu, uint32_t pc24) {
+    if (!aot_resume_on() || !cpu) return;
+    CpuTailcallContextSave tc;
+    cpu_tailcall_context_save(&tc);
+    if (tc.valid) return; /* a tail callee yielded before adopting its frame */
+    AotResumeRec chain[AOT_RESUME_RECS];
+    const int slot = g_recomp_yield_popped_top == g_recomp_stack_top
+        ? g_recomp_stack_top : g_recomp_stack_top - 1;
+    aot_resume_walk(slot, pc24 & 0xFFFFFFu, cpu->S, chain, 0);
+}
+
+/* A tail transfer out of a variant's CFG (interp_tier_dispatch_tail): the
+ * target runs in the transferring frame, whose entry S and contract the call
+ * site passes. Its slot may still be live (a switch-case call site) or popped
+ * (a `return` call site); a live one has this entry S. */
+static int s_aot_captured;
+/* The instruction compiled code last handed back to the interpreter in place
+ * (a tail transfer to its own PC), or all ones. */
+static uint32_t s_aot_resume_skip = 0xFFFFFFFFu;
+static void aot_resume_note_handback(uint32_t target_pc24, uint32_t site_pc24) {
+    if (((target_pc24 ^ site_pc24) & 0xFFFFFFu) == 0)
+        s_aot_resume_skip = target_pc24 & 0xFFFFFFu;
+}
+static void aot_resume_capture_tail(const CpuState *cpu, uint32_t pc24,
+                                    uint16_t entry_s, uint8_t hrv) {
+    if (!aot_resume_on() || !cpu) return;
+    s_aot_captured = 1;
+    AotResumeRec chain[AOT_RESUME_RECS];
+    int slot = g_recomp_stack_top - 1;
+    uint16_t e; uint8_t h; int t;
+    if (slot >= 0 && cpu_entry_frame(slot, &e, &h, &t) && e == entry_s) {
+        aot_resume_walk(slot, pc24 & 0xFFFFFFu, cpu->S, chain, 0);
+        return;
+    }
+    if (hrv != 2 && hrv != 3) return;
+    chain[0] = (AotResumeRec){ pc24 & 0xFFFFFFu, cpu->S, entry_s, hrv };
+    aot_resume_walk(slot, 0, (uint16_t)(entry_s + hrv), chain, 1);
+}
+
+static void aot_resume_push(const AotResumeRec *chain, int k) {
+    if (!k) return;
+    while (s_aot_resume_n && s_aot_resume[s_aot_resume_n - 1].s <= chain[k - 1].s)
+        s_aot_resume_n--;
+    for (int i = k - 1; i >= 0; i--) {
+        if (s_aot_resume_n == AOT_RESUME_RECS) {
+            memmove(s_aot_resume, s_aot_resume + 1, sizeof s_aot_resume[0] * (AOT_RESUME_RECS - 1));
+            s_aot_resume_n--;
+        }
+        s_aot_resume[s_aot_resume_n++] = chain[i];
+    }
+}
+
+/* Where a resumed frame's return went: its return frame, still in memory at
+ * entry_s + 1 after the RTS/RTL popped it (rewritten by an inline-argument
+ * callee, as the RTS saw it). A JSR frame returns to the bank it ran in. */
+static uint32_t aot_resume_return_pc(CpuState *cpu, uint16_t entry_s, uint8_t hrv,
+                                     uint32_t pc24);
+
+/* A region-paced compiled instruction that stays compiled, at its start: the
+ * host's per-instruction hook, as the interpreter calls it (a frame driver that
+ * judges the last instruction before an interrupt needs every one), and
+ * SNESRECOMP_CYC_WATCH's line with the start clock (the interpreter's
+ * `start=`). */
+void cpu_aot_insn_begin(const CpuState *cpu, uint32_t pc16) {
+    const uint32_t pc24 = ((uint32_t)cpu->PB << 16) | (pc16 & 0xFFFF);
+    if (g_interp_bridge_pc_hook)
+        g_interp_bridge_pc_hook(pc24, cpu->m_flag ? 1 : 0, cpu->x_flag ? 1 : 0);
+    static int on = -1;
+    static unsigned long lo, hi;
+    if (on < 0) {
+        const char *e = getenv("SNESRECOMP_CYC_WATCH");
+        on = (e && e[0] && sscanf(e, "%lx-%lx", &lo, &hi) == 2) ? 1 : 0;
+    }
+    if (!on || pc24 < lo || pc24 > hi) return;
+    extern int snes_frame_counter;
+    fprintf(stderr, "[acyc] f=%d pc=$%06X start=%llu\n", snes_frame_counter,
+            (unsigned)pc24, (unsigned long long)cpu->master_cycles);
 }
 
 int interp_bridge_lle_master_deadline_reached(const CpuState *cpu) {
@@ -1126,6 +1286,15 @@ int interp_bridge_lle_master_deadline_reached(const CpuState *cpu) {
     return reached;
 }
 
+RecompReturn interp_bridge_aot_rti(CpuState *cpu, uint32 popped_pc24) {
+    if (s_interp_bridge_depth > 0 && s_interp_owner_is_scheduler) {
+        /* The handler's frame is done, not suspended: nothing to resume later. */
+        s_aot_captured = 1;
+        return interp_bridge_lle_yield_unwind(cpu, popped_pc24 & 0xFFFFFFu);
+    }
+    return RECOMP_RETURN_NORMAL;
+}
+
 RecompReturn interp_bridge_lle_yield_unwind(CpuState *cpu, uint32 resume_pc24) {
     /* DIAGNOSTIC (SNESRECOMP_TRAP_YIELD=<lo>-<hi> hex pc24 range): print every
      * LLE yield unwind whose resume PC falls in the range, with the live guest
@@ -1164,6 +1333,10 @@ RecompReturn interp_bridge_lle_yield_unwind(CpuState *cpu, uint32 resume_pc24) {
      * never takes it (the hle wrapper has no prologue). Swallow it here so
      * the NEXT emitted function entered (the next bounce) can't adopt a
      * stale _entry_s/_hrv. */
+    /* Every unwind from compiled code to the scheduler: a deadline, or a
+     * transfer the variant cannot follow (a branch out of its CFG). */
+    if (!s_aot_captured) aot_resume_capture(cpu, resume_pc24);
+    s_aot_captured = 0;
     cpu_take_tailcall_return_context(NULL, NULL);
     lle_unwind_arm(resume_pc24, s_interp_bounce_owner_depth,
                    s_lle_next_unwind_is_deadline,
@@ -1666,6 +1839,32 @@ static void interp_hist_init(void) {
     }
 }
 #endif
+
+static uint32_t aot_resume_return_pc(CpuState *cpu, uint16_t entry_s, uint8_t hrv,
+                                     uint32_t pc24) {
+    /* The stack is in bank $00's WRAM mirror: read the RAM itself, no bus cycle. */
+    const uint8_t *st = cpu->ram;
+    const uint16_t lo = st[(uint16_t)(entry_s + 1u) & 0x1FFFu];
+    const uint16_t hi = st[(uint16_t)(entry_s + 2u) & 0x1FFFu];
+    const uint32_t bank = hrv == 3 ? st[(uint16_t)(entry_s + 3u) & 0x1FFFu] : (pc24 >> 16) & 0xFFu;
+    return (bank << 16) | (uint16_t)(((hi << 8) | lo) + 1u);
+}
+
+/* A frameless entry's frame is assumed, not known: a normal return from it (a
+ * bound routine that ran its own RTS/RTL) popped the real frame, which sat on
+ * top of the stack at entry. Its size is how far S rose: 2 for RTS (the bank
+ * stays), 3 for RTL. */
+static uint32_t aot_frameless_return_pc(CpuState *cpu, uint16_t sp_entry, uint16_t entry_s,
+                                        uint8_t hrv, uint32_t pc24) {
+    const uint16_t rose = (uint16_t)(cpu->S - sp_entry);
+    if (rose != 2 && rose != 3)
+        return aot_resume_return_pc(cpu, entry_s, hrv, pc24);
+    const uint8_t *st = cpu->ram;
+    const uint16_t lo = st[(uint16_t)(sp_entry + 1u) & 0x1FFFu];
+    const uint16_t hi = st[(uint16_t)(sp_entry + 2u) & 0x1FFFu];
+    const uint32_t bank = rose == 3 ? st[(uint16_t)(sp_entry + 3u) & 0x1FFFu] : cpu->PB;
+    return (bank << 16) | (uint16_t)(((hi << 8) | lo) + 1u);
+}
 
 static int _interp_run_core(CpuState *cpu, uint32_t entry_pc24,
                                  uint16_t s_exit, uint32_t *out_landing,
@@ -2753,6 +2952,58 @@ static int _interp_run_core(CpuState *cpu, uint32_t entry_pc24,
         const int call_len = (op == 0x22) ? 4 : 3;
         const int is_ret   = (op == 0x60 || op == 0x6B);
 
+        /* Compiled resume: this instruction continues a frame a deadline
+         * suspended (see AotResumeRec). It runs compiled from here, through
+         * the call bounce below. */
+        uint32_t target = 0;
+        RecompReturn (*resume_fn)(CpuState *) = NULL;
+        uint16_t resume_entry_s = 0;
+        uint8_t resume_hrv = 0;
+        int resume_frameless = 0;
+        /* Compiled code just handed this instruction back (a region-paced
+         * fallback: unmodeled, MMIO, a pointer it cannot preview). Run it here
+         * once; resuming at it again would hand it back again, forever. */
+        const int resume_skip = s_aot_resume_skip != 0xFFFFFFFFu &&
+                                ((s_aot_resume_skip ^ pc_before) & 0x7FFFFFu) == 0;
+        s_aot_resume_skip = 0xFFFFFFFFu;
+        if (auto_quiescent && s_aot_resume_n && !in.e && !resume_skip) {
+            /* A suspended frame continues here (its record's S). */
+            while (s_aot_resume_n && in.sp > s_aot_resume[s_aot_resume_n - 1].s)
+                s_aot_resume_n--;
+            const AotResumeRec *r = s_aot_resume_n ? &s_aot_resume[s_aot_resume_n - 1] : NULL;
+            if (r && in.sp == r->s) {
+                s_aot_resume_n--;
+                if (!r->pc || ((r->pc ^ pc_before) & 0x7FFFFFu) == 0) {
+                    sync_interp_to_cpu(&in, cpu);
+                    resume_fn = cpu_aot_resume_fn(cpu, pc_before);
+                    if (resume_fn) {
+                        target = pc_before;
+                        resume_entry_s = r->entry_s;
+                        resume_hrv = r->hrv;
+                        goto aot_bounce;
+                    }
+                }
+            }
+        }
+        /* No frame known (code the scheduler reached by a jump, or whose
+         * record a transfer lost): enter compiled code anyway, as a frame whose
+         * entry S is one below the current S. Its first RTS/RTL pops above
+         * that entry, which compiled code hands back to the scheduler at the
+         * popped address (interp_bridge_return_targets_owner), as the
+         * interpreter would have continued. */
+        if (auto_quiescent && !resume_fn && !resume_skip && !in.e && aot_resume_on() && aot_resume_frameless_on() &&
+            cpu_aot_resume_maybe(pc_before)) {
+            sync_interp_to_cpu(&in, cpu);
+            resume_fn = cpu_aot_resume_fn(cpu, pc_before);
+            if (resume_fn) {
+                target = pc_before;
+                resume_entry_s = (uint16_t)(in.sp - 1u);
+                resume_hrv = 2;
+                resume_frameless = 1;
+                goto aot_bounce;
+            }
+        }
+
         const uint8_t coverage_mx = (uint8_t)((in.mf << 1) | in.xf);
         const uint8_t coverage_e = in.e;
         const uint16_t dp_before = in.dp;
@@ -2943,7 +3194,7 @@ static int _interp_run_core(CpuState *cpu, uint32_t entry_pc24,
              * and set pc to the target. If the target has a compiled body for
              * the current (m,x), run it compiled. */
             sync_interp_to_cpu(&in, cpu);          /* expose (m,x) + frame to AOT */
-            const uint32_t target = ((uint32_t)in.k << 16) | in.pc;
+            target = ((uint32_t)in.k << 16) | in.pc;
             /* Cooperative-scheduler (yield_pc) mode bounces too (fiber-free
              * rich-LLE, docs/LLE_SCHEDULER.md): a bounced body that reaches a
              * yield primitive no longer corrupts the paired-call stack — its
@@ -2964,8 +3215,10 @@ static int _interp_run_core(CpuState *cpu, uint32_t entry_pc24,
                  * on the popped return addr — and over-pop whenever that addr is
                  * itself a registered function entry (e.g. $90:EB55 sub_90EB55
                  * right after HandleChargingBeamGfxAudio's JSR), the Samus-draw
-                 * +2 leak. frame: JSL(0x22)=3, JSR/JSR(abs,X)=2. */
-                const uint8_t _fs = (op == 0x22) ? 3 : 2;
+                 * +2 leak. frame: JSL(0x22)=3, JSR/JSR(abs,X)=2.
+                 * A compiled resume joins here with the frame's own size. */
+              aot_bounce:;
+                const uint8_t _fs = resume_fn ? resume_hrv : (op == 0x22) ? 3 : 2;
                 uint16_t _sp_pre = in.sp;
                 /* Compiled body paces its own APU (RtlApuRead/Write); un-suppress
                  * the per-touch catch-up for its duration, then restore the
@@ -3007,7 +3260,9 @@ static int _interp_run_core(CpuState *cpu, uint32_t entry_pc24,
                 interp_edge_note(pc_before, target, INTERP_EDGE_AOT_CALL, op,
                                  (uint16_t)_sp_pre);
                 g_interp_wlog_pc24 = 0;
-                RecompReturn _air = cpu_dispatch_pc_paired(cpu, target, _fs);
+                RecompReturn _air = resume_fn
+                    ? cpu_dispatch_resume_paired(cpu, target, resume_entry_s, _fs, resume_fn)
+                    : cpu_dispatch_pc_paired(cpu, target, _fs);
                 if (s_apu_pending_master) {
                     snes_refresh_charge();
                     cpu_aot_instruction_boundary(cpu);
@@ -3015,6 +3270,11 @@ static int _interp_run_core(CpuState *cpu, uint32_t entry_pc24,
                 s_interp_bounce_owner_depth = _saved_bounce_owner;
                 s_interp_bounce_recomp_base = _saved_bounce_base;
                 g_interp_apu_driving = _apu_drv;
+                /* The beam to the end of the compiled run, as the interpreter
+                 * leaves it after each of its own instructions: a slice that
+                 * ends here (a deadline) hands the host a current beam, which
+                 * the host's beam-gated events (auto-joypad read) read. */
+                if (g_snes) snes_sync_master_clock(g_snes, cpu->master_cycles);
                 sync_cpu_to_interp(cpu, &in);
                 if (_ibrw)
                     fprintf(stderr, "[ibr] call op=$%02X pc=$%06X -> $%06X "
@@ -3023,9 +3283,13 @@ static int _interp_run_core(CpuState *cpu, uint32_t entry_pc24,
                             (unsigned)_sp_pre, (int)_air, (unsigned)in.sp);
                 /* Sequential code and inline arguments advance the 16-bit
                  * PC within the caller's program bank. */
-                const uint32_t ret = (pc_before & 0xFF0000u) |
-                    ((pc_before + (uint32_t)call_len +
-                      (uint32_t)cpu_dispatch_inline_arg_bytes(target)) & 0xFFFFu);
+                const uint32_t ret = resume_frameless
+                    ? aot_frameless_return_pc(cpu, _sp_pre, resume_entry_s, _fs, pc_before)
+                    : resume_fn
+                    ? aot_resume_return_pc(cpu, resume_entry_s, _fs, pc_before)
+                    : (pc_before & 0xFF0000u) |
+                      ((pc_before + (uint32_t)call_len +
+                        (uint32_t)cpu_dispatch_inline_arg_bytes(target)) & 0xFFFFu);
                 edge_expect = ret;
                 if (_air != RECOMP_RETURN_NORMAL) {
                     if (s_lle_unwind_active) {
@@ -3803,8 +4067,11 @@ RecompReturn interp_tier_dispatch_tail_ex(CpuState *cpu, uint32_t target_pc24,
      * sentinel to unwind to the owning interpreter and resume there at the tail
      * target.  The guest S/register state is untouched, and ordinary top-level
      * AOT tail fallbacks retain the balanced nested-interpreter path below. */
-    if (s_interp_bounce_owner_depth > 0)
+    aot_resume_note_handback(target_pc24, site_pc24);
+    if (s_interp_bounce_owner_depth > 0) {
+        aot_resume_capture_tail(cpu, target_pc24, entry_s, hrv);
         return interp_bridge_lle_yield_unwind(cpu, target_pc24);
+    }
     /* A subroutine called inside NMI/IRQ still returns with RTS/RTL. Let an
      * owning interpreter resume first; a nested interrupt interpreter would
      * consume its continuation and RTI before returning to a live AOT caller.

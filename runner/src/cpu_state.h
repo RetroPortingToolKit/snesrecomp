@@ -427,6 +427,9 @@ uint32_t  cpu_region_speed(uint32_t adr);
  * refresh, DMA and interpreted instructions must not call this helper. */
 extern void (*g_cpu_aot_master_credit_hook)(CpuState *cpu, uint64 clocks);
 void cpu_add_aot_master_cycles(CpuState *cpu, uint64 clocks);
+/* A region-paced instruction that stays compiled, at its start: reported as
+ * the interpreter reports each of its instructions (g_interp_bridge_pc_hook). */
+void cpu_aot_insn_begin(const CpuState *cpu, uint32_t pc16);
 /* Called only at architectural boundaries by opt-in paced emission. This
  * reports completion, not elapsed time, and must never credit clocks again. */
 extern void (*g_cpu_aot_instruction_boundary_hook)(CpuState *cpu);
@@ -654,6 +657,33 @@ RecompReturn cpu_dispatch_call_pc_pushed(CpuState *cpu, uint32 pc24,
  * is a registered function entry). Returns the callee's value. */
 RecompReturn cpu_dispatch_pc_paired(CpuState *cpu, uint32 pc24, uint8 frame_size);
 
+/* Compiled resume (generate --aot-resume, region-paced code): every
+ * instruction of a compiled variant is also an entry. The generated
+ * g_aot_resume_table lists them, sorted by (pc24, mx); each names one variant
+ * whose prologue, when a resume is armed, adopts the suspended frame's entry S
+ * and return contract and jumps to that instruction. Empty without the switch. */
+typedef struct AotResumeEntry {
+    uint32 pc24;
+    uint8 mx;  /* ((m & 1) << 1) | (x & 1) at the instruction */
+    RecompReturn (*fn)(CpuState *);
+} AotResumeEntry;
+extern const AotResumeEntry g_aot_resume_table[];
+extern const unsigned g_aot_resume_count;
+/* The variant that resumes at pc24 for the live (m,x); NULL when none (or in
+ * emulation mode, or WRAM code, whose bodies are guarded per entry). */
+RecompReturn (*cpu_aot_resume_fn(CpuState *cpu, uint32 pc24))(CpuState *);
+/* Cheap filter before cpu_aot_resume_fn: could any variant resume at pc24? */
+int cpu_aot_resume_maybe(uint32 pc24);
+/* Run `fn` from the instruction at pc24 as the frame (entry_s, hrv): a paired
+ * call like cpu_dispatch_pc_paired, whose RTS/RTL host-returns once the
+ * frame's own return frame (at entry_s + 1) is popped. */
+RecompReturn cpu_dispatch_resume_paired(CpuState *cpu, uint32 pc24,
+                                        uint16 entry_s, uint8 hrv,
+                                        RecompReturn (*fn)(CpuState *));
+/* A generated resume switch found no case for the armed instruction: the table
+ * and the switch disagree. Fatal. */
+void cpu_aot_resume_miss(CpuState *cpu, uint32 key);
+
 /* Read-only exact-AOT probe used by interpreter bounce and RTS rewriting.
  * A known LLE-only row intentionally returns false. */
 int cpu_dispatch_has_entry(CpuState *cpu, uint32 pc24);
@@ -780,6 +810,10 @@ int interp_bridge_in_lle_scheduler(void);
 int interp_bridge_lle_master_deadline_reached(const CpuState *cpu);
 int interp_bridge_lle_unwind_pending(void);
 RecompReturn interp_bridge_lle_yield_unwind(CpuState *cpu, uint32 resume_pc24);
+/* A compiled RTI. Under a host-delivered interrupt (interp_bridge_run_interrupt) the RTI is the host boundary:
+ * RECOMP_RETURN_NORMAL. Under the scheduler (an NMI run as an ordinary slice) it goes on at the popped PB:PC, as
+ * the interpreter's RTI does. */
+RecompReturn interp_bridge_aot_rti(CpuState *cpu, uint32 popped_pc24);
 uint32 interp_bridge_lle_resume_pc(void);
 void interp_bridge_set_lle_bounce_exclusions(const uint32 *targets,
                                               size_t count);
