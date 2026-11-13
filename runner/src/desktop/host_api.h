@@ -40,6 +40,10 @@ bool snesrecomp_host_frame_is_live(void);
  * Speculative frames and netplay rollback replays cannot request an exit. */
 void snesrecomp_request_exit(void);
 
+/* End the current game through normal SRAM/config shutdown, then start this
+ * executable at its launcher. Refused during speculative frames or netplay. */
+bool snesrecomp_request_launcher(void);
+
 /* Enables or disables fullscreen/borderless mode from dependent project code.
  * Clamps mode to {0,1}: 0 = windowed, 1 = borderless
  * (SNESRECOMP_SDL_WINDOW_FULLSCREEN_DESKTOP).

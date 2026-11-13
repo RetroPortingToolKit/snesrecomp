@@ -2251,10 +2251,15 @@ static int g_frames_per_block;
 static uint8 g_audio_channels;
 static SDL_AudioDeviceID g_audio_device;
 /* Only the thread executing guest work may wait for the audio consumer. */
-static _Thread_local bool g_audio_producer_active;
-static _Thread_local unsigned g_apu_lock_depth;
-static _Thread_local bool g_audio_consumer_stalled;
-static _Thread_local uint32_t g_audio_stalled_read;
+#ifdef _MSC_VER
+#define HOST_THREAD_LOCAL __declspec(thread)
+#else
+#define HOST_THREAD_LOCAL _Thread_local
+#endif
+static HOST_THREAD_LOCAL bool g_audio_producer_active;
+static HOST_THREAD_LOCAL unsigned g_apu_lock_depth;
+static HOST_THREAD_LOCAL bool g_audio_consumer_stalled;
+static HOST_THREAD_LOCAL uint32_t g_audio_stalled_read;
 static bool g_audio_primed;  /* protected by g_audio_mutex */
 #define HOST_AUDIO_PREFILL 2136u
 #define HOST_AUDIO_HIGH_WATER 4096u
@@ -2874,6 +2879,16 @@ static struct {
   char rom[1024];
   char state[1024];
 } g_relaunch;
+
+bool snesrecomp_request_launcher(void) {
+  if (!snesrecomp_host_frame_is_live() || g_netplay_session || !g_rom_path[0])
+    return false;
+  g_relaunch.pending = g_relaunch.launcher = true;
+  g_relaunch.with_state = false;
+  snprintf(g_relaunch.rom, sizeof(g_relaunch.rom), "%s", g_rom_path);
+  snesrecomp_request_exit();
+  return true;
+}
 
 /* Every gamepad SDL knows about, seated by OpenOneGamepad's rules. */
 static void OpenAllGamepads(void) {

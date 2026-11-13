@@ -284,7 +284,11 @@ void rtl_apu_restore_pacing(uint64_t frame_start_master, uint8_t frame_time_vali
 #define RTL_AUDIO_TARGET_NATIVES 2136u /* 4 native blocks, ~67 ms cushion */
 static bool g_audio_fast_forward;
 static void (*g_audio_producer_wait)(void);
+#ifdef _MSC_VER
+static __declspec(thread) bool g_audio_producer_wait_active;
+#else
 static _Thread_local bool g_audio_producer_wait_active;
+#endif
 static uint32_t g_audio_recovery_frames;
 static uint32_t g_audio_recovery_remaining;
 static int16 g_audio_recovery_anchor_l;
