@@ -1224,10 +1224,9 @@ bool package_is_manifest_only(Runtime& runtime, const Package& package) {
         const auto entries = ModPaths::entries(directory, ec);
         if (ec) { only = false; break; }   /* cannot see it: do not vouch */
         for (const auto& path : entries) {
-            const fs::path io = ModPaths::for_io(path);
-            if (fs::is_regular_file(io, ec)) {
+            if (ModPaths::is_regular_file(path, ec)) {
                 if (path.filename() != "manifest.toml") { only = false; break; }
-            } else if (!ec && fs::is_directory(io, ec) && !fs::is_symlink(io, ec)) {
+            } else if (!ec && ModPaths::is_directory(path, ec) && !ModPaths::is_symlink(path, ec)) {
                 pending.push_back(path);
             }
             if (ec) { only = false; break; }
@@ -1601,21 +1600,20 @@ bool scan(Runtime& runtime, std::string* error) {
     runtime.packages.clear();
     const fs::path packages_root = runtime.root / "packages";
     std::error_code ec;
-    fs::create_directories(ModPaths::for_io(packages_root), ec);
-    if (ec) {
+    if (!ModPaths::create_directories(packages_root, ec)) {
         set_error(error, "cannot create mods directory: " + ec.message());
         return false;
     }
     const auto package_dirs = ModPaths::entries(packages_root, ec);
     for (const fs::path& package_dir : package_dirs) {
         if (ec) break;
-        if (!fs::is_directory(ModPaths::for_io(package_dir))) continue;
+        if (!ModPaths::is_directory(package_dir)) continue;
         const auto version_dirs = ModPaths::entries(package_dir, ec);
         for (const fs::path& version_dir : version_dirs) {
             if (ec) break;
-            if (!fs::is_directory(ModPaths::for_io(version_dir))) continue;
+            if (!ModPaths::is_directory(version_dir)) continue;
             const fs::path manifest = version_dir / "manifest.toml";
-            if (!fs::is_regular_file(ModPaths::for_io(manifest))) continue;
+            if (!ModPaths::is_regular_file(manifest)) continue;
             Package package;
             if (!read_manifest(manifest, package, error)) return false;
             if (package.id != package_dir.filename().u8string() ||
@@ -1660,7 +1658,7 @@ bool load_state(Runtime& runtime, std::string* error) {
     runtime.selections.clear();
     runtime.shared_resources.clear();
     const fs::path path = runtime.root / "state.toml";
-    if (!fs::exists(ModPaths::for_io(path))) return true;
+    if (!ModPaths::exists(path)) return true;
     std::ifstream file(ModPaths::for_io(path));
     if (!file) {
         set_error(error, "cannot read mod state");
@@ -1810,7 +1808,7 @@ bool save_state(Runtime& runtime, std::string* error) {
                 saved[id].features[fid].resources = feature.resources;
     }
     std::error_code ec;
-    fs::create_directories(ModPaths::for_io(runtime.root), ec);
+    ModPaths::create_directories(runtime.root, ec);
     const fs::path temp = runtime.root / "state.toml.tmp";
     const fs::path output = runtime.root / "state.toml";
     std::ofstream file(ModPaths::for_io(temp), std::ios::trunc);
@@ -1854,7 +1852,7 @@ bool save_state(Runtime& runtime, std::string* error) {
     }
     fs::rename(ModPaths::for_io(temp), ModPaths::for_io(output), ec);
     if (ec) {
-        fs::remove(ModPaths::for_io(output), ec);
+        ModPaths::remove(output, ec);
         ec.clear();
         fs::rename(ModPaths::for_io(temp), ModPaths::for_io(output), ec);
     }
