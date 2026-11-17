@@ -61,6 +61,15 @@ static int get_exe_path(char *out, size_t max_len) {
 /* Directory containing the executable, with trailing separator.
  * Falls back to "./" when the executable path cannot be determined. */
 static void get_exe_dir(char *out, size_t max_len) {
+#ifdef __ANDROID__
+    /* Android's executable is app_process, not the game library. The activity
+     * supplies its private writable directory before entering SDL_main. */
+    const char *storage = getenv("SNESRECOMP_DATA_DIR");
+    if (storage && storage[0] == '/') {
+        snprintf(out, max_len, "%s/", storage);
+        return;
+    }
+#endif
     char exe_path[1024];
     if (get_exe_path(exe_path, sizeof(exe_path))) {
         char *last_sep = NULL;

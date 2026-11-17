@@ -227,7 +227,9 @@ function(snesrecomp_target_sdl target)
         endif()
         message(STATUS "${target}: SDL3 desktop backend")
     else()
-        find_package(SDL2 REQUIRED)
+        if(NOT TARGET SDL2::SDL2)
+            find_package(SDL2 REQUIRED)
+        endif()
         target_compile_definitions(${target} PRIVATE
             SNESRECOMP_SDL3=0
             SDL_MAIN_HANDLED)
