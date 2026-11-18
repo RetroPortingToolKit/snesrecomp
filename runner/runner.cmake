@@ -837,6 +837,11 @@ function(snesrecomp_target_mod_catalog target preloaded_dir)
         return()
     endif()
 
+    if(ANDROID)
+        # Consumers install their verified catalog from APK assets. Native
+        # library output directories are not Android's writable data root.
+        return()
+    endif()
     add_custom_command(TARGET ${target} POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E copy_directory
             "${_pkg_src}"
@@ -1334,7 +1339,11 @@ function(snesrecomp_target_desktop_host target)
     else()
         snesrecomp_target_post_mortem(${target})
     endif()
-    if(NOT ANDROID)
+    if(ANDROID)
+        target_sources(${target} PRIVATE
+            ${SNESRECOMP_RUNNER_ROOT}/src/desktop/android_host.c
+            ${SNESRECOMP_RUNNER_ROOT}/src/desktop/android_present.c)
+    else()
         snesrecomp_target_opengl(${target})
     endif()
     # Run-ahead and rewind are the host's (snes_runahead.c, snes_rewind.c,

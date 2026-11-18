@@ -40,6 +40,9 @@
 
 #include "host_main.h"
 #include "host_clock.h"
+#ifdef __ANDROID__
+#include "android_host.h"
+#endif
 
 #include "snes/ppu.h"
 #include "snes/hd_jobs.h"
@@ -1696,7 +1699,11 @@ static void DrawPpuFrameWithPerf(void) {
 /* Seat-0 input word the overlays navigate with — the same sources the guest
  * gets, minus the script (an overlay is a human facility). */
 static uint32 OverlayNavInputs(void) {
-  return g_input_state | g_pad_buttons | g_gamepad[0].axis_buttons;
+  return g_input_state | g_pad_buttons | g_gamepad[0].axis_buttons
+#ifdef __ANDROID__
+      | snesrecomp_android_buttons()
+#endif
+      ;
 }
 
 /* Controller and joystick events, in ONE place, because the overlays' modal
@@ -3378,11 +3385,15 @@ int snesrecomp_desktop_main(const SnesDesktopHostGame *game, int argc, char **ar
 #endif
   signal(SIGABRT, crash_handler);
 #ifdef __ANDROID__
-  /* All relative I/O (config.ini, rom.cfg, saves/, last_run_report.json)
-   * lands in the app's external files dir, which is adb-pushable. */
+  /* Match the Java launcher's private storage and host_paths.c. A consumer
+   * can explicitly select a different private root before entering the host. */
   {
-    const char *storage = SDL_AndroidGetExternalStoragePath();
-    if (storage) chdir(storage);
+    const char *storage = getenv("SNESRECOMP_DATA_DIR");
+    if (!storage || !storage[0]) storage = SDL_AndroidGetInternalStoragePath();
+    if (storage && storage[0]) {
+      setenv("SNESRECOMP_DATA_DIR",storage,1);
+      if(chdir(storage)) { fprintf(stderr,"Android data directory unavailable\n"); return 1; }
+    }
   }
 #endif
 #ifdef _WIN32
@@ -4224,6 +4235,10 @@ error_reading:;
       }
     }
 
+#ifdef __ANDROID__
+    if(snesrecomp_android_commands(&running,&g_paused)) GameReset();
+    if(!running) { exit_reason="Android return to launcher"; break; }
+#endif
     ProfileEnd(kProfileEvents, event_profile_start);
     if (g_paused != audiopaused) {
       audiopaused = g_paused;
