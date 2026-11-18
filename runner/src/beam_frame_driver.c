@@ -170,7 +170,26 @@ void snes_beam_frame_driver_run_frame(void) {
     if (s_wai_halted && irq_line_asserted())
       s_wai_halted = false;
     if (!s_wai_halted && !irq_wanted()) {
-      interp_bridge_set_master_deadline(frame_end);
+      /* Bound the slice at the next V/H-IRQ match as well as the field end.
+       * The beam (and so the comparator) only advances when the guest touches
+       * MMIO; a compiled routine that works purely in WRAM runs on past the
+       * match, and the IRQ is then taken with the CPU clock tens of lines
+       * ahead of the beam. Every register write the handler makes lands on
+       * that late line. Super Ghouls 'n Ghosts' IRQ at V=38 switches BG3 from
+       * the HUD map to the playfield map by enabling HDMA; when it rode in
+       * after update_oam_table ($01:85BB, ~65 lines of WRAM-only work) the HUD
+       * map showed as a band of garbage tiles down to line ~110. H-only IRQs
+       * (a match every line) are left on the field deadline. */
+      uint64_t deadline = frame_end;
+      if (g_snes->vIrqEnabled && !g_snes->inIrq) {
+        uint32_t until = snes_master_clocks_until_irq(g_snes);
+        if (until) {
+          uint64_t irq_at = g_snes->beamMasterLast + until + 1u;
+          if (irq_at < deadline)
+            deadline = irq_at;
+        }
+      }
+      interp_bridge_set_master_deadline(deadline);
       (void)interp_bridge_run_until_quiescent(&g_cpu, s_resume_pc);
       interp_bridge_set_master_deadline(0);
       update_resume_pc();
