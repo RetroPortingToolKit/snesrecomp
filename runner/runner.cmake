@@ -87,7 +87,7 @@ option(SNESRECOMP_EXPOSE_COVERAGE_MOD "Show the default-off Coverage Capture mod
 add_compile_definitions(SNESRECOMP_EXPOSE_COVERAGE_MOD=$<BOOL:${SNESRECOMP_EXPOSE_COVERAGE_MOD}>)
 include(${CMAKE_CURRENT_LIST_DIR}/ppu_8bpp_backend.cmake)
 
-# runner.cmake — shared source list for snesrecomp game projects.
+# runner.cmake â€” shared source list for snesrecomp game projects.
 #
 # Usage from a game project's CMakeLists.txt:
 #   set(SNESRECOMP_ROOT ${CMAKE_SOURCE_DIR}/snesrecomp)
@@ -98,7 +98,7 @@ include(${CMAKE_CURRENT_LIST_DIR}/ppu_8bpp_backend.cmake)
 # Mirrors the file list in the MSVC .vcxproj so the same sources build on
 # Windows (MSVC) and on macOS/Linux (clang/gcc + CMake). The snes9x emulator
 # oracle (snes9x_bridge.cpp / ENABLE_ORACLE_BACKEND) is intentionally NOT part
-# of this list — it is a developer-only verify backend, off for normal builds.
+# of this list â€” it is a developer-only verify backend, off for normal builds.
 
 set(SNESRECOMP_RUNNER_ROOT ${CMAKE_CURRENT_LIST_DIR})
 set(SNESRECOMP_CRC32_IMPL "${_SNESRECOMP_CRC_DEFAULT}" CACHE STRING "IEEE CRC implementation (BYTE or SLICE8)")
@@ -234,7 +234,9 @@ function(snesrecomp_target_sdl target)
         endif()
         message(STATUS "${target}: SDL3 desktop backend")
     else()
-        find_package(SDL2 REQUIRED)
+        if(NOT TARGET SDL2::SDL2)
+            find_package(SDL2 REQUIRED)
+        endif()
         target_compile_definitions(${target} PRIVATE
             SNESRECOMP_SDL3=0
             SNESRECOMP_SDL_GLES2_ONLY=$<BOOL:${SNESRECOMP_SDL_GLES2_ONLY}>
@@ -352,9 +354,9 @@ set(SNESRECOMP_RUNNER_SOURCES
     ${SNESRECOMP_RUNNER_ROOT}/src/snes/interp_bridge.c
 )
 
-# ── Capcom Cx4 coprocessor (Mega Man X2 / X3 only) ────────────────────────
+# â”€â”€ Capcom Cx4 coprocessor (Mega Man X2 / X3 only) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 # cx4.c is an instruction-level Hitachi HG51B S169 core ported from ares
-# (ISC licence — permissive, notice-only). It is the faithful LLE floor; any
+# (ISC licence â€” permissive, notice-only). It is the faithful LLE floor; any
 # future host-side Cx4 shortcut must be a gated optimization layered ON TOP of
 # it, authored from this core's observed behavior.
 #
@@ -363,11 +365,11 @@ list(APPEND SNESRECOMP_RUNNER_SOURCES
     ${SNESRECOMP_RUNNER_ROOT}/src/snes/mmx23_background.c)
 message(STATUS "Cx4: instruction-level HG51B S169 core (ares, ISC)")
 
-# ── Windows: UTF-8 process code page ──────────────────────────────────────
+# â”€â”€ Windows: UTF-8 process code page â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 # Paths cross the host as narrow strings: GetModuleFileNameA, fopen and the
 # command line on the C side; std::filesystem, SDL and the launcher's pickers
 # on the other. On Windows those disagreed (ANSI vs UTF-8), and an install
-# folder such as "Mega Man X Recompilé" aborted at startup. The manifest makes
+# folder such as "Mega Man X RecompilÃ©" aborted at startup. The manifest makes
 # the process code page UTF-8 (Windows 10 1903+), so every narrow path is
 # UTF-8 on both sides. It rides in the runner sources so every host
 # executable carries it (resources in a static library would be dropped).
@@ -387,7 +389,7 @@ if(WIN32)
 endif()
 
 # Execution policy DEFAULT for optimized (HLE) replacements over the faithful
-# LLE floor. This chooses the default only — the policy itself is resolved at
+# LLE floor. This chooses the default only â€” the policy itself is resolved at
 # runtime by snesrecomp_execution_mode() and can always be overridden with
 # SNESRECOMP_EXECUTION_MODE, or forced back to the floor with
 # SNESRECOMP_FORCE_FLOOR=1.
@@ -398,9 +400,9 @@ endif()
 # compiled out has nothing to fall back to on a miss and nothing to force when
 # reproducing a player's bug report.
 #
-# Vocabulary is recomp-ai-rules/OPTIMIZATION.md §2: off|on|force|verify|auto.
+# Vocabulary is recomp-ai-rules/OPTIMIZATION.md Â§2: off|on|force|verify|auto.
 # Dev builds want "off" (prove the floor). A port flips its release default to
-# "on" only after a replacement has cleared its promotion gates — and there is
+# "on" only after a replacement has cleared its promotion gates â€” and there is
 # nothing to promote until a port actually has an optimized path.
 set(SNESRECOMP_EXECUTION_DEFAULT "off" CACHE STRING
     "Default execution policy: off|on|force|verify|auto (runtime-overridable)")
@@ -434,14 +436,14 @@ message(STATUS
 
 # The TCP debug server + emulator-oracle command handlers are a developer-only
 # feature. debug_server.h provides static-inline no-op stubs when SNESRECOMP_TRACE
-# is 0 (the default), so debug_server.c must only be compiled when tracing is on —
+# is 0 (the default), so debug_server.c must only be compiled when tracing is on â€”
 # otherwise the real definitions collide with the header stubs. Off by default for
 # a normal playable build; opt in with -DSNESRECOMP_ENABLE_TRACE=ON.
 option(SNESRECOMP_ENABLE_TRACE "Build the TCP debug server / observability rings" OFF)
 if(SNESRECOMP_ENABLE_TRACE)
     add_compile_definitions(SNESRECOMP_TRACE=1)
     # Compiling debug_server.c is only half of turning tracing on. The header
-    # keys off SNESRECOMP_TRACE, not off the option, and defaults it to 0 — so
+    # keys off SNESRECOMP_TRACE, not off the option, and defaults it to 0 â€” so
     # without this define every translation unit (debug_server.c included) sees
     # the no-op stubs, and debug_server.c's real definitions collide with the
     # stubs it just pulled in from its own header. The option was inert before
@@ -500,7 +502,7 @@ if(SNESRECOMP_ENABLE_TRACE AND WIN32)
 endif()
 
 # Differential co-simulation (docs/COSIM.md): full-state first-divergence oracle.
-# DEV/DIAGNOSTICS ONLY — must NEVER be enabled in a shipping Production config.
+# DEV/DIAGNOSTICS ONLY â€” must NEVER be enabled in a shipping Production config.
 # Adds the frame-keyed park/step engine (cosim.c) + canonical state hash
 # (cosim_state.c) + a loopback TCP server; needs ws2_32 on Windows. Defines
 # SNES_COSIM for every target configured after this include (the game exe).
@@ -514,7 +516,7 @@ if(SNES_COSIM)
     if(WIN32)
         list(APPEND SNESRECOMP_RUNNER_LIBRARIES ws2_32)
     endif()
-    message(STATUS "SNES_COSIM enabled — DEV co-simulation build (not for release)")
+    message(STATUS "SNES_COSIM enabled â€” DEV co-simulation build (not for release)")
 endif()
 
 # Full-WRAM frame fingerprints are a forensic determinism aid, not emulated
@@ -715,7 +717,7 @@ set(SNESRECOMP_RUNNER_INCLUDE_DIRS
     ${SNESRECOMP_RUNNER_ROOT}/src/snes
 )
 
-# ── Directories the game loads relative to its executable ───────────────────
+# â”€â”€ Directories the game loads relative to its executable â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 #
 # snesrecomp_target_stage_dir(<target> <source_dir> <dest_relative>)
 #
@@ -745,7 +747,7 @@ function(snesrecomp_target_stage_dir target source_dir dest_rel)
         VERBATIM)
 endfunction()
 
-# ── The mod catalog — THE FRAMEWORK OWNS THE LAYOUT ─────────────────────────
+# â”€â”€ The mod catalog â€” THE FRAMEWORK OWNS THE LAYOUT â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 #
 # snesrecomp_target_mod_catalog(<target> <preloaded_dir>|NONE)
 #
@@ -768,11 +770,11 @@ endfunction()
 #
 # Two guards, so "the title forgot" stops being a thing that can happen:
 #
-#   * configure time — a project with packages under mods/preloaded/packages
+#   * configure time â€” a project with packages under mods/preloaded/packages
 #     that never declares them is a hard error, naming the call to add. An
 #     EMPTY packages/ (the scaffold's initial state) configures fine, because
 #     a title that has not written a mod yet must still build.
-#   * build time — snes_check_mod_catalog.cmake runs after the staging copy and
+#   * build time â€” snes_check_mod_catalog.cmake runs after the staging copy and
 #     fails the build if a declared package did not arrive. A staging step that
 #     half-worked is otherwise indistinguishable from a title with no mods.
 #
@@ -846,6 +848,11 @@ function(snesrecomp_target_mod_catalog target preloaded_dir)
         return()
     endif()
 
+    if(ANDROID)
+        # Consumers install their verified catalog from APK assets. Native
+        # library output directories are not Android's writable data root.
+        return()
+    endif()
     add_custom_command(TARGET ${target} POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E copy_directory
             "${_pkg_src}"
@@ -911,7 +918,7 @@ if(CMAKE_VERSION VERSION_GREATER_EQUAL 3.19)
     cmake_language(DEFER CALL _snesrecomp_finalize_mod_catalog_guard)
 endif()
 
-# ── ROM identity ────────────────────────────────────────────────────────────
+# â”€â”€ ROM identity â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 #
 # snesrecomp_rom_identity(<target> <identity_file>)
 #
@@ -987,7 +994,7 @@ function(snesrecomp_rom_identity target identity_file)
     target_include_directories(${target} PRIVATE "${_out_dir}")
 endfunction()
 
-# ── Generated code, or the setup host that stands in for it ────────────────
+# â”€â”€ Generated code, or the setup host that stands in for it â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 #
 # src/gen/*.c is recompiler output derived from ROM bytes: never committed,
 # never in CI, never in a release zip. That leaves exactly one honest way to
@@ -1241,7 +1248,7 @@ endfunction()
 # host speaks the SDL2/SDL3 shim.
 #
 #   snesrecomp_target_desktop_host(<target> [TIER2])
-# ── Header shadowing: an include directory that hides a standard header ─────
+# â”€â”€ Header shadowing: an include directory that hides a standard header â”€â”€â”€â”€â”€
 #
 # A port that puts its repo root on the include path hands the compiler a
 # directory holding VERSION, README, LICENSE and friends. On a case-insensitive
@@ -1343,7 +1350,11 @@ function(snesrecomp_target_desktop_host target)
     else()
         snesrecomp_target_post_mortem(${target})
     endif()
-    if(NOT ANDROID AND NOT SNESRECOMP_SDL_GLES2_ONLY)
+    if(ANDROID)
+        target_sources(${target} PRIVATE
+            ${SNESRECOMP_RUNNER_ROOT}/src/desktop/android_host.c
+            ${SNESRECOMP_RUNNER_ROOT}/src/desktop/android_present.c)
+    elseif(NOT SNESRECOMP_SDL_GLES2_ONLY)
         snesrecomp_target_opengl(${target})
     endif()
     # Run-ahead and rewind are the host's (snes_runahead.c, snes_rewind.c,

@@ -4,7 +4,9 @@ set(_SNES_DATA_PACK_SOURCE_DIR "${CMAKE_CURRENT_LIST_DIR}/src")
 function(snesrecomp_target_data_packs target)
     if(NOT TARGET snesrecomp_data_packs)
         enable_language(CXX)
-        find_package(LibArchive REQUIRED)
+        if(NOT TARGET LibArchive::LibArchive)
+            find_package(LibArchive REQUIRED)
+        endif()
         find_path(SNESRECOMP_RAPIDJSON_INCLUDE_DIR rapidjson/document.h REQUIRED)
         add_library(snesrecomp_data_packs STATIC
             "${_SNES_DATA_PACK_SOURCE_DIR}/data_pack.cpp"

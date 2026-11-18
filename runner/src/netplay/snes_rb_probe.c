@@ -61,7 +61,7 @@ static void probe_cycles(ProbeCycles *c)
  *
  * GNU-ld only, and deliberately a bisection instrument, not a feature.
  */
-#if defined(__linux__) && defined(__GNUC__)
+#if defined(__linux__) && defined(__GNUC__) && !defined(__ANDROID__)
 #define RB_PROBE_HAVE_STATICS 1
 extern char __data_start[], _edata[], __bss_start[], _end[];
 static uint8_t *rb_probe_statics_grab(void)

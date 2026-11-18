@@ -21,6 +21,7 @@
 #include <SDL3/SDL_main.h>
 #else
 #include <SDL.h>
+#define SDL_SCANCODE_COUNT SDL_NUM_SCANCODES
 #endif
 
 #define SNESRECOMP_SDL_MIX_MAXVOLUME 128
