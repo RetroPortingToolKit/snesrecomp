@@ -93,7 +93,9 @@ static void fixture(unsigned test) {
   normal.fixedColor = (uint16_t)random32() & 0x7fff;
   normal.bgTileAdr = (uint16_t)random32();
   normal.obsel = (uint8_t)random32();
-  normal.extraLeftRight = normal.extraLeftCur = normal.extraRightCur = 8;
+  /* Match the physical framebuffer budget as well as the visible margins.
+   * The legacy renderer offsets negative screen coordinates by this budget. */
+  PpuSetExtraSpace(&normal, 8);
   normal.wsOamMotionLastLine = 100;
   for (unsigned i = 0; i < 4; ++i) {
     normal.hScroll[i] = (uint16_t)random32();

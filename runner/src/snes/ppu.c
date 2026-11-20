@@ -1732,7 +1732,7 @@ static void PpuDrawBackground_4bpp_opt(Ppu *ppu, uint y, bool sub, uint layer,
   const int opt_hrow = (opt_vscroll & opt_coord_mask) >> opt_shift;
   const int opt_vrow = ((opt_vscroll + 8) & opt_coord_mask) >> opt_shift;
   const uint16 enable = (uint16)(0x2000u << layer);
-  const bool ws_shadow = WsShadowLayerActive((int)layer);
+  const bool ws_shadow = !s_detached_line_depth && WsShadowLayerActive((int)layer);
 
   for (size_t windex = 0; windex < win.nr; windex++) {
     if (win.bits & (1 << windex))
