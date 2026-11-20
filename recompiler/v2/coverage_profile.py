@@ -223,9 +223,8 @@ def load_profiles(paths, *, expected_rom=None, expected_module=None,
     return result
 
 
-def promotion_reason(row, declared, identity):
+def promotion_reason(row, declared, identity, *, canonical_boundaries=None):
     """Explain whether a row may seed analysis, never whether it is proven AOT."""
-    import re
     if row.get("record_kind", "transfer") != "transfer":
         return "instruction_cost_only"
     if row.get("bail_hits", 0):
@@ -238,10 +237,13 @@ def promotion_reason(row, declared, identity):
         return "missing_entry_width"
     if not (row.get("observed_hits", 0) or row.get("completed_hits", 0)):
         return "no_execution_evidence"
-    target = canonical_pc(row["target_pc24"], identity.get("mapper"))
-    boundaries = {canonical_pc(v, identity.get("mapper")) for v in declared}
-    if row.get("site_kind") != "call_gap" and target not in boundaries:
-        return "landing_requires_function_boundary"
+    mapper = identity.get("mapper")
+    target = canonical_pc(row["target_pc24"], mapper)
+    if row.get("site_kind") != "call_gap":
+        if canonical_boundaries is None:
+            canonical_boundaries = {canonical_pc(pc, mapper) for pc in declared}
+        if target not in canonical_boundaries:
+            return "landing_requires_function_boundary"
     if target >> 16 in (0x7E, 0x7F):
         return "ram_requires_decoded_snapshot_and_guard"
     return "candidate_requires_analysis_and_replay"

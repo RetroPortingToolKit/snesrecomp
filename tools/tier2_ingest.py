@@ -14,11 +14,13 @@ from v2.coverage_profile import load_profiles, promotion_reason, canonical_pc, e
 
 def audit(profile, declared=(), program=None):
     nodes = (program or {}).get("nodes", {})
+    mapper = profile.identity.get("mapper")
+    boundaries = {canonical_pc(value, mapper) for value in declared} if profile.discoveries else set()
     rows = []
     for observed in profile.discoveries:
         row = dict(observed)
-        target = execution_pc(row["target_pc24"], profile.identity.get("mapper"))
-        row["rom_pc24"] = canonical_pc(row["target_pc24"], profile.identity.get("mapper"))
+        target = execution_pc(row["target_pc24"], mapper)
+        row["rom_pc24"] = canonical_pc(row["target_pc24"], mapper)
         key = f"{target:06X}:{row.get('entry_mx', 'unknown')}"
         node = nodes.get(key) or nodes.get(
             f"{pc(row['target_pc24']):06X}:{row.get('entry_mx', 'unknown')}")
@@ -31,7 +33,7 @@ def audit(profile, declared=(), program=None):
                 else "Analysis rejected this exact variant")
         else:
             row["explanation"] = "Exact variant absent from supplied analysis" if program else "No program manifest supplied"
-        row["candidate_status"] = promotion_reason(row, declared, profile.identity)
+        row["candidate_status"] = promotion_reason(row, (), profile.identity, canonical_boundaries=boundaries)
         row["variant"] = key
         rows.append(row)
     return {
