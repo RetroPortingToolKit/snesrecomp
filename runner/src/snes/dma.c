@@ -371,25 +371,37 @@ uint64_t dma_hdmaMasterEstimate(Dma* dma) {
   return any ? (18u + perLine) * 224u + 128u : 0;
 }
 
-static void dma_hdmaLoadDescriptor(Dma* dma, DmaChannel* ch) {
+static uint32_t dma_hdmaLoadDescriptor(Dma* dma, DmaChannel* ch) {
+  uint32_t clocks = 8;
   ch->repCount = snes_read(dma->snes, (ch->aBank << 16) | ch->tableAdr++);
   ch->terminated = ch->repCount == 0;
   if (ch->indirect && !ch->terminated) {
+    clocks += 16;
     ch->size = snes_read(dma->snes, (ch->aBank << 16) | ch->tableAdr++);
     ch->size |= snes_read(dma->snes, (ch->aBank << 16) | ch->tableAdr++) << 8;
   }
   ch->doTransfer = !ch->terminated;
+  return clocks;
 }
 
 void dma_initHdma(Dma* dma) {
+  (void)dma_initHdmaWithClocks(dma);
+}
+
+uint32_t dma_initHdmaWithClocks(Dma* dma) {
+  uint32_t clocks = 0;
   for (int i = 0; i < 8; i++) {
     DmaChannel* ch = &dma->channel[i];
     if (!ch->hdmaActive) continue;
     dma->hdmaPendingInit &= (uint8_t)~(1u << i);
     ch->tableAdr = ch->aAdr;
-    dma_hdmaLoadDescriptor(dma, ch);
+    clocks += dma_hdmaLoadDescriptor(dma, ch);
     ch->offIndex = 0;
   }
+  /* Match the shared general-DMA clock model's fixed sync/setup cost. The
+   * descriptor and payload slots below are eight master clocks each. This
+   * is not a claim of sub-instruction CPU/DMA divider alignment precision. */
+  return clocks ? clocks + 18 : 0;
 }
 
 void dma_primeHdmaFirstLine(Dma* dma) {
@@ -412,6 +424,11 @@ void dma_primeHdmaFirstLine(Dma* dma) {
 }
 
 void dma_doHdma(Dma* dma) {
+  (void)dma_doHdmaWithClocks(dma);
+}
+
+uint32_t dma_doHdmaWithClocks(Dma* dma) {
+  uint32_t clocks = 0;
   for (int i = 0; i < 8; i++) {
     DmaChannel* ch = &dma->channel[i];
     if (!ch->hdmaActive) continue;
@@ -422,14 +439,19 @@ void dma_doHdma(Dma* dma) {
     if (dma->hdmaPendingInit & (1u << i)) {
       dma->hdmaPendingInit &= (uint8_t)~(1u << i);
       ch->tableAdr = ch->aAdr;
-      dma_hdmaLoadDescriptor(dma, ch);
+      clocks += dma_hdmaLoadDescriptor(dma, ch);
       ch->offIndex = 0;
       continue;
     }
     if (ch->terminated) continue;
 
+    /* Every live channel has a line-counter/descriptor bus slot even on
+     * non-repeat lines. Indirect address reads are charged only on reload. */
+    clocks += 8;
+
     if (ch->doTransfer) {
       int len = transferLength[ch->mode & 7];
+      clocks += 8u * (uint32_t)len;
       for (int j = 0; j < len; j++) {
         uint8_t bAdr = (uint8_t)(ch->bAdr + bAdrOffsets[ch->mode & 7][j]);
         g_ppu_wlog_src = kPpuWlogHdma;
@@ -444,8 +466,9 @@ void dma_doHdma(Dma* dma) {
     ch->repCount--;
     ch->doTransfer = (ch->repCount & 0x80) != 0;
     if ((ch->repCount & 0x7f) == 0)
-      dma_hdmaLoadDescriptor(dma, ch);
+      clocks += dma_hdmaLoadDescriptor(dma, ch) - 8;
   }
+  return clocks ? clocks + 18 : 0;
 }
 
 /* ── HDMA ────────────────────────────────────────────────────────────────

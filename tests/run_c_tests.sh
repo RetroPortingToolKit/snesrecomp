@@ -163,6 +163,16 @@ echo "=== DMA / HDMA ==="
     $GC_SECTIONS_LINKER -o "$OUT/hdma_timing_test"
 "$OUT/hdma_timing_test"
 
+echo "=== live HDMA CPU stalls and mid-field channel/table changes ==="
+"$CC" -std=c11 -Wall -Wextra -O1 -DSNESRECOMP_REVERSE_DEBUG=0 \
+    -ffunction-sections -fdata-sections \
+    -I "$ROOT/tests/dma" -I "$ROOT/runner/src" -I "$ROOT/runner/src/snes" \
+    "$ROOT/tests/dma/hdma_cpu_stall_test.c" \
+    "$ROOT/runner/src/snes/dma.c" "$ROOT/runner/src/snes/snes.c" \
+    "$ROOT/runner/src/snes/sdd1.c" \
+    $GC_SECTIONS_LINKER -o "$OUT/hdma_cpu_stall_test"
+"$OUT/hdma_cpu_stall_test"
+
 echo "=== fiber snapshot (rewindable execution position) ==="
 # Darwin exposes the POSIX context API but marks it deprecated.
 "$CC" $FIBER_PLATFORM_FLAGS -std=c11 -Wall -Wextra -Werror -O1 \

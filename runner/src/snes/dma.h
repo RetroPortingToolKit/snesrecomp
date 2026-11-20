@@ -82,6 +82,10 @@ void dma_write(Dma* dma, uint16_t adr, uint8_t val); // 43x0-43xf
 void dma_doDma(Dma* dma);
 void dma_initHdma(Dma* dma);
 void dma_doHdma(Dma* dma);
+/* Execute the same live unit and return the work clocks for this event.
+ * Legacy render-owned callers above intentionally discard these clocks. */
+uint32_t dma_initHdmaWithClocks(Dma* dma);
+uint32_t dma_doHdmaWithClocks(Dma* dma);
 void dma_primeHdmaFirstLine(Dma* dma);
 uint64_t dma_hdmaMasterEstimate(Dma* dma);
 /* Per-scanline HDMA. A frame-model host owns these edges: call dma_initHdma()

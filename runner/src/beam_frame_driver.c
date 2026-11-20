@@ -105,7 +105,7 @@ static uint64_t next_irq_latch(void) {
 static void advance_parked(uint64_t until) {
   g_cpu.master_cycles = until;
   snes_refresh_exempt();
-  snes_sync_master_clock(g_snes, g_cpu.master_cycles);
+  snes_sync_master_clock_parked(g_snes, g_cpu.master_cycles);
   cart_sync_coprocessors(g_snes->cart, g_cpu.master_cycles);
 }
 

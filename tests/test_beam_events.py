@@ -20,6 +20,19 @@ def test_beam_events_and_midspan_sync(tmp_path):
     subprocess.run([str(exe)], check=True)
 
 
+def test_live_hdma_cpu_stalls(tmp_path):
+    cc = shutil.which('gcc') or shutil.which('cc')
+    if cc is None:
+        pytest.skip('C compiler unavailable')
+    exe = tmp_path / 'hdma-cpu-stall.exe'
+    subprocess.run([cc, '-std=c11', '-O1', '-DSNESRECOMP_REVERSE_DEBUG=0',
+        '-ffunction-sections', '-fdata-sections', '-Irunner/src',
+        '-Irunner/src/snes', '-Itests/dma', 'tests/dma/hdma_cpu_stall_test.c',
+        'runner/src/snes/snes.c', 'runner/src/snes/dma.c',
+        'runner/src/snes/sdd1.c', '-lm', '-o', str(exe)], cwd=ROOT, check=True)
+    subprocess.run([str(exe)], check=True)
+
+
 def test_render_hdma_first_slot(tmp_path):
     cc=shutil.which('gcc') or shutil.which('cc')
     if cc is None:pytest.skip('C compiler unavailable')

@@ -22,6 +22,9 @@ void wlog_addr_note_direct(uint32_t wa, uint8_t v, const char *via) {
 
 static uint8_t ram[0x20000];
 static uint8_t ppu_regs[0x40];
+static Snes *ppu_observed_machine;
+static uint16_t ppu_observed_line, ppu_observed_h;
+static unsigned ppu_observed_writes;
 
 uint8_t ppu_read(Ppu *ppu, uint8_t adr) {
     (void)ppu;
@@ -31,6 +34,11 @@ uint8_t ppu_read(Ppu *ppu, uint8_t adr) {
 void ppu_write(Ppu *ppu, uint8_t adr, uint8_t val) {
     (void)ppu;
     ppu_regs[adr & 0x3f] = val;
+    if (ppu_observed_machine) {
+        ppu_observed_line = ppu_observed_machine->vPos;
+        ppu_observed_h = ppu_observed_machine->hPos;
+        ++ppu_observed_writes;
+    }
 }
 
 /* snes.c's save-state and reset paths call into joypad.c, which this harness
@@ -166,13 +174,13 @@ int main(void) {
     dma_startDma(dma, 0x01, true);
     dma_initHdma(dma);
 
-    snes_advance_master_cycles(&snes, 1023);
-    failures += check(ppu_regs[0x26] == 0x00, "HDMA does not fire before HBlank");
+    snes_advance_master_cycles(&snes, 1103);
+    failures += check(ppu_regs[0x26] == 0x00, "HDMA does not fire before the H=1104 request");
     snes_advance_master_cycles(&snes, 1);
-    failures += check(ppu_regs[0x26] == 0x44, "HDMA fires at HBlank");
+    failures += check(ppu_regs[0x26] == 0x44, "HDMA fires at its H=1104 request");
     failures += check(dma->channel[0].tableAdr == 0x0103, "HDMA consumed terminator at timing edge");
 
-    snes_advance_master_cycles(&snes, 1364u * 262u - 1024u);
+    snes_advance_master_cycles(&snes, 1364u * 262u - 1104u);
     failures += check(snes.vPos == 0 && snes.hPos == 0, "beam reached next frame");
     failures += check(dma->channel[0].tableAdr == 0x0101, "frame rollover reloaded line count");
     failures += check(dma->channel[0].hdmaActive, "frame rollover preserved HDMAEN state");
@@ -254,7 +262,7 @@ int main(void) {
     dma_startDma(dma, 0x01, true);
     dma_initHdma(dma);
 
-    snes_advance_master_cycles(&snes, 1024);
+    snes_advance_master_cycles(&snes, 1104);
     failures += check(ppu_regs[0x28] == 0x11,
                       "beam HDMA transfers once per HBlank, not twice");
 
@@ -273,7 +281,7 @@ int main(void) {
     dma_startDma(dma, 0x01, true);
     dma_initHdma(dma);
 
-    snes_advance_master_cycles(&snes, 1024);
+    snes_advance_master_cycles(&snes, 1104);
     failures += check(ppu_regs[0x28] == 0x00,
                       "snes_set_hdma_beam_enabled(false) keeps the beam off HDMA");
     snes.hdmaBeamOff = false;

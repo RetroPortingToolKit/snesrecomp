@@ -46,6 +46,9 @@ struct Snes {
   // Host read scope, not guest state. The caller has charged this access to
   // its master clock; HVBJOY must not add the legacy polling advance too.
   bool cpuReadClocked;
+  /* Transient recursion guard while a live event charges the host CPU.
+   * Never survives a synchronization call or belongs in a snapshot. */
+  bool cpuClockSyncing;
 
   // Host timing anchor; excluded from savestates and reconciled after load.
   uint64_t beamMasterLast;
@@ -139,7 +142,13 @@ uint32_t snes_saveload_get_version(void);
 void snes_saveload(Snes *snes, SaveLoadInfo *sli);
 void snes_catchupApu(Snes *snes);
 void snes_advance_master_cycles(Snes *snes, uint32_t clocks);
+/* CPU execution observer: live beam-owned HDMA charges the installed host
+ * clock hook and walks its additional elapsed time. The raw advance above
+ * instead walks an already-accounted physical interval. */
 void snes_sync_master_clock(Snes *snes, uint64_t master_clock);
+/* Walk physical waiting time without charging stalls again: WAI/idle parks
+ * already include the interval during which HDMA holds the CPU bus. */
+void snes_sync_master_clock_parked(Snes *snes, uint64_t master_clock);
 /* Scope an independently clocked CPU read. Restore the returned value after
  * dispatch. The caller must synchronize the beam to the charged read clock;
  * ReadRegOpenBus does this for HVBJOY when this scope is active. */
