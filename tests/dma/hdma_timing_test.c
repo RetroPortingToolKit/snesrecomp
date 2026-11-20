@@ -50,6 +50,8 @@ void ppu_rasterRecord(uint16_t reg, uint16_t line, uint8_t val) {
 void ppu_rasterFieldBoundary(void) {}
 void ppu_rasterReset(void) {}
 void (*g_ppu_latch_position_hook)(uint16_t *h_dot, uint16_t *v);
+/* ppu.c's beam hook for register accesses during rendering: ppu.c is not linked here. */
+bool (*g_ppu_beam_hook)(uint16_t adr, uint16_t *h_clock, uint16_t *v);
 
 void RtlApuLock(void) {}
 void RtlApuUnlock(void) {}
