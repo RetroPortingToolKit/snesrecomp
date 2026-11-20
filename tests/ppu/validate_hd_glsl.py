@@ -30,15 +30,16 @@ def main():
     fragment = shader_strings(source, 'static const char *fragment_source =',
                               '/* One double-precision')
     coordinate = shader_strings(source, 'static const char *coordinate_source =',
-                                'static GLuint hd_shader')
+                                '/* Shader variants')
     with tempfile.TemporaryDirectory(prefix='snes-hd-glsl-') as directory:
         folder = Path(directory)
         vert = folder / 'hd.vert'
         vert.write_bytes(vertex.encode('utf-8'))
         for name, prefix, body in (
                 ('register', '#version 330 core\n', fragment),
-                ('affine', '#version 400 core\n#define HD_AFFINE 1\n', fragment),
-                ('coordinate', '#version 400 core\n#define HD_AFFINE 1\n', coordinate)):
+                ('affine single', '#version 330 core\n#define HD_AFFINE 1\n', fragment),
+                ('affine double', '#version 400 core\n#define HD_AFFINE 1\n#define HD_FP64 1\n', fragment),
+                ('coordinate', '#version 400 core\n#define HD_AFFINE 1\n#define HD_FP64 1\n', coordinate)):
             frag = folder / (name + '.frag')
             frag.write_bytes((prefix + body).encode('utf-8'))
             subprocess.run([args.validator, '-l', str(vert), str(frag)], check=True)

@@ -124,8 +124,20 @@ int main(void) {
   assert(allocations==4 && releases==3 && !snapshot && closes==4);
   fail_close=1;assert(write_apu_events("","close-failure")==-1);fail_close=0;
   assert(allocations==5 && releases==4 && !snapshot && closes==5);
+  static Snes console;
+  g_snes = &console;
+  g_cpu.master_cycles = 1000;
+  console.beamMasterLast = 900;
+  console.vPos = 20;
+  console.hPos = 100;
   fail_alloc=1;assert(snes_state_dump("","public-oom",NULL,0,0,0,0)==-1);fail_alloc=0;
   assert(!snapshot && allocations==6 && releases==4 && !lock_depth);
+  FILE *info = fopen("public-oom.info.json", "r");
+  char json[512];
+  assert(info && fgets(json, sizeof(json), info));
+  assert(strstr(json, "\"master_clock\": 1000, \"beam_master_clock\": 900, \"vpos\": 20, \"hpos\": 100"));
+  assert(fclose(info) == 0);
+  g_snes = NULL;
   uint64_t total=0;audio_trace_copy_port_events(0,0,NULL,NULL,&total);
   assert(total==AUDIO_TRACE_PORT_RING+18); /* exports never consume the history */
   const char *files[]={"empty.apu.tsv","wrapped.apu.tsv","alloc-failure.apu.tsv",

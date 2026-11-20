@@ -454,11 +454,13 @@ def discover_profile_roots(manifest_paths: Iterable[pathlib.Path],
                            *, expected_rom=None, expected_module=None,
                            legacy_rom=None, historical_paths=()) -> tuple[VariantKey, ...]:
     """Observe -> analyze -> validate. A profile never supplies decoding facts."""
-    from .coverage_profile import load_profiles, promotion_reason, execution_pc as canonical_pc, pc
+    from .coverage_profile import canonical_pc as rom_pc, execution_pc, load_profiles, pc, promotion_reason
     # Historical builds retain their own capture identities and eligibility
     # checks. Only their analysis seeds and conservative exclusions survive;
     # costs/outcomes are never combined across different executable builds.
     roots = set()
+    if historical_paths:
+        declared_entry_pcs = tuple(declared_entry_pcs)
     for path in historical_paths:
         roots.update(discover_profile_roots(
             [path], declared_entry_pcs, force_lle_out,
@@ -467,7 +469,8 @@ def discover_profile_roots(manifest_paths: Iterable[pathlib.Path],
     profile = load_profiles(manifest_paths, expected_rom=expected_rom,
                             expected_module=expected_module, legacy_rom=legacy_rom)
     mapper = profile.identity.get("mapper")
-    canonical = lambda value: canonical_pc(value, mapper)
+    canonical = lambda value: execution_pc(value, mapper)
+    boundaries = {rom_pc(value, mapper) for value in declared_entry_pcs} if profile.discoveries else set()
     unsafe = {canonical(v) for v in profile.unsafe_targets}
     for row in profile.discoveries:
         if row.get("legacy") and row.get("bail_hits"):
@@ -492,7 +495,7 @@ def discover_profile_roots(manifest_paths: Iterable[pathlib.Path],
         mx = row.get("entry_mx")
         if canonical(target) in unsafe or (canonical(target), mx) in failed_variants:
             continue
-        if promotion_reason(row, declared_entry_pcs, profile.identity) != \
+        if promotion_reason(row, (), profile.identity, canonical_boundaries=boundaries) != \
                 "candidate_requires_analysis_and_replay":
             continue
         if qualified is not None and canonical(target) not in qualified and force_lle_out is not None:

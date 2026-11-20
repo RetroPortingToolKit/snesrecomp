@@ -354,6 +354,18 @@ echo "=== APU guest-time pacing ==="
     $GC_SECTIONS_LINKER -o "$OUT/apu_port_guest_time_test"
 "$OUT/apu_port_guest_time_test"
 
+echo "=== SPC700 DIV and ADDW ==="
+"$CC" -std=c11 -Wall -Wextra -Werror -O1 \
+    -Wno-error=unknown-pragmas -Wno-error=comment \
+    -I "$ROOT/runner/src" -I "$ROOT/runner/src/snes" \
+    "$ROOT/tests/spc/spc_div_addw_test.c" \
+    "$ROOT/runner/src/snes/apu.c" \
+    "$ROOT/runner/src/snes/spc.c" \
+    "$ROOT/runner/src/snes/dsp.c" \
+    "$ROOT/runner/src/snes/dsp_clock.c" \
+    -o "$OUT/spc_div_addw_test"
+"$OUT/spc_div_addw_test"
+
 echo "=== benchmark helper ==="
 "$CC" -std=c11 -Wall -Wextra -Werror -O1 \
     -I "$ROOT/runner/src" \
