@@ -1087,7 +1087,7 @@ static void spc_doOpcode(Spc* spc, uint8_t opcode) {
       uint16_t ya = spc->a | (spc->y << 8);
       int result = ya + value;
       spc->v = (ya & 0x8000) == (value & 0x8000) && (value & 0x8000) != (result & 0x8000);
-      spc->h = ((ya & 0xfff) + (value & 0xfff) + 1) > 0xfff;
+      spc->h = ((ya & 0xfff) + (value & 0xfff)) > 0xfff;
       spc->c = result > 0xffff;
       spc->z = (result & 0xffff) == 0;
       spc->n = result & 0x8000;
@@ -1242,18 +1242,20 @@ static void spc_doOpcode(Spc* spc, uint8_t opcode) {
       break;
     }
     case 0x9e: { // div imp
-      // TODO: proper division algorithm
+      // Nine shift-and-subtract steps over a 17-bit register, as in anomie's SPC700 document.
+      // The result is one field laid out YYYYYYYY V AAAAAAAA, with V being bit 8 of the quotient.
       uint16_t value = spc->a | (spc->y << 8);
-      int result = 0xffff;
-      int mod = spc->a;
-      if(spc->x != 0) {
-        result = value / spc->x;
-        mod = value % spc->x;
+      uint32_t work = value;
+      const uint32_t divisor = (uint32_t) spc->x << 9;
+      for(int step = 0; step < 9; step++) {
+        work = ((work << 1) | (work >> 16)) & 0x1ffff;
+        if(work >= divisor) work ^= 1;
+        if(work & 1) work = (work - divisor) & 0x1ffff;
       }
-      spc->v = result > 0xff;
       spc->h = (spc->x & 0xf) <= (spc->y & 0xf);
-      spc->a = result;
-      spc->y = mod;
+      spc->v = (work >> 8) & 1;
+      spc->a = work & 0xff;
+      spc->y = (work >> 9) & 0xff;
       spc_setZN(spc, spc->a);
       break;
     }
