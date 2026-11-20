@@ -54,6 +54,7 @@ static int      g_aot_double_rewrite;
 static int      g_aot_crosses_interp_owner;
 static int      g_aot_skips_interp_owner;
 static int      g_aot_deadline_unwind;
+static int      g_aot_paced_boundary;
 static int      g_aot_nested_deadline;
 static int      g_after_nested_deadline;
 static int      g_aot_gap_walks_into_wait;
@@ -75,6 +76,11 @@ int snes_frame_counter = 0;
 const char *rtl_game_title(void) { return "bridge_test"; }
 static Snes g_test_snes;
 static uint64_t g_test_irq_master;
+/* The host's H/V IRQ prediction (beam_frame_driver.c in the real runner):
+ * the master clock at which the next comparator match latches, 0 = none. */
+static uint64_t g_test_irq_latch, g_test_irq_relatch;
+static int g_test_irq_raise;
+static uint64_t test_next_irq_latch(void) { return g_test_irq_latch; }
 Snes *g_snes = &g_test_snes;
 uint64_t g_apu_last_sync_master;
 int g_interp_apu_driving;
@@ -310,7 +316,19 @@ RecompReturn cpu_dispatch_pc_paired(CpuState *cpu, uint32 pc24,
     }
     if (g_aot_deadline_unwind && (pc24 & 0xFFFFFF) == FAKE_AOT) {
         g_aot_called++;
+        if (g_aot_paced_boundary == 2) {
+            /* A boundary reported earlier, then clocks without one. */
+            cpu->master_cycles = 150;
+            cpu_aot_instruction_boundary(cpu);
+        }
         cpu->master_cycles = 200;
+        /* The body reprograms the comparator, or the IRQ line rises or is
+         * acknowledged ($4211), before its next instruction boundary. */
+        if (g_test_irq_relatch) g_test_irq_latch = g_test_irq_relatch;
+        if (g_test_irq_raise) g_test_snes.inIrq = g_test_irq_raise == 1;
+        /* Region-paced emission reports the boundary right before its
+         * deadline poll; aggregate emission polls without one. */
+        if (g_aot_paced_boundary == 1) cpu_aot_instruction_boundary(cpu);
         if (interp_bridge_lle_master_deadline_reached(cpu))
             return interp_bridge_lle_yield_unwind(cpu, 0x008100);
         cpu->A = 0x0100;
@@ -1150,6 +1168,73 @@ int main(void) {
             (unsigned)interp_bridge_lle_resume_pc());
       interp_bridge_set_master_deadline(0);
       g_aot_deadline_unwind = 0; }
+
+    /* S8i: a raster IRQ latching inside region-paced compiled code. The
+     * interpreter syncs the beam after every opcode and yields at the first
+     * boundary after the comparator latches; paced code must yield at that
+     * same boundary rather than at the frame deadline. The body runs to
+     * master 200 and reports its boundary there; the frame deadline is far
+     * away. Aggregate blocks report no boundary and keep their behavior. */
+    {
+      static const struct {
+        const char *what;
+        /* boundary: 1 = reported at the poll, 2 = only earlier. raise: 1 =
+         * the line rises in the body, 2 = pending on entry and acknowledged
+         * in the body. latch/relatch: next_latch() on entry/in the body. */
+        int armed, boundary, flag_i, raise, yield;
+        uint64_t latch, relatch;
+      } cases[] = {
+        {"latch reached",                 1, 1, 0, 0, 1, 151,   0},
+        {"I set",                         1, 1, 1, 0, 0, 151,   0},
+        {"comparator moved past it",      1, 1, 0, 0, 0, 151, 501},
+        {"comparator moved before it",    1, 1, 0, 0, 1, 501, 151},
+        {"IRQ already pending",           1, 1, 0, 1, 1,   0,   0},
+        {"acknowledged, next match ahead",1, 1, 0, 2, 0, 501,   0},
+        {"aggregate block",               1, 0, 0, 0, 0, 151,   0},
+        {"stale boundary",                1, 2, 0, 0, 0, 151,   0},
+        {"not armed",                     0, 1, 0, 0, 0, 151,   0},
+      };
+      for (unsigned k = 0; k < sizeof cases / sizeof cases[0]; k++) {
+        memset(RAM, 0, MEMSZ); init_cpu(); g_aot_called = 0;
+        g_aot_deadline_unwind = 1;
+        g_aot_paced_boundary = cases[k].boundary;
+        g_test_snes.inIrq = cases[k].raise == 2;   /* pending until acknowledged */
+        g_test_irq_latch = cases[k].latch;
+        g_test_irq_relatch = cases[k].relatch;
+        g_test_irq_raise = cases[k].raise;
+        interp_bridge_set_master_deadline(1000000);
+        interp_bridge_set_irq_deadline(cases[k].armed ? test_next_irq_latch : NULL);
+        g_c._flag_I = (uint8)cases[k].flag_i;
+        cpu_mirrors_to_p(&g_c);
+        uint8_t scheduler[] = {
+            0x22,0x00,0x81,0x00,               /* JSL fake compiled root */
+            0xA9,0x5A,                         /* runs only without a yield */
+            0xAD,0x20,0x00, 0xD0,0xFB          /* cooperative wait loop */
+        };
+        load(0x8000, scheduler, sizeof scheduler);
+        RAM[0x20] = 0;
+        int rc = interp_bridge_run_loop(&g_c, 0x008000, 0x008006, 0x0020, 0);
+        printf("S8i paced IRQ deadline: %s\n", cases[k].what);
+        CHECK(g_aot_called == 1, "%s: aot_called=%d exp 1", cases[k].what, g_aot_called);
+        if (cases[k].yield) {
+          CHECK(rc == 1, "%s: rc=%d exp 1", cases[k].what, rc);
+          CHECK(interp_bridge_lle_resume_pc() == 0x008100,
+                "%s: resume=$%06X exp $008100", cases[k].what,
+                (unsigned)interp_bridge_lle_resume_pc());
+          CHECK((g_c.A & 0xFF) == 0x00,
+                "%s: A.lo=%02X exp 00 (continuation not run)", cases[k].what, g_c.A & 0xFF);
+        } else {
+          CHECK((g_c.A & 0xFFFF) == 0x015A,
+                "%s: A=%04X exp 015A (body and continuation ran)", cases[k].what,
+                g_c.A & 0xFFFF);
+        }
+        interp_bridge_set_irq_deadline(NULL);
+        interp_bridge_set_master_deadline(0);
+        g_aot_deadline_unwind = 0; g_aot_paced_boundary = 0;
+        g_test_irq_latch = g_test_irq_relatch = 0; g_test_irq_raise = 0;
+        g_test_snes.inIrq = false;
+      }
+    }
 
     /* A deadline inside scheduler -> AOT -> gap -> AOT belongs to the host,
      * not the nested gap's immediate bounce owner. Retain PHP/JSL and resume
