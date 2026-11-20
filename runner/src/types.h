@@ -39,12 +39,12 @@ typedef uint16 VoidP;
 #ifdef _MSC_VER
 #define countof _countof
 #define NORETURN __declspec(noreturn)
-#define FORCEINLINE __forceinline
+#define SNESRECOMP_FORCE_INLINE __forceinline
 #define NOINLINE __declspec(noinline)
 #else
 #define countof(a) (sizeof(a)/sizeof(*(a)))
 #define NORETURN
-#define FORCEINLINE inline
+#define SNESRECOMP_FORCE_INLINE inline
 #define NOINLINE
 #endif
 
@@ -54,8 +54,8 @@ typedef uint16 VoidP;
 #define kDebugFlag 0
 #endif
 
-static FORCEINLINE int IntMin(int a, int b) { return a < b ? a : b; }
-static FORCEINLINE int IntMax(int a, int b) { return a > b ? a : b; }
+static SNESRECOMP_FORCE_INLINE int IntMin(int a, int b) { return a < b ? a : b; }
+static SNESRECOMP_FORCE_INLINE int IntMax(int a, int b) { return a > b ? a : b; }
 
 static inline uint16 swap16(uint16 v) { return (v << 8) | (v >> 8); }
 
