@@ -40,6 +40,24 @@ typedef enum SnesRegion {
   kSnesRegionPal = 2,
 } SnesRegion;
 
+/* Where the resolved region came from. Netplay reports this with the region
+ * when it refuses a match, so the players can see which side changed timing.
+ * The source is informational: the match identity is the resolved region. */
+typedef enum SnesRegionSource {
+  kSnesRegionSourceHeader = 0,   /* $FFD9 destination code */
+  kSnesRegionSourceEnv = 1,      /* SNESRECOMP_REGION */
+  kSnesRegionSourceOverride = 2, /* --region / snes_set_region_override */
+} SnesRegionSource;
+
+/* "header", "SNESRECOMP_REGION", "override". */
+static inline const char *snes_region_source_name(SnesRegionSource source) {
+  switch (source) {
+    case kSnesRegionSourceEnv: return "SNESRECOMP_REGION";
+    case kSnesRegionSourceOverride: return "override";
+    default: return "header";
+  }
+}
+
 enum {
   kSnesMasterClocksPerLine = 1364,
   kSnesVblankLine = 225,

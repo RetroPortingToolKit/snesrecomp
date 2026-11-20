@@ -64,6 +64,9 @@ int snes_netplay_return_to_lobby_requested(void) {
 const char *snes_netplay_refusal(void) {
   return snes_netplay_region_reason(&current->region);
 }
+const char *snes_netplay_refusal_message(void) {
+  return snes_netplay_region_message(&current->region);
+}
 uint32_t snes_netplay_sim_tick(void) { return 0; }
 void snes_netplay_soft_exit_to_lobby(const char *origin, int from_lobby) {
   assert(current->active);
@@ -74,10 +77,10 @@ void snes_netplay_soft_exit_to_lobby(const char *origin, int from_lobby) {
   current->running = 0;
 }
 void snes_netplay_connect_wait_reset(void) {}
+void snes_netplay_log_peer_disconnect(uint32_t timeout) { (void)timeout; }
 void snes_host_lobby_set_runtime_error(const char *why) {
-  assert(!strcmp(why, "region_mismatch"));
-  snprintf(current->lobby_error, sizeof(current->lobby_error), "%s",
-           snes_netplay_region_message(&current->region));
+  assert(strstr(why, "region_mismatch") != NULL);
+  snprintf(current->lobby_error, sizeof(current->lobby_error), "%s", why);
 }
 int snes_netplay_remote_lead(void) { return 0; }
 int snes_netplay_input_delay(void) { return 2; }
@@ -97,7 +100,7 @@ void snes_netplay_stage_local(uint16_t buttons) { (void)buttons; }
 void snes_netplay_pump(void) {}
 static uint16_t capture(void *ctx) { (void)ctx; return 0; }
 
-static void peer_init(Peer *peer, int pal, SnesNetplayRegionSource source) {
+static void peer_init(Peer *peer, int pal, SnesRegionSource source) {
   memset(peer, 0, sizeof(*peer));
   snes_netplay_region_state_init(&peer->region);
   snes_netplay_region_set_local(&peer->region, pal, source, SAME_ROM_FP);
@@ -139,8 +142,8 @@ int main(void) {
 
   /* The identity fold is driven by the resolved region, never by its source:
    * overriding to the region the header already says is not a mismatch. */
-  peer_init(a, 1, kSnesNetplayRegionSourceOverride);
-  peer_init(b, 0, kSnesNetplayRegionSourceHeader);
+  peer_init(a, 1, kSnesRegionSourceOverride);
+  peer_init(b, 0, kSnesRegionSourceHeader);
   assert(snes_netplay_region_folded_fp(&a->region) !=
          snes_netplay_region_folded_fp(&b->region));
   exchange(a, b);
@@ -165,8 +168,8 @@ int main(void) {
   printf("peer %s: %s\n", peer_name(b), b->lobby_error);
 
   /* Same ROM, same resolved region: the control pair still plays. */
-  peer_init(a, 0, kSnesNetplayRegionSourceHeader);
-  peer_init(b, 0, kSnesNetplayRegionSourceHeader);
+  peer_init(a, 0, kSnesRegionSourceHeader);
+  peer_init(b, 0, kSnesRegionSourceHeader);
   assert(snes_netplay_region_folded_fp(&a->region) ==
          snes_netplay_region_folded_fp(&b->region));
   exchange(a, b);
@@ -181,10 +184,11 @@ int main(void) {
   assert(!a->lobby_error[0] && !b->lobby_error[0]);
 
   /* SNESRECOMP_REGION is a source too, and must be named in the copy. */
-  peer_init(a, 1, kSnesNetplayRegionSourceEnv);
-  peer_init(b, 0, kSnesNetplayRegionSourceHeader);
+  peer_init(a, 1, kSnesRegionSourceEnv);
+  peer_init(b, 0, kSnesRegionSourceHeader);
   exchange(a, b);
   assert(snes_netplay_region_check(&a->region) == 0);
+  assert(snes_netplay_region_check(&b->region) == 0);
   assert(contains(snes_netplay_region_message(&a->region),
                   "PAL (from SNESRECOMP_REGION)"));
   assert(contains(snes_netplay_region_message(&b->region),

@@ -212,8 +212,12 @@ static int barrier_refused(int from_lobby, int *running, int *desync_logged,
           "snes_netplay: match refused (%s) at sim=%u — leaving the match%s\n",
           why, (unsigned)snes_netplay_sim_tick(),
           from_lobby ? "; returning both players to the lobby" : "");
-  if (from_lobby)
-    snes_host_lobby_set_runtime_error(why);
+  if (from_lobby) {
+    /* A region_mismatch carries copy naming both peers' regions and sources;
+     * the code alone is not enough for a player to fix the launch. */
+    const char *detail = snes_netplay_refusal_message();
+    snes_host_lobby_set_runtime_error(detail ? detail : why);
+  }
   barrier_soft_exit(from_lobby, running, why, desync_logged, wait_logged);
   return 1;
 }

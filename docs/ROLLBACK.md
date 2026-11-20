@@ -27,6 +27,17 @@ game main loop                     unchanged: poll_admit → RtlRunFrame → fin
         └── retcomm-rbengine       snap ring, monotonic clock
 ```
 
+**Amended for region agreement.** A host may load the same ROM on two peers
+with different console regions: `--region` / `snes_set_region_override` is
+per-peer, while auto resolves from `$FFD9` or `SNESRECOMP_REGION`. PAL and NTSC
+run different master clocks and field geometry, so `snes_netplay_rb_set_identity`
+folds the resolved region into the content fingerprint before handing it to
+`rnet_rb_driver_set_identity`. `snes_netplay_poll_admit` also checks agreement
+before the first admit and reports reason `region_mismatch` with both peers'
+regions and sources, then the barrier soft-returns to the lobby. This is a
+stopgap inside snesrecomp; a dedicated region field in recomp-net would be
+cleaner and is pending reviewer preference.
+
 **Amended 2026-09-24.** The episode driver — admit, reconcile, open / follow /
 seal / replay / verify / commit, tip-hold and tip-extend, watchdogs, the fork
 cap, the boot-digest, mod-set and identity gates, lockstep degrade — was lifted

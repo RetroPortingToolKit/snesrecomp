@@ -302,6 +302,7 @@ set(SNESRECOMP_RUNNER_SOURCES
     # The facade supplies offline stubs unless this target enables netplay.
     # Shared menus must link even without snesrecomp_enable_recomp_net().
     ${SNESRECOMP_RUNNER_ROOT}/src/netplay/snes_netplay.c
+    ${SNESRECOMP_RUNNER_ROOT}/src/netplay/snes_netplay_region.c
     ${SNESRECOMP_RUNNER_ROOT}/src/snes_osd.c
     ${SNESRECOMP_RUNNER_ROOT}/src/snes_rewind.c
     ${SNESRECOMP_RUNNER_ROOT}/src/cpu_state.c

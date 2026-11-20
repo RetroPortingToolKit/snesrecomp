@@ -44,17 +44,24 @@ typedef struct CartHeader {
 static void readHeader(const uint8_t* data, int length, int location, CartHeader* header);
 
 static SnesRegion s_region_override = kSnesRegionAuto;
+/* Set by the last snes_loadRom. Netplay reads it to name the source of the
+ * resolved region when it refuses a match (snes_region_resolution_source). */
+static SnesRegionSource s_region_source = kSnesRegionSourceHeader;
 
 void snes_set_region_override(SnesRegion region) {
   s_region_override = region;
 }
 
+SnesRegionSource snes_region_resolution_source(void) {
+  return s_region_source;
+}
+
 /* The header decides unless the host or the environment says otherwise. The
  * override exists for dumps whose header disagrees with the console they were
  * sold for. It also runs a cartridge on the other console on purpose. */
-static bool select_pal_timing(const CartHeader *header, const char **source) {
+static bool select_pal_timing(const CartHeader *header) {
   SnesRegion region = s_region_override;
-  *source = "override";
+  s_region_source = kSnesRegionSourceOverride;
   if (region == kSnesRegionAuto) {
     const char *e = getenv("SNESRECOMP_REGION");
     if (e && !strcmp(e, "ntsc")) region = kSnesRegionNtsc;
@@ -62,11 +69,11 @@ static bool select_pal_timing(const CartHeader *header, const char **source) {
     else if (e && e[0] && strcmp(e, "auto"))
       printf("Warning! SNESRECOMP_REGION=%s is not ntsc, pal or auto; "
              "using the header\n", e);
-    *source = "SNESRECOMP_REGION";
+    s_region_source = kSnesRegionSourceEnv;
   }
   if (region == kSnesRegionNtsc) return false;
   if (region == kSnesRegionPal) return true;
-  *source = "header";
+  s_region_source = kSnesRegionSourceHeader;
   return header->pal;
 }
 
@@ -234,12 +241,10 @@ else if (headers[used].cartType == CART_SA1)
 #endif
 
   /* Before cart_load: the coprocessors it creates take their timing from it. */
-  {
-    const char *source;
-    snes->palTiming = select_pal_timing(&headers[used], &source);
-    printf("[snes_load] region=%s ($FFD9=%02x, from %s)\n",
-           snes_region_name(snes->palTiming), headers[used].region, source);
-  }
+  snes->palTiming = select_pal_timing(&headers[used]);
+  printf("[snes_load] region=%s ($FFD9=%02x, from %s)\n",
+         snes_region_name(snes->palTiming), headers[used].region,
+         snes_region_source_name(s_region_source));
 
   cart_load(
     snes->cart, headers[used].cartType,

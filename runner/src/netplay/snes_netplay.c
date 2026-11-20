@@ -1,4 +1,11 @@
 #include "snes_netplay.h"
+#include "snes_netplay_region.h"
+
+/* The dedicated local reason for a resolved-region disagreement. It is kept
+ * beside the profile refusal (not inside the driver) because the stopgap wire
+ * has no region field: the driver's identity gate sees the folded fingerprint,
+ * this facade names the policy verdict. */
+static const char *g_region_refusal;
 
 static struct {
     uint32_t qualification,cpu,backends,profiles,architecture;
@@ -206,6 +213,7 @@ void snes_netplay_request_return_to_lobby(void) { g_return_to_lobby_stub = 1; }
 int  snes_netplay_return_to_lobby_requested(void) { return g_return_to_lobby_stub; }
 void snes_netplay_clear_return_to_lobby(void) { g_return_to_lobby_stub = 0; }
 const char *snes_netplay_refusal(void) { return NULL; }
+const char *snes_netplay_refusal_message(void) { return NULL; }
 
 int  snes_netplay_is_host(void) { return 0; }
 int snes_netplay_menu_open(void) { return 0; }
@@ -703,8 +711,14 @@ int snes_netplay_draining(void)
 
 const char *snes_netplay_refusal(void)
 {
+    if (g_region_refusal) return g_region_refusal;
     if(g_profiles.refusal)return g_profiles.refusal;
     return snes_netplay_rollback_active() ? snes_netplay_rb_refusal() : NULL;
+}
+
+const char *snes_netplay_refusal_message(void)
+{
+    return g_region_refusal ? snes_netplay_region_refusal_message() : NULL;
 }
 
 int snes_netplay_active(void)
@@ -941,6 +955,8 @@ int snes_netplay_start(const SnesNetplayConfig *cfg)
     g_np.session = rnet_session_create(&rcfg, &host);
     if (!g_np.session) return -2;
     g_profiles.pending=g_profiles.qualification!=0;g_profiles.refusal=NULL;
+    g_region_refusal = NULL;
+    snes_netplay_region_reset_peer(); /* keep the resolved region across rematch */
     g_profiles.started_ms=(uint32_t)np_diagnostic_clock_ms();
     if(g_profiles.pending) {
         RNetProfileCaps caps={g_profiles.cpu,g_profiles.backends,g_profiles.profiles,g_profiles.architecture};
@@ -1270,6 +1286,7 @@ int snes_netplay_start(const SnesNetplayConfig *cfg)
 
 void snes_netplay_shutdown(void)
 {
+    g_region_refusal = NULL;
     snes_netplay_rb_shutdown();
 #if defined(SNESRECOMP_NET_ROLLBACK)
     snes_netplay_rb_bind(NULL);
@@ -2741,6 +2758,16 @@ int snes_netplay_poll_admit(void)
     rnet_u32 sim;
     int admitted = 0;
     if (!snes_netplay_active()) return 1;
+
+    /* Resolved region is part of the match identity. Refuse here, before the
+     * first admit and hence before any RtlRunFrame, rather than letting the
+     * peers fork on different guest timing. Both sides reach the same verdict
+     * from their own identity exchange and then soft-return to the lobby. */
+    if (!snes_netplay_region_check_agreement()) {
+        g_region_refusal = snes_netplay_region_refusal();
+        snes_netplay_request_return_to_lobby();
+        return 0;
+    }
 
     np_pump_session();
     if(g_profiles.pending) {

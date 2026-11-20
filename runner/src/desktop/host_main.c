@@ -113,6 +113,7 @@
  * it every netplay block compiles out and the launcher's netplay button stays
  * hidden. */
 #include "snes_netplay.h"
+#include "snes_netplay_region.h"
 #include "snes_host_lobby.h"
 #include "snes_host_app.h"
 #include "snes_netplay_identity.h"
@@ -3899,9 +3900,16 @@ error_reading:;
     return 1;
   }
   /* The region is known once the ROM has loaded. A port that fixed its own
-   * rate keeps it. */
+   * rate keeps it. Publish the resolution before netplay starts: the rollback
+   * adapter folds it into the content fingerprint, and the facade refuses a
+   * peer that resolved the same ROM differently. */
   if (!(game->simulation_hz > 0))
     g_simulation_hz = snes->palTiming ? SNES_HOST_PAL_HZ : SNES_HOST_NTSC_HZ;
+#if defined(SNES_HAS_LOBBY_CLIENT)
+  snes_netplay_region_publish_local(snes->palTiming ? 1 : 0,
+                                    snes_region_resolution_source(),
+                                    g_rom_crc32);
+#endif
 #if SNESRECOMP_ENABLE_MODS
   /* Plugins act on a machine that exists: after SnesInit, before frame 1. */
   if (g_mods_ready)

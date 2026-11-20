@@ -1,8 +1,10 @@
-"""Same-ROM PAL/NTSC netplay agreement at the first-admit barrier.
+"""Same-ROM PAL/NTSC netplay agreement before the first admit.
 
-Both peers are driven through the real admission barrier in one process: an
-explicit PAL override against an NTSC header must refuse with region_mismatch
-and zero admitted frames, while a matching pair still admits.
+The core fixture pins the region fold, the two-peer verdict and the copy that
+names each side's region and source. The barrier fixture drives the real host
+admission path for both peers and checks zero admits / zero guest frames on a
+mismatch, with a matching-region control that still admits. The latter needs
+the recomp-net headers from the submodule; it is skipped when they are absent.
 """
 import os
 import pathlib
@@ -26,29 +28,62 @@ def _compiler():
     return compiler
 
 
-def test_region_agreement():
+def _build_and_run(sources, name):
     compiler = _compiler()
     if not compiler:
         print("    SKIPPED: no C compiler")
-        return
+        return None
     with tempfile.TemporaryDirectory() as temporary:
         exe = pathlib.Path(temporary) / (
-            "region_agreement.exe" if os.name == "nt" else "region_agreement"
+            name + (".exe" if os.name == "nt" else "")
         )
         command = [compiler]
         if pathlib.Path(compiler).name.lower().startswith("clang") and os.name == "nt":
             command += ["--target=x86_64-pc-windows-msvc", "-fuse-ld=lld"]
         command += [
             "-std=c11", "-O1", "-UNDEBUG", "-Wall", "-Wextra", "-Werror",
+            "-Wno-deprecated-declarations",  # MSVC headers mark getenv unsafe
             "-I", str(REPO / "runner/src"),
             "-I", str(REPO / "runner/src/lobby"),
             "-I", str(REPO / "lib/recomp-net/include"),
-            str(REPO / "tests/netplay/region_agreement_test.c"), "-o", str(exe),
+            # Test-only stand-ins for the uninitialized submodule. The real
+            # include path above wins when the submodule is checked out.
+            "-I", str(REPO / "tests/netplay/stubs"),
         ]
+        command += [str(REPO / source) for source in sources]
+        command += ["-o", str(exe)]
         built = subprocess.run(command, capture_output=True, text=True, timeout=60)
         assert built.returncode == 0, built.stderr
         tested = subprocess.run([str(exe)], capture_output=True, text=True, timeout=10)
         assert tested.returncode == 0, tested.stdout + tested.stderr
-        assert "region agreement: PASS" in tested.stdout
-        assert "PAL (from override)" in tested.stdout
-        assert "NTSC (from header)" in tested.stdout
+        return tested.stdout
+
+
+def test_region_agreement_core():
+    output = _build_and_run(
+        [
+            "tests/netplay/region_agreement_core_test.c",
+            "runner/src/netplay/snes_netplay_region.c",
+        ],
+        "region_agreement_core",
+    )
+    if output is None:
+        return
+    assert "region agreement core: PASS" in output
+    assert "PAL (from override)" in output
+    assert "NTSC (from header)" in output
+
+
+def test_region_agreement_barrier():
+    output = _build_and_run(
+        [
+            "tests/netplay/region_agreement_test.c",
+            "runner/src/netplay/snes_netplay_region.c",
+        ],
+        "region_agreement",
+    )
+    if output is None:
+        return
+    assert "region agreement: PASS" in output
+    assert "PAL (from override)" in output
+    assert "NTSC (from header)" in output

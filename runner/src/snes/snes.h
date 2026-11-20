@@ -145,6 +145,9 @@ bool snes_loadRom(Snes* snes, const uint8_t* data, int length);
  * header's $FFD9 destination code, unless SNESRECOMP_REGION=ntsc|pal is set in
  * the environment. An explicit NTSC or PAL here wins over both. */
 void snes_set_region_override(SnesRegion region);
+/* Which input decided the last snes_loadRom. Netplay uses it to explain a
+ * region_mismatch; the resolved region itself is snes->palTiming. */
+SnesRegionSource snes_region_resolution_source(void);
 
 /* Field timing of the loaded machine. A NULL snes is NTSC. */
 static inline uint32_t snes_lines_per_field(const Snes *snes) {

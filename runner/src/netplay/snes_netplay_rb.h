@@ -38,6 +38,7 @@
 
 #include <stdint.h>
 
+#include "snes/snes_region.h"
 #include "recomp_net/recomp_net.h"
 #include "recomp_net/rb_driver.h"
 #include "recomp_net/hash_confirm.h"
@@ -132,6 +133,11 @@ uint32_t snes_netplay_rb_desync_count(void);
  * desync says "these are different builds" rather than only "these states
  * differ". */
 void snes_netplay_rb_set_identity(uint32_t build_fp, uint32_t content_fp);
+/* Publish the peer's resolved region from the identity exchange so the facade
+ * can report region_mismatch before the first admit. peer_content_fp is the
+ * region-folded fingerprint; see snes_netplay_region.h. */
+void snes_netplay_rb_set_peer_identity(uint32_t peer_content_fp,
+                                       SnesRegionSource peer_source);
 
 /* The host publishes this set; every peer must confirm it can run it before
  * the match may start. `check` answers for the local build and writes a
