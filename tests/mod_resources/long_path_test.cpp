@@ -1,5 +1,7 @@
 // Exercise the real catalog, state reader/writer and trusted activation plan.
-// Fixture I/O explicitly uses extended Windows paths so it works before the fix.
+// Fixture I/O explicitly uses extended Windows paths so it works before the fix;
+// status queries and directory creation use ModPaths, because MinGW's stat-based
+// std::filesystem calls reject extended paths.
 #include "mod_runtime.h"
 #include "content_variant.h"
 #include "mod_paths.h"
@@ -39,7 +41,9 @@ static fs::path fixture_io(const fs::path& path) {
 }
 
 static void write(const fs::path& path, const std::string& text) {
-    fs::create_directories(fixture_io(path.parent_path()));
+    std::error_code ec;
+    require(SNESRecomp::ModPaths::create_directories(path.parent_path(), ec),
+            "cannot create fixture directory: " + ec.message());
     std::ofstream file(fixture_io(path), std::ios::binary);
     file << text;
     require(bool(file), "cannot create fixture");
@@ -48,15 +52,14 @@ static void write(const fs::path& path, const std::string& text) {
 static void cleanup_fixture(const fs::path& path) {
     // MinGW's recursive remove_all uses the same limited directory iterator.
     // This is only called on the unique directory created by this test.
-    const auto io = fixture_io(path);
-    require(!fs::is_symlink(io), "unexpected fixture symlink; cleanup refused");
-    if (fs::is_directory(io)) {
-        std::error_code ec;
+    std::error_code ec;
+    require(!SNESRecomp::ModPaths::is_symlink(path, ec), "unexpected fixture symlink; cleanup refused");
+    if (SNESRecomp::ModPaths::is_directory(path)) {
         const auto entries = SNESRecomp::ModPaths::entries(path, ec);
         require(!ec, "cannot enumerate fixture during cleanup");
         for (const auto& entry : entries) cleanup_fixture(entry);
     }
-    require(fs::remove(io), "cannot remove fixture");
+    require(SNESRecomp::ModPaths::remove(path, ec), "cannot remove fixture: " + ec.message());
 }
 
 static fs::path package_dir(const fs::path& root) {
@@ -92,7 +95,7 @@ static void run_case(const fs::path& root, const fs::path& input, bool c_api) {
         return c_api ? snes_mod_runtime_initialize_c(input.u8string().c_str(), "test", digest) != 0
                      : SNESRecomp::mod_runtime_initialize(input, "test", digest, &error);
     };
-    require(fs::is_regular_file(fixture_io(manifest)), "fixture manifest is missing");
+    require(SNESRecomp::ModPaths::is_regular_file(manifest), "fixture manifest is missing");
     require(initialize(), "initialize: " + error + " / " + snes_mod_runtime_last_error_c());
     std::puts("initialized");
     require(SNESRecomp::mod_runtime_commit(input / "empty.bin", &error), "commit: " + error);
@@ -119,7 +122,8 @@ static void run_case(const fs::path& root, const fs::path& input, bool c_api) {
     require(snes_mod_runtime_effective_set_c(effective, sizeof effective) != 0 &&
                 std::string(effective).find("test.longpath") != std::string::npos,
             "nested package payload was not detected");
-    fs::remove(fixture_io(payload));
+    std::error_code ec;
+    require(SNESRecomp::ModPaths::remove(payload, ec), "cannot remove payload: " + ec.message());
 }
 
 int main(int argc, char **argv) {
@@ -128,7 +132,7 @@ int main(int argc, char **argv) {
     fs::path root = fs::absolute(fs::u8path(argv[1])) /
         ("mod-paths-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
     try {
-        require(!fs::exists(fixture_io(root)), "fixture already exists");
+        require(!SNESRecomp::ModPaths::exists(root), "fixture already exists");
         require(snes_mod_register_presentation_plugin("test.longpath.plugin", activate) != 0,
                 "plugin registration failed");
         run_case(root / "short", root / "short", false);
@@ -140,7 +144,13 @@ int main(int argc, char **argv) {
         run_case(deep, deep, false);
         const auto unicode = padded(root / fs::u8path(u8"caf\u00e9-\u8def\u5f84"), 360);
         run_case(unicode, unicode, true);
-        run_case(above, above.lexically_relative(fs::current_path()), false);
+        // Relative to the fixture root, not the caller's directory: Windows reports
+        // the drive letter as the caller spelled it, and lexically_relative gives up
+        // (empty path) when "C:" meets "c:".
+        const fs::path caller_dir = fs::current_path();
+        fs::current_path(root);
+        run_case(above, above.lexically_relative(root), false);
+        fs::current_path(caller_dir);
 #ifdef _WIN32
         require(SNESRecomp::ModPaths::for_io(fs::path(L"\\\\server\\share\\folder\\..\\pack")) ==
                     fs::path(L"\\\\?\\UNC\\server\\share\\pack"), "UNC path conversion");
