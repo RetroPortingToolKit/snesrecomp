@@ -111,6 +111,14 @@ void cart_load(Cart* cart, int type, uint8_t* rom, int romSize, int ramSize) {
   if (type == CART_SA1)
     cart->sa1 = sa1_create(cart->rom, cart->romSize,
                            cart->ram, cart->ramSize);
+  /* Coprocessors with their own crystal convert master clocks at the
+   * region's rate. The SA-1 H/V timer counts the region's scanlines.
+   * SuperFX is modelled one cycle per master clock on both regions. */
+  if (cart->snes && cart->snes->palTiming) {
+    if (cart->cx4) cx4_set_pal_timing(cart->cx4, true);
+    if (cart->dsp1) dsp1_set_pal_timing(cart->dsp1, true);
+    if (cart->sa1) sa1_set_pal_timing(cart->sa1, true);
+  }
 }
 
 void cart_sync_coprocessors(Cart *cart, uint64_t master_clock) {

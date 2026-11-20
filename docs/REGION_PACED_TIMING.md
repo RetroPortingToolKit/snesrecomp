@@ -118,3 +118,46 @@ code-patch guards and interpreter policies, then compare matched-input native
 and interpreter execution, guest memory, devices and rendered output before
 claiming route qualification. See upstream [timing issue 205](https://github.com/RetroPortingToolKit/snesrecomp/issues/205)
 for the associated timing investigation.
+
+## Netplay region agreement
+
+The console region is part of a netplay match's compatibility identity. NTSC
+and PAL run the same guest at different master clocks and field geometry (262
+vs 312 scanlines), so two peers that load the same ROM but resolve different
+regions cannot stay in sync while presenting the same ROM identity.
+
+The agreed policy:
+
+- With auto, each peer resolves its region from the cartridge's `$FFD9`
+  destination code, or from `SNESRECOMP_REGION` when that is set.
+- An explicit `--region` / `snes_set_region_override` is per-peer and must
+  resolve to the same region on every peer. Overriding to the region the header
+  already selected does not change the identity.
+- A mismatch is a hard refusal before frame 0, never a silent correction. Both
+  peers report the reason `region_mismatch` with a player-facing message naming
+  each side's resolved region and its source (`override`,
+  `SNESRECOMP_REGION` or `header`), then soft-return to the waiting room.
+
+The desktop host publishes its resolved region after `SnesInit` and before
+`snes_netplay_start`. `snes_netplay_rb_set_identity` folds that region into the
+content fingerprint passed to recomp-net's `rnet_rb_driver_set_identity`, so
+the existing identity gate compares it. `snes_netplay_poll_admit` checks
+agreement before the first admit; a mismatch raises the dedicated local reason
+and the return-to-lobby request that `snes_host_barrier_admit` consumes. The
+player-facing message reaches `snes_host_lobby_set_runtime_error`.
+
+This folding is a stopgap entirely inside snesrecomp. It deliberately does not
+touch the shared, currently uninitialized `lib/recomp-net` submodule. The
+fingerprint carries the region bit; the source label is published through
+`snes_netplay_rb_set_peer_identity` when the driver exposes the peer identity,
+and the refusal copy names it when present. A dedicated region field in
+recomp-net's identity exchange would carry each side's region and source
+explicitly instead of encoding the region in a fingerprint and relying on the
+driver's equality gate; that cleaner design is pending reviewer preference.
+
+The ROM-free [region agreement fixture](../tests/v2/test_region_agreement.py)
+drives both peers through the real barrier with one synthetic ROM: one PAL from
+an override, one NTSC from its header. It checks the refusal, zero admits and
+zero guest frames, the message on both sides, and a matching-region control
+that still admits. The dependency-light core fixture pins the fold and the
+verdict where the recomp-net headers are unavailable.

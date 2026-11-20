@@ -12,6 +12,20 @@ digest of game state only: cameras, windows, audio output and transport state
 must stay outside it. Clear the callback after shutdown. NULL preserves the
 legacy digest domain exactly.
 
+The resolved console region is also part of the compatibility identity. NTSC
+and PAL change the guest master clock and field geometry, so a per-peer
+`--region` / `snes_set_region_override` must resolve to the same region on every
+peer; `SNESRECOMP_REGION` and the `$FFD9` header are the other sources. Publish
+the resolution with `snes_netplay_region_publish_local` after the ROM is loaded
+and before `snes_netplay_start`. The rollback adapter folds it into the content
+fingerprint passed to `rnet_rb_driver_set_identity`, and
+`snes_netplay_poll_admit` refuses a disagreement before the first admitted frame
+with reason `region_mismatch`. Both peers then soft-return to the waiting room
+with a message naming each side's region and source. This is a stopgap that
+leaves recomp-net untouched; a dedicated region field there would be cleaner
+and is pending reviewer preference. See
+[docs/REGION_PACED_TIMING.md](../docs/REGION_PACED_TIMING.md#netplay-region-agreement).
+
 For an execution-profile barrier, call `snes_netplay_set_profile_caps` before
 `snes_netplay_start`. Supply actual runtime CPU features, available backend and
 qualified profile masks, architecture, and a qualification revision/namespace.

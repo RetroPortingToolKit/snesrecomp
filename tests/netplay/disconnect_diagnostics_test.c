@@ -25,6 +25,7 @@ void snes_netplay_soft_exit_to_lobby(const char *origin, int from_lobby)
 void snes_netplay_connect_wait_reset(void) {}
 int snes_netplay_return_to_lobby_requested(void) { return 0; }
 const char *snes_netplay_refusal(void) { return NULL; }
+const char *snes_netplay_refusal_message(void) { return NULL; }
 uint32_t snes_netplay_sim_tick(void) { return 300; }
 void snes_host_lobby_set_runtime_error(const char *why) { (void)why; }
 int snes_netplay_remote_lead(void) { return 0; }

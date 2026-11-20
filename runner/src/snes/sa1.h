@@ -36,6 +36,9 @@ Sa1 *sa1_create(uint8_t *rom, uint32_t rom_size,
                 uint8_t *bwram, uint32_t bwram_size);
 void sa1_destroy(Sa1 *sa1);
 void sa1_reset(Sa1 *sa1);
+/* The H/V timer counts the console's scanlines: 262 on NTSC (the default),
+ * 312 on PAL. */
+void sa1_set_pal_timing(Sa1 *sa1, bool pal);
 void sa1_set_cpu_bus_address(Sa1 *sa1, uint32_t address);
 void sa1_sync(Sa1 *sa1, uint64_t master_clock);
 void sa1_saveload(Sa1 *sa1, SaveLoadInfo *sli);

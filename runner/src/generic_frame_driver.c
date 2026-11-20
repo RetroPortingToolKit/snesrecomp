@@ -10,9 +10,9 @@
 #include "snes/ppu.h"
 #include "snes/snes.h"
 
-/* One NTSC frame: 262 scanlines x 1364 master clocks. Bounds a productive
- * MMIO loop so it cannot run across several vblanks atomically. */
-#define GFD_MASTER_CYCLES_PER_FRAME 357368ull
+/* A frame is one field of master clocks (snes_master_clocks_per_field:
+ * 262 x 1364 on NTSC, 312 x 1364 on PAL). Bounds a productive MMIO loop so it
+ * cannot run across several vblanks atomically. */
 
 /* How many times a frame may re-enter the guest after it parks on a poll.
  * Each slice ends at a deterministic read-only cycle or at an IRQ; the bound
@@ -76,7 +76,8 @@ static void apply_boot_policy(void) {
 }
 
 void snes_generic_frame_driver_run_frame(void) {
-    const uint64_t frame_end = g_cpu.master_cycles + GFD_MASTER_CYCLES_PER_FRAME;
+    const uint64_t frame_end =
+        g_cpu.master_cycles + snes_master_clocks_per_field(g_snes);
     const int booting = (s_resume_pc == 0);
     int slice;
 

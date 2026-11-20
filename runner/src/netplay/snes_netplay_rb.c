@@ -6,6 +6,7 @@
 #include <signal.h>   /* sig_atomic_t everywhere; SIGUSR1 / sigaction on POSIX */
 
 #include "snes_netplay.h"
+#include "snes_netplay_region.h"
 #include "snes_state_digest.h"
 #include "common_rtl.h"
 #include "common_cpu_infra.h"  /* snes_refresh_state_get */
@@ -595,7 +596,23 @@ void snes_netplay_rb_set_modset(const char *text,
 
 void snes_netplay_rb_set_identity(uint32_t build_fp, uint32_t content_fp)
 {
-    rnet_rb_driver_set_identity(rb_drv(), build_fp, content_fp);
+    /* The resolved region is part of the match compatibility identity: PAL and
+     * NTSC run the same ROM at different master clocks and field geometry.
+     * Folding it here keeps the change inside snesrecomp; a dedicated field in
+     * recomp-net would be cleaner and is pending reviewer preference. The fold
+     * is source-agnostic, so overriding to the header's own region stays a
+     * match. */
+    rnet_rb_driver_set_identity(rb_drv(), build_fp,
+                                snes_netplay_region_identity_fp(content_fp));
+}
+
+void snes_netplay_rb_set_peer_identity(uint32_t peer_content_fp,
+                                       SnesRegionSource peer_source)
+{
+    /* Called from the identity exchange when the driver exposes the peer's
+     * content fingerprint. The stopgap has no dedicated wire field, so the
+     * published value is the region-folded fingerprint the driver compares. */
+    snes_netplay_region_publish_peer(peer_content_fp, peer_source);
 }
 
 uint32_t snes_netplay_rb_rtt_estimate_ms(void)

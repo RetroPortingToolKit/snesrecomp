@@ -27,7 +27,6 @@
 uint64_t g_snes_dma_charged;
 
 int snes_frame_counter;
-static const double apuCyclesPerMaster = (32040 * 32) / (1364 * 262 * 60.0);
 
 bool snes_next_irq_master(const Snes *snes, uint64_t now, uint64_t *out) {
   if (!snes || !out) return false;
@@ -38,10 +37,11 @@ bool snes_next_irq_master(const Snes *snes, uint64_t now, uint64_t *out) {
       snes->hIrqEnabled ? (uint32_t)snes->hTimer * 4u : 0u;
   if (target_h >= 1364u) return false;
 
+  const uint32_t lines = snes_lines_per_field(snes);
   uint32_t h = snes->hPos;
   uint32_t v = snes->vPos;
   uint64_t delta = 0;
-  for (uint32_t scanned = 0; scanned <= 262u; scanned++) {
+  for (uint32_t scanned = 0; scanned <= lines; scanned++) {
     const bool line_matches = !snes->vIrqEnabled || v == snes->vTimer;
     if (line_matches && target_h >= h) {
       *out = now + delta + (uint64_t)(target_h - h);
@@ -49,7 +49,7 @@ bool snes_next_irq_master(const Snes *snes, uint64_t now, uint64_t *out) {
     }
     delta += 1364u - h;
     h = 0;
-    v = (v + 1u) % 262u;
+    v = (v + 1u) % lines;
   }
   return false;
 }
@@ -81,8 +81,9 @@ static void snes_latch_position(uint16_t *h_dot, uint16_t *v_out) {
   const uint64_t at = rtl_cpu_master_now() + lead;
   int64_t h = (int64_t)snes->hPos + (int64_t)(at - snes->beamMasterLast);
   int v = snes->vPos;
-  while (h >= 1364) { h -= 1364; v = v + 1 >= 262 ? 0 : v + 1; }
-  while (h < 0) { h += 1364; v = v ? v - 1 : 261; }
+  const int lines = (int)snes_lines_per_field(snes);
+  while (h >= 1364) { h -= 1364; v = v + 1 >= lines ? 0 : v + 1; }
+  while (h < 0) { h += 1364; v = v ? v - 1 : lines - 1; }
   *h_dot = (uint16_t)(h <= 1292 ? h >> 2 : h <= 1310 ? (h - 2) >> 2 : (h - 4) >> 2);
   *v_out = (uint16_t)v;
   static int hv_log = -1;
@@ -433,7 +434,8 @@ uint16_t SwapInputBits(uint16_t x) {
  * masked while polling a later beam position. Hosts which need to hold the
  * beam during an interrupt handler use snes_beam_hold explicitly. */
 static uint32_t snes_advance_beam(Snes *snes, uint32_t clocks, bool check_irq) {
-  /* One NTSC scanline is 1364 master clocks, 262 scanlines per frame. Keep
+  /* One scanline is 1364 master clocks; a field is 262 scanlines on NTSC and
+   * 312 on PAL, with vblank from line 225 on both. Keep
    * the live beam counters moving while LLE code executes so SLHV/OPHCT/OPVCT
    * polling observes hardware time rather than a frame-frozen PPU.
    *
@@ -441,6 +443,7 @@ static uint32_t snes_advance_beam(Snes *snes, uint32_t clocks, bool check_irq) {
    * vblank.  Keeping this here (instead of in the visible-line renderer) is
    * important for games such as Star Fox, which deliberately schedules an
    * H+V IRQ on scanline 228 and blocks until that IRQ completes an NMI task. */
+  const uint32_t lines = snes_lines_per_field(snes);
   uint32_t h = snes->hPos;
   uint32_t v = snes->vPos;
   uint32_t consumed = 0;
@@ -501,7 +504,7 @@ static uint32_t snes_advance_beam(Snes *snes, uint32_t clocks, bool check_irq) {
         h += upto;
         consumed += upto;
         if (h >= 1364u) {
-          h = 0; v++; if (v >= 262u) v = 0;
+          h = 0; v++; if (v >= lines) v = 0;
           if (v == 225u) {
             if (!s_rdnmi_beam_off) snes->rdnmiPending = true;
             ppu_rasterFieldBoundary();
@@ -541,7 +544,7 @@ static uint32_t snes_advance_beam(Snes *snes, uint32_t clocks, bool check_irq) {
         if (!s_rdnmi_beam_off) snes->rdnmiPending = true;
         ppu_rasterFieldBoundary();
       }
-      if (v >= 262u) {
+      if (v >= lines) {
         v = 0;
         snes->rdnmiPending = false;
         if (check_irq && !snes->hdmaBeamOff)
@@ -583,12 +586,14 @@ void snes_advance_master_cycles(Snes *snes, uint32_t clocks) {
  * 30/34 on later ones, and from the moment it passed line 21 the raster chain
  * lost its first link on every single frame. */
 uint32_t snes_master_clocks_until_line(const Snes *snes, uint32_t line) {
-  uint32_t h, v, lines;
-  if (!snes || line >= 262u) return 0;
+  uint32_t h, v, lines, field;
+  if (!snes) return 0;
+  field = snes_lines_per_field(snes);
+  if (line >= field) return 0;
   h = snes->hPos;
   v = snes->vPos;
   if (v == line && h == 0u) return 0;
-  lines = (line > v) ? (line - v) : (262u - v + line);
+  lines = (line > v) ? (line - v) : (field - v + line);
   return lines * 1364u - h;
 }
 
@@ -609,13 +614,14 @@ uint32_t snes_master_clocks_until_irq(const Snes *snes) {
 
   {
     /* V (with or without H): one match per field, at (vTimer, target_h). */
+    const uint32_t field = snes_lines_per_field(snes);
     uint32_t target_v = snes->vTimer;
     uint32_t lines;
     uint64_t d;
-    if (target_v >= 262u) return 0;
+    if (target_v >= field) return 0;
     if (target_v > v)      lines = target_v - v;
-    else if (target_v < v) lines = 262u - v + target_v;
-    else                   lines = (target_h > h) ? 0u : 262u;
+    else if (target_v < v) lines = field - v + target_v;
+    else                   lines = (target_h > h) ? 0u : field;
     /* lines==0 implies target_h>h, so this stays positive; every other branch
        adds at least a whole line, so the subtraction cannot underflow. */
     d = (uint64_t)lines * 1364u + (uint64_t)target_h - (uint64_t)h;
@@ -960,7 +966,8 @@ void snes_writeReg(Snes* snes, uint16_t adr, uint8_t val) {
            * next opcode fetch 6, then the cycle the DMA would start in). */
           {
             const uint64_t line = snes->beamMasterLast - snes->hPos;
-            const uint64_t line0 = snes->vPos == 0 ? line : snes->vPos == 261 ? line + 1364u : 0;
+            const uint64_t line0 = snes->vPos == 0 ? line
+                : snes->vPos == snes_lines_per_field(snes) - 1u ? line + 1364u : 0;
             if (line0) {
               const uint64_t ev = line0 + 12u + (line0 & 7u);
               const uint64_t write_cycle = start - 12u, next_fetch = start - 6u;

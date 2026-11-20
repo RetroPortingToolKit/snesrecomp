@@ -1,6 +1,7 @@
 #ifndef SNES_CX4_H
 #define SNES_CX4_H
 
+#include <stdbool.h>
 #include <stdint.h>
 
 /* Capcom Cx4 — a Hitachi HG51B S169 DSP in a Capcom package.
@@ -56,6 +57,9 @@ Cx4 *cx4_create(const uint8_t *rom, uint32_t rom_size,
                 uint8_t *ram, uint32_t ram_size);
 void cx4_destroy(Cx4 *cx4);
 void cx4_reset(Cx4 *cx4);
+/* The DSP keeps its own 20 MHz crystal. A PAL console's slower master clock
+ * therefore gives it more cycles per master clock. Default NTSC. */
+void cx4_set_pal_timing(Cx4 *cx4, bool pal);
 
 /* Advance the DSP to the given SNES master clock. MUST be called before any
  * read/write of the Cx4 window and before DMA sources data out of its RAM:

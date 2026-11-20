@@ -240,38 +240,69 @@ int main(void) {
    * short frames afterward must produce PCM immediately, not wait 40 frames
    * for a host frame counter to catch up. No ROM or wall-clock timing needed. */
   apu_clearPortQueue(apu);
+  const RtlApuFramePeriod ntsc = rtl_apu_frame_period(false);
   RtlApuFrameClock clock = {0};
   rtl_apu_clock_begin(&clock, 0);
   failures += check(apu_schedulePortWrite(apu, 0, 0, 0), "map extended clock");
   uint64_t before_long = apu->portClock;
   for (unsigned quarter = 1; quarter <= 160; ++quarter) {
     uint64_t master = quarter * RTL_MASTER_CYCLES_PER_FRAME / 4;
-    failures += check(apu_runToGuestCycle(apu, rtl_apu_clock_now(&clock, master),
+    failures += check(apu_runToGuestCycle(apu,
+                                          rtl_apu_clock_now(&clock, &ntsc, master),
                                           1u << 20), "progress inside long loader");
     apu->dsp->sampleRead = apu->dsp->sampleWrite;
   }
   uint64_t master_end = 40 * RTL_MASTER_CYCLES_PER_FRAME;
-  uint64_t end = rtl_apu_clock_finish(&clock, master_end);
+  uint64_t end = rtl_apu_clock_finish(&clock, &ntsc, master_end);
   failures += check(clock.last_duration == 40 * RTL_APU_CYCLES_PER_FRAME &&
                     apu->portClock - before_long == clock.last_duration,
                     "long loader clocks the SPC once for all elapsed time");
-  failures += check(rtl_apu_clock_now(&clock, master_end) == end,
+  failures += check(rtl_apu_clock_now(&clock, &ntsc, master_end) == end,
                     "finishing must not add the stale within-frame offset again");
   for (unsigned frame = 0; frame < 45; ++frame) {
     rtl_apu_clock_begin(&clock, master_end);
-    failures += check(rtl_apu_clock_now(&clock, master_end) == end,
+    failures += check(rtl_apu_clock_now(&clock, &ntsc, master_end) == end,
                       "next iteration starts at the completed guest timestamp");
     uint32_t samples_before = apu->dsp->sampleWrite;
     master_end += 100;  /* Mostly WAI. */
-    end = rtl_apu_clock_finish(&clock, master_end);
+    end = rtl_apu_clock_finish(&clock, &ntsc, master_end);
     failures += check(apu_runToGuestCycle(apu, end, 1u << 20) &&
                       apu->dsp->sampleWrite - samples_before == 534,
                       "every following short frame produces its normal PCM");
     apu->dsp->sampleRead = apu->dsp->sampleWrite;
   }
   rtl_apu_clock_begin(&clock, master_end);
-  failures += check(rtl_apu_clock_now(&clock, 0) == clock.start_guest,
+  failures += check(rtl_apu_clock_now(&clock, &ntsc, 0) == clock.start_guest,
                     "CPU reset cannot underflow the within-frame timestamp");
+
+  /* The frame period is the NTSC arithmetic this clock always used... */
+  int ntsc_same = 1;
+  for (uint64_t f = 0; f < 4000; f += 37)
+    for (uint64_t w = 0; w < RTL_MASTER_CYCLES_PER_FRAME; w += 9973)
+      ntsc_same &= rtl_apu_cycles_at(&ntsc, f, w) ==
+                   f * RTL_APU_CYCLES_PER_FRAME +
+                       w * RTL_APU_CYCLES_PER_FRAME / RTL_MASTER_CYCLES_PER_FRAME;
+  failures += check(ntsc_same, "NTSC frame period keeps 17088 cycles per frame");
+  /* ...and a PAL field (312 x 1364 master clocks) is 1/50 s: 20505.6 SPC
+   * cycles. Five fields are exactly 102528 and the fraction is carried
+   * across frame boundaries rather than dropped. */
+  const RtlApuFramePeriod pal = rtl_apu_frame_period(true);
+  failures += check(pal.master == 312u * 1364u &&
+                    rtl_apu_cycles_at(&pal, 1, 0) == 20505 &&
+                    rtl_apu_cycles_at(&pal, 2, 0) == 41011 &&
+                    rtl_apu_cycles_at(&pal, 5, 0) == 102528 &&
+                    rtl_apu_cycles_at(&pal, 4, pal.master) == 102528,
+                    "PAL fields are 20505.6 SPC cycles");
+  int pal_exact = 1;
+  for (uint64_t f = 0; f < 4000; f += 37)
+    for (uint64_t w = 0; w < pal.master; w += 9973)
+      pal_exact &= rtl_apu_cycles_at(&pal, f, w) ==
+                   (f * pal.master + w) * 1025280u / (pal.master * 50u);
+  failures += check(pal_exact, "PAL guest cycles are floor(master x 1025280 / 50 field)");
+  RtlApuFrameClock pal_clock = {0};
+  rtl_apu_clock_begin(&pal_clock, 0);
+  failures += check(rtl_apu_clock_finish(&pal_clock, &pal, 100) == 20505,
+                    "a short PAL frame still advances one field");
 
 #if !SNESRECOMP_SPC_DIAGNOSTICS
   failures += check(g_spc_pc_histogram[0] == 0 &&

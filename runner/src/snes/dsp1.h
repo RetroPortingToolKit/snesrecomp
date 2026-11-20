@@ -1,6 +1,7 @@
 #ifndef SNES_DSP1_H
 #define SNES_DSP1_H
 
+#include <stdbool.h>
 #include <stdint.h>
 
 /* Standalone builds retain the instruction-level floor by default. CMake
@@ -19,6 +20,9 @@ typedef struct Dsp1 Dsp1;
 Dsp1 *dsp1_create(void);
 void dsp1_destroy(Dsp1 *d);
 void dsp1_reset(Dsp1 *d);
+/* The DSP-1 keeps its own 7.6 MHz oscillator. A PAL console's slower master
+ * clock therefore gives it more cycles per master clock. Default NTSC. */
+void dsp1_set_pal_timing(Dsp1 *d, bool pal);
 void dsp1_sync(Dsp1 *d, uint64_t master_clock);
 
 uint8_t dsp1_read(Dsp1 *d, uint16_t addr);

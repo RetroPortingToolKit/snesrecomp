@@ -35,6 +35,7 @@
 #include <string.h>
 
 #include "saveload.h"
+#include "snes_region.h"
 
 /* Explicit width masks — see the porting note above. */
 #define M1  0x1u
@@ -51,8 +52,9 @@
 #define M24 0xFFFFFFu
 #define M48 0xFFFFFFFFFFFFull
 
-/* SNES master clock vs Cx4 oscillator. */
-enum { kSnesMasterHz = 21477272, kCx4Hz = 20000000 };
+/* Cx4 oscillator; the SNES master clock it is measured against depends on the
+ * console region (snes_region.h). */
+enum { kCx4Hz = 20000000 };
 
 struct Cx4 {
   /* ── HG51B core state ─────────────────────────────────────────────── */
@@ -110,6 +112,7 @@ struct Cx4 {
   int64_t budget;         /* Cx4 cycles available to run */
   uint32_t frac;          /* master->Cx4 rate-conversion remainder */
   int in_dsp;             /* re-entrancy guard: we are inside cx4_run */
+  bool pal_timing;        /* console region; host configuration, not saved */
 
   Cx4RamWriteObserver ram_observer;
   void *ram_observer_context;
@@ -972,6 +975,10 @@ Cx4 *cx4_create(const uint8_t *rom, uint32_t rom_size,
 
 void cx4_destroy(Cx4 *c) { free(c); }
 
+void cx4_set_pal_timing(Cx4 *c, bool pal) {
+  if (c) c->pal_timing = pal;
+}
+
 void cx4_set_ram_write_observer(Cx4 *c, Cx4RamWriteObserver observer,
                                 void *context) {
   if (!c) return;
@@ -1005,12 +1012,14 @@ void cx4_sync(Cx4 *c, uint64_t master_clock) {
   if (master_clock <= c->last_master) { c->last_master = master_clock; return; }
 
   /* Convert elapsed SNES master cycles into Cx4 cycles, carrying the
-   * remainder so the 20 MHz / 21.477 MHz ratio does not drift. */
+   * remainder so the 20 MHz / 21.477 MHz (PAL 21.281 MHz) ratio does not
+   * drift. */
+  const uint64_t master_hz = snes_region_master_hz(c->pal_timing);
   const uint64_t delta = master_clock - c->last_master;
   c->last_master = master_clock;
   const uint64_t num = delta * (uint64_t)kCx4Hz + c->frac;
-  c->budget += (int64_t)(num / (uint64_t)kSnesMasterHz);
-  c->frac = (uint32_t)(num % (uint64_t)kSnesMasterHz);
+  c->budget += (int64_t)(num / master_hz);
+  c->frac = (uint32_t)(num % master_hz);
 
   if (c->budget <= 0) return;
 

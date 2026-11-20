@@ -152,6 +152,40 @@ int main(void) {
   CHECK(p.window1left==0x14);ppu_rasterRenderEnd(&p);
   free(saved);
 
+  /* PAL: STAT78 bit 4 reports the region. The field runs to line 311: a
+   * write on a PAL-only vblank line lands before line 0 and the last visible
+   * line's entries still validate. */
+  CHECK((ppu_read(&p, 0x3f) & 0x1f) == 0x03);
+  s_snes.palTiming = true;
+  CHECK((ppu_read(&p, 0x3f) & 0x1f) == 0x13);
+  ppu_rasterReset();
+  write_at(225, 0x00, 0x80);
+  write_at(225, 0x26, 0xFF);
+  ppu_rasterBegin(&p);
+  write_at(290, 0x00, 0x0F);        /* vblank line 290 exists only on PAL */
+  write_at(22, 0x26, 0x14);
+  write_at(224, 0x27, 0x99);
+  s_snes.vPos = 225;
+  ppu_rasterFieldBoundary();
+  ppu_rasterRenderBegin(&p);
+  CHECK(p.inidisp == 0x80);
+  ppu_rasterApplyLine(&p, 0);
+  CHECK(p.inidisp == 0x0F && p.window1left == 0xFF);
+  ppu_rasterApplyLine(&p, 22);
+  CHECK(p.window1left == 0x14);
+  ppu_rasterApplyLine(&p, 224);
+  CHECK(p.window1right == 0x99);
+  ppu_rasterRenderEnd(&p);
+  uint8_t *pal_saved=malloc(state_size); CHECK(pal_saved!=NULL);
+  JournalStream pal_state={{&journal_transfer},pal_saved,state_size,true};
+  write_at(224, 0x27, 0x98);        /* recording field: key 311 */
+  CHECK(ppu_rasterStateSave(&pal_state.base));
+  CHECK(ppu_rasterStateValid(pal_saved,state_size));
+  s_snes.palTiming = false;         /* line 224 of a PAL field is past NTSC's */
+  CHECK(!ppu_rasterStateValid(pal_saved,state_size));
+  free(pal_saved);
+  ppu_rasterReset();
+
   printf("ppu_raster_journal_test: ok\n");
   return 0;
 }

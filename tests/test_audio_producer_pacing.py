@@ -153,6 +153,8 @@ def test_long_frame_streams_without_fifo_loss_and_keeps_guest_time(tmp_path):
 static struct { uint64_t master_cycles; } g_cpu;
 static bool g_extended_frame_timing = true;
 static RtlApuFrameClock g_apu_frame_clock;
+static RtlApuFramePeriod g_apu_frame_period = {
+    RTL_MASTER_CYCLES_PER_FRAME, RTL_APU_CYCLES_PER_FRAME, 1};
 static unsigned snes_frame_counter;
 static uint64_t s_apu_boundary_ns, s_apu_boundary_calls;
 static uint64_t sync_cycles, dropped, peak;
@@ -165,7 +167,8 @@ static bool rtl_apu_master_clock(void) { return false; }
 static void rtl_apu_master_sync_locked(void) { assert(0); }
 static void rtl_apu_master_frame_end_locked(void) { assert(0); }
 static uint64_t rtl_apu_guest_cycle(void) {
-  return rtl_apu_clock_now(&g_apu_frame_clock, g_cpu.master_cycles);
+  return rtl_apu_clock_now(&g_apu_frame_clock, &g_apu_frame_period,
+                           g_cpu.master_cycles);
 }
 enum { AUDIO_TRACE_PRODUCER_CPU, AUDIO_TRACE_PRODUCER_UNKNOWN };
 static void audio_trace_set_producer(int p) { (void)p; }
@@ -221,6 +224,18 @@ int main(void) {
   consume = false; delays = ticks = 0; g_audio_consumer_stalled = false;
   rtl_sync_apu_frame_boundary();
   assert(!locked && apu.portClock == 44*RTL_APU_CYCLES_PER_FRAME && delays == 250);
+  /* 44 PAL fields of 312 lines are 44 x 20505.6 SPC cycles. */
+  apu.portClock = dsp.sampleRead = dsp.sampleWrite = 0;
+  g_apu_frame_clock = (RtlApuFrameClock){0};
+  g_apu_frame_period = rtl_apu_frame_period(true);
+  consume = true; delays = ticks = 0; g_audio_consumer_stalled = false;
+  dropped = 0;
+  g_cpu.master_cycles = 44*425568ull;
+  rtl_sync_apu_frame_boundary();
+  assert(!locked && !dropped && apu.portClock == 44ull*102528/5);
+  assert(g_apu_frame_clock.last_duration == apu.portClock);
+  g_apu_frame_period = rtl_apu_frame_period(false);
+  consume = false;
   /* A pathological target still cannot evade the original 1<<20 cycle cap. */
   apu.portClock = 0; dsp.sampleRead = dsp.sampleWrite = 0;
   g_apu_frame_clock = (RtlApuFrameClock){0};

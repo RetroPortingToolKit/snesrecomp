@@ -29,6 +29,8 @@ extern "C" {
 
 /* NTSC SNES field rate: 21.477272 MHz / (262 * 1364). */
 #define SNES_HOST_NTSC_HZ 60.098811862
+/* PAL SNES field rate: 21.281370 MHz / (312 * 1364). */
+#define SNES_HOST_PAL_HZ 50.006977968
 
 typedef struct SnesHostClock {
   double next_simulation, next_presentation;

@@ -3501,7 +3501,8 @@ uint8_t ppu_read(Ppu* ppu, uint8_t adr) {
       return val;
     }
     case 0x3f: {
-      uint8_t val = 0x3; // ppu2 version (4 bit), bit 4: ntsc/pal
+      uint8_t val = 0x3; // ppu2 version (4 bit)
+      val |= (g_snes && g_snes->palTiming) << 4; // 0 = NTSC, 1 = PAL
       val |= ppu->countersLatched << 6;
       val |= ppu->evenFrame << 7;
       ppu->countersLatched = false; // TODO: only when ppulatch is set
@@ -3599,8 +3600,15 @@ static Ppu *raster_machine_ppu(void) {
   return g_snes ? g_snes->ppu : NULL;
 }
 
+/* 262 on NTSC, 312 on PAL: a PAL field's vblank runs to key 86 (V=311) and
+ * its visible lines start at key 87. */
+static unsigned raster_lines_per_field(void) {
+  return snes_lines_per_field(g_snes);
+}
+
 static uint16_t raster_key(uint16_t line) {
-  return (uint16_t)(line >= 225 ? line - 225 : line + (262 - 225));
+  return (uint16_t)(line >= 225 ? line - 225
+                                : line + (raster_lines_per_field() - 225));
 }
 
 static int raster_reg_journaled(uint16_t reg) {
@@ -3780,11 +3788,12 @@ bool ppu_rasterStateValid(const void *data, size_t size) {
   memcpy(&state, data, sizeof state);
   if (state.magic != PPU_RASTER_STATE_MAGIC || state.size != sizeof state ||
       state.current > 1 || state.armed > 1 || state.completed > 1) return false;
+  const unsigned lines = raster_lines_per_field();
   for (unsigned f = 0; f < 2; ++f) {
     const PpuRasterField *field = &state.field[f];
     if (field->count < 0 || field->count > PPU_RASTER_MAX) return false;
     for (int i = 0; i < field->count; ++i)
-      if (field->e[i].key >= 262 || !raster_reg_journaled(field->e[i].reg))
+      if (field->e[i].key >= lines || !raster_reg_journaled(field->e[i].reg))
         return false;
   }
   return true;
@@ -3825,8 +3834,8 @@ bool ppu_rasterStateLoad(SaveLoadInfo *sli) {
 /* Snapshot of the journal as the renderer will consume it, for the debug
  * server. The journal is the difference between "what the game wrote" and
  * "what got drawn", so when a frame looks wrong this is the only place the two
- * can be compared. Lines are beam lines (225..261 = the vblank before the
- * field's line 0). */
+ * can be compared. Lines are beam lines (225..261, PAL 225..311 = the vblank
+ * before the field's line 0). */
 static int raster_dump_field(char *out, int cap, const char *name,
                              const PpuRasterField *f) {
   int pos = 0;
@@ -3845,9 +3854,10 @@ static int raster_dump_field(char *out, int cap, const char *name,
                   f->regs[RJ_OFF(screenWindowed)], f->regs[RJ_OFF(cgadsub)],
                   (unsigned)bg1h, (unsigned)bg1v);
 #undef RJ_OFF
+  const unsigned vblank_keys = raster_lines_per_field() - 225;
   for (i = 0; i < f->count && pos < cap - 64; i++) {
     const unsigned key = f->e[i].key;
-    const unsigned line = key < (262 - 225) ? key + 225 : key - (262 - 225);
+    const unsigned line = key < vblank_keys ? key + 225 : key - vblank_keys;
     pos += snprintf(out + pos, cap - pos,
                     "%s{\"l\":%u,\"r\":\"0x%04X\",\"v\":\"0x%02X\"}",
                     i ? "," : "", line, f->e[i].reg, f->e[i].val);
