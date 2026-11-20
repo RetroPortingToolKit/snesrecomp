@@ -29,6 +29,44 @@ struct Ppu;
 typedef void SnesBeamRasterObserver(const struct Ppu *ppu, unsigned line, void *context);
 void snes_beam_frame_driver_draw_ppu_frame_observed(
     SnesBeamRasterObserver *observer, void *context);
+/* MesenCE's interrupt and field rules (SNESRECOMP_BEAM_EXACT; default: on
+ * with the master-clock APU timeline, RtlApuUseMasterClock). With them
+ * snes_beam_frame_driver_run_frame
+ *  - charges the interrupt sequence: 8 cycles, 60 master clocks, and a DRAM
+ *    refresh point inside it stalls it;
+ *  - takes the field's NMI after the first instruction that starts a cycle
+ *    from V=225 H=6 on (snes/last_cycle.h), not after the first to end past
+ *    V=225;
+ *  - fires an NMI that is enabled inside vblank (the RDNMI flag still set)
+ *    after the next instruction, in that field, not a field later;
+ *  - runs the CPU in slices that end at each DRAM refresh point
+ *    (snes_refresh_at_beam), so each stall falls between the right
+ *    instructions, and keeps the beam where the CPU is after each slice. */
+bool snes_beam_frame_driver_exact(void);
+
+/* Host hooks for the exact rules, all optional: instrumentation and host
+ * features, never needed for correctness. */
+typedef struct SnesBeamFrameHooks {
+  /* A field begins; `frame_end` is its V=225 (master clock). */
+  void (*frame_start)(uint64_t frame_end, bool booting);
+  /* An interrupt is about to be taken: its return frame is not pushed yet. */
+  void (*interrupt_entry)(bool nmi);
+  /* An NMI was taken: frame pushed, sequence charged, handler not yet run. */
+  void (*nmi_taken)(void);
+  /* The field's NMI is due at its start. True: the host took it itself (a
+   * machine loaded inside its NMI handler resumes that handler instead). */
+  bool (*field_nmi)(uint64_t frame_end);
+  /* A CPU slice ended (refresh charged). True: the host took the slice's time
+   * back, so it does not count against the field's slice budget. */
+  bool (*slice_end)(void);
+} SnesBeamFrameHooks;
+void snes_beam_frame_driver_set_hooks(const SnesBeamFrameHooks *hooks);
+/* The slice's deadline and its first stop that is not a DRAM refresh (0: no
+ * slice runs), for host code that must not run past either. */
+void snes_beam_frame_driver_deadlines(uint64_t *deadline, uint64_t *hard);
+/* The last instruction the current slice started (0: none yet). */
+uint32_t snes_beam_frame_driver_last_pc(void);
+
 /* Forget the booted machine: the next frame starts from the reset vector. */
 void snes_beam_frame_driver_reset(void);
 
