@@ -2008,15 +2008,16 @@ static void PpuDrawBackground_4bpp_mosaic(Ppu *ppu,
       continue;  // layer is disabled for this window part
     int sx = win.edges[windex];
     if (win.edges[windex + 1] <= sx) continue;
-    int ws_sx = sx;
+    // Clipping changes the output span, not the mosaic block's source sample.
+    int ws_sx = PpuMosaicAt(ppu, sx);
     PpuZbufType *dstz = dstbuf->data + sx + kPpuLineBorder;
     PpuZbufType *dstz_end = dstbuf->data + win.edges[windex + 1] + kPpuLineBorder;
-    uint x = sx + ppu->hScroll[layer];
+    uint x = ws_sx + ppu->hScroll[layer];
     const uint16 *tp = tps[x >> 8 & 1] + ((x >> 3) & 0x1f);
     const uint16 *tp_last = tps[x >> 8 & 1] + 31, *tp_next = tps[(x >> 8 & 1) ^ 1];
     x &= 7;
     int mosaic_size = PPU_mosaicSize(ppu);
-    int w = mosaic_size - (sx - PpuMosaicAt(ppu, sx));
+    int w = mosaic_size - (sx - ws_sx);
     do {
       w = IntMin(w, dstz_end - dstz);
       uint32 tile = WS_TILE(*tp, ws_sx);
@@ -2032,7 +2033,7 @@ static void PpuDrawBackground_4bpp_mosaic(Ppu *ppu,
             dstz[i] = pixel + z;
         } while (++i != w);
       }
-      dstz += w, x += w, ws_sx += w;
+      dstz += w, x += mosaic_size, ws_sx += mosaic_size;
       for (; x >= 8; x -= 8)
         tp = (tp != tp_last) ? tp + 1 : tp_next;
       w = mosaic_size;
@@ -2322,14 +2323,15 @@ static void PpuDrawBackground_2bpp_mosaic(Ppu *ppu, PpuPixelPrioBufs *dstbuf, in
       continue;  // layer is disabled for this window part
     int sx = win.edges[windex];
     if (win.edges[windex + 1] <= sx) continue;
+    int sample_sx = PpuMosaicAt(ppu, sx);
     PpuZbufType *dstz = dstbuf->data + sx + kPpuLineBorder;
     PpuZbufType *dstz_end = dstbuf->data + win.edges[windex + 1] + kPpuLineBorder;
-    uint x = sx + ppu->hScroll[layer];
+    uint x = sample_sx + ppu->hScroll[layer];
     const uint16 *tp = tps[x >> 8 & 1] + ((x >> 3) & 0x1f);
     const uint16 *tp_last = tps[x >> 8 & 1] + 31, *tp_next = tps[(x >> 8 & 1) ^ 1];
     x &= 7;
     int mosaic_size = PPU_mosaicSize(ppu);
-    int w = mosaic_size - (sx - PpuMosaicAt(ppu, sx));
+    int w = mosaic_size - (sx - sample_sx);
     do {
       w = IntMin(w, dstz_end - dstz);
       uint32 tile = *tp;
@@ -2345,7 +2347,7 @@ static void PpuDrawBackground_2bpp_mosaic(Ppu *ppu, PpuPixelPrioBufs *dstbuf, in
             dstz[i] = pixel + z;
         } while (++i != w);
       }
-      dstz += w, x += w;
+      dstz += w, x += mosaic_size;
       for (; x >= 8; x -= 8)
         tp = (tp != tp_last) ? tp + 1 : tp_next;
       w = mosaic_size;
