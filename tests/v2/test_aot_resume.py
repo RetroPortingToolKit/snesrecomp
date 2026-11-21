@@ -56,6 +56,45 @@ def test_setup_host_defines_empty_resume_table(tmp_path):
     subprocess.run([str(exe)], check=True)
 
 
+def test_mirrored_handback_uses_the_dispatch_identity_provider(tmp_path):
+    from test_hle_func_seam import _compiler
+    from test_region_pacing import _c_function
+    cc = _compiler()
+    if not cc:
+        pytest.skip('C compiler required')
+    repo = Path(__file__).resolve().parents[2]
+    bridge = (repo / 'runner/src/snes/interp_bridge.c').read_text(encoding='utf-8')
+    source = r'''
+#include <stdint.h>
+#include <assert.h>
+static uint32_t s_aot_resume_skip = 0xffffffffu, target, site;
+static int enabled = 1, same, queried;
+static int aot_resume_on(void) { return enabled; }
+int cpu_dispatch_pc_matches(uint32_t a, uint32_t b) {
+  assert(a == target && b == site); queried++; return same;
+}
+'''
+    source += _c_function(bridge, 'aot_resume_note_handback')
+    source += r'''
+int main(void) {
+  target=0x808100; site=0x008100; same=1;
+  aot_resume_note_handback(target,site);
+  assert(s_aot_resume_skip==target && queried==1);
+  s_aot_resume_skip=0xffffffffu; target=0x7e8100; site=0xfe8100; same=0;
+  aot_resume_note_handback(target,site);
+  assert(s_aot_resume_skip==0xffffffffu && queried==2);
+  target=site=0x008100; same=1; enabled=0;
+  aot_resume_note_handback(target,site);
+  assert(s_aot_resume_skip==0xffffffffu && queried==2);
+  return 0;
+}
+'''
+    main = tmp_path / 'handback.c'; main.write_text(source)
+    exe = tmp_path / 'handback.exe'
+    subprocess.run([cc, '-std=c11', str(main), '-o', str(exe)], check=True)
+    subprocess.run([str(exe)], check=True)
+
+
 def test_needs_region_pacing():
     old = get_rom_mapping()
     try:

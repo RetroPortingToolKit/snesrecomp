@@ -1208,7 +1208,7 @@ static int s_aot_captured;
  * (a tail transfer to its own PC), or all ones. */
 static uint32_t s_aot_resume_skip = 0xFFFFFFFFu;
 static void aot_resume_note_handback(uint32_t target_pc24, uint32_t site_pc24) {
-    if (((target_pc24 ^ site_pc24) & 0xFFFFFFu) == 0)
+    if (aot_resume_on() && cpu_dispatch_pc_matches(target_pc24, site_pc24))
         s_aot_resume_skip = target_pc24 & 0xFFFFFFu;
 }
 static void aot_resume_capture_tail(const CpuState *cpu, uint32_t pc24,
