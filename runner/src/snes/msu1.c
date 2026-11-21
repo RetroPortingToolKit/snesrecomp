@@ -27,6 +27,9 @@
 #ifndef S_ISDIR
 #define S_ISDIR(m) (((m) & _S_IFMT) == _S_IFDIR)
 #endif
+#ifndef S_ISREG
+#define S_ISREG(m) (((m) & _S_IFMT) == _S_IFREG)
+#endif
 
 /* The audio thread already holds this around RtlRenderAudio; the CPU
  * thread takes it for register accesses. SDL mutexes are recursive, so
