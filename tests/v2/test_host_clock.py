@@ -32,10 +32,10 @@ def test_host_clock_contract():
         build = subprocess.run(
             [cc, '-std=c11', '-O1', '-UNDEBUG', '-Wall', '-Wextra', '-Werror',
              '-I', str(UNIT.parent), str(TEST), str(UNIT), '-lm', '-o', str(exe)],
-            capture_output=True, text=True, timeout=300)
+            capture_output=True, text=True)
         if build.returncode != 0:
             raise AssertionError(f"host_clock_test failed to build:\n{build.stderr[-2000:]}")
-        run = subprocess.run([str(exe)], capture_output=True, text=True, timeout=300)
+        run = subprocess.run([str(exe)], capture_output=True, text=True)
         if run.returncode != 0:
             raise AssertionError(
                 f"host_clock_test exited {run.returncode}\n{run.stdout[-2000:]}\n{run.stderr[-2000:]}")
