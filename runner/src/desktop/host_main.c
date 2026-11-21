@@ -40,6 +40,7 @@
 
 #include "host_main.h"
 #include "host_clock.h"
+#include "host_pad_binding.h"
 
 #include "snes/ppu.h"
 #include "snes/hd_jobs.h"
@@ -429,6 +430,9 @@ static struct RendererFuncs g_renderer_funcs;
 
 /* Set by the hotkeys; consumed once in the frame loop. */
 static int g_savestate_menu_hotkey;
+static bool g_state_menu_pad_hotkey;
+static bool g_state_menu_pad_armed;
+static bool g_state_menu_pad_was_held;
 static int g_rewind_hotkey;
 static int g_open_launcher_hotkey;   /* in_game_launcher only */
 static uint64_t g_state_generation;
@@ -1935,6 +1939,65 @@ static bool PadGesturePressed(PadGesture *g) {
   return pressed;
 }
 
+/* One controller shortcut owner. KeyMap remains the keyboard owner; this
+ * binding is captured and cleared in the launcher's existing Controls page. */
+static void StateMenuPadPoll(void) {
+  if (!g_game->editable_state_menu_controller) return;
+  GamepadInfo *seat = &g_gamepad[0];
+  uint32_t buttons = 0;
+  int16_t axes[6] = {0};
+  const bool assigned = ConfigHasPlayerSource(0)
+      ? g_config.player_src[0] == 2 : g_config.enable_gamepad[0];
+  if (assigned && seat->joystick_id != (SDL_JoystickID)-1) {
+    /* The event state also serves an unmapped joystick's existing standard
+     * button layout. Mapped devices provide their complete SDL button set. */
+    buttons = seat->modifiers & 0x7fffu;
+    axes[0] = seat->last_axis_x; axes[1] = seat->last_axis_y;
+    axes[2] = seat->right_axis_x; axes[3] = seat->right_axis_y;
+    axes[4] = seat->left_trigger; axes[5] = seat->right_trigger;
+#if SNESRECOMP_SDL3
+    SDL_Gamepad *pad = SDL_GetGamepadFromID(seat->joystick_id);
+    if (pad) {
+      buttons = 0;
+      for (int b = 0; b < SDL_GAMEPAD_BUTTON_COUNT && b < 32; ++b)
+        if (SDL_GetGamepadButton(pad, (SDL_GamepadButton)b)) buttons |= 1u << b;
+      for (int a = 0; a < 6; ++a) axes[a] = SDL_GetGamepadAxis(pad, (SDL_GamepadAxis)a);
+    }
+#else
+    SDL_GameController *pad = SDL_GameControllerFromInstanceID(seat->joystick_id);
+    if (pad) {
+      buttons = 0;
+      for (int b = 0; b < SDL_CONTROLLER_BUTTON_MAX && b < 32; ++b)
+        if (SDL_GameControllerGetButton(pad, (SDL_GameControllerButton)b)) buttons |= 1u << b;
+      for (int a = 0; a < 6; ++a) axes[a] = SDL_GameControllerGetAxis(pad, (SDL_GameControllerAxis)a);
+    }
+#endif
+  }
+  const bool down = SnesHostPadBindingDown(g_config.state_menu_pad_binding, buttons, axes);
+  /* Returning from capture with the chosen chord held must not open a menu.
+   * Re-arm only after neutral input, including after a device reassignment. */
+  if (!down) g_state_menu_pad_armed = true;
+  if (down && g_state_menu_pad_armed && !g_state_menu_pad_was_held)
+    g_state_menu_pad_hotkey = true;
+  g_state_menu_pad_was_held = down;
+}
+
+static int StateMenuPollOpen(uint32_t human) {
+  if (g_game->editable_state_menu_controller) {
+    const bool request = g_savestate_menu_hotkey || g_state_menu_pad_hotkey;
+    g_savestate_menu_hotkey = 0;
+    g_state_menu_pad_hotkey = false;
+    return request ? snes_savestate_menu_open(human) : 0;
+  }
+  int opened = snes_savestate_menu_poll_open(human);
+  if (g_savestate_menu_hotkey) {
+    g_savestate_menu_hotkey = 0;
+    if (!snes_savestate_menu_is_open())
+      opened = snes_savestate_menu_poll_open(SNES_PAD_SELECT | SNES_PAD_R);
+  }
+  return opened;
+}
+
 /* Pad self-test (SNESRECOMP_OVERLAY_SELFTEST_PAD=<frame>, off by default).
  *
  * Attaches a VIRTUAL gamepad and drives the overlays with it, so the whole
@@ -1950,6 +2013,7 @@ static SDL_Joystick *g_selftest_pad;
 static long g_selftest_pad_frame = -2;
 static int g_selftest_pad_phase;      /* 0 idle, 1 browser, 2 rewind */
 static int g_selftest_pad_failed;
+static bool g_selftest_pad_guard_seen;
 static int g_selftest_pad_opened;     /* bit 1: browser opened, bit 2: rewind */
 /* While the self-test is armed, only the virtual pad is opened: a real
  * controller plugged in would take player 1 and the virtual one would land
@@ -1966,8 +2030,26 @@ static void SelftestPadSet(int button, bool down) {
   SDL_JoystickSetVirtualButton(g_selftest_pad, button, down ? SDL_PRESSED : SDL_RELEASED);
 #endif
 }
+static void SelftestPadAxis(int axis, Sint16 value) {
+  if (!g_selftest_pad) return;
+#if SNESRECOMP_SDL3
+  SDL_SetJoystickVirtualAxis(g_selftest_pad, axis, value);
+#else
+  SDL_JoystickSetVirtualAxis(g_selftest_pad, axis, value);
+#endif
+}
 static void SelftestPadReleaseAll(void) {
   for (int b = 0; b < 15; b++) SelftestPadSet(b, false);
+  for (int a = 0; a < 6; a++) SelftestPadAxis(a, 0);
+}
+static void SelftestPadBinding(int binding) {
+  if (binding <= 0) return;
+  if (binding < 100) SelftestPadSet(binding - 1, true);
+  else if (binding < 1000)
+    SelftestPadAxis((binding - 100) / 2, (binding - 100) & 1 ? 32767 : -32768);
+  else
+    for (int b = 0; b < 15; ++b)
+      if ((unsigned)(binding - 1000) & (1u << b)) SelftestPadSet(b, true);
 }
 static void OverlaySelftestPadAttach(void) {
   const char *v = HostGetenv("OVERLAY_SELFTEST_PAD");
@@ -1999,6 +2081,39 @@ static void OverlaySelftestPadMainTick(unsigned frame) {
    * paces; act once per frame. */
   if (frame == last_frame) return;
   last_frame = frame;
+  if (g_game->editable_state_menu_controller) {
+    const long offset = (long)frame - g_selftest_pad_frame;
+    if (offset == 0) {
+      g_selftest_pad_phase = 4;  /* Select+R is ordinary gameplay now. */
+      SelftestPadSet(SDL_CONTROLLER_BUTTON_BACK, true);
+      SelftestPadSet(SDL_CONTROLLER_BUTTON_RIGHTSHOULDER, true);
+    } else if (offset > 0 && offset < 5) {
+      /* Keep the ordinary pair held through several real guest frames. */
+    } else if (offset == 5) {
+      const uint16 ordinary = SNES_PAD_SELECT | SNES_PAD_R;
+      if (snes_savestate_menu_is_open() ||
+          (RtlGetPadState(0) & ordinary) != ordinary) g_selftest_pad_failed = 1;
+      fprintf(stderr, "[state_menu_pad_selftest] ordinary Select+R %s\n",
+              g_selftest_pad_failed ? "FAIL" : "reached the guest without opening a menu");
+      g_selftest_pad_phase = 0;
+      SelftestPadReleaseAll();
+    } else if (offset == 12) {
+      g_selftest_pad_phase = 1;
+      SelftestPadBinding(g_config.state_menu_pad_binding);
+    } else if (offset == 35) {
+      const bool expected = g_config.state_menu_pad_binding > 0;
+      if (((g_selftest_pad_opened & 1) != 0) != expected ||
+          (expected && !g_selftest_pad_guard_seen)) g_selftest_pad_failed = 1;
+      fprintf(stderr, "[state_menu_pad_selftest] binding=%d %s: opened=%d held-navigation-guard=%d\n",
+              g_config.state_menu_pad_binding, g_selftest_pad_failed ? "FAIL" : "PASS",
+              (g_selftest_pad_opened & 1) != 0, g_selftest_pad_guard_seen);
+      g_selftest_pad_phase = 0;
+      SelftestPadReleaseAll();
+    } else {
+      SelftestPadReleaseAll();
+    }
+    return;
+  }
   if ((long)frame == g_selftest_pad_frame) {
     fprintf(stderr, "[overlay_selftest_pad] frame %u: holding Select+R on the pad\n", frame);
     g_selftest_pad_phase = 1;
@@ -2024,6 +2139,14 @@ static void OverlaySelftestPadMainTick(unsigned frame) {
 /* Modal-pump tick, called by both overlay loops. */
 static void OverlaySelftestPadTick(unsigned pump) {
   if (!g_selftest_pad || !g_selftest_pad_phase) return;
+  if (g_selftest_pad_phase == 4) {
+    fputs("[state_menu_pad_selftest] FAIL: ordinary Select+R opened the menu\n", stderr);
+    g_selftest_pad_failed = 1;
+    snes_savestate_menu_close();
+    return;
+  }
+  if (g_game->editable_state_menu_controller && pump == 1)
+    g_selftest_pad_guard_seen = snes_savestate_menu_is_open() != 0;
   const int nav = g_selftest_pad_phase == 1 ? SDL_CONTROLLER_BUTTON_DPAD_DOWN
                                             : SDL_CONTROLLER_BUTTON_DPAD_LEFT;
   if (pump == 0) g_selftest_pad_opened |= g_selftest_pad_phase;
@@ -2160,6 +2283,11 @@ static void RunSavestateMenuLoop(bool *running) {
     if (!*running)
       snes_savestate_menu_close();
     OverlaySelftestPadTick(frames);
+    StateMenuPadPoll();
+    if (g_state_menu_pad_hotkey) {
+      g_state_menu_pad_hotkey = false;
+      snes_savestate_menu_close();
+    }
     snes_savestate_menu_poll_nav(OverlayNavInputs(), SDL_GetTicks());
     PresentFrozenWithOverlay();
     SDL_Delay(8);
@@ -2936,6 +3064,9 @@ static void ReassignGamepads(void) {
   }
   g_pad_buttons = 0;
   memset(g_seat_pad, 0, sizeof(g_seat_pad));
+  g_state_menu_pad_hotkey = false;
+  g_state_menu_pad_armed = false;
+  g_state_menu_pad_was_held = false;
   OpenAllGamepads();
 }
 
@@ -3102,6 +3233,22 @@ static void LauncherSeed(RecompLauncherCSettings *ls, RecompLauncherCGameInfo *g
   gi->in_session = in_session;
   gi->mods = HdHostProvider(gi->mods);
   gi->has_open_launcher_hotkey = game->in_game_launcher ? 1 : 0;
+#if defined(RECOMP_LAUNCHER_HAS_PAD_ONLY_SHORTCUTS)
+  if (game->editable_state_menu_controller) {
+    static const char *const labels[] = {"Save states"};
+    static const int keys[RECOMP_LAUNCHER_MAX_ASSIST_BINDINGS] = {0};
+    static const int pads[RECOMP_LAUNCHER_MAX_ASSIST_BINDINGS] = {
+      SNES_HOST_STATE_MENU_PAD_DEFAULT
+    };
+    gi->assist_binding_labels = labels;
+    gi->assist_binding_count = 1;
+    gi->assist_pad_only = 1;
+    gi->assist_tools_note = "Uses Player 1's controller. Keyboard shortcuts remain in Hotkeys.";
+    gi->assist_default_key_bind = keys;
+    gi->assist_default_pad_bind = pads;
+    ls->assist_pad_bind[0] = g_config.state_menu_pad_binding;
+  }
+#endif
 #if defined(SNES_HAS_LOBBY_CLIENT)
   /* The netplay button is capability-gated: these two fields are what
    * make the launcher show it. */
@@ -3176,6 +3323,17 @@ static void LauncherCommit(const RecompLauncherCSettings *ls, const char *config
   snes_netplay_identity_load(g_config.netplay_player_name,
                              sizeof(g_config.netplay_player_name));
 #endif
+  if (g_game->editable_state_menu_controller) {
+#if defined(RECOMP_LAUNCHER_HAS_PAD_ONLY_SHORTCUTS)
+    const int binding = ls->assist_pad_bind[0];
+    if (SnesHostPadBindingValid(binding)) {
+      g_config.state_menu_pad_binding = binding ? binding : SNES_HOST_STATE_MENU_PAD_DEFAULT;
+      g_state_menu_pad_hotkey = false;
+      g_state_menu_pad_armed = false;
+      g_state_menu_pad_was_held = false;
+    }
+#endif
+  }
   WriteConfigFile(config_file);
   /* The launcher's Hotkeys and controller editors write [KeyMap] and
    * [GamepadMap] straight into the config file, which was parsed before the
@@ -3497,6 +3655,7 @@ int snesrecomp_desktop_main(const SnesDesktopHostGame *game, int argc, char **ar
                              anchored ? "ok" : "declined");
     }
   }
+  if (game->editable_state_menu_controller) ConfigEnableStateMenuPadBinding();
   if (game->state_menu_hotkeys) ConfigUseStateMenuDefaults();
   if (game->in_game_launcher) ConfigUseInGameLauncherDefaults();
   /* Before parsing: default [GamepadMap] rows exist for each routed seat. */
@@ -3511,6 +3670,8 @@ int snesrecomp_desktop_main(const SnesDesktopHostGame *game, int argc, char **ar
       ParseConfigFile("config.local.ini");
     }
   }
+  if (game->editable_state_menu_controller && !g_config.state_menu_pad_binding)
+    g_config.state_menu_pad_binding = SNES_HOST_STATE_MENU_PAD_DEFAULT;
   /* Before after_config, so a port that wants to inspect the parsed rewind
    * settings sees the same opt-in the writer will honour. */
   if (game->rewind_settings) ConfigEnableRewindKeys();
@@ -4276,7 +4437,8 @@ error_reading:;
       SetAudioPaused(audiopaused);
     }
 
-    if (g_paused && !g_savestate_menu_hotkey && !g_rewind_hotkey &&
+    StateMenuPadPoll();
+    if (g_paused && !g_savestate_menu_hotkey && !g_state_menu_pad_hotkey && !g_rewind_hotkey &&
         !g_open_launcher_hotkey) {
       snes_host_clock_reset(&video_clock, MonotonicSeconds(), g_simulation_hz, presentation_hz);
       SDL_Delay(16);
@@ -4314,15 +4476,16 @@ error_reading:;
       if (snes_netplay_is_host()) {
         uint32 human = snes_savestate_menu_filter_guest_input(netplay_capture_pad(NULL));
         if (snes_savestate_menu_is_open()) {
-          snes_savestate_menu_poll_nav(human, SDL_GetTicks());
+          if (g_state_menu_pad_hotkey) snes_savestate_menu_close();
+          else snes_savestate_menu_poll_nav(human, SDL_GetTicks());
         } else if (!snes_netplay_menu_paused()) {
-          (void)snes_savestate_menu_poll_open(g_savestate_menu_hotkey
-              ? (SNES_PAD_SELECT | SNES_PAD_R) : human);
+          (void)StateMenuPollOpen(human);
         }
         g_savestate_menu_hotkey = 0;
         if (snes_netplay_menu_ready() && !snes_savestate_menu_is_open())
           (void)snes_netplay_menu_close();
       }
+      g_state_menu_pad_hotkey = false;
       if (snes_netplay_menu_paused() && !g_overlay_modal) {
         g_overlay_modal = true;
         SetAudioPaused(true);
@@ -4574,12 +4737,7 @@ error_reading:;
     g_rewind_hotkey = 0;
     /* Exactly ONE poll_open per frame: it latches the previous word to edge
      * detect on, so a second call in the same frame eats the edge. */
-    (void)snes_savestate_menu_poll_open(human);
-    if (g_savestate_menu_hotkey) {
-      g_savestate_menu_hotkey = 0;
-      if (!snes_savestate_menu_is_open())
-        (void)snes_savestate_menu_poll_open(SNES_PAD_SELECT | SNES_PAD_R);
-    }
+    (void)StateMenuPollOpen(human);
     if (snes_savestate_menu_is_open()) {
       RunSavestateMenuLoop(&running);
       GameReset();
@@ -4803,7 +4961,7 @@ error_reading:;
     }
     host_report_breadcrumb("in-game launcher: restarted");
   }
-  return g_script_failed ? 3 : 0;
+  return g_script_failed ? 3 : g_selftest_pad_failed ? 4 : 0;
 }
 
 /* ── Input plumbing ───────────────────────────────────────────────────────── */

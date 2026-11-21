@@ -13,6 +13,7 @@
  * added to the launcher and forgotten in WriteConfigFile fails here.
  */
 #include "config.h"
+#include "host_pad_binding.h"
 #include "display_aspect.h"
 
 #include <stdio.h>
@@ -320,6 +321,43 @@ static void test_multitap_seats_roundtrip(void) {
   ConfigSetPadSeats(2);
 }
 
+static void test_state_menu_binding(void) {
+  const uint32_t gameplay = (1u << 4) | (1u << 10); /* Back + right shoulder */
+  const uint32_t sticks = (1u << 7) | (1u << 8);
+  int16_t axes[6] = {0};
+  CHECK(!SnesHostPadBindingDown(SNES_HOST_STATE_MENU_PAD_DEFAULT, gameplay, axes),
+        "default shortcut intercepted normal Select+R");
+  CHECK(SnesHostPadBindingDown(SNES_HOST_STATE_MENU_PAD_DEFAULT, sticks, axes),
+        "both stick clicks did not satisfy the default");
+  CHECK(!SnesHostPadBindingDown(SNES_HOST_STATE_MENU_PAD_DEFAULT, 1u << 7, axes),
+        "only one stick click satisfied the pair");
+  CHECK(!SnesHostPadBindingDown(-1, sticks, axes), "cleared shortcut remained active");
+  axes[5] = 20000;
+  CHECK(SnesHostPadBindingDown(111, 0, axes), "positive trigger binding failed");
+  CHECK(!SnesHostPadBindingDown(110, 0, axes), "positive trigger matched negative direction");
+  CHECK(!SnesHostPadBindingValid(999), "out-of-range axis accepted");
+
+  write_file("[Controller]\nSaveStateMenuPad = 1384\n[KeyMap]\nSaveStateMenu = Ctrl+F11\n");
+  ParseConfigFile(kPath);
+  CHECK(g_config.state_menu_pad_binding == SNES_HOST_STATE_MENU_PAD_DEFAULT,
+        "saved controller shortcut not loaded");
+  ConfigEnableStateMenuPadBinding();
+  g_config.state_menu_pad_binding = 1; /* explicitly chosen south button */
+  WriteConfigFile(kPath);
+  g_config.state_menu_pad_binding = 0xEE;
+  ParseConfigFile(kPath);
+  CHECK(g_config.state_menu_pad_binding == 1, "remapped shortcut did not survive restart");
+  CHECK(strstr(read_file(), "SaveStateMenu = Ctrl+F11"), "controller edit changed keyboard shortcut");
+  g_config.state_menu_pad_binding = -1;
+  WriteConfigFile(kPath);
+  g_config.state_menu_pad_binding = 0xEE;
+  ParseConfigFile(kPath);
+  CHECK(g_config.state_menu_pad_binding == -1, "explicit clear did not survive restart");
+  write_file("[Controller]\nSaveStateMenuPad = 999999999999999999999999\n");
+  ParseConfigFile(kPath);
+  CHECK(g_config.state_menu_pad_binding == 0, "overflowing shortcut was accepted");
+}
+
 int main(void) {
   test_fullscreen_roundtrip();
   test_player_sources_roundtrip();
@@ -329,6 +367,7 @@ int main(void) {
   test_multitap_seats_roundtrip();
   /* Last: it flips the process-wide opt-in and never flips it back. */
   test_rewind_opt_in();
+  test_state_menu_binding();
   remove(kPath);
   if (g_failures) {
     fprintf(stderr, "config round-trip: %d failure(s)\n", g_failures);

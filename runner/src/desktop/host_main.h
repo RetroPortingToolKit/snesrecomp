@@ -223,6 +223,10 @@ typedef struct SnesDesktopHostGame {
    * raster-state capture. The host owns this writable surface. A separate
    * draw_frame may retain a wider image for presentation. */
   void (*publish_native_field)(uint8_t *field, unsigned number);
+  /* Controller shortcut shown in Controls, independent of keyboard KeyMap.
+   * Default both stick clicks; the player can capture another chord or clear it.
+   * Zero retains the established Select+R behavior for existing consumers. */
+  int editable_state_menu_controller;
 } SnesDesktopHostGame;
 
 /* The whole program. Returns the process exit code. */
