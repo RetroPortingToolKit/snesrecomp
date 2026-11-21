@@ -33,11 +33,11 @@ def test_live_hdma_cpu_stalls(tmp_path):
     subprocess.run([str(exe)], check=True)
 
 
-def test_render_hdma_first_slot(tmp_path):
+def test_render_hdma_picture_ownership(tmp_path):
     cc=shutil.which('gcc') or shutil.which('cc')
     if cc is None:pytest.skip('C compiler unavailable')
     source=(ROOT/'runner/src/beam_frame_driver.c').read_text(encoding='utf-8')
-    parts=['#include "beam_frame_driver.h"\n#include "snes/snes.h"\n#include "snes/ppu.h"\n#include "snes/dma.h"\nextern Snes *g_snes;\nextern Ppu *g_ppu;\n']
+    parts=['#include "beam_frame_driver.h"\n#include "snes/snes.h"\n#include "snes/ppu.h"\n#include "snes/dma.h"\nextern Snes *g_snes;\nextern Ppu *g_ppu;\nextern bool g_fail;\n#include <stdio.h>\n']
     for name in ('void snes_beam_frame_driver_draw_ppu_frame(',
                  'void snes_beam_frame_driver_draw_ppu_frame_observed('):
         start=source.index(name);brace=source.index('{',start);depth=1;end=brace+1
@@ -49,5 +49,6 @@ def test_render_hdma_first_slot(tmp_path):
     subprocess.run([cc,'-std=c11','-O1','-DSNESRECOMP_REVERSE_DEBUG=0',
         '-Irunner/src','-Irunner/src/snes','-Itests/dma',
         'tests/dma/frame_render_hdma_test.c',str(driver),'runner/src/snes/snes.c',
-        'runner/src/snes/dma.c','runner/src/snes/sdd1.c','-lm','-o',str(exe)],cwd=ROOT,check=True)
+        'runner/src/snes/dma.c','runner/src/snes/sdd1.c',
+        'runner/src/snes/ppu.c','runner/src/snes/hd_jobs.c','runner/src/snes/ppu_legacy.c','-lm','-o',str(exe)],cwd=ROOT,check=True)
     subprocess.run([str(exe)],check=True)

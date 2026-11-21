@@ -94,6 +94,10 @@ void snes_set_hdma_beam_enabled(Snes *snes, bool enabled) {
   snes->hdmaBeamOff = !enabled;
 }
 
+void snes_set_ppu_beam_enabled(Snes *snes, bool enabled) {
+  snes->ppuBeamState = enabled;
+}
+
 static bool s_raster_irq_beam_off;
 static bool s_rdnmi_beam_off;
 void snes_set_rdnmi_beam_enabled(bool enabled) {
@@ -432,6 +436,14 @@ uint16_t SwapInputBits(uint16_t x) {
  * already pending the beam must still progress: the CPU may have interrupts
  * masked while polling a later beam position. Hosts which need to hold the
  * beam during an interrupt handler use snes_beam_hold explicitly. */
+static void snes_picture_field_boundary(Snes *snes) {
+  if (snes->ppuBeamState && snes->ppu) {
+    ppu_checkOverscan(snes->ppu);
+    ppu_handleVblank(snes->ppu);
+  }
+  ppu_rasterFieldBoundary();
+}
+
 static uint32_t snes_advance_beam(Snes *snes, uint32_t clocks, bool check_irq,
                                 uint64_t *hdma_clocks) {
   /* One NTSC scanline is 1364 master clocks, 262 scanlines per frame. Keep
@@ -510,7 +522,7 @@ static uint32_t snes_advance_beam(Snes *snes, uint32_t clocks, bool check_irq,
           h = 0; v++; if (v >= 262u) v = 0;
           if (v == 225u) {
             if (!s_rdnmi_beam_off) snes->rdnmiPending = true;
-            ppu_rasterFieldBoundary();
+            snes_picture_field_boundary(snes);
           }
           if (v == 0u) snes->rdnmiPending = false;
         }
@@ -551,7 +563,7 @@ static uint32_t snes_advance_beam(Snes *snes, uint32_t clocks, bool check_irq,
       v++;
       if (v == 225u) {
         if (!s_rdnmi_beam_off) snes->rdnmiPending = true;
-        ppu_rasterFieldBoundary();
+        snes_picture_field_boundary(snes);
       }
       if (v >= 262u) {
         v = 0;
@@ -571,6 +583,11 @@ static uint32_t snes_advance_beam(Snes *snes, uint32_t clocks, bool check_irq,
           snes->dbgLastMissedLine = snes->vTimer;
         }
         snes->dbgLatchedThisField = 0;
+      }
+      if (check_irq && snes->ppuBeamState && snes->ppu && v < 225u) {
+        snes->hPos = (uint16_t)h;
+        snes->vPos = (uint16_t)v;
+        ppu_runLineState(snes->ppu, (int)v);
       }
     }
   }
@@ -664,7 +681,8 @@ static int s_beam_hold;
 
 void snes_beam_hold(int hold) { s_beam_hold = hold; }
 
-static void snes_sync_clock(Snes *snes, uint64_t master_clock, bool executing) {
+static void snes_sync_clock(Snes *snes, uint64_t master_clock, bool executing,
+                            bool follow_stalls) {
   if (s_beam_hold || snes->cpuClockSyncing) return;
   if (master_clock < snes->beamMasterLast) {
     snes->beamMasterLast = master_clock;
@@ -683,7 +701,7 @@ static void snes_sync_clock(Snes *snes, uint64_t master_clock, bool executing) {
        * general DMA. Its eager sync is suppressed by cpuClockSyncing; the
        * outer walk owns the new elapsed time and any IRQ preemption/debt. */
       s_master_clock_charge_hook(snes, work);
-      master_clock += work;
+      if (follow_stalls) master_clock += work;
     }
     /* A short walk means an IRQ latched (or is still pending): the beam
      * pre-empts there. The remaining delta stays owed and is walked on the
@@ -696,11 +714,15 @@ static void snes_sync_clock(Snes *snes, uint64_t master_clock, bool executing) {
 }
 
 void snes_sync_master_clock(Snes *snes, uint64_t master_clock) {
-  snes_sync_clock(snes, master_clock, true);
+  snes_sync_clock(snes, master_clock, true, true);
 }
 
 void snes_sync_master_clock_parked(Snes *snes, uint64_t master_clock) {
-  snes_sync_clock(snes, master_clock, false);
+  snes_sync_clock(snes, master_clock, false, false);
+}
+
+void snes_sync_master_clock_boundary(Snes *snes, uint64_t master_clock) {
+  snes_sync_clock(snes, master_clock, true, false);
 }
 
 uint8_t snes_readReg(Snes* snes, uint16_t adr) {

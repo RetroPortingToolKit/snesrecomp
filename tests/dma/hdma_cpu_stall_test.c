@@ -6,6 +6,7 @@
 
 #ifdef SNES_TEST_OLD_BASELINE
 #define snes_sync_master_clock_parked snes_sync_master_clock
+#define snes_sync_master_clock_boundary snes_sync_master_clock
 #endif
 
 static unsigned failures;
@@ -128,6 +129,19 @@ int main(void) {
   snes_sync_master_clock(&s, g_cpu.master_cycles);
   CHECK(s.hPos == 1138 && s.beamMasterLast == g_cpu.master_cycles && charged == 34 &&
         ppu_observed_writes == 1, "resume pays debt without another transfer or CPU charge");
+
+  setup(&s, &d);
+  ram[0x100] = 0x81; ram[0x101] = 0x44; ram[0x102] = 0;
+  channel(&d, 0, 0, 0x100, 0x26);
+  dma_startDma(&d, 1, true); dma_initHdma(&d);
+  s.hPos = 1090; g_cpu.master_cycles += 14;
+  uint64_t boundary = g_cpu.master_cycles;
+  snes_sync_master_clock_boundary(&s, boundary);
+  CHECK(charged == 34 && s.hPos == 1104 && g_cpu.master_cycles == boundary + 34,
+        "field-boundary settlement charges work without walking past the boundary");
+  snes_sync_master_clock(&s, g_cpu.master_cycles);
+  CHECK(s.hPos == 1138 && charged == 34 && ppu_observed_writes == 1,
+        "next CPU observer consumes carried field debt exactly once");
 
   setup(&s, &d);
   s.vPos = 261; s.hPos = 1360;

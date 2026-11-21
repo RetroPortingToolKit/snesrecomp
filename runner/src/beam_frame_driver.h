@@ -12,7 +12,8 @@
  * coprocessor holding the IRQ line (SuperFX, Cx4, SA-1) -- and lets hardware
  * time pass while the guest is parked, so the beam, APU and coprocessors get
  * the whole field. The render half rasterizes that field from the raster
- * journal (ppu.c), stepping the real HDMA unit per line.
+ * complete picture journal (ppu.c). Real HDMA and PPU line/status work run
+ * only on the CPU beam; rendering cannot consume channels or guest ports.
  *
  * new_project scaffolds call these from src/game_rtl.c; a title replaces
  * them only when it needs something they do not do (see

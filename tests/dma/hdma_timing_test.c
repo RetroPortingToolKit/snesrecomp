@@ -26,6 +26,7 @@ static Snes *ppu_observed_machine;
 static uint16_t ppu_observed_line, ppu_observed_h;
 static unsigned ppu_observed_writes;
 
+#ifndef SNES_TEST_REAL_PPU
 uint8_t ppu_read(Ppu *ppu, uint8_t adr) {
     (void)ppu;
     return ppu_regs[adr & 0x3f];
@@ -40,6 +41,7 @@ void ppu_write(Ppu *ppu, uint8_t adr, uint8_t val) {
         ++ppu_observed_writes;
     }
 }
+#endif
 
 /* snes.c's save-state and reset paths call into joypad.c, which this harness
  * does not link. POSIX linkers drop those unreferenced functions under
@@ -50,6 +52,7 @@ void joypad_saveload(struct SaveLoadInfo *sli) { (void)sli; }
 
 /* The PPU write journal and raster journal (ppu.c) are not linked into this
  * harness. */
+#ifndef SNES_TEST_REAL_PPU
 uint8_t g_ppu_wlog_src;
 void ppu_wlog_note_reg(uint16_t reg, uint8_t val) { (void)reg; (void)val; }
 void ppu_rasterRecord(uint16_t reg, uint16_t line, uint8_t val) {
@@ -58,6 +61,7 @@ void ppu_rasterRecord(uint16_t reg, uint16_t line, uint8_t val) {
 void ppu_rasterFieldBoundary(void) {}
 void ppu_rasterReset(void) {}
 void (*g_ppu_latch_position_hook)(uint16_t *h_dot, uint16_t *v);
+#endif
 
 void RtlApuLock(void) {}
 void RtlApuUnlock(void) {}
@@ -91,10 +95,15 @@ void apu_cycle(Apu *apu) { (void)apu; }
 void apu_runCycles(Apu *apu, uint32_t clocks) { (void)apu; (void)clocks; }
 void apu_saveload(Apu *apu, SaveLoadInfo *sli) { (void)apu; (void)sli; }
 
+#ifndef SNES_TEST_REAL_PPU
 Ppu *ppu_init(void) { return NULL; }
 void ppu_free(Ppu *ppu) { (void)ppu; }
 void ppu_reset(Ppu *ppu) { (void)ppu; }
+void ppu_runLineState(Ppu *ppu, int line) { (void)ppu; (void)line; }
+bool ppu_checkOverscan(Ppu *ppu) { (void)ppu; return false; }
+void ppu_handleVblank(Ppu *ppu) { (void)ppu; }
 void ppu_saveload(Ppu *ppu, SaveLoadInfo *sli) { (void)ppu; (void)sli; }
+#endif
 
 Cart *cart_init(Snes *snes) { (void)snes; return NULL; }
 void cart_free(Cart *cart) { (void)cart; }
