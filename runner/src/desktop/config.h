@@ -134,6 +134,8 @@ typedef struct Config {
   /* [Controller] LauncherGesture: the same syntax, opening the launcher
    * mid-game for a host that offers it (default "Select+L3"). */
   char launcher_gesture[64];
+  /* Portable launcher pad binding; 0 uses the host default, -1 disables. */
+  int state_menu_pad_binding;
 
   /* Presentation and emulation options the desktop host offers through the
    * launcher's Display page, persisted by WriteConfigFile:
@@ -281,6 +283,8 @@ static inline int ConfigSeatForControl(int cmd) {
  * rewind rows never calls this, and WriteConfigFile then leaves whatever the
  * file says about rewind exactly as it found it. */
 void ConfigEnableRewindKeys(void);
+/* Permit the opted-in host to persist its editable controller shortcut. */
+void ConfigEnableStateMenuPadBinding(void);
 
 /* Analog stick deadzone, in raw axis units of a 32767 full scale. 10% is the
  * default because it clears a resting stick on the pads players actually own
