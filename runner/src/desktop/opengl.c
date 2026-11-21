@@ -40,6 +40,7 @@
 #include "config.h"
 #include "display_aspect.h"
 #include "hd_gpu.h"
+#include "host_report.h"
 #if SNESRECOMP_SDL3
 #define DeleteGlContext SDL_GL_DestroyContext
 #else
@@ -129,6 +130,29 @@ static void ApplySwapInterval(void) {
   if (!ok && interval < 0) SDL_GL_SetSwapInterval(1);
 }
 
+static void LogGlContext(SDL_Window *window) {
+  const char *vendor = (const char *)glGetString(GL_VENDOR);
+  const char *renderer = (const char *)glGetString(GL_RENDERER);
+  const char *version = (const char *)glGetString(GL_VERSION);
+  int interval = 0;
+#if SNESRECOMP_SDL3
+  const char *query = SDL_GL_GetSwapInterval(&interval) ? "ok" : "failed";
+#else
+  interval = SDL_GL_GetSwapInterval();
+  const char *query = "sdl2-value";
+#endif
+  unsigned long long flags = (unsigned long long)SDL_GetWindowFlags(window);
+  host_report_breadcrumb("video GL vendor: %s", vendor ? vendor : "<unavailable>");
+  host_report_breadcrumb("video GL renderer: %s", renderer ? renderer : "<unavailable>");
+  host_report_breadcrumb("video GL version: %s", version ? version : "<unavailable>");
+  host_report_breadcrumb("video GL window: swap_interval=%d swap_query=%s "
+      "window_flags=0x%llx visible=%u minimized=%u focused=%u",
+      interval, query, flags,
+      (flags & SDL_WINDOW_HIDDEN) ? 0u : 1u,
+      (flags & SDL_WINDOW_MINIMIZED) ? 1u : 0u,
+      (flags & SDL_WINDOW_INPUT_FOCUS) ? 1u : 0u);
+}
+
 static void LoadShaderFromConfig(void) {
   const char *want = g_config.shader ? g_config.shader : "";
   if (g_shader_resolved && strcmp(want, g_shader_path) == 0)
@@ -162,6 +186,7 @@ static bool OpenGLRenderer_Init(SDL_Window *window) {
     DeleteGlContext(g_context); g_context = NULL;
     return false;
   }
+  LogGlContext(window);
 
   if (kDebugFlag) {
     glEnable(GL_DEBUG_OUTPUT);
