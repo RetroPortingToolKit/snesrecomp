@@ -1378,7 +1378,19 @@ bool validate_resource_file(const Resource& resource,
     }
     const fs::path path(path_text);
     std::error_code ec;
-    if (resource_is_directory(resource)) {
+    const bool directory_selection = resource_is_directory(resource) ||
+        (resource.format == "file-or-directory" && fs::is_directory(path, ec));
+    if (!directory_selection && resource.format == "file-or-directory" &&
+        resource.identity == kMsu1ResourceIdentity) {
+        std::string extension = path.extension().string();
+        std::transform(extension.begin(), extension.end(), extension.begin(),
+                       [](unsigned char c) { return (char)std::tolower(c); });
+        if (extension != ".msu") {
+            if (status) *status = "Select an .msu file";
+            return false;
+        }
+    }
+    if (directory_selection) {
         if (!fs::is_directory(path, ec)) {
             if (status) *status = "Folder not found";
             return false;
@@ -1387,7 +1399,7 @@ bool validate_resource_file(const Resource& resource,
         if (status) *status = "File not found";
         return false;
     }
-    if (resource.size != 0 && !resource_is_directory(resource)) {
+    if (resource.size != 0 && !directory_selection) {
         const uint64_t actual = (uint64_t)fs::file_size(path, ec);
         if (ec || actual != resource.size) {
             if (status) *status = "File size does not match";

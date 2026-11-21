@@ -27,6 +27,9 @@
 #ifndef S_ISDIR
 #define S_ISDIR(m) (((m) & _S_IFMT) == _S_IFDIR)
 #endif
+#ifndef S_ISREG
+#define S_ISREG(m) (((m) & _S_IFMT) == _S_IFREG)
+#endif
 
 /* The audio thread already holds this around RtlRenderAudio; the CPU
  * thread takes it for register accesses. SDL mutexes are recursive, so
@@ -60,6 +63,7 @@ static struct {
     bool   auto_base;    /* derive base from ROM path */
     bool   have_base;
     char   base[MSU1_PATH_MAX];
+    char   data_path[MSU1_PATH_MAX]; /* exact selected file, including extension case */
 
     /* Audio channel */
     FILE  *track;        /* current <base>-<N>.pcm, positioned at the read cursor */
@@ -217,7 +221,15 @@ void msu1_init(void) {
     } else {
         strncpy(g.base, e, sizeof(g.base) - 1);
         g.have_base = true;
-        msu_resolve_base_if_dir();         /* allow pointing at a folder */
+        struct stat st;
+        const size_t length = strlen(g.base);
+        if (length > 4 && ci_eq(g.base + length - 4, ".msu") &&
+            stat(g.base, &st) == 0 && S_ISREG(st.st_mode)) {
+            memcpy(g.data_path, g.base, length + 1);
+            g.base[length - 4] = '\0';
+        } else {
+            msu_resolve_base_if_dir();     /* retain existing folder/prefix choices */
+        }
     }
     printf("[MSU-1] enabled: base='%s'\n",
            g.have_base ? g.base : "(awaiting ROM path)");
@@ -394,7 +406,8 @@ uint8_t msu1_read(uint16_t reg) {
             if (!g.data && !g.data_tried) {
                 g.data_tried = true;
                 char dn[MSU1_PATH_MAX + 8];
-                snprintf(dn, sizeof(dn), "%s.msu", g.base);
+                if (g.data_path[0]) snprintf(dn, sizeof(dn), "%s", g.data_path);
+                else snprintf(dn, sizeof(dn), "%s.msu", g.base);
                 g.data = fopen(dn, "rb");
             }
             if (g.data) {
@@ -424,7 +437,8 @@ void msu1_write(uint16_t reg, uint8_t val) {
             if (!g.data && !g.data_tried) {
                 g.data_tried = true;
                 char dn[MSU1_PATH_MAX + 8];
-                snprintf(dn, sizeof(dn), "%s.msu", g.base);
+                if (g.data_path[0]) snprintf(dn, sizeof(dn), "%s", g.data_path);
+                else snprintf(dn, sizeof(dn), "%s.msu", g.base);
                 g.data = fopen(dn, "rb");
             }
             if (g.data) fseek(g.data, (long)off, SEEK_SET);
