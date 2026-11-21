@@ -60,6 +60,9 @@ uint32_t snes_savestate_menu_filter_guest_input(uint32_t inputs);
  * (bit 2 = Select, bit 11 = R). Returns 1 on the frame it opens. Safe to
  * call every frame; does nothing while already open. */
 int  snes_savestate_menu_poll_open(uint32_t inputs);
+/* Open on a host-owned shortcut edge. Prime actual held navigation buttons,
+ * so the opening chord cannot also load/save/close a slot. */
+int  snes_savestate_menu_open(uint32_t inputs);
 
 /* Gamepad navigation while open: Up/Down pick a slot (with key repeat),
  * A loads, X saves, B closes. ticks_ms is a free-running millisecond clock. */

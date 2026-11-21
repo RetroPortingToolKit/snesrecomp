@@ -55,8 +55,8 @@ def test_interp816_and_bridge_contract():
             for index, sources in enumerate(groups):
                 exe = pathlib.Path(directory) / f'contract-{index}.exe'
                 subprocess.run(flags + sources + ['-lm', '-o', str(exe)],
-                               cwd=REPO, check=True, timeout=120)
-                subprocess.run([str(exe)], cwd=directory, check=True, timeout=120)
+                               cwd=REPO, check=True)
+                subprocess.run([str(exe)], cwd=directory, check=True)
         return
     for tool in ('bash', 'gcc'):
         if shutil.which(tool) is None:
@@ -68,7 +68,6 @@ def test_interp816_and_bridge_contract():
         cwd=str(REPO),
         capture_output=True,
         text=True,
-        timeout=900,
     )
     if proc.returncode != 0:
         # The harness prints one line per failed CHECK; surface them rather

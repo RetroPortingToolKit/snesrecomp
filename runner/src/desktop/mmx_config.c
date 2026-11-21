@@ -5,6 +5,9 @@
 #include "config.h"
 #include "types.h"
 #include <stdarg.h>
+#include <limits.h>
+#include <errno.h>
+#include "host_pad_binding.h"
 #include <stdio.h>
 #include <string.h>
 #include "sdl_compat.h"
@@ -38,6 +41,8 @@ int ConfigPadSeats(void) { return s_pad_seats; }
  * port that does not opt in keeps a byte-identical config.ini. */
 static bool s_rewind_keys;
 void ConfigEnableRewindKeys(void) { s_rewind_keys = true; }
+static bool s_state_menu_pad_binding;
+void ConfigEnableStateMenuPadBinding(void) { s_state_menu_pad_binding = true; }
 bool ConfigHasPlayerSource(int player) {
   return (unsigned)player < kSnesHostPadSeats && s_player_src_seen[player];
 }
@@ -476,7 +481,17 @@ static bool HandleIniConfig(int section, const char *key, char *value) {
       }
     }
   } else if (section == 7) {
-    if (StringEqualsNoCase(key, "RewindGesture")) {
+    if (StringEqualsNoCase(key, "SaveStateMenuPad")) {
+      char *end;
+      errno = 0;
+      long binding = strtol(value, &end, 10);
+      while (*end == ' ' || *end == '\t') ++end;
+      if (errno == ERANGE || end == value || (*end && *end != '#' && *end != ';') ||
+          binding < -1 || binding > INT_MAX ||
+          !SnesHostPadBindingValid((int)binding)) return false;
+      g_config.state_menu_pad_binding = (int)binding;
+      return true;
+    } else if (StringEqualsNoCase(key, "RewindGesture")) {
       snprintf(g_config.rewind_gesture, sizeof(g_config.rewind_gesture), "%s", value);
       return true;
     } else if (StringEqualsNoCase(key, "LauncherGesture")) {
@@ -699,6 +714,7 @@ void ParseConfigFile(const char *filename) {
   g_config.gamepad_deadzone = SNES_CONFIG_DEFAULT_DEADZONE;
   g_config.display_aspect = kSnesDisplayAspect_Crt4x3;
   g_config.skip_launcher = false;
+  g_config.state_menu_pad_binding = 0;
   /* Rewind's built-in ring, matching snes_rewind.c's own defaults so a host
    * that opts into the launcher rows starts from what it already had. */
   g_config.rewind_enabled = true;
@@ -912,6 +928,7 @@ void WriteConfigFile(const char *filename) {
     { "General",    "RunAhead" },
     { "Sound",      "Volume" },
     { "Controller", "SourceP1" },
+    { "Controller", "SaveStateMenuPad" },
     { "Controller", "SourceP2" },
     { "GamepadMap", "EnableGamepad3" }, { "Controller", "SourceP3" },
     { "GamepadMap", "EnableGamepad4" }, { "Controller", "SourceP4" },
@@ -959,6 +976,10 @@ void WriteConfigFile(const char *filename) {
          g_config.renderer[0] ? g_config.renderer : "auto");
   CfgSet(kvs, N, "General", "RunAhead", "%d", g_config.run_ahead);
   CfgSet(kvs, N, "Sound", "Volume", "%d", g_config.volume);
+  if (s_state_menu_pad_binding)
+    CfgSet(kvs, N, "Controller", "SaveStateMenuPad", "%d", g_config.state_menu_pad_binding);
+  else
+    CfgSkip(kvs, N, "Controller", "SaveStateMenuPad");
   CfgSet(kvs, N, "Controller", "SourceP1", "%d", g_config.player_src[0]);
   CfgSet(kvs, N, "Controller", "SourceP2", "%d", g_config.player_src[1]);
   for (int seat = 2; seat < kSnesHostPadSeats; ++seat) {

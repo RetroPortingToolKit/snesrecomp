@@ -165,6 +165,11 @@ void snes_sync_master_clock(Snes *snes, uint64_t master_clock) {
     if (g_test_irq_master && master_clock >= g_test_irq_master)
         snes->inIrq = true;
 }
+/* This fixture has no DMA producers; parked CPU waits observe the same IRQ
+ * deadline as an ordinary beam synchronization. */
+void snes_sync_master_clock_parked(Snes *snes, uint64_t master_clock) {
+    snes_sync_master_clock(snes, master_clock);
+}
 void cart_sync_coprocessors(Cart *cart, uint64_t master_clock) {
     (void)cart; (void)master_clock;
 }
