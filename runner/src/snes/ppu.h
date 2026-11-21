@@ -590,6 +590,9 @@ void ppu_runLine(Ppu* ppu, int line);
 /* Native image producers still need the live PPU's line/status work. Omit
  * color rasterization only when the caller owns that line's final pixels. */
 void ppu_runLineState(Ppu* ppu, int line);
+/* BFD picture replay: guest line/status work already ran on the beam.
+ * Draw and publish this captured line without a second hardware-line event. */
+void ppu_renderRasterLine(Ppu *ppu, int line);
 /* Render an immutable caller-owned PPU copy, without recording another live
  * hardware line. Used for explicit reference-image/readback requests. */
 void ppu_drawCapturedLine(Ppu* ppu, int line, bool pixels);
@@ -622,6 +625,10 @@ void ppu_set_vram_write_log_hook(PpuVramWriteLogHook hook);
  * register write with the beam line. A host arms it with ppu_rasterBegin and
  * brackets its render loop with RenderBegin / ApplyLine per line / RenderEnd. */
 void ppu_rasterBegin(Ppu *ppu);
+/* Complete picture journal for CPU/beam-owned HDMA. Includes upload ports
+ * and their read side effects; legacy render-owned hosts keep Begin above. */
+void ppu_rasterBeginPicture(Ppu *ppu);
+bool ppu_rasterReplayReady(void);
 /* Isolated native loaders may change registers/beam time on a scratch
  * timeline. Keep those writes out of the live field replay and write log. */
 void ppu_setGuestScope(bool active);

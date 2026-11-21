@@ -86,6 +86,14 @@ echo "=== PPU modes 4-6 fall back to the compatibility renderer ==="
 "$CC" -std=c11 -Wall -Wextra -O1     -DSNESRECOMP_REVERSE_DEBUG=0     -I "$ROOT/runner/src" -I "$ROOT/runner/src/snes"     "$ROOT/tests/ppu/ppu_hires_mode_test.c"     "$ROOT/runner/src/snes/hd_jobs.c" "$ROOT/runner/src/snes/ppu.c"     "$ROOT/runner/src/snes/ppu_legacy.c"     -lm -o "$OUT/ppu_hires_mode_test"
 "$OUT/ppu_hires_mode_test"
 
+echo "=== PPU mosaic source grid at clipped window edges ==="
+"$CC" -std=c11 -Wall -Wextra -O1 -DSNESRECOMP_REVERSE_DEBUG=0 \
+    -I "$ROOT/runner/src" -I "$ROOT/runner/src/snes" \
+    "$ROOT/tests/ppu/ppu_mosaic_window_test.c" \
+    "$ROOT/runner/src/snes/hd_jobs.c" "$ROOT/runner/src/snes/ppu_legacy.c" \
+    -lm -o "$OUT/ppu_mosaic_window_test"
+"$OUT/ppu_mosaic_window_test"
+
 echo "=== PPU sprite priority against BG1/BG2 in modes 1-3 ==="
 "$CC" -std=c11 -Wall -Wextra -O1     -DSNESRECOMP_REVERSE_DEBUG=0     -I "$ROOT/runner/src" -I "$ROOT/runner/src/snes"     "$ROOT/tests/ppu/ppu_obj_priority_test.c"     "$ROOT/runner/src/snes/hd_jobs.c" "$ROOT/runner/src/snes/ppu.c"     "$ROOT/runner/src/snes/ppu_legacy.c"     -lm -o "$OUT/ppu_obj_priority_test"
 "$OUT/ppu_obj_priority_test"
@@ -123,7 +131,16 @@ echo "=== HD Mode 7 sampling and composition ==="
 
 echo "=== PPU raster journal ==="
 "$CC" -std=c11 -Wall -Wextra -O1     -DSNESRECOMP_REVERSE_DEBUG=0     -I "$ROOT/runner/src" -I "$ROOT/runner/src/snes"     "$ROOT/tests/ppu/ppu_raster_journal_test.c"     "$ROOT/runner/src/snes/hd_jobs.c" "$ROOT/runner/src/snes/ppu.c"     "$ROOT/runner/src/snes/ppu_legacy.c"     -lm -o "$OUT/ppu_raster_journal_test"
+
 "$OUT/ppu_raster_journal_test"
+
+echo "=== complete beam picture memory and port replay ==="
+"$CC" -std=c11 -Wall -Wextra -O1 -DSNESRECOMP_REVERSE_DEBUG=0 \
+    -I "$ROOT/runner/src" -I "$ROOT/runner/src/snes" \
+    "$ROOT/tests/ppu/ppu_picture_journal_test.c" \
+    "$ROOT/runner/src/snes/hd_jobs.c" "$ROOT/runner/src/snes/ppu.c" \
+    "$ROOT/runner/src/snes/ppu_legacy.c" -lm -o "$OUT/ppu_picture_journal_test"
+"$OUT/ppu_picture_journal_test"
 
 echo "=== DMA / HDMA ==="
 # sdd1.c is upstream's vendored S-DD1 decoder and is not -Werror clean here:
@@ -154,6 +171,16 @@ echo "=== DMA / HDMA ==="
     "$ROOT/runner/src/snes/sdd1.c" \
     $GC_SECTIONS_LINKER -o "$OUT/hdma_timing_test"
 "$OUT/hdma_timing_test"
+
+echo "=== live HDMA CPU stalls and mid-field channel/table changes ==="
+"$CC" -std=c11 -Wall -Wextra -O1 -DSNESRECOMP_REVERSE_DEBUG=0 \
+    -ffunction-sections -fdata-sections \
+    -I "$ROOT/tests/dma" -I "$ROOT/runner/src" -I "$ROOT/runner/src/snes" \
+    "$ROOT/tests/dma/hdma_cpu_stall_test.c" \
+    "$ROOT/runner/src/snes/dma.c" "$ROOT/runner/src/snes/snes.c" \
+    "$ROOT/runner/src/snes/sdd1.c" \
+    $GC_SECTIONS_LINKER -o "$OUT/hdma_cpu_stall_test"
+"$OUT/hdma_cpu_stall_test"
 
 echo "=== fiber snapshot (rewindable execution position) ==="
 # Darwin exposes the POSIX context API but marks it deprecated.

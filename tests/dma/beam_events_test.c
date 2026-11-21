@@ -2,6 +2,9 @@
 #define main hdma_harness_main
 #include "hdma_timing_test.c"
 #undef main
+#ifdef NDEBUG
+#undef NDEBUG
+#endif
 #include <assert.h>
 
 int main(void) {

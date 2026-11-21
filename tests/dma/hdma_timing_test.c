@@ -22,7 +22,11 @@ void wlog_addr_note_direct(uint32_t wa, uint8_t v, const char *via) {
 
 static uint8_t ram[0x20000];
 static uint8_t ppu_regs[0x40];
+static Snes *ppu_observed_machine;
+static uint16_t ppu_observed_line, ppu_observed_h;
+static unsigned ppu_observed_writes;
 
+#ifndef SNES_TEST_REAL_PPU
 uint8_t ppu_read(Ppu *ppu, uint8_t adr) {
     (void)ppu;
     return ppu_regs[adr & 0x3f];
@@ -31,7 +35,13 @@ uint8_t ppu_read(Ppu *ppu, uint8_t adr) {
 void ppu_write(Ppu *ppu, uint8_t adr, uint8_t val) {
     (void)ppu;
     ppu_regs[adr & 0x3f] = val;
+    if (ppu_observed_machine) {
+        ppu_observed_line = ppu_observed_machine->vPos;
+        ppu_observed_h = ppu_observed_machine->hPos;
+        ++ppu_observed_writes;
+    }
 }
+#endif
 
 /* snes.c's save-state and reset paths call into joypad.c, which this harness
  * does not link. POSIX linkers drop those unreferenced functions under
@@ -42,6 +52,7 @@ void joypad_saveload(struct SaveLoadInfo *sli) { (void)sli; }
 
 /* The PPU write journal and raster journal (ppu.c) are not linked into this
  * harness. */
+#ifndef SNES_TEST_REAL_PPU
 uint8_t g_ppu_wlog_src;
 void ppu_wlog_note_reg(uint16_t reg, uint8_t val) { (void)reg; (void)val; }
 void ppu_rasterRecord(uint16_t reg, uint16_t line, uint8_t val) {
@@ -50,6 +61,7 @@ void ppu_rasterRecord(uint16_t reg, uint16_t line, uint8_t val) {
 void ppu_rasterFieldBoundary(void) {}
 void ppu_rasterReset(void) {}
 void (*g_ppu_latch_position_hook)(uint16_t *h_dot, uint16_t *v);
+#endif
 
 void RtlApuLock(void) {}
 void RtlApuUnlock(void) {}
@@ -57,7 +69,13 @@ void rtl_sync_apu_to_cpu_locked(void) {}
 void rtl_sync_apu_for_access_locked(uint16_t adr) { (void)adr; }
 void rtl_port_log_cpu(uint16_t adr, char rw, uint8_t v) { (void)adr; (void)rw; (void)v; }
 bool rtl_apu_master_clock(void) { return false; }
-uint64_t rtl_cpu_master_now(void) { return 0; }
+uint64_t rtl_cpu_master_now(void) {
+#ifdef SNES_TEST_CPU_MASTER_NOW
+    return g_cpu.master_cycles;
+#else
+    return 0;
+#endif
+}
 uint32_t interp_bridge_access_lead(uint16_t adr, uint32_t fallback) { (void)adr; return fallback; }
 void RtlApuWrite(uint16_t adr, uint8_t val) { (void)adr; (void)val; }
 uint8_t rtl_apu_port_observers_read(uint16_t adr, uint8_t value) {
@@ -83,10 +101,15 @@ void apu_cycle(Apu *apu) { (void)apu; }
 void apu_runCycles(Apu *apu, uint32_t clocks) { (void)apu; (void)clocks; }
 void apu_saveload(Apu *apu, SaveLoadInfo *sli) { (void)apu; (void)sli; }
 
+#ifndef SNES_TEST_REAL_PPU
 Ppu *ppu_init(void) { return NULL; }
 void ppu_free(Ppu *ppu) { (void)ppu; }
 void ppu_reset(Ppu *ppu) { (void)ppu; }
+void ppu_runLineState(Ppu *ppu, int line) { (void)ppu; (void)line; }
+bool ppu_checkOverscan(Ppu *ppu) { (void)ppu; return false; }
+void ppu_handleVblank(Ppu *ppu) { (void)ppu; }
 void ppu_saveload(Ppu *ppu, SaveLoadInfo *sli) { (void)ppu; (void)sli; }
+#endif
 
 Cart *cart_init(Snes *snes) { (void)snes; return NULL; }
 void cart_free(Cart *cart) { (void)cart; }
@@ -166,13 +189,13 @@ int main(void) {
     dma_startDma(dma, 0x01, true);
     dma_initHdma(dma);
 
-    snes_advance_master_cycles(&snes, 1023);
-    failures += check(ppu_regs[0x26] == 0x00, "HDMA does not fire before HBlank");
+    snes_advance_master_cycles(&snes, 1103);
+    failures += check(ppu_regs[0x26] == 0x00, "HDMA does not fire before the H=1104 request");
     snes_advance_master_cycles(&snes, 1);
-    failures += check(ppu_regs[0x26] == 0x44, "HDMA fires at HBlank");
+    failures += check(ppu_regs[0x26] == 0x44, "HDMA fires at its H=1104 request");
     failures += check(dma->channel[0].tableAdr == 0x0103, "HDMA consumed terminator at timing edge");
 
-    snes_advance_master_cycles(&snes, 1364u * 262u - 1024u);
+    snes_advance_master_cycles(&snes, 1364u * 262u - 1104u);
     failures += check(snes.vPos == 0 && snes.hPos == 0, "beam reached next frame");
     failures += check(dma->channel[0].tableAdr == 0x0101, "frame rollover reloaded line count");
     failures += check(dma->channel[0].hdmaActive, "frame rollover preserved HDMAEN state");
@@ -254,7 +277,7 @@ int main(void) {
     dma_startDma(dma, 0x01, true);
     dma_initHdma(dma);
 
-    snes_advance_master_cycles(&snes, 1024);
+    snes_advance_master_cycles(&snes, 1104);
     failures += check(ppu_regs[0x28] == 0x11,
                       "beam HDMA transfers once per HBlank, not twice");
 
@@ -273,7 +296,7 @@ int main(void) {
     dma_startDma(dma, 0x01, true);
     dma_initHdma(dma);
 
-    snes_advance_master_cycles(&snes, 1024);
+    snes_advance_master_cycles(&snes, 1104);
     failures += check(ppu_regs[0x28] == 0x00,
                       "snes_set_hdma_beam_enabled(false) keeps the beam off HDMA");
     snes.hdmaBeamOff = false;

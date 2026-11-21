@@ -2183,7 +2183,7 @@ static int _interp_run_core(CpuState *cpu, uint32_t entry_pc24,
                                 if (!_chunk) break;
                             }
                             cpu->master_cycles = target;
-                            snes_sync_master_clock(g_snes, target);
+                            snes_sync_master_clock_parked(g_snes, target);
                         }
                     }
                 }

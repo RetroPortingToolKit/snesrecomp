@@ -43,6 +43,12 @@ bool   snes_host_clock_simulation_due(const SnesHostClock *c, double now);
  * actually spanned (RtlLastFramePeriods()); a lag frame spans more than one. */
 void   snes_host_clock_simulation_done(SnesHostClock *c, double now,
                                        bool preserve_debt, double elapsed_periods);
+/* Whole-frame owner: pass the actual dispatch and completion timestamps.
+ * A late restart is measured from dispatch, so completed work counts toward
+ * the period instead of creating another idle wait. The completion-only API
+ * above retains its existing policy for legacy callers without dispatch time. */
+void snes_host_clock_simulation_done_from_start(SnesHostClock *c,
+    double started_at, double now, bool preserve_debt, double elapsed_periods);
 bool   snes_host_clock_presentation_due(const SnesHostClock *c, double now);
 void   snes_host_clock_presentation_done(SnesHostClock *c, double now);
 double snes_host_clock_alpha(const SnesHostClock *c, double now);

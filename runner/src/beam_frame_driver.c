@@ -105,7 +105,7 @@ static uint64_t next_irq_latch(void) {
 static void advance_parked(uint64_t until) {
   g_cpu.master_cycles = until;
   snes_refresh_exempt();
-  snes_sync_master_clock(g_snes, g_cpu.master_cycles);
+  snes_sync_master_clock_parked(g_snes, g_cpu.master_cycles);
   cart_sync_coprocessors(g_snes->cart, g_cpu.master_cycles);
 }
 
@@ -144,16 +144,14 @@ void snes_beam_frame_driver_run_frame(void) {
 
   if (booting) {
     s_resume_pc = reset_vector();
-  } else {
-    /* Vblank-edge PPU work a frame-model host owns: OAMADDR re-latches. */
-    ppu_checkOverscan(g_ppu);
-    ppu_handleVblank(g_ppu);
   }
-  /* The render walk owns HDMA (see draw) and the CPU half owns the H/V
-   * comparator. Re-asserted per frame: a save-state load restores Snes. */
-  snes_set_hdma_beam_enabled(g_snes, false);
+  /* Actual HDMA and live PPU status belong to this CPU/beam timeline. The
+   * later renderer only replays its complete picture history. */
+  snes_set_hdma_beam_enabled(g_snes, true);
+  snes_set_ppu_beam_enabled(g_snes, true);
   snes_set_raster_irq_beam_enabled(true);
-  ppu_rasterBegin(g_ppu);
+  ppu_rasterBeginPicture(g_ppu);
+  if (booting) ppu_runLineState(g_ppu, 0);
 
   /* NMITIMEN gates NMI; nothing is delivered before reset has run, since
    * there is no instruction stream to interrupt yet. */
@@ -235,8 +233,7 @@ void snes_beam_frame_driver_run_frame(void) {
       advance_parked(frame_end);
     while (g_snes->beamMasterLast < frame_end && walk++ < 1200) {
       uint64_t before = g_snes->beamMasterLast;
-      uint64_t want = frame_end - before;
-      snes_advance_master_cycles(g_snes, want > UINT32_MAX ? UINT32_MAX : (uint32_t)want);
+      snes_sync_master_clock_boundary(g_snes, frame_end);
       if (g_snes->beamMasterLast == before)
         break;
     }
@@ -252,27 +249,21 @@ void snes_beam_frame_driver_draw_ppu_frame_observed(
     SnesBeamRasterObserver *observer, void *context) {
   int line;
 
-  /* The field's register state as of its start, then each line's journal
-   * entries and HDMA in beam order. HDMA here is the real unit (dma.c), so
-   * the beam must not also step it from inside guest register writes. */
-  snes_set_hdma_beam_enabled(g_snes, false);
+  if (!ppu_rasterReplayReady()) {
+    fprintf(stderr, "[snes] incomplete beam picture history; refusing a stale field\n");
+    g_fail = true;
+    return;
+  }
+  /* DMA channels, guest ports and memory already hold the CPU's final state.
+   * Replay their observed PPU effects, never execute another real transfer. */
   ppu_rasterRenderBegin(g_ppu);
-  dma_initHdma(g_snes->dma);
-  /* H-blank on V=0 performs and consumes the first transfer before visible
-   * line 1. A preview leaves the address/count behind and repeats that slot. */
-  dma_doHdma(g_snes->dma);
   for (line = 1; line <= 224; line++) {
-    uint8_t hdmaen;
     /* A split is written in H-blank after its line is drawn, so the previous
      * line's entries take effect on this one. */
     ppu_rasterApplyLine(g_ppu, line - 1);
-    if (ppu_rasterTakeHdmaen(&hdmaen))
-      dma_startDma(g_snes->dma, hdmaen, true);
-    ppu_runLine(g_ppu, line);
+    ppu_renderRasterLine(g_ppu, line);
     if (observer)
       observer(g_ppu, (unsigned)line, context);
-    /* HDMA runs in the H-blank after this line; it lands on the next. */
-    dma_doHdma(g_snes->dma);
   }
   ppu_rasterRenderEnd(g_ppu);
 }

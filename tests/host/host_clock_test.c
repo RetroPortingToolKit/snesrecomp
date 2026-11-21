@@ -13,7 +13,32 @@
 
 #include "host_clock.h"
 
+#ifdef SNES_TEST_REFERENCE_CLOCK
+#define COMPLETE(c, start, now, debt, periods) \
+  ((void)(start), snes_host_clock_simulation_done(c, now, debt, periods))
+#else
+#define COMPLETE snes_host_clock_simulation_done_from_start
+#endif
+
+static void completed_work_is_not_idle(double work, double present) {
+  SnesHostClock c;
+  snes_host_clock_reset(&c, 0, SNES_HOST_NTSC_HZ, 60);
+  double now=0, idle=0;
+  for(unsigned i=0;i<120;++i) {
+    if(now<c.next_simulation) {idle+=c.next_simulation-now;now=c.next_simulation;}
+    double started=now;now+=work;
+    COMPLETE(&c,started,now,false,1);now+=present;
+  }
+  printf("host work=%.3f present=%.3f: wall=%.6f idle=%.6f fps=%.3f\n",
+      work,present,now,idle,120/now);
+  assert(idle<1e-9 && fabs(now-120*(work+present))<1e-9);
+}
+
 int main(void) {
+  /* Slow CPU work and serial guest/presentation work must run at their real
+   * capacity; re-anchoring after completion adds an artificial idle period. */
+  completed_work_is_not_idle(0.018,0);
+  completed_work_is_not_idle(0.011,0.008);
   const double sim = SNES_HOST_NTSC_HZ;
   const unsigned rates[] = {60, 90, 120, 144, 165, 240, 360};
   for (unsigned r = 0; r < sizeof(rates) / sizeof(rates[0]); ++r) {
@@ -43,6 +68,18 @@ int main(void) {
   while (snes_host_clock_simulation_due(&stalled, 5))
     snes_host_clock_simulation_done(&stalled, 5, false, 1);
   assert(stalled.simulation_frames == 1);
+  SnesHostClock dispatch;
+  snes_host_clock_reset(&dispatch,0,sim,144);
+  COMPLETE(&dispatch,5,5,false,1);
+  assert(dispatch.simulation_frames==1 && !snes_host_clock_simulation_due(&dispatch,5));
+  /* Dropping a late dispatch cannot throw away genuine multi-period guest
+   * work; preserve-debt loading still retains its original clock phase. */
+  snes_host_clock_reset(&dispatch,0,sim,144);
+  COMPLETE(&dispatch,5,5.1,false,18);
+  assert(fabs(dispatch.next_simulation-(5+18/sim))<1e-9);
+  snes_host_clock_reset(&dispatch,0,sim,144);
+  COMPLETE(&dispatch,5,5.1,true,18);
+  assert(fabs(dispatch.next_simulation-18/sim)<1e-9);
 
   /* A title may ask to PRESERVE the debt (a loading phase that refills a
    * guest-driven audio queue) -- then the backlog is repaid in full. */

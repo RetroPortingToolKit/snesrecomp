@@ -18,15 +18,30 @@ bool snes_host_clock_simulation_due(const SnesHostClock *c, double now) {
   return now >= c->next_simulation;
 }
 
-void snes_host_clock_simulation_done(SnesHostClock *c, double now,
-                                     bool preserve_debt, double elapsed_periods) {
+static void simulation_done(SnesHostClock *c, double now, bool preserve_debt,
+                            double elapsed_periods, double restart_at) {
   double deadline = c->next_simulation + elapsed_periods / c->simulation_hz;
   /* Keep ordinary sub-frame scheduling jitter on the original phase. A
    * loader may preserve its backlog so its non-interactive frames refill the
    * guest-driven audio queue; all ordinary gameplay drops stale work. */
   c->next_simulation = preserve_debt || now <= deadline
-      ? deadline : now + 1.0 / c->simulation_hz;
+      ? deadline : restart_at;
   ++c->simulation_frames;
+}
+
+void snes_host_clock_simulation_done(SnesHostClock *c, double now,
+                                     bool preserve_debt, double elapsed_periods) {
+  simulation_done(c, now, preserve_debt, elapsed_periods,
+                  now + 1.0 / c->simulation_hz);
+}
+
+void snes_host_clock_simulation_done_from_start(SnesHostClock *c,
+    double started_at, double now, bool preserve_debt, double elapsed_periods) {
+  /* Work already consumed time in this frame. Dropping stale scheduling debt
+   * must not add another full period after that work finished. Genuine guest
+   * lag periods still count, and a paused/late dispatch starts a fresh phase. */
+  simulation_done(c, now, preserve_debt, elapsed_periods,
+                  started_at + elapsed_periods / c->simulation_hz);
 }
 
 bool snes_host_clock_presentation_due(const SnesHostClock *c, double now) {
