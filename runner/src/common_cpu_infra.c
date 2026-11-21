@@ -142,6 +142,12 @@ static uint8_t g_cpu_entry_return_frame[RECOMP_STACK_DEPTH];
  * Consulted when converting a host-frame index into a SKIP_N unwind depth —
  * see cpu_resolve_unwind_depth(). */
 static uint8_t g_cpu_entry_tailcall[RECOMP_STACK_DEPTH];
+/* Per-slot: the frame's return contract (its prologue's _hrv: 2/3 = paired
+ * caller with a JSR/JSL frame at entry S + 1, 0 = dispatch ABI), adopted from
+ * a tail-call context like its entry S. Read by cpu_entry_frame() when a
+ * deadline unwind records the frames it abandons (interp_bridge.c, compiled
+ * resume). */
+static uint8_t g_cpu_entry_hrv[RECOMP_STACK_DEPTH];
 static uint8_t g_tailcall_context_valid;
 static uint16_t g_tailcall_entry_s;
 static uint8_t g_tailcall_hrv;
@@ -186,9 +192,45 @@ int cpu_take_tailcall_return_context(uint16_t *entry_s, uint8_t *hrv) {
    * must not be recorded as a tail entry. A prologue that asks for the
    * entry_s/hrv out-params is the real tail-entered case: its RecompStackPush
    * already ran, so top-1 is its own slot. */
-  if (entry_s && g_recomp_stack_top > 0)
+  if (entry_s && g_recomp_stack_top > 0) {
     g_cpu_entry_tailcall[g_recomp_stack_top - 1] = 1;
+    g_cpu_entry_hrv[g_recomp_stack_top - 1] = g_tailcall_hrv;
+  }
   return 1;
+}
+
+int cpu_entry_frame(int slot, uint16_t *entry_s, uint8_t *hrv, int *tail) {
+  if (slot < 0 || slot >= RECOMP_STACK_DEPTH || !g_cpu_entry_s_valid[slot])
+    return 0;
+  *entry_s = g_cpu_entry_s[slot];
+  *hrv = g_cpu_entry_hrv[slot];
+  *tail = g_cpu_entry_tailcall[slot];
+  return 1;
+}
+
+/* Compiled resume (generate --aot-resume): the next generated
+ * prologue to run adopts this frame (entry S, return contract) and jumps to
+ * the instruction at pc instead of its entry. Armed by cpu_dispatch_resume_paired
+ * right before it calls the variant that holds that instruction. */
+static uint32_t g_aot_resume_pc;
+static uint16_t g_aot_resume_entry_s;
+static uint8_t g_aot_resume_hrv;
+
+void cpu_arm_aot_resume(uint32_t pc24, uint16_t entry_s, uint8_t hrv) {
+  g_aot_resume_pc = pc24 & 0xFFFFFFu;
+  g_aot_resume_entry_s = entry_s;
+  g_aot_resume_hrv = hrv;
+}
+
+uint32_t cpu_take_aot_resume(uint16_t *entry_s, uint8_t *hrv) {
+  const uint32_t pc = g_aot_resume_pc;
+  if (!pc) return 0;
+  g_aot_resume_pc = 0;
+  *entry_s = g_aot_resume_entry_s;
+  *hrv = g_aot_resume_hrv;
+  if (g_recomp_stack_top > 0)
+    g_cpu_entry_hrv[g_recomp_stack_top - 1] = *hrv;
+  return pc;
 }
 
 void cpu_tailcall_context_save(CpuTailcallContextSave *out) {
@@ -604,6 +646,7 @@ void RecompStackPushInterpreter(const char *name) {
 }
 
 void RecompStackPush(const char *name) {
+  g_recomp_yield_popped_top = -1;
 #ifdef SNESRECOMP_INTERP_PROFILE
   if (g_aotprof_on < 0) aotprof_latch_env();
   if (g_aotprof_on == 1) {
@@ -643,6 +686,7 @@ void RecompStackPush(const char *name) {
      * cpu_take_tailcall_return_context(NULL, NULL), before they can call a
      * helper that bounces into the interpreter. */
     g_cpu_entry_s[slot] = g_cpu.S;
+    g_cpu_entry_hrv[slot] = g_cpu.host_return_valid;
     g_cpu_entry_s_valid[slot] = 1;
     g_cpu_entry_tailcall[slot] = 0;  /* set only if this prologue adopts a
                                       * tailcall return context (below) */
@@ -835,7 +879,10 @@ static void recomp_stack_pop_common(int audit) {
   g_last_recomp_func = g_recomp_stack_top > 0 ? g_recomp_stack[g_recomp_stack_top - 1] : "(none)";
 }
 
-void RecompStackPop(void) { recomp_stack_pop_common(1); }
+void RecompStackPop(void) {
+  recomp_stack_pop_common(1);
+  g_recomp_yield_popped_top = g_recomp_stack_top;
+}
 
 /* Pop for an LLE yield unwind (interp_bridge_lle_yield_unwind).
  *
@@ -856,7 +903,15 @@ void RecompStackPop(void) { recomp_stack_pop_common(1); }
  *
  * Yields are counted separately so "how often does this frame leave through
  * a yield" stays visible without contaminating the balance figure. */
-void RecompStackPopYield(void) { recomp_stack_pop_common(0); }
+/* The recomp-stack top right after the last pop, -1 once a push ran: the slot
+ * there is the frame that just left (a generated yield site, or a return
+ * handed to a tier-down helper), its data intact. Whether that frame is over
+ * is for its entry S to say (aot_resume_walk). */
+int g_recomp_yield_popped_top = -1;
+void RecompStackPopYield(void) {
+  recomp_stack_pop_common(0);
+  g_recomp_yield_popped_top = g_recomp_stack_top;
+}
 
 // Frame watchdog: detect infinite loops in generated code.
 // Set before calling run_frame, checked by generated code periodically.

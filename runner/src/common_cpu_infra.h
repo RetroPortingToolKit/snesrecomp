@@ -64,6 +64,7 @@ void RecompStackPop(void);
 /* Pop for an LLE yield unwind: the frame is unfinished, so no balance figure
  * is recorded. See common_cpu_infra.c. */
 void RecompStackPopYield(void);
+extern int g_recomp_yield_popped_top;
 /* Optional stack-balance auditor (see common_cpu_infra.c): reports stack
  * movement beyond consumption of the caller's materialized JSR/JSL frame when
  * SNESRECOMP_STACK_BALANCE_DIAGNOSTICS is enabled. */
@@ -97,6 +98,13 @@ typedef struct CpuTailcallContextSave {
 void cpu_tailcall_inherit_return_context(uint16_t entry_s, uint8_t hrv);
 int cpu_take_tailcall_return_context(uint16_t *entry_s, uint8_t *hrv);
 void cpu_tailcall_context_save(CpuTailcallContextSave *out);
+/* A live compiled frame by recomp-stack slot: its entry S, return contract
+ * (_hrv) and whether it was tail-entered. 0 for a slot that is not a generated
+ * frame (HLE forwarding, interpreter attribution). */
+int cpu_entry_frame(int slot, uint16_t *entry_s, uint8_t *hrv, int *tail);
+/* Compiled resume: arm / take the frame the next generated prologue adopts. */
+void cpu_arm_aot_resume(uint32_t pc24, uint16_t entry_s, uint8_t hrv);
+uint32_t cpu_take_aot_resume(uint16_t *entry_s, uint8_t *hrv);
 void cpu_tailcall_context_restore(const CpuTailcallContextSave *in);
 /* Architectural interrupt handlers may cross AOT/LLE boundaries before their
  * terminal RTI.  Keep that host-boundary context independent of any one

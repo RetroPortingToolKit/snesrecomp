@@ -268,6 +268,10 @@ int interp_bridge_return_targets_owner(uint16 a, uint16 b) {
   (void)a; (void)b; return 0;
 }
 int interp_bridge_has_direct_paired_bounce(void) { return 0; }
+/* A compiled RTI under a host-delivered interrupt is the host boundary. */
+RecompReturn interp_bridge_aot_rti(CpuState *cpu, uint32 popped_pc24) {
+  (void)cpu; (void)popped_pc24; return RECOMP_RETURN_NORMAL;
+}
 int cpu_dispatch_has_entry(CpuState *cpu, uint32 pc24) {
   (void)cpu; (void)pc24; return 0;
 }

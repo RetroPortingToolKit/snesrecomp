@@ -31,6 +31,7 @@
 #include "cpu_plain_rom_read.h"
 #include "common_rtl.h"
 #include "cpu_trace.h"
+#include "common_cpu_infra.h"  /* cpu_arm_aot_resume / cpu_take_aot_resume */
 #include "snes/snes.h"
 #include "snes/cart.h"
 #include "snes/cx4.h"
@@ -1372,6 +1373,72 @@ RecompReturn cpu_dispatch_pc_paired(CpuState *cpu, uint32 pc24, uint8 frame_size
     if (fp == NULL) return RECOMP_RETURN_NORMAL;  /* caller already checked has_entry */
     cpu->host_return_valid = frame_size;
     return fp(cpu);
+}
+
+static RecompReturn (*aot_resume_lookup(uint32 pc24, unsigned mx))(CpuState *) {
+    const uint64_t key = ((uint64_t)pc24 << 2) | mx;
+    unsigned lo = 0, hi = g_aot_resume_count;
+    while (lo < hi) {
+        const unsigned mid = lo + (hi - lo) / 2;
+        const AotResumeEntry *e = &g_aot_resume_table[mid];
+        const uint64_t k = ((uint64_t)e->pc24 << 2) | e->mx;
+        if (k < key) lo = mid + 1;
+        else if (k > key) hi = mid;
+        else return e->fn;
+    }
+    return NULL;
+}
+
+/* One bit per PC24 (both LoROM mirrors) that some variant can resume at, for
+ * the interpreter's per-instruction check: 2 MB, built on first use. */
+int cpu_aot_resume_maybe(uint32 pc24) {
+    static uint8 *bits;
+    if (!g_aot_resume_count) return 0;
+    if (!bits) {
+        bits = (uint8 *)calloc(1u << 21, 1);
+        if (!bits) return 1;
+        for (unsigned i = 0; i < g_aot_resume_count; i++) {
+            const uint32 pc = g_aot_resume_table[i].pc24 & 0xFFFFFFu;
+            bits[pc >> 3] |= (uint8)(1u << (pc & 7));
+            if (dispatch_has_rom_mirror(pc)) {
+                const uint32 m = pc ^ 0x800000u;
+                bits[m >> 3] |= (uint8)(1u << (m & 7));
+            }
+        }
+    }
+    pc24 &= 0xFFFFFFu;
+    return (bits[pc24 >> 3] >> (pc24 & 7)) & 1;
+}
+
+RecompReturn (*cpu_aot_resume_fn(CpuState *cpu, uint32 pc24))(CpuState *) {
+    pc24 &= 0xFFFFFFu;
+    const uint8 bank = (uint8)(pc24 >> 16);
+    if (!g_aot_resume_count || cpu->emulation || bank == 0x7E || bank == 0x7F)
+        return NULL;
+    const unsigned mx = (unsigned)(((cpu->m_flag & 1) << 1) | (cpu->x_flag & 1));
+    RecompReturn (*fn)(CpuState *) = aot_resume_lookup(pc24, mx);
+    if (!fn && dispatch_has_rom_mirror(pc24))
+        fn = aot_resume_lookup(pc24 ^ 0x800000u, mx);
+    return fn;
+}
+
+RecompReturn cpu_dispatch_resume_paired(CpuState *cpu, uint32 pc24,
+                                        uint16 entry_s, uint8 hrv,
+                                        RecompReturn (*fn)(CpuState *)) {
+    cpu_arm_aot_resume(pc24, entry_s, hrv);
+    cpu->host_return_valid = hrv;
+    const RecompReturn r = fn(cpu);
+    /* A prologue that yielded before adopting it leaves the resume armed. */
+    uint16 drop_s; uint8 drop_hrv;
+    (void)cpu_take_aot_resume(&drop_s, &drop_hrv);
+    return r;
+}
+
+void cpu_aot_resume_miss(CpuState *cpu, uint32 key) {
+    fprintf(stderr, "[aot_resume] no case for $%04X m%ux%u in %s (PB=$%02X)\n",
+            (unsigned)(key >> 2), (unsigned)((key >> 1) & 1), (unsigned)(key & 1),
+            g_last_recomp_func ? g_last_recomp_func : "?", (unsigned)cpu->PB);
+    abort();
 }
 
 /* Read-only probe: would a dispatch to pc24 find an exact AOT body?
