@@ -59,7 +59,8 @@ def _c_function(source, name):
     return source[start:end] + "\n"
 
 
-def run_region_cases(tmp_path, cases=None, *, extra_main="", extra_emitted="", check_read_counts=False):
+def run_region_cases(tmp_path, cases=None, *, extra_main="", extra_emitted="", check_read_counts=False,
+                     harness_transform=None):
     import test_hle_func_seam as seam
     compiler = seam._compiler()
     if not compiler:
@@ -89,6 +90,13 @@ static int g_balanced_calls, s_interp_bounce_owner_depth;
 static uint64 credited_master;
 static void record_credit(CpuState *cpu, uint64 clocks) { (void)cpu; credited_master += clocks; }
 int cpu_interrupt_context_active(void) { return 0; }
+/* The per-instruction report of region-paced code (interp_bridge.c): no hook here. */
+void cpu_aot_insn_begin(const CpuState *cpu, uint32_t pc16) { (void)cpu; (void)pc16; }
+/* Compiled resume's bookkeeping in the tail helper: nothing resumes here. */
+static void aot_resume_note_handback(uint32 target, uint32 site) { (void)target; (void)site; }
+static void aot_resume_capture_tail(const CpuState *cpu, uint32 pc, uint16 entry, uint8 hrv) {
+  (void)cpu; (void)pc; (void)entry; (void)hrv;
+}
 RecompReturn interp_tier_dispatch_interrupt(CpuState *cpu, uint32 pc) {
   (void)cpu; (void)pc; return 0;
 }
@@ -278,7 +286,8 @@ int cosim_apu_shared_clock(void) { return shared_on; }
     main += [extra_main]
     main += [f'if (!fails) puts("{len(cases) * 2} synthetic native/interpreter timing cases passed"); return fails != 0; }}']
     c_file = tmp_path / "region.c"
-    c_file.write_text(f"#define CHECK_READ_COUNTS {int(check_read_counts)}\n" + harness + paced + extra + tail_helpers + credit_fixture + emitted + "\n".join(main))
+    source = f"#define CHECK_READ_COUNTS {int(check_read_counts)}\n" + harness + paced + extra + tail_helpers + credit_fixture + emitted + "\n".join(main)
+    c_file.write_text(harness_transform(source) if harness_transform else source)
     exe = tmp_path / ("region.exe" if os.name == "nt" else "region")
     build = subprocess.run([compiler, "-std=c11", "-O1", "-I", str(REPO / "runner/src"),
                             str(c_file), str(REPO / "runner/src/snes/interp816.c"), "-o", str(exe)],

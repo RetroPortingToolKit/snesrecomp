@@ -1,7 +1,17 @@
+#ifndef _POSIX_C_SOURCE
+#define _POSIX_C_SOURCE 200809L
+#endif
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <string.h>
+#include <stdlib.h>
+#ifdef _WIN32
+static int test_setenv(const char *name, const char *value, int overwrite) {
+    return !overwrite && getenv(name) ? 0 : _putenv_s(name, value);
+}
+#define setenv test_setenv
+#endif
 
 #include "snes/dma.h"
 #include "snes/ppu.h"
@@ -61,6 +71,8 @@ void ppu_rasterRecord(uint16_t reg, uint16_t line, uint8_t val) {
 void ppu_rasterFieldBoundary(void) {}
 void ppu_rasterReset(void) {}
 void (*g_ppu_latch_position_hook)(uint16_t *h_dot, uint16_t *v);
+/* ppu.c's beam hook for register accesses during rendering: ppu.c is not linked here. */
+bool (*g_ppu_beam_hook)(uint16_t adr, uint16_t *h_clock, uint16_t *v);
 #endif
 
 void RtlApuLock(void) {}

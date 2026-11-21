@@ -1,6 +1,7 @@
 #include <stdint.h>
 #include <stdio.h>
 #include <string.h>
+#include <stdlib.h>
 
 #include "cpu_state.h"
 #include "snes/cart.h"
@@ -13,6 +14,7 @@ uint8 g_memsel;
 int snes_frame_counter;
 const char *g_last_recomp_func = "wlog_addr_lazy_test";
 uint8 *g_sram;
+uint8 g_ram[0x20000];
 int g_sram_size;
 uint64_t g_main_cpu_cycles_estimate;
 uint64_t g_apu_pace_cycles_estimate;
@@ -21,6 +23,15 @@ const RamRoutineGuard g_ram_routine_guards[] = {{0}};
 const unsigned g_ram_routine_guard_count = 0;
 const DispatchEntry g_dispatch_table[] = {{0}};
 const unsigned g_dispatch_table_count = 0;
+const AotResumeEntry g_aot_resume_table[] = {{0}};
+const unsigned g_aot_resume_count = 0;
+/* No generated continuation is present in this bus/logging fixture. */
+void cpu_arm_aot_resume(uint32_t pc, uint16_t s, uint8_t hrv) {
+    (void)pc; (void)s; (void)hrv; abort();
+}
+uint32_t cpu_take_aot_resume(uint16_t *s, uint8_t *hrv) {
+    (void)s; (void)hrv; abort();
+}
 
 static const char *g_mode;
 static int g_wlog_addr_getenv_calls;

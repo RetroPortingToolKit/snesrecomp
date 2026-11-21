@@ -99,6 +99,17 @@ const DispatchEntry g_dispatch_table[] = {
 const unsigned g_dispatch_table_count =
     (unsigned)(sizeof g_dispatch_table / sizeof g_dispatch_table[0]);
 
+const AotResumeEntry g_aot_resume_table[] = {{0x008100u, 0, fake_aot}};
+const unsigned g_aot_resume_count = 1;
+/* This dispatch fixture probes resume eligibility, not generated prologues.
+ * The actual paired-resume/ledger path is exercised by the bridge/game gates. */
+void cpu_arm_aot_resume(uint32_t pc, uint16_t s, uint8_t hrv) {
+    (void)pc; (void)s; (void)hrv;
+}
+uint32_t cpu_take_aot_resume(uint16_t *s, uint8_t *hrv) {
+    (void)s; (void)hrv; return 0;
+}
+
 RecompReturn interp_tier_dispatch_popped_return(
     CpuState *cpu, uint32 target_pc24, uint32 site_pc24,
     uint16 miss_restore_s) {
@@ -166,6 +177,18 @@ int main(void) {
     sa1_destroy(cart.sa1);
     cart.sa1 = NULL;
     cart.type = CART_LOROM;
+
+    fails += check(cpu_dispatch_pc_matches(0x008100u, 0x808100u) &&
+                       cpu_dispatch_pc_matches(0x808100u, 0x008100u),
+                   "resume identity admits actual LoROM mirrored code");
+    fails += check(cpu_dispatch_pc_matches(0x7E8100u, 0x7E8100u),
+                   "exact WRAM PC retains identity");
+    fails += check(!cpu_dispatch_pc_matches(0x7E8100u, 0xFE8100u),
+                   "resume identity never aliases WRAM and cartridge code");
+    fails += check(!cpu_dispatch_pc_matches(0x706100u, 0xF06100u),
+                   "resume identity does not infer SRAM bank equivalence");
+    fails += check(!cpu_dispatch_pc_matches(0x002100u, 0x802100u),
+                   "resume identity does not infer MMIO bank equivalence");
 
     /* SMK indexes $7F:5000 by $FA78, carrying into unmapped $80:4A78.
      * Its final operand byte leaves $7F on the data bus. */
@@ -342,6 +365,11 @@ int main(void) {
     int previous_cart_type = cart.type;
     cart.type = CART_HIROM;
     cpu_select_program(hirom_entries, 3, NULL, 0);
+    fails += check(cpu_dispatch_pc_matches(0x401000u, 0xC01000u) &&
+                       cpu_dispatch_pc_matches(0xC01000u, 0x401000u),
+                   "resume identity admits actual full HiROM bank mirrors");
+    fails += check(!cpu_dispatch_pc_matches(0x009000u, 0xC09000u),
+                   "shared bytes do not equate low and full HiROM banks");
     fails += check(cpu_dispatch_has_entry(&cpu, 0x401000u),
                    "full HiROM lower-half mirror finds compiled entry");
     fails += check(cpu_dispatch_has_entry(&cpu, 0x409000u),
@@ -362,17 +390,26 @@ int main(void) {
 
     const DispatchEntry alternate[] = {{0x008300u, {NULL, NULL, NULL, NULL}, 3}};
     cpu_select_program(alternate, 1, NULL, 0);
+    fails += check(!cpu_aot_resume_fn(&cpu, 0x008100u),
+                   "alternate content cannot resume stock compiled code");
     fails += check(!cpu_dispatch_has_entry(&cpu, 0x008100u),
                    "alternate program cannot reach stock AOT table");
     fails += check(cpu_dispatch_inline_arg_bytes(0x008300u) == 3,
                    "inline arguments use active program metadata");
     cpu_select_interpreted_program();
+    fails += check(!cpu_aot_resume_fn(&cpu, 0x008100u),
+                   "interpreted content cannot resume stock compiled code");
     fails += check(!cpu_dispatch_has_entry(&cpu, 0x008100u) &&
                    !cpu_dispatch_has_entry(&cpu, 0x008300u),
                    "uncompiled content reaches neither stock nor alternate AOT");
     fails += check(cpu_dispatch_inline_arg_bytes(0x008300u) == 0,
                    "uncompiled content inherits no native inline metadata");
     cpu_select_program(NULL, 0, NULL, 0);
+    cpu.emulation = 0; cpu.m_flag = cpu.x_flag = 0;
+    fails += check(cpu_aot_resume_fn(&cpu, 0x008100u) == fake_aot,
+                   "default program restores its exact resume entry");
+    fails += check(cpu_aot_resume_fn(&cpu, 0x808100u) == fake_aot,
+                   "resume lookup agrees with actual LoROM dispatch mirror");
     fails += check(cpu_dispatch_has_entry(&cpu, 0x008100u),
                    "default program restores stock dispatch");
 
