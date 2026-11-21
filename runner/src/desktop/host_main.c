@@ -1959,6 +1959,9 @@ static bool PadGesturePressed(PadGesture *g) {
 /* One controller shortcut owner. KeyMap remains the keyboard owner; this
  * binding is captured and cleared in the launcher's existing Controls page. */
 static void StateMenuPadPoll(void) {
+  /* An edge belongs to this poll, not to the next modal that happens to
+   * become available after rewind or the launcher closes. */
+  g_state_menu_pad_hotkey = false;
   if (!g_game->editable_state_menu_controller) return;
   GamepadInfo *seat = &g_gamepad[0];
   uint32_t buttons = 0;
@@ -2038,6 +2041,7 @@ static long g_selftest_pad_frame = -2;
 static int g_selftest_pad_phase;      /* 0 idle, 1 browser, 2 rewind */
 static int g_selftest_pad_failed;
 static bool g_selftest_pad_guard_seen;
+static int g_selftest_save_opens, g_selftest_rewind_opens;
 static int g_selftest_pad_opened;     /* bit 1: browser opened, bit 2: rewind */
 /* While the self-test is armed, only the virtual pad is opened: a real
  * controller plugged in would take player 1 and the virtual one would land
@@ -2122,12 +2126,21 @@ static void OverlaySelftestPadMainTick(unsigned frame) {
       g_selftest_pad_phase = 0;
       SelftestPadReleaseAll();
     } else if (offset == 12) {
-      g_selftest_pad_phase = 1;
+      g_selftest_pad_phase = HostGetenv("STATE_MENU_PAD_EXPECT_REWIND") ? 2 : 1;
       SelftestPadBinding(g_config.state_menu_pad_binding);
     } else if (offset == 35) {
       const bool expected = g_config.state_menu_pad_binding > 0;
-      if (((g_selftest_pad_opened & 1) != 0) != expected ||
-          (expected && !g_selftest_pad_guard_seen)) g_selftest_pad_failed = 1;
+      const bool rewind = HostGetenv("STATE_MENU_PAD_EXPECT_REWIND") != NULL;
+      if (rewind) {
+        if (g_selftest_save_opens != 0 || g_selftest_rewind_opens != 1)
+          g_selftest_pad_failed = 1;
+      } else if (g_selftest_save_opens != (expected ? 1 : 0) ||
+                 g_selftest_rewind_opens != 0 ||
+                 (expected && !g_selftest_pad_guard_seen)) {
+        g_selftest_pad_failed = 1;
+      }
+      fprintf(stderr, "[state_menu_pad_selftest] actual modals save=%d rewind=%d\n",
+              g_selftest_save_opens, g_selftest_rewind_opens);
       fprintf(stderr, "[state_menu_pad_selftest] binding=%d %s: opened=%d held-navigation-guard=%d\n",
               g_config.state_menu_pad_binding, g_selftest_pad_failed ? "FAIL" : "PASS",
               (g_selftest_pad_opened & 1) != 0, g_selftest_pad_guard_seen);
@@ -2288,6 +2301,7 @@ static void PresentFrozenWithOverlay(void) {
  * never calls RtlRunFrame and never calls the game's draw_ppu_frame, which is
  * what makes "save right here" a definite point in time. */
 static void RunSavestateMenuLoop(bool *running) {
+  if (g_selftest_pad) ++g_selftest_save_opens;
   /* Always on, and deliberately so: the guest is about to stop, and from the
    * outside a deliberate freeze and a hang look identical. Whoever reads the
    * log next should not have to guess which one they got -- and the player
@@ -2342,6 +2356,7 @@ static void RewindKeyDown(int key, int repeat) {
  * ports: Left/Right scrub (hold to keep scrubbing), Enter or Space commits,
  * Escape cancels, and the pad mirrors them. */
 static void RunRewindLoop(bool *running) {
+  if (g_selftest_pad) ++g_selftest_rewind_opens;
   uint32 prev_pad = 0;
   uint32 held_dir = 0;
   uint32 held_since = 0, last_repeat = 0;
