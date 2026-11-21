@@ -71,6 +71,13 @@ int main(int argc, char **argv) {
     assert(std::string(r.path) == (root / "mixed" / "mmx.msu").string());
     assert(SNESRecomp::mod_runtime_commit());
     assert(std::string(getenv("SNESRECOMP_MSU1")) == r.path);
+    // A new PCM-only user can select a folder through the same resource ID.
+    set("test.msu", ""); assert(!get("test.msu").verified);
+    set("test.msu", root / "mixed"); assert(get("test.msu").verified);
+    assert(SNESRecomp::mod_runtime_commit()); initialize();
+    assert(std::string(get("test.msu").path) == (root / "mixed").string());
+    assert(get("test.msu").verified);
+    set("test.msu", root / "mixed" / "mmx.msu");
     assert(p->feature_enable(p->ctx, "test.msu", "music", 0));
     assert(SNESRecomp::mod_runtime_commit());
     const char *value = getenv("SNESRECOMP_MSU1"); assert(!value || !*value);
