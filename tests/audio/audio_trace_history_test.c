@@ -148,6 +148,20 @@ int main(void) {
 
   audio_trace_sample_clocks(&produced, &consumed);
   expect_u64("sample clock produced", produced, 4);
+  {
+    int16_t pcm[8] = {0};
+    uint64_t total;
+    uint32_t copied = audio_trace_copy_pcm(0, 4, pcm, &oldest, &total);
+    expect_u64("PCM producer total", total, 4);
+#if AUDIO_TRACE_WRITES_HISTORY
+    const int16_t expected[] = {100, -100, 300, 0, 301, 0, 0, 0};
+    expect_u32("PCM copy includes dropped samples", copied, 4);
+    if (memcmp(pcm, expected, sizeof(expected))) fail("PCM copy lost pre-drop samples");
+    expect_u32("future PCM span rejected", audio_trace_copy_pcm(5, 1, pcm, NULL, NULL), 0);
+#else
+    expect_u32("disabled PCM history rejected", copied, 0);
+#endif
+  }
   expect_u64("sample clock consumed", consumed, 640);
   expect_u32("consume quantum", audio_trace_consume_quantum(), 640);
 
@@ -304,6 +318,14 @@ int main(void) {
     expect_u64("small wav_count", wav_count, 9);
     expect_wav_snapshot(wav_path, wav_count);
     remove(wav_path);
+    {
+      int16_t pcm[2];
+      uint64_t total;
+      expect_u32("overwritten PCM prefix rejected",
+                 audio_trace_copy_pcm(0, 1, pcm, &oldest, &total), 0);
+      if (!oldest || total <= AUDIO_TRACE_PCM_RING)
+        fail("PCM copy did not report its overwritten range");
+    }
   }
 #endif
 

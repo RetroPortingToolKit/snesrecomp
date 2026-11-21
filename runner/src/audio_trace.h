@@ -296,6 +296,11 @@ uint32_t audio_trace_consume_quantum(void);
 
 /* ---- query/dump (any thread; takes RtlApuLock internally) ---- */
 void audio_trace_get_stats(AudioTraceStats *out);
+/* Copy native DSP frames before playback-FIFO drops. A missing prefix is an
+ * error (zero copied), never an implicit trim. The reported range lets a
+ * diagnostic reject overwritten or unavailable history. */
+uint32_t audio_trace_copy_pcm(uint64_t first_idx, uint32_t max, int16_t *out,
+                             uint64_t *oldest, uint64_t *total);
 /* Copy events [first_idx, first_idx+max) into out; returns count copied.
  * first/oldest available index is written to *oldest. */
 uint32_t audio_trace_copy_events(uint64_t first_idx, uint32_t max,

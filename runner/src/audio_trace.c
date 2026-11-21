@@ -471,6 +471,33 @@ void audio_trace_get_stats(AudioTraceStats *out) {
   RtlApuUnlock();
 }
 
+uint32_t audio_trace_copy_pcm(uint64_t first_idx, uint32_t max, int16_t *out,
+                             uint64_t *oldest, uint64_t *total) {
+  RtlApuLock();
+  uint64_t end = s_stats.produced;
+#if AUDIO_TRACE_WRITES_HISTORY
+  uint64_t start = end > AUDIO_TRACE_PCM_RING ? end - AUDIO_TRACE_PCM_RING : 0;
+  uint32_t count = 0;
+  if (out && first_idx >= start && first_idx <= end) {
+    uint64_t available = end - first_idx;
+    count = available < max ? (uint32_t)available : max;
+    for (uint32_t i = 0; i < count; ++i) {
+      uint32_t index = (uint32_t)((first_idx + i) & (AUDIO_TRACE_PCM_RING - 1));
+      out[i * 2] = s_pcm[index * 2];
+      out[i * 2 + 1] = s_pcm[index * 2 + 1];
+    }
+  }
+#else
+  uint64_t start = end;
+  uint32_t count = 0;
+  (void)first_idx; (void)max; (void)out;
+#endif
+  if (oldest) *oldest = start;
+  if (total) *total = end;
+  RtlApuUnlock();
+  return count;
+}
+
 uint32_t audio_trace_copy_events(uint64_t first_idx, uint32_t max,
                                  AudioTraceEvent *out, uint64_t *oldest) {
   RtlApuLock();

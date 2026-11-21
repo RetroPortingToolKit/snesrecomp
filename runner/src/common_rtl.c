@@ -698,53 +698,74 @@ static void recomp_dspreg_trace_tick(void) {
     if ((frame % 30) == 0) fflush(log);
 }
 
-/* Native DSP output-stream capture (co-sim audio hunt). Reads the samples the
- * S-DSP PRODUCED this frame straight from dsp->sampleBuffer (the always-on ring,
- * per CLAUDE.md ring-buffer rule) using the monotonic sampleWrite counter, and
- * appends them as raw s16 stereo PCM (~32040 Hz, pre-host-resample) — the exact
- * game-agnostic audio the recomp generates, to align against bsnes's
+/* Native DSP output-stream capture (co-sim audio hunt). Reads every sample the
+ * S-DSP produced from the existing audio-trace history, before playback-FIFO
+ * overflow can discard it. Appends raw s16 stereo PCM (~32040 Hz,
+ * pre-host-resample), to align against bsnes's
  * BSNES_COSIM_DSPOUT stream. Env-gated (SNESRECOMP_DSPOUT). */
 static int s_dspout_enabled = -1;
-static AudioCaptureCursor s_dspout_cursor;
+static uint64_t s_dspout_first, s_dspout_generation;
+static bool s_dspout_primed;
 static void recomp_dspout_begin_frame(void) {
-    if (g_rtl_speculative_frame) return;
-    if (s_dspout_enabled < 0) {
-        const char *p = getenv("SNESRECOMP_DSPOUT");
-        s_dspout_enabled = p && p[0];
+  if (g_rtl_speculative_frame) return;
+  if (s_dspout_enabled < 0) {
+    const char *p = getenv("SNESRECOMP_DSPOUT");
+    s_dspout_enabled = p && p[0];
+  }
+  if (s_dspout_enabled && g_snes && g_snes->apu && g_snes->apu->dsp) {
+    uint64_t generation = RtlStateGeneration();
+    if (!s_dspout_primed || generation != s_dspout_generation) {
+      AudioTraceStats stats;
+      audio_trace_get_stats(&stats);
+      s_dspout_first = stats.produced;
+      s_dspout_generation = generation;
+      s_dspout_primed = true;
     }
-    if (s_dspout_enabled && g_snes && g_snes->apu && g_snes->apu->dsp)
-        audio_capture_begin(&s_dspout_cursor, RtlStateGeneration(),
-                            g_snes->apu->dsp->sampleWrite);
+  }
 }
 static void recomp_dspout_capture(void) {
-    static FILE *f;
-    if (g_rtl_speculative_frame || !s_dspout_enabled ||
-        !g_snes || !g_snes->apu || !g_snes->apu->dsp) return;
-    if (!f) { f = fopen(getenv("SNESRECOMP_DSPOUT"), "wb"); if (!f) {
-        fprintf(stderr, "[dsp_capture] cannot open requested output\n");
-        exit(EXIT_FAILURE);
-    } }
-    Dsp *dsp = g_snes->apu->dsp;
-    uint32_t first, count;
-    if (!audio_capture_span(&s_dspout_cursor, RtlStateGeneration(),
-                            dsp->sampleWrite, DSP_SAMPLE_RING, &first, &count)) {
-        fprintf(stderr, "[dsp_capture] invalid epoch or overwritten sample span: %u\n", count);
-        exit(EXIT_FAILURE);
+  static FILE *f;
+  if (g_rtl_speculative_frame || !s_dspout_enabled ||
+      !g_snes || !g_snes->apu || !g_snes->apu->dsp) return;
+  if (!f) {
+    f = fopen(getenv("SNESRECOMP_DSPOUT"), "wb");
+    if (!f) {
+      fprintf(stderr, "[dsp_capture] cannot open requested output\n");
+      exit(EXIT_FAILURE);
     }
-    for (uint32_t n = 0; n < count; ++n) {
-        uint32_t idx = ((first + n) & (DSP_SAMPLE_RING - 1)) * 2;
-        int16 pair[2] = { dsp->sampleBuffer[idx], dsp->sampleBuffer[idx + 1] };
-        if (fwrite(pair, sizeof(int16), 2, f) != 2) {
-            fprintf(stderr, "[dsp_capture] sample write failed\n");
-            exit(EXIT_FAILURE);
-        }
+  }
+  AudioTraceStats stats;
+  audio_trace_get_stats(&stats);
+  uint64_t count = stats.produced - s_dspout_first;
+  if (!s_dspout_primed || s_dspout_generation != RtlStateGeneration() ||
+      stats.produced < s_dspout_first || count > AUDIO_TRACE_PCM_RING) {
+    fprintf(stderr, "[dsp_capture] invalid epoch or overwritten sample span\n");
+    exit(EXIT_FAILURE);
+  }
+  int16 samples[512 * 2];
+  while (count) {
+    uint32_t chunk = count > 512 ? 512 : (uint32_t)count;
+    uint64_t oldest, total;
+    uint32_t copied = audio_trace_copy_pcm(s_dspout_first, chunk, samples, &oldest, &total);
+    if (copied != chunk || s_dspout_first < oldest || total < stats.produced) {
+      fprintf(stderr, "[dsp_capture] unavailable or overwritten sample span\n");
+      exit(EXIT_FAILURE);
     }
-    /* Detect buffered I/O errors before a qualification run can accept a
-     * truncated capture. This diagnostic is opt-in; failure is a failed run. */
-    if (fflush(f) != 0) {
-        fprintf(stderr, "[dsp_capture] sample flush failed\n");
+    for (uint32_t n = 0; n < chunk; ++n) {
+      if (fwrite(&samples[n * 2], sizeof(int16), 2, f) != 2) {
+        fprintf(stderr, "[dsp_capture] sample write failed\n");
         exit(EXIT_FAILURE);
+      }
     }
+    s_dspout_first += chunk;
+    count -= chunk;
+  }
+  /* Detect buffered I/O errors before a qualification run can accept a
+   * truncated capture. This diagnostic is opt-in; failure is a failed run. */
+  if (fflush(f) != 0) {
+    fprintf(stderr, "[dsp_capture] sample flush failed\n");
+    exit(EXIT_FAILURE);
+  }
 }
 
 /* ── Multiplayer seats ───────────────────────────────────────────────────
@@ -919,7 +940,6 @@ bool RtlRunFrame(uint32 inputs) {
   recomp_wram_trace_tick();   /* differential first-divergence trace (env-gated) */
   recomp_apuram_trace_tick(); /* APU/SPC-RAM differential trace (audio hunt, env-gated) */
   recomp_dspreg_trace_tick(); /* S-DSP register-file differential trace (env-gated) */
-  recomp_dspout_capture();    /* native DSP output-stream capture (env-gated) */
 
   /* Axis-7 diagnostic determinism fingerprint. */
 #if SNESRECOMP_FRAME_FINGERPRINTS
@@ -946,6 +966,7 @@ bool RtlRunFrame(uint32 inputs) {
    * cheaper one -- the audio from those frames was discarded regardless. */
   if (!g_rtl_speculative_frame)
     rtl_sync_apu_frame_boundary();
+  recomp_dspout_capture();    /* include the completed frame's APU boundary */
 
 #if SNESRECOMP_ENABLE_MODS
   /* Not on a speculative frame: the player never sees it, so a mod counting
