@@ -53,6 +53,8 @@ bool msu1_seek_playback(uint64_t source_frames);
 /* Read the SNESRECOMP_MSU1 environment variable and arm the chip.
  *
  *   SNESRECOMP_MSU1 unset/empty  -> disabled (default; byte-identical).
+ *   SNESRECOMP_MSU1=<file.msu> -> explicit pack file; tracks resolve beside it
+ *                               as <file>-<N>.pcm. The data port reads that file.
  *   SNESRECOMP_MSU1=<path-prefix> -> pack base; tracks resolve as
  *                                    "<prefix>-<N>.pcm", data as
  *                                    "<prefix>.msu". e.g. C:/msu/alttp
