@@ -1966,29 +1966,36 @@ static void StateMenuPadPoll(void) {
   const bool assigned = ConfigHasPlayerSource(0)
       ? g_config.player_src[0] == 2 : g_config.enable_gamepad[0];
   if (assigned && seat->joystick_id != (SDL_JoystickID)-1) {
-    /* The event state also serves an unmapped joystick's existing standard
-     * button layout. Mapped devices provide their complete SDL button set. */
-    buttons = seat->modifiers & 0x7fffu;
-    axes[0] = seat->last_axis_x; axes[1] = seat->last_axis_y;
-    axes[2] = seat->right_axis_x; axes[3] = seat->right_axis_y;
-    axes[4] = seat->left_trigger; axes[5] = seat->right_trigger;
+    if (seat->raw_joystick && seat->joystick) {
+      buttons = seat->modifiers & 0x7fffu;
 #if SNESRECOMP_SDL3
-    SDL_Gamepad *pad = SDL_GetGamepadFromID(seat->joystick_id);
-    if (pad) {
-      buttons = 0;
-      for (int b = 0; b < SDL_GAMEPAD_BUTTON_COUNT && b < 32; ++b)
-        if (SDL_GetGamepadButton(pad, (SDL_GamepadButton)b)) buttons |= 1u << b;
-      for (int a = 0; a < 6; ++a) axes[a] = SDL_GetGamepadAxis(pad, (SDL_GamepadAxis)a);
-    }
+      const int count = SDL_GetNumJoystickAxes(seat->joystick);
+      for (int a = 0; a < count && a < 6; ++a)
+        axes[a] = SDL_GetJoystickAxis(seat->joystick, a);
 #else
-    SDL_GameController *pad = SDL_GameControllerFromInstanceID(seat->joystick_id);
-    if (pad) {
-      buttons = 0;
-      for (int b = 0; b < SDL_CONTROLLER_BUTTON_MAX && b < 32; ++b)
-        if (SDL_GameControllerGetButton(pad, (SDL_GameControllerButton)b)) buttons |= 1u << b;
-      for (int a = 0; a < 6; ++a) axes[a] = SDL_GameControllerGetAxis(pad, (SDL_GameControllerAxis)a);
-    }
+      const int count = SDL_JoystickNumAxes(seat->joystick);
+      for (int a = 0; a < count && a < 6; ++a)
+        axes[a] = SDL_JoystickGetAxis(seat->joystick, a);
 #endif
+    } else {
+      /* Query the opened device directly. A missing/disconnected handle is
+       * neutral, and the host does not need a second cached axis layout. */
+#if SNESRECOMP_SDL3
+      SDL_Gamepad *pad = SDL_GetGamepadFromID(seat->joystick_id);
+      if (pad) {
+        for (int b = 0; b < SDL_GAMEPAD_BUTTON_COUNT && b < 32; ++b)
+          if (SDL_GetGamepadButton(pad, (SDL_GamepadButton)b)) buttons |= 1u << b;
+        for (int a = 0; a < 6; ++a) axes[a] = SDL_GetGamepadAxis(pad, (SDL_GamepadAxis)a);
+      }
+#else
+      SDL_GameController *pad = SDL_GameControllerFromInstanceID(seat->joystick_id);
+      if (pad) {
+        for (int b = 0; b < SDL_CONTROLLER_BUTTON_MAX && b < 32; ++b)
+          if (SDL_GameControllerGetButton(pad, (SDL_GameControllerButton)b)) buttons |= 1u << b;
+        for (int a = 0; a < 6; ++a) axes[a] = SDL_GameControllerGetAxis(pad, (SDL_GameControllerAxis)a);
+      }
+#endif
+    }
   }
   const bool down = SnesHostPadBindingDown(g_config.state_menu_pad_binding, buttons, axes);
   /* Returning from capture with the chosen chord held must not open a menu.
