@@ -80,6 +80,11 @@ void dma_hdma_pending_init_set(Dma* dma, uint8_t mask);
 uint8_t dma_read(Dma* dma, uint16_t adr); // 43x0-43xf
 void dma_write(Dma* dma, uint16_t adr, uint8_t val); // 43x0-43xf
 void dma_doDma(Dma* dma);
+/* Drain the same live transfer unit, charging channel/payload slots before
+ * their bus effects. The caller owns startup/alignment and CPU-cycle tail.
+ * Legacy dma_cycle callers retain the two-clock timer interface. */
+typedef void (*DmaMasterClockSlotHook)(Snes *snes, uint32_t clocks);
+void dma_runDmaTimed(Dma *dma, DmaMasterClockSlotHook slot);
 void dma_initHdma(Dma* dma);
 void dma_doHdma(Dma* dma);
 /* Execute the same live unit and return the work clocks for this event.

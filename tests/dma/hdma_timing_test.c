@@ -69,7 +69,13 @@ void rtl_sync_apu_to_cpu_locked(void) {}
 void rtl_sync_apu_for_access_locked(uint16_t adr) { (void)adr; }
 void rtl_port_log_cpu(uint16_t adr, char rw, uint8_t v) { (void)adr; (void)rw; (void)v; }
 bool rtl_apu_master_clock(void) { return false; }
-uint64_t rtl_cpu_master_now(void) { return 0; }
+uint64_t rtl_cpu_master_now(void) {
+#ifdef SNES_TEST_CPU_MASTER_NOW
+    return g_cpu.master_cycles;
+#else
+    return 0;
+#endif
+}
 uint32_t interp_bridge_access_lead(uint16_t adr, uint32_t fallback) { (void)adr; return fallback; }
 void RtlApuWrite(uint16_t adr, uint8_t val) { (void)adr; (void)val; }
 uint8_t rtl_apu_port_observers_read(uint16_t adr, uint8_t value) {

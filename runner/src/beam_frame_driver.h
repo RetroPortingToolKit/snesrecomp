@@ -22,7 +22,7 @@
 void snes_beam_frame_driver_run_frame(void);
 void snes_beam_frame_driver_draw_ppu_frame(void);
 /* Observe the display state that actually produced each visible line, after
- * raster journal writes and before H-blank HDMA. The PPU is read-only and the
+ * replaying the preceding line's captured effects. The PPU is read-only and the
  * callback must not advance the machine or change guest memory/registers.
  * `line` is 1..224, corresponding to output row line-1. No observer is kept
  * between calls; the regular draw entry point is identical to passing NULL. */

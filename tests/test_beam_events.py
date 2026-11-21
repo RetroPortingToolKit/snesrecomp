@@ -45,10 +45,11 @@ def test_render_hdma_picture_ownership(tmp_path):
             depth+=(source[end]=='{')-(source[end]=='}');end+=1
         parts.append(source[start:end])
     driver=tmp_path/'render.c';driver.write_text('\n'.join(parts),encoding='utf-8')
-    exe=tmp_path/'frame-render.exe'
-    subprocess.run([cc,'-std=c11','-O1','-DSNESRECOMP_REVERSE_DEBUG=0',
-        '-Irunner/src','-Irunner/src/snes','-Itests/dma',
-        'tests/dma/frame_render_hdma_test.c',str(driver),'runner/src/snes/snes.c',
-        'runner/src/snes/dma.c','runner/src/snes/sdd1.c',
-        'runner/src/snes/ppu.c','runner/src/snes/hd_jobs.c','runner/src/snes/ppu_legacy.c','-lm','-o',str(exe)],cwd=ROOT,check=True)
-    subprocess.run([str(exe)],check=True)
+    for name in ('frame_render_hdma_test','general_dma_beam_test'):
+        exe=tmp_path/(name+'.exe')
+        subprocess.run([cc,'-std=c11','-O1','-DSNESRECOMP_REVERSE_DEBUG=0',
+            '-Irunner/src','-Irunner/src/snes','-Itests/dma',
+            'tests/dma/'+name+'.c',str(driver),'runner/src/snes/snes.c',
+            'runner/src/snes/dma.c','runner/src/snes/sdd1.c',
+            'runner/src/snes/ppu.c','runner/src/snes/hd_jobs.c','runner/src/snes/ppu_legacy.c','-lm','-o',str(exe)],cwd=ROOT,check=True)
+        subprocess.run([str(exe)],check=True)

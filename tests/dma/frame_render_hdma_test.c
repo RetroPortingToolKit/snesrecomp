@@ -63,6 +63,7 @@ static void transfer(SaveLoadInfo *base,void *data,size_t size) {
   Stream *s=(Stream *)base;REQUIRE(size==s->size);
   if(s->save)memcpy(s->bytes,data,size);else memcpy(data,s->bytes,size);
 }
+#ifndef SNES_TEST_PICTURE_NO_MAIN
 int main(void) {
   Snes s={0};g_snes=&s;g_ppu=&p;s.ppu=&p;s.ram=ram;s.dma=dma_init(&s);
   REQUIRE(s.dma);dma_reset(s.dma);ppu_reset(&p);p.inidisp=15;p.cgram[0]=0x001f;
@@ -94,3 +95,4 @@ int main(void) {
   free(saved);dma_free(s.dma);snes_set_master_clock_charge_hook(NULL);
   puts("BFD picture: PASS real timed CPU/HDMA order, pixels, live status, no second DMA, final ports/memory and current-build replay");return 0;
 }
+#endif

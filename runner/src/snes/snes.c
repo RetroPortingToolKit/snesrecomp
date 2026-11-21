@@ -485,11 +485,10 @@ static uint32_t snes_advance_beam(Snes *snes, uint32_t clocks, bool check_irq,
        * five-player sequence reads it from. */
       joypad_auto_read(snes);
     }
-    if (snes->autoJoyTimer) {
+    uint16_t joy_timer_before = snes->autoJoyTimer;
+    if (snes->autoJoyTimer)
       snes->autoJoyTimer = span >= snes->autoJoyTimer
-                         ? 0 : (uint16_t)(snes->autoJoyTimer - span);
-    }
-
+          ? 0 : (uint16_t)(snes->autoJoyTimer - span);
     if (check_irq && !s_raster_irq_beam_off &&
         (snes->hIrqEnabled || snes->vIrqEnabled)) {
       bool line_matches = !snes->vIrqEnabled || v == snes->vTimer;
@@ -529,6 +528,18 @@ static uint32_t snes_advance_beam(Snes *snes, uint32_t clocks, bool check_irq,
         snes->hPos = (uint16_t)h;
         snes->vPos = (uint16_t)v;
         snes->inVblank = v >= 225u;
+        /* General DMA halts the CPU. Latch the IRQ, but finish the physical
+         * transfer before the CPU can dispatch its handler. Outside DMA the
+         * existing instruction preemption/debt contract is unchanged. */
+        if (snes->dma && snes->dma->dmaBusy) {
+          /* This walk continues immediately; charge just the consumed part,
+           * rather than charging the rest of this span again on continuation.
+           * Non-DMA hosts retain their existing partial-span timer policy. */
+          snes->autoJoyTimer = upto >= joy_timer_before
+              ? 0 : (uint16_t)(joy_timer_before - upto);
+          clocks -= upto;
+          continue;
+        }
         return consumed;
       }
     }
@@ -696,11 +707,11 @@ static void snes_sync_clock(Snes *snes, uint64_t master_clock, bool executing,
     uint64_t work = 0;
     uint32_t consumed = snes_advance_beam(snes, chunk, true, &work);
     snes->beamMasterLast += consumed;
-    if (executing && work && s_master_clock_charge_hook) {
+    if (executing && work) {
       /* Charge actual live events once, through the same host CPU owner as
        * general DMA. Its eager sync is suppressed by cpuClockSyncing; the
        * outer walk owns the new elapsed time and any IRQ preemption/debt. */
-      s_master_clock_charge_hook(snes, work);
+      if (s_master_clock_charge_hook) s_master_clock_charge_hook(snes, work);
       if (follow_stalls) master_clock += work;
     }
     /* A short walk means an IRQ latched (or is still pending): the beam
@@ -723,6 +734,13 @@ void snes_sync_master_clock_parked(Snes *snes, uint64_t master_clock) {
 
 void snes_sync_master_clock_boundary(Snes *snes, uint64_t master_clock) {
   snes_sync_clock(snes, master_clock, true, false);
+}
+
+static void snes_charge_dma_slot(Snes *snes, uint32_t clocks) {
+  if (!clocks) return;
+  g_snes_dma_charged += clocks;
+  if (s_master_clock_charge_hook) s_master_clock_charge_hook(snes, clocks);
+  else snes_sync_master_clock(snes, snes->beamMasterLast + clocks);
 }
 
 uint8_t snes_readReg(Snes* snes, uint16_t adr) {
@@ -967,7 +985,7 @@ void snes_writeReg(Snes* snes, uint16_t adr, uint8_t val) {
           ppudma_record_dma(ch, c->fromB, c->aBank, c->aAdr, c->bAdr, c->size);
         }
       }
-      /* Charge the transfer's guest time BEFORE running it. On hardware a
+      /* Account for the transfer's guest time. On hardware a
        * general-purpose DMA halts the CPU for ~8 master clocks per byte plus
        * small per-channel setup; this loop used to complete the whole
        * transfer in ZERO guest time. That is not a rounding error: a scene
@@ -977,8 +995,9 @@ void snes_writeReg(Snes* snes, uint16_t adr, uint8_t val) {
        * of the pass that spawns the mechs — and the sprite hover (gated on
        * the pass counter) then paired with the wrong animation phase,
        * publishing Y±1 sprite tables hardware never shows. See
-       * gundamwing-parity-root-cause. HDMA stays uncharged here (per-line,
-       * far smaller; out of scope for this fix). */
+       * gundamwing-parity-root-cause. Legacy render-owned hosts retain that
+       * bulk charge; beam-owned hosts advance the same real unit's slots so
+       * concurrent HDMA and field cuts observe the payload in bus order. */
       {
         /* SNESRECOMP_DMA_ALIGN (default 1): hardware alignment. The transfer
          * starts on the next 8-clock boundary after the next opcode fetch
@@ -1006,7 +1025,8 @@ void snes_writeReg(Snes* snes, uint16_t adr, uint8_t val) {
             body += 8 + (uint64_t)n * 8;
           }
         }
-        uint64_t dma_master = 12 + body;
+        uint64_t dma_startup = 12, dma_tail = 0;
+        uint64_t dma_master = dma_startup + body;
         if (dma_align && !val) {
           dma_master = 0;  /* no channel: no transfer, no time */
         } else if (dma_align) {
@@ -1030,9 +1050,10 @@ void snes_writeReg(Snes* snes, uint16_t adr, uint8_t val) {
           }
           /* The cycles it waits are the next instruction's own, charged as it
            * runs; only the alignment from the later start differs. */
-          uint64_t t = (8 - (start & 7)) + 8 + body;
-          if (dma_end_speed > 0) t += (uint64_t)dma_end_speed - t % (uint64_t)dma_end_speed;
-          dma_master = t;
+          dma_startup = (8 - (start & 7)) + 8;
+          uint64_t t = dma_startup + body;
+          if (dma_end_speed > 0) dma_tail = (uint64_t)dma_end_speed - t % (uint64_t)dma_end_speed;
+          dma_master = t + dma_tail;
         }
         { static int dma_log = -1;
           if (dma_log < 0) dma_log = getenv("SNESRECOMP_DMA_LOG") != NULL;
@@ -1043,6 +1064,17 @@ void snes_writeReg(Snes* snes, uint16_t adr, uint8_t val) {
         /* SnesInit installs the CpuState-clock charge; a host that drives
          * the beam itself installs its own (see snes.h). With no hook the
          * device layer advances its own beam, so snes.c needs no CpuState. */
+        if (!snes->hdmaBeamOff && val) {
+          /* Beam-owned HDMA can observe this upload while the CPU is halted.
+           * Start once, then charge the actual unit's slots in payload order;
+           * a bulk precharge puts every byte after all intervening HDMA/field
+           * edges. Retain the established startup/alignment/tail convention. */
+          dma_startDma(snes->dma, val, false);
+          snes_charge_dma_slot(snes, (uint32_t)dma_startup);
+          dma_runDmaTimed(snes->dma, snes_charge_dma_slot);
+          snes_charge_dma_slot(snes, (uint32_t)dma_tail);
+          break;
+        }
         g_snes_dma_charged += dma_master;
         if (s_master_clock_charge_hook) {
           s_master_clock_charge_hook(snes, dma_master);

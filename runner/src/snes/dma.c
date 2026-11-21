@@ -260,11 +260,8 @@ void dma_write(Dma* dma, uint16_t adr, uint8_t val) {
   }
 }
 
-void dma_doDma(Dma* dma) {
-  if(dma->dmaTimer > 0) {
-    dma->dmaTimer -= 2;
-    return;
-  }
+static void dma_transferNextByte(Dma *dma, DmaMasterClockSlotHook slot,
+                                 int *last_channel) {
   // figure out first channel that is active
   int i = 0;
   for(i = 0; i < 8; i++) {
@@ -276,6 +273,14 @@ void dma_doDma(Dma* dma) {
     // no active channels
     dma->dmaBusy = false;
     return;
+  }
+
+  if (slot) {
+    if (*last_channel != i) {
+      *last_channel = i;
+      slot(dma->snes, 8);
+    }
+    slot(dma->snes, 8);
   }
 
   // do channel i
@@ -295,6 +300,25 @@ void dma_doDma(Dma* dma) {
     dma->channel[i].offIndex = 0; // reset offset index
     dma->channel[i].dmaActive = false;
     dma->dmaTimer += 8; // 8 cycle overhead per channel
+  }
+}
+
+void dma_doDma(Dma *dma) {
+  if (dma->dmaTimer > 0) {
+    dma->dmaTimer -= 2;
+    return;
+  }
+  dma_transferNextByte(dma, NULL, NULL);
+}
+
+void dma_runDmaTimed(Dma *dma, DmaMasterClockSlotHook slot) {
+  int last_channel = -1;
+  /* The slot owner replaces only the legacy timer countdown; descriptor,
+   * source, read/write, pointer and completion state have one implementation. */
+  dma->dmaTimer = 0;
+  while (dma->dmaBusy) {
+    dma_transferNextByte(dma, slot, &last_channel);
+    dma->dmaTimer = 0;
   }
 }
 
