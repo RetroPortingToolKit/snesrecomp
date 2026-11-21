@@ -4636,7 +4636,8 @@ error_reading:;
     ProfileEnd(kProfileTrace, profile_start);
     if (paced_realtime) {
       bool keep_debt = game->keep_pacing_debt && game->keep_pacing_debt();
-      snes_host_clock_simulation_done(&video_clock, MonotonicSeconds(), keep_debt,
+      snes_host_clock_simulation_done_from_start(&video_clock, guest_start,
+                                      MonotonicSeconds(), keep_debt,
                                       RtlLastFramePeriods());
     }
     else
