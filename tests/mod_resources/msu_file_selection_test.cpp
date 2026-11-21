@@ -30,6 +30,8 @@ int main(int argc, char **argv) {
     std::ofstream(root / "wrong.txt");
     manifest(root, "test.msu", "directory", "snes.msu1.pack");
     manifest(root, "test.other", "file", "test.other.file");
+    manifest(root, "test.folder", "directory", "test.other.folder");
+    manifest(root, "test.either", "file-or-directory", "test.either");
     std::ofstream(root / "state.toml") << "format_version = 1\n";
     auto initialize = [&] { assert(SNESRecomp::mod_runtime_initialize(root, "test", digest)); };
     initialize();
@@ -45,16 +47,21 @@ int main(int argc, char **argv) {
     set("test.msu", root / "mixed"); assert(get("test.msu").verified);
     assert(p->feature_enable(p->ctx, "test.msu", "music", 1));
     assert(SNESRecomp::mod_runtime_commit());
-    manifest(root, "test.msu", "msu", "snes.msu1.pack");
+    manifest(root, "test.msu", "file-or-directory", "snes.msu1.pack");
     initialize();
     auto r = get("test.msu");
-    assert(r.verified && !strcmp(r.format, "msu"));
+    assert(r.verified && !strcmp(r.format, "file-or-directory"));
     assert(!strcmp(r.file_patterns, "*.msu,*.MSU"));
     assert(std::string(r.path) == (root / "mixed").string());
     assert(SNESRecomp::mod_runtime_commit());
     assert(std::string(getenv("SNESRECOMP_MSU1")) == (root / "mixed").string());
     // Ordinary file resources must still reject folders.
     set("test.other", root / "mixed"); assert(!get("test.other").verified);
+    set("test.other", root / "wrong.txt"); assert(get("test.other").verified);
+    set("test.folder", root / "wrong.txt"); assert(!get("test.folder").verified);
+    set("test.folder", root / "mixed"); assert(get("test.folder").verified);
+    set("test.either", root / "mixed"); assert(get("test.either").verified);
+    set("test.either", root / "wrong.txt"); assert(get("test.either").verified);
     set("test.msu", root / "wrong.txt"); assert(!get("test.msu").verified);
     assert(!SNESRecomp::mod_runtime_commit());
     set("test.msu", root / "mixed" / "mmx.msu"); assert(get("test.msu").verified);
