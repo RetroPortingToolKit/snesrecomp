@@ -1,6 +1,7 @@
 #include <stdint.h>
 #include <stdio.h>
 #include <string.h>
+#include <stdlib.h>
 
 #include "cpu_state.h"
 #include "cpu_plain_rom_read.h"
@@ -23,6 +24,15 @@ const RamRoutineGuard g_ram_routine_guards[] = {{0}};
 const unsigned g_ram_routine_guard_count = 0;
 const DispatchEntry g_dispatch_table[] = {{0}};
 const unsigned g_dispatch_table_count = 0;
+const AotResumeEntry g_aot_resume_table[] = {{0}};
+const unsigned g_aot_resume_count = 0;
+/* No generated continuation is present in this isolated bus fixture. */
+void cpu_arm_aot_resume(uint32_t pc, uint16_t s, uint8_t hrv) {
+    (void)pc; (void)s; (void)hrv; abort();
+}
+uint32_t cpu_take_aot_resume(uint16_t *s, uint8_t *hrv) {
+    (void)s; (void)hrv; abort();
+}
 
 static int g_note_calls;
 static uint8_t *g_mapped_rom;

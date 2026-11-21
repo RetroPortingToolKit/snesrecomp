@@ -32,6 +32,12 @@ const DispatchEntry g_dispatch_table[] = {
 };
 const unsigned g_dispatch_table_count = 0u;
 
+/* Setup hosts have no generated instruction continuations either. */
+const AotResumeEntry g_aot_resume_table[] = {
+    { 0xFFFFFFFFu, 0, NULL },
+};
+const unsigned g_aot_resume_count = 0u;
+
 const RamRoutineGuard g_ram_routine_guards[] = {
     { 0xFFFFFFFFu, 0u, 0u },
 };

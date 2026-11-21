@@ -10,6 +10,8 @@ tests pin the three generated artifacts that let two modules share one link:
 import pathlib
 import re
 import sys
+import subprocess
+import pytest
 
 TESTS_DIR = pathlib.Path(__file__).resolve().parent
 REPO_ROOT = TESTS_DIR.parent
@@ -19,6 +21,7 @@ from v2.program_analysis import ProgramManifest  # noqa: E402
 from v2.program_emit import (  # noqa: E402
     collect_bank_symbols,
     emit_dispatch_table,
+    emit_aot_resume_table,
     emit_module_descriptor,
     emit_module_namespace,
     validate_module_identity,
@@ -53,7 +56,8 @@ def test_namespace_renames_bases_variants_and_module_globals():
     for name in ("Foo", "Foo_M0X0", "Foo_M0X1", "Foo_M1X0", "Foo_M1X1",
                  "I_RESET", "I_RESET_M1X1", "g_dispatch_table",
                  "g_dispatch_table_count", "g_ram_routine_guards",
-                 "g_ram_routine_guard_count", "g_program_module"):
+                 "g_ram_routine_guard_count", "g_program_module",
+                 "g_aot_resume_table", "g_aot_resume_count"):
         assert defines.get(name) == f"smas_{name}", (name, defines.get(name))
     assert "#pragma once" in header
     # Deterministic output: same input, byte-identical header.
@@ -110,3 +114,25 @@ def test_dispatch_table_joins_the_module_namespace():
     assert MODULE_NAMESPACE_HEADER not in plain
     assert f'#include "{MODULE_NAMESPACE_HEADER}"' in prefixed
     assert "const DispatchEntry g_dispatch_table[]" in prefixed
+
+
+def test_stock_and_prefixed_resume_tables_link_together(tmp_path):
+    from test_hle_func_seam import _compiler
+    cc = _compiler()
+    if not cc:
+        pytest.skip('C compiler required')
+    manifest = ProgramManifest(roots=(), nodes={})
+    (tmp_path / MODULE_NAMESPACE_HEADER).write_text(emit_module_namespace('alt', []))
+    sources = []
+    for name, prefix in [('stock', None), ('alternate', 'alt')]:
+        p = tmp_path / (name + '.c')
+        p.write_text(emit_dispatch_table(manifest, {}, {}, {}, module_prefix=prefix)
+                     + emit_aot_resume_table([]))
+        sources.append(str(p))
+    main = tmp_path / 'main.c'
+    main.write_text('#include "cpu_state.h"\nextern const unsigned alt_g_aot_resume_count;\n'
+                    'int main(void) { return g_aot_resume_count || alt_g_aot_resume_count; }\n')
+    exe = tmp_path / 'modules.exe'
+    subprocess.run([cc, '-std=c11', '-I', str(REPO_ROOT / 'runner/src'),
+                    *sources, str(main), '-o', str(exe)], check=True)
+    subprocess.run([str(exe)], check=True)

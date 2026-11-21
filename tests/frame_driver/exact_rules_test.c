@@ -22,10 +22,11 @@ void cart_sync_coprocessors(Cart *cart, uint64_t master_clock) { (void)cart; (vo
 int cx4_irq_pending(const Cx4 *cx4) { (void)cx4; return 0; }
 bool sa1_cpu_irq_pending(const Sa1 *sa1) { (void)sa1; return false; }
 void cpu_write8(CpuState *cpu, uint8 bank, uint16 addr, uint8 v) { (void)cpu; (void)bank; (void)addr; (void)v; }
-bool ppu_checkOverscan(Ppu *ppu) { (void)ppu; return false; }
-void ppu_handleVblank(Ppu *ppu) { (void)ppu; }
 void ppu_runLine(Ppu *ppu, int line) { (void)ppu; (void)line; }
 void ppu_rasterBegin(Ppu *ppu) { (void)ppu; }
+void ppu_rasterBeginPicture(Ppu *ppu) { (void)ppu; }
+bool ppu_rasterReplayReady(void) { return true; }
+void ppu_renderRasterLine(Ppu *ppu, int line) { (void)ppu; (void)line; }
 void ppu_rasterRenderBegin(Ppu *ppu) { (void)ppu; }
 void ppu_rasterRenderEnd(Ppu *ppu) { (void)ppu; }
 int ppu_rasterTakeHdmaen(uint8_t *out) { (void)out; return 0; }
@@ -37,11 +38,18 @@ unsigned snes_last_cycle_clocks(uint32_t pc24, uint32_t next_pc24) { (void)pc24;
 /* The scripted CPU: main-line PCs count up from $808000; the NMI vector reads
  * as 0 (cart_read), and its handler returns at once. */
 static uint64_t s_bridge_deadline, s_nmi_at, s_enable_from;
+static uint64_t (*s_irq_hook)(void);
 static uint32_t s_pc = 0x808000;
 static int s_nmis;
 void interp_bridge_set_master_deadline(uint64_t master_clock) { s_bridge_deadline = master_clock; }
+void interp_bridge_set_irq_deadline(uint64_t (*hook)(void)) { s_irq_hook = hook; }
 int interp_bridge_run_until_quiescent(CpuState *cpu, uint32_t entry_pc24) {
-  if (entry_pc24 == 0) return 0; /* the NMI handler */
+  if (entry_pc24 == 0) {
+    /* A handler entered through run_until_quiescent can execute main-line
+     * code after RTI: it must not lose either slice observer. */
+    assert(g_interp_bridge_pc_hook == record_pc && s_irq_hook == next_irq_latch);
+    return 0;
+  }
   s_pc = entry_pc24;
   while (!s_bridge_deadline || cpu->master_cycles < s_bridge_deadline) {
     if (g_interp_bridge_pc_hook) g_interp_bridge_pc_hook(s_pc, 1, 1);
@@ -81,6 +89,7 @@ int main(void) {
   snes.nmiEnabled = true;
   snes_beam_frame_driver_run_frame();
   assert(s_nmis == 1 && s_nmi_at == f0 + 60);
+  assert(g_interp_bridge_pc_hook == NULL && s_irq_hook == NULL);
   const uint64_t f1 = f0 + 357368;
   /* The CPU ran past V=225 to the instruction NMI follows; the next field
    * takes it there, 60 clocks later. Instructions start at f0 + 60 + 8k. */

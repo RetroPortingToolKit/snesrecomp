@@ -83,6 +83,15 @@ with `ppu_rasterRenderBegin`, `ppu_rasterApplyLine` per line and
 
 ### Hardware timing rules
 
+With the master-clock timeline, `$2138` reads use the modeled OAM evaluation
+address while the CPU's OAM address/latch still advances. `$213B` reads use the
+backdrop palette entry during active display when no sub-screen layer is
+enabled. Sub-screen pixel palette fetches are not modeled: those reads retain
+the CPU address, as do forced blank, free CGRAM periods and hosts without the
+register-access beam hook. `SNESRECOMP_PPU_RENDER_READS=0` retains the CPU-address
+behavior throughout. This is a limited register-read model, not full PPU bus
+fetch emulation.
+
 With the master-clock APU timeline (`RtlApuUseMasterClock`) the beam and the
 driver follow MesenCE's timing; each rule has its own switch (`=0` turns it
 off, `=1` on without the timeline):
@@ -125,6 +134,15 @@ alone have advanced all deferred SPC time; flush or catch up at explicit
 integration points.
 
 ## Bridge Hooks
+
+Compiled continuation is generated with `--instruction-blocks --region-paced
+--aot-resume`. A timed unwind records the abandoned compiled frames and their
+guest return contracts; only those frames can resume in compiled code.
+`SNESRECOMP_AOT_RESUME=0` keeps their continuations interpreted. Arbitrary
+interpreter PCs do not trigger speculative compiled entry. Loading a snapshot
+discards the host-only frame records, so execution continues through the normal
+interpreter/call-dispatch contract until a compiled call creates a new frame.
+Selected alternate/interpreted content cannot enter the stock resume table.
 
 `interp_bridge_set_pre_opcode_hook()` is the supported pre-opcode extension
 point. The older `interp816_opcode_hook` symbol is a legacy no-op and is not
