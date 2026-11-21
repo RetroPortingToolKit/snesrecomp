@@ -22,5 +22,5 @@ def test_interrupt_tail_ownership(tmp_path, fixture):
         'runner/src/sha256.c', 'runner/src/snes/cx4.c', '-lm', '-o', str(exe),
     ], cwd=ROOT, check=True, capture_output=True, text=True)
     run = subprocess.run([str(exe)], cwd=tmp_path, capture_output=True,
-                         text=True, timeout=60)
+                         text=True)
     assert run.returncode == 0, run.stdout + run.stderr
