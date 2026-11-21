@@ -1369,6 +1369,22 @@ bool validate_resource_file(const Resource& resource,
     }
     const fs::path path(path_text);
     std::error_code ec;
+    if (resource.format == "msu" && resource.identity == kMsu1ResourceIdentity) {
+        /* Updated catalogs offer an explicit file picker. Retain a player's
+         * saved folder until they choose a particular pack themselves. */
+        if (fs::is_directory(path, ec) && resource.size == 0 &&
+            resource.normalized_sha256.empty() && resource.normalized_sha1.empty()) {
+            if (status) *status = "Folder selected; Browse can choose a specific .msu file";
+            return true;
+        }
+        std::string extension = path.extension().string();
+        std::transform(extension.begin(), extension.end(), extension.begin(),
+                       [](unsigned char c) { return (char)std::tolower(c); });
+        if (extension != ".msu") {
+            if (status) *status = "Select an .msu file";
+            return false;
+        }
+    }
     if (resource_is_directory(resource)) {
         if (!fs::is_directory(path, ec)) {
             if (status) *status = "Folder not found";

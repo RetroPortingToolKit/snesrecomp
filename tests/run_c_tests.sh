@@ -525,6 +525,15 @@ if [ -f "$RECOMP_UI_SRC/recomp_launcher.h" ]; then
         "$ROOT/runner/src/rom_identity.c" "$ROOT/runner/src/sha1.c" \
         -o "$OUT/mod_exclusive_plugin_test"
     "$OUT/mod_exclusive_plugin_test" "$OUT/mod_exclusive_plugin_fixture"
+    "${CXX:-g++}" -std=c++17 -Wall -Wextra -O1 -DRECOMP_LAUNCHER \
+        -I "$ROOT/runner/src" -I "$RECOMP_UI_SRC" \
+        "$ROOT/tests/mod_resources/msu_file_selection_test.cpp" \
+        -x c++ "$ROOT/runner/src/mod_runtime.cpp" \
+        "$ROOT/runner/src/sha256.c" "$ROOT/runner/src/snes/tier2_capture.c" \
+        "$ROOT/runner/src/crc32.c" \
+        "$ROOT/runner/src/rom_identity.c" "$ROOT/runner/src/sha1.c" \
+        -o "$OUT/mod_msu_file_selection_test"
+    "$OUT/mod_msu_file_selection_test" "$OUT/mod_msu_file_selection_fixture"
 else
     echo "  (skipped: no recomp-ui; set RECOMP_UI_DIR)"
 fi
