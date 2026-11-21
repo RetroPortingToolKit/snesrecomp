@@ -81,6 +81,25 @@ next field. A host arms it with `ppu_rasterBegin`, and brackets its render loop
 with `ppu_rasterRenderBegin`, `ppu_rasterApplyLine` per line and
 `ppu_rasterRenderEnd`, which reapplies the writes made since the field ended.
 
+### Hardware timing rules
+
+With the master-clock APU timeline (`RtlApuUseMasterClock`) the beam and the
+driver follow MesenCE's timing; each rule has its own switch (`=0` turns it
+off, `=1` on without the timeline):
+
+| Switch | Where | Rule |
+|---|---|---|
+| `SNESRECOMP_SHORT_LINE` | snes.c | Line 240 of every other non-interlaced field lasts 1360 clocks, no long dots (`Snes.fieldParity`, savestate v12) |
+| `SNESRECOMP_RESET_CLOCK` | driver | The CPU starts at master clock 186, the beam at 0 |
+| `SNESRECOMP_HVBJOY_EXACT` | snes.c | `$4212` bits 7 and 0 at the read's own clock, as bit 6 (`SNESRECOMP_HBLANK_EXACT`); the automatic read from the first clock 128 mod 256 at least 3 after line 225 begins, for 4352 clocks |
+| `SNESRECOMP_REFRESH_AT_BEAM` | runtime | DRAM refresh: 40 clocks at H = 538 - (line start & 7) of every line, per point the CPU crosses, also in front of an APU port access |
+| `SNESRECOMP_BEAM_EXACT` | driver | The interrupt sequence (8 cycles, 60 clocks); the field's NMI after the first instruction with a cycle from V=225 H=6 (`snes/last_cycle.h`); an NMI enabled inside vblank fires after the next instruction; slices end at each refresh point; the beam follows the CPU after each slice |
+
+No host needs to walk the beam ahead of the CPU or move it after a field for
+these. A host adds its own work through `SnesBeamFrameHooks` (field start,
+interrupt entry, NMI taken, a field NMI it takes itself, slice end) and reads
+the running slice's deadlines with `snes_beam_frame_driver_deadlines`.
+
 ## APU Pacing
 
 Whole-program hosts using the beam driver must wire its `state_save`,
