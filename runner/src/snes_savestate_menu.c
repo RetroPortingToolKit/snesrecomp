@@ -35,7 +35,6 @@
 #include "netplay/snes_netplay.h"
 
 #include "common_rtl.h"
-#include "host_report.h"
 #include "desktop/sdl_compat.h"
 
 #include <stdio.h>
@@ -397,7 +396,6 @@ int snes_savestate_menu_write_slot(int slot)
     RtlEnsureSaveDir();
     slot_path(slot, path, sizeof(path));
     printf("*** Saving slot %d: %s\n", slot, path);
-    host_report_breadcrumb("savestate save: %s", path);
 #if defined(SNESRECOMP_NET)
     bool saved = snes_netplay_active() ? RtlSaveSnapshotRingBlanked(path) : RtlSaveSnapshot(path);
 #else
