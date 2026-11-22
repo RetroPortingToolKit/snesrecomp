@@ -11,6 +11,7 @@
  * where this file differs from that main.c the comment says why.
  */
 #include <stdio.h>
+#include <math.h>
 #include <stdlib.h>
 #include <string.h>
 #include <stdint.h>
@@ -362,8 +363,56 @@ static void ProfileEnd(unsigned stage, double start) {
   }
   ++g_timings[stage].count;
 }
+/* The main thread owns this timer for its runtime loop. Keep the SDL path
+ * available when the Windows API or high-resolution timer is unavailable. */
+#ifdef _WIN32
+static HANDLE g_deadline_timer;
+static bool g_deadline_timer_tried;
+static bool WaitUntilNative(double deadline) {
+  double remaining = deadline - MonotonicSeconds();
+  if (!(remaining > 0)) return true;
+  if (!g_deadline_timer_tried) {
+    typedef HANDLE (WINAPI *CreateTimer)(LPSECURITY_ATTRIBUTES, LPCWSTR, DWORD, DWORD);
+    HMODULE kernel = GetModuleHandleW(L"kernel32.dll");
+    CreateTimer create_timer = kernel
+        ? (CreateTimer)GetProcAddress(kernel, "CreateWaitableTimerExW") : NULL;
+    g_deadline_timer_tried = true;
+    /* CREATE_WAITABLE_TIMER_HIGH_RESOLUTION, supported since Windows10 1803.
+     * Resolve dynamically and let older systems retain the portable waiter. */
+    if (create_timer)
+      g_deadline_timer = create_timer(NULL, NULL, 0x2, TIMER_MODIFY_STATE | SYNCHRONIZE);
+    host_report_breadcrumb("deadline wait: %s", g_deadline_timer
+        ? "Windows high-resolution timer" : "portable SDL fallback");
+  }
+  if (!g_deadline_timer) return false;
+  LARGE_INTEGER due;
+  due.QuadPart = -(LONGLONG)ceil(remaining * 10000000.0);
+  if (SetWaitableTimer(g_deadline_timer, &due, 0, NULL, NULL, FALSE) &&
+      WaitForSingleObject(g_deadline_timer, INFINITE) == WAIT_OBJECT_0)
+    return true;
+  /* An arm/wait failure must not turn this into an immediate-return loop.
+   * Retire the failed timer and use the existing waiter for this invocation. */
+  CloseHandle(g_deadline_timer);
+  g_deadline_timer = NULL;
+  host_report_breadcrumb("deadline wait: timer failed; using portable SDL fallback");
+  return false;
+}
+static void CloseDeadlineTimer(void) {
+  if (g_deadline_timer) CloseHandle(g_deadline_timer);
+  g_deadline_timer = NULL;
+  g_deadline_timer_tried = false;
+}
+#else
+static bool WaitUntilNative(double deadline) { (void)deadline; return false; }
+static void CloseDeadlineTimer(void) {}
+#endif
+
 static void WaitUntil(double deadline) {
   double profile_start = ProfileStart();
+  if (WaitUntilNative(deadline)) {
+    ProfileEnd(kProfileWait, profile_start);
+    return;
+  }
   /* Short deadline wait: a fixed 1ms sleep on every presentation-only
    * iteration unnecessarily overshoots near deadlines. */
   double now = MonotonicSeconds();
@@ -4868,6 +4917,7 @@ error_reading:;
 
   const double run_end = MonotonicSeconds();
   const double run_cpu_end = ProcessCpuSeconds();
+  CloseDeadlineTimer();
   if (state_trace) fclose(state_trace);
   if (g_frame_timings) {
     FILE *f = fopen(frame_timing_path, "w");
