@@ -96,6 +96,7 @@ else
 fi
 FILL_TOKENS="$SCRIPT_DIR/fill_tokens.py"
 PROBE_ROM="$SCRIPT_DIR/probe_rom.py"
+RECOMP_JSON="$SCRIPT_DIR/write_recomp_json.py"
 
 PYTHON=${PYTHON:-}
 if [ -z "$PYTHON" ]; then
@@ -733,6 +734,11 @@ render_templates() {
     fi
 }
 render_templates
+
+# Community project identity belongs at the game repository root. Values are
+# taken from the existing name/probe, with no guesses about target support.
+"$PYTHON" "$RECOMP_JSON" "$ROOT/.recomp.json" --game "$NAME" \
+    --project "$PROJECT_NAME" --region "$REGION" --sha1 "$ROM_SHA1"
 
 # Empty mod catalog. CMakeLists.txt declares it to the framework
 # (snesrecomp_target_mod_catalog), which stages packages/ beside the executable

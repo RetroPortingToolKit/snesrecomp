@@ -22,6 +22,25 @@ thin launcher: it finds Git for Windows' bash and runs the same script with the
 same arguments, so there is one scaffolder to fix. It needs Git for Windows,
 Python 3 and CMake on `PATH`; WSL and Git Bash users can run the `.sh` directly.
 
+## Project identity
+
+The wizard writes `.recomp.json` at the game repository root, using the chosen
+game/project name and the ROM probe's region and SHA-1. This follows the open
+[recomp.board specification](https://recomp.fyi/spec); it contains no ROM data
+or input path. New projects start at `exploring`, without claiming a playable
+game or supported host platforms. Commit the file and update its status as the
+project progresses.
+
+For an existing project, run the same metadata command directly:
+
+```sh
+python3 snesrecomp/tools/new_project/write_recomp_json.py .recomp.json \
+  --game "My Game" --project MyGameSNESRecomp --rom ~/roms/game.sfc
+```
+
+It fills only missing fields. Existing names, statuses, maintainers and original
+release identities are kept; invalid existing JSON is rejected unchanged.
+
 ## What it asks
 
 | Question | Default |
