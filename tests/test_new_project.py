@@ -119,7 +119,7 @@ def test_scaffold_writes_the_expected_layout():
     with tempfile.TemporaryDirectory() as directory:
         project = _scaffold(pathlib.Path(directory))
         expected = [
-            "CMakeLists.txt", "VERSION", ".gitignore", "README.md",
+            "CMakeLists.txt", "VERSION", ".gitignore", "README.md", ".recomp.json",
             "recomp/bank00.cfg", "recomp/symbols.toml", "recomp/README.md",
             "src/main.c", "src/game_rtl.c", "src/game_rtl.h",
             "src/host_contract.c", "src/variables.h", "src/gen_stubs.c",
@@ -735,3 +735,20 @@ def test_project_rom_never_joins_a_windows_path(tmp_path, monkeypatch):
     monkeypatch.setattr(pathlib.Path, "is_file", is_file)
     assert str(_resolve(tmp_path, "absent.sfc")).replace("\\", "/") == "C:/dumps/game.sfc"
     assert not any(c.endswith("/C:/dumps/game.sfc") for c in checked), checked
+
+
+def test_scaffold_describes_its_project_for_community_tools():
+    import hashlib
+    with tempfile.TemporaryDirectory() as directory:
+        tmp = pathlib.Path(directory)
+        project = _scaffold(tmp)
+        doc = json.loads((project / ".recomp.json").read_text(encoding="utf-8"))
+        assert doc["game"] == "Fixture Quest"
+        assert doc["project"] == "FixtureQuestSNESRecomp"
+        assert doc["system"] == "SNES" and doc["toolchain"] == "snesrecomp"
+        assert doc["status"] == "exploring" and doc["type"] == "recomp"
+        assert doc["original"] == {"region": "USA", "sha1": hashlib.sha1((tmp / "fixture.sfc").read_bytes()).hexdigest()}
+        assert "launchers" not in doc and "targets" not in doc
+        subprocess.run(["git", "-C", str(project), "ls-files", "--error-unmatch", ".recomp.json"],
+                       check=True, capture_output=True,
+                       creationflags=0x08000000 if os.name == "nt" else 0)
