@@ -969,6 +969,7 @@ static ScriptEntry *NewScriptEntry(int *cap) {
  *   renderer toggle         invoke the renderer hotkey at this boundary
  *   poke <addr> <hex>       write WRAM bytes for one frame
  *   pokefor <addr> <hex> N  write WRAM bytes for N frames
+ *   screenshot            request the ordinary desktop capture action
  *   forcepoke <addr> <hex>  write WRAM bytes every frame from now on
  *   until <addr> <op> <hex> [timeout]    block until the WRAM byte at <addr>
  *   until16 <addr> <op> <hex> [timeout]  (or LE word) compares; op is == or
@@ -1009,6 +1010,12 @@ static void LoadScript(const char *path) {
       }
       ScriptEntry *e = NewScriptEntry(&cap);
       e->mask = kScriptHostControl | (strcmp(arg1, "on") == 0 ? 1u : 0u);
+      e->wait_frames = pending_wait;
+      pending_wait = 0;
+    } else if (strcmp(cmd, "screenshot") == 0) {
+      ScriptEntry *e = NewScriptEntry(&cap);
+      e->mask = kScriptHostControl;
+      e->host_command = kKeys_Screenshot;
       e->wait_frames = pending_wait;
       pending_wait = 0;
     } else if (strcmp(cmd, "renderer") == 0) {
@@ -1182,8 +1189,11 @@ static uint32 TickScript(void) {
     } else if (e->mask & kScriptHostControl) {
       if (e->host_command) {
         HandleCommand(e->host_command, true);
-        fprintf(stderr, "script f=%u renderer=%s\n", frame,
-                snesrecomp_desktop_new_renderer() ? "new" : "reference");
+        if (e->host_command == kKeys_Screenshot)
+          fprintf(stderr, "script f=%u screenshot requested\n", frame);
+        else
+          fprintf(stderr, "script f=%u renderer=%s\n", frame,
+                  snesrecomp_desktop_new_renderer() ? "new" : "reference");
       } else {
         g_turbo = (e->mask & 1u) != 0;
         fprintf(stderr, "script f=%u turbo %s\n", frame, g_turbo ? "on" : "off");
@@ -1205,7 +1215,8 @@ static uint32 TickScript(void) {
     if (g_script_counter > 0) {
       g_script_counter--;
       if (e->mask & kScriptLoadState) {
-        RtlSaveLoad(e->save_state ? kSaveLoad_Save : kSaveLoad_Load, e->mask & 0xF);
+        if (e->save_state) snes_savestate_menu_write_slot(e->mask & 0xF);
+        else RtlSaveLoad(kSaveLoad_Load, e->mask & 0xF);
         if (!e->save_state) GameReset();
         return 0;
       }
@@ -3117,6 +3128,9 @@ static void LauncherSeed(RecompLauncherCSettings *ls, RecompLauncherCGameInfo *g
   gi->in_session = in_session;
   gi->mods = HdHostProvider(gi->mods);
   gi->has_open_launcher_hotkey = game->in_game_launcher ? 1 : 0;
+#if defined(RECOMP_LAUNCHER_HAS_SCREENSHOT_HOTKEY) && !defined(__ANDROID__) && !SNESRECOMP_SDL_GLES2_ONLY
+  gi->has_screenshot_hotkey = g_config.output_method == kOutputMethod_OpenGL;
+#endif
 #if defined(SNES_HAS_LOBBY_CLIENT)
   /* The netplay button is capability-gated: these two fields are what
    * make the launcher show it. */
@@ -4316,7 +4330,7 @@ error_reading:;
       }
       int ss = debug_server_consume_savestate();
       if (ss >= 0 && !g_netplay_session)
-        RtlSaveLoad(kSaveLoad_Save, ss);
+        snes_savestate_menu_write_slot(ss);
     }
     double before_debug_wait = MonotonicSeconds();
     if (!g_netplay_session) debug_server_wait_if_paused();
@@ -4897,7 +4911,7 @@ static void HandleCommand(uint32 j, bool pressed) {
     RtlSaveLoad(kSaveLoad_Load, j - kKeys_Load);
     GameReset();
   } else if (j <= kKeys_Save_Last) {
-    RtlSaveLoad(kSaveLoad_Save, j - kKeys_Save);
+    snes_savestate_menu_write_slot(j - kKeys_Save);
   } else {
     switch (j) {
     case kKeys_Fullscreen:
@@ -5308,6 +5322,9 @@ static const char kDefaultConfigIniContent[] =
   "ToggleRenderer = r\n"
   "SaveStateMenu = F11\n"
   "Rewind = F12\n"
+#if !defined(__ANDROID__) && !SNESRECOMP_SDL_GLES2_ONLY
+  "Screenshot = PrintScreen\n"
+#endif
   "Load =      F1,     F2,     F3,     F4,     F5,     F6,     F7,     F8,     F9,     F10\n"
   "Save = Shift+F1,Shift+F2,Shift+F3,Shift+F4,Shift+F5,Shift+F6,Shift+F7,Shift+F8,Shift+F9,Shift+F10\n"
   "\n"
@@ -5333,6 +5350,9 @@ static const char *DefaultConfigIni(void) {
     snprintf(menu_config, sizeof(menu_config), "%.*s%s%s",
         (int)(keys - kDefaultConfigIniContent), kDefaultConfigIniContent,
         "SaveStateMenu = F7\nRewind = F8\n"
+#if !defined(__ANDROID__) && !SNESRECOMP_SDL_GLES2_ONLY
+        "Screenshot = PrintScreen\n"
+#endif
         "Load = F1,F2,F3,F4,F5,F6,F11,F12,F9,F10\n", after_load);
     return menu_config;
   }

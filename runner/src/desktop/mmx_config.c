@@ -74,9 +74,12 @@ static uint16 kDefaultKbdControls[kKeys_Total] = {
    * move them. */
   _(SDLK_F11),
   _(SDLK_F12),
-  /* Screenshot is opt-in through a port's config.ini so it does not displace
-   * existing F-key overlay defaults. */
+  /* Desktop capture has its own key, without taking a state/rewind F-key. */
+#if defined(__ANDROID__) || SNESRECOMP_SDL_GLES2_ONLY
   N,
+#else
+  _(SDLK_PRINTSCREEN),
+#endif
 };
 /* Opt in before parsing: existing hosts keep their legacy slot defaults. */
 void ConfigUseStateMenuDefaults(void) {
