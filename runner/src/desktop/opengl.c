@@ -141,6 +141,19 @@ static void LogGlContext(SDL_Window *window) {
   interval = SDL_GL_GetSwapInterval();
   const char *query = "sdl2-value";
 #endif
+#if SNESRECOMP_SDL3
+  SDL_DisplayID display = SDL_GetDisplayForWindow(window);
+  const SDL_DisplayMode *mode = SDL_GetCurrentDisplayMode(display);
+#else
+  int display = SDL_GetWindowDisplayIndex(window);
+  SDL_DisplayMode current_mode;
+  const SDL_DisplayMode *mode = SDL_GetCurrentDisplayMode(display, &current_mode) == 0
+      ? &current_mode : NULL;
+#endif
+  const char *display_name = SDL_GetDisplayName(display);
+  host_report_breadcrumb("video GL display: %s width=%d height=%d refresh_hz=%.3f",
+      display_name ? display_name : "<unavailable>", mode ? mode->w : 0,
+      mode ? mode->h : 0, mode ? (double)mode->refresh_rate : 0.0);
   unsigned long long flags = (unsigned long long)SDL_GetWindowFlags(window);
   host_report_breadcrumb("video GL vendor: %s", vendor ? vendor : "<unavailable>");
   host_report_breadcrumb("video GL renderer: %s", renderer ? renderer : "<unavailable>");
