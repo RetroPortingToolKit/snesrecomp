@@ -45,6 +45,23 @@ static uint64_t SDL_GetWindowFlags(SDL_Window *window) {
   return !strcmp(scenario, "hidden") ? SDL_WINDOW_HIDDEN | SDL_WINDOW_MINIMIZED :
          !strcmp(scenario, "focused") ? SDL_WINDOW_INPUT_FOCUS : 0;
 }
+typedef int SDL_DisplayID;
+typedef struct SDL_DisplayMode { int w, h; float refresh_rate; } SDL_DisplayMode;
+static const char *SDL_GetDisplayName(int display) { return display == 1 ? "Test Display" : NULL; }
+#if SNESRECOMP_SDL3
+static SDL_DisplayID SDL_GetDisplayForWindow(SDL_Window *window) { (void)window; return 1; }
+static const SDL_DisplayMode *SDL_GetCurrentDisplayMode(SDL_DisplayID display) {
+  static const SDL_DisplayMode mode = { 1920, 1080, 59.94f }; (void)display;
+  return !strcmp(scenario, "no-display") ? NULL : &mode;
+}
+#else
+static int SDL_GetWindowDisplayIndex(SDL_Window *window) { (void)window; return 1; }
+static int SDL_GetCurrentDisplayMode(int display, SDL_DisplayMode *mode) {
+  (void)display;
+  if (!strcmp(scenario, "no-display")) return -1;
+  *mode = (SDL_DisplayMode){ 1920, 1080, 60.0f }; return 0;
+}
+#endif
 #if SNESRECOMP_SDL3
 static bool SDL_GL_GetSwapInterval(int *out) {
   if (!strcmp(scenario, "failed")) return false;
@@ -67,7 +84,7 @@ int main(int argc, char **argv) {
     return exe, request.param
 
 
-@pytest.mark.parametrize("scenario", ["normal", "hidden", "focused", "missing", "failed"])
+@pytest.mark.parametrize("scenario", ["normal", "hidden", "focused", "missing", "failed", "no-display"])
 def test_current_context_and_window_observations(diagnostic, scenario):
     exe, sdl3 = diagnostic
     result = subprocess.run([str(exe), scenario], check=True, capture_output=True, text=True)
@@ -84,3 +101,9 @@ def test_current_context_and_window_observations(diagnostic, scenario):
     expected = "visible=0 minimized=1 focused=0" if scenario == "hidden" else (
         "visible=1 minimized=0 focused=1" if scenario == "focused" else "visible=1 minimized=0 focused=0")
     assert expected in text
+
+    if scenario == "no-display":
+        assert "width=0 height=0 refresh_hz=0.000" in text
+    else:
+        assert "video GL display: Test Display width=1920 height=1080" in text
+        assert ("refresh_hz=59.940" if sdl3 else "refresh_hz=60.000") in text
