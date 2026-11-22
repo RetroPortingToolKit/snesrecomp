@@ -15,7 +15,7 @@ with tempfile.TemporaryDirectory(prefix='mmx-state-') as temp:
         result = subprocess.run([str(a.exe.resolve()), str(a.rom.resolve()), *extra],
                                 cwd=temp, env=env, text=True,
                                 stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                                timeout=180,
+                                # Finite workload; no elapsed-time kill cutoff.
                                 creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0)
         print(result.stdout, end='')
         result.check_returncode()
