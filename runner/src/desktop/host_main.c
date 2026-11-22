@@ -384,6 +384,8 @@ static bool WaitUntilNative(double deadline) {
         ? "Windows high-resolution timer" : "portable SDL fallback");
   }
   if (!g_deadline_timer) return false;
+  remaining = deadline - MonotonicSeconds();
+  if (!(remaining > 0)) return true;
   LARGE_INTEGER due;
   due.QuadPart = -(LONGLONG)ceil(remaining * 10000000.0);
   if (SetWaitableTimer(g_deadline_timer, &due, 0, NULL, NULL, FALSE) &&

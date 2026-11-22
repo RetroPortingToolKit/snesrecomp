@@ -63,7 +63,10 @@ static void SDL_Delay(Uint32 ms) {
 #if TEST_WINDOWS
 static HANDLE create_timer(LPSECURITY_ATTRIBUTES attrs, LPCWSTR name, DWORD flags, DWORD access) {
   assert(!attrs && !name && flags == 2 && access == (TIMER_MODIFY_STATE | SYNCHRONIZE));
-  creates++; return !strcmp(scenario, "create-fail") ? NULL : (HANDLE)(uintptr_t)1;
+  creates++;
+  if (!strcmp(scenario, "create-late")) now += 0.002;
+  if (!strcmp(scenario, "create-expired")) now += 0.010;
+  return !strcmp(scenario, "create-fail") ? NULL : (HANDLE)(uintptr_t)1;
 }
 static HMODULE GetModuleHandleW(LPCWSTR name) { assert(name); return (HMODULE)(uintptr_t)2; }
 static void *GetProcAddress(HMODULE module, const char *name) {
@@ -92,7 +95,10 @@ int main(int argc, char **argv) {
     WaitUntil(0.005);
     assert(now >= 0.005);
 #if TEST_WINDOWS
-    if (!strcmp(scenario, "success")) {
+    if (!strcmp(scenario, "create-expired")) {
+      if (!(now == 0.010 && creates == 1 && !arms && !waits && !polls && !sleeps)) return 1;
+    } else if (!strcmp(scenario, "success") || !strcmp(scenario, "create-late")) {
+      if (now > 0.0050001) return 1;
       if (!(creates == 1 && arms == 1 && waits == 1 && !polls && !sleeps)) return 1;
       WaitUntil(0.010); assert(creates == 1 && arms == 2 && waits == 2 && !closes);
     } else {
@@ -118,6 +124,6 @@ int main(int argc, char **argv) {
                     "-DTEST_WINDOWS=" + str(request.param), str(cfile), "-lm", "-o", str(exe)], check=True)
     return exe
 
-@pytest.mark.parametrize("scenario", ["success", "unsupported", "create-fail", "arm-fail", "wait-fail", "past"])
+@pytest.mark.parametrize("scenario", ["success", "unsupported", "create-fail", "arm-fail", "wait-fail", "past", "create-late", "create-expired"])
 def test_native_wait_and_portable_failure_contract(waiter, scenario):
     subprocess.run([str(waiter), scenario], check=True)
