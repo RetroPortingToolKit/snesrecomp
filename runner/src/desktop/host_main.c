@@ -3738,9 +3738,21 @@ int snesrecomp_desktop_main(const SnesDesktopHostGame *game, int argc, char **ar
 
         /* cwd is anchored to the exe dir and recomp_ui.cmake stages assets to
          * <exe>/assets, so "." resolves assets correctly. */
+#if defined(RECOMP_LAUNCHER_HAS_PLAYER_GAMEPAD_INSTANCE) && SNESRECOMP_SDL3
+        /* Startup Play uses the launcher's SDL instance IDs. SDL_Quit would
+         * invalidate them before the host can seat those devices. */
+        recomp_launcher_set_preserve_sdl(1);
+#endif
         int act = recomp_launcher_run_window(
             g_launcher_title, &ls, &gi, ".", init_rom[0] ? init_rom : NULL,
             rom_path_buf, sizeof(rom_path_buf));
+#if defined(RECOMP_LAUNCHER_HAS_PLAYER_GAMEPAD_INSTANCE) && SNESRECOMP_SDL3
+        recomp_launcher_set_preserve_sdl(0);
+        if (act == RECOMP_LAUNCHER_RESULT_LAUNCH && rom_path_buf[0])
+          SDL_FlushEvent(SDL_QUIT);
+        else
+          SDL_Quit();
+#endif
         host_report_breadcrumb("launcher: action=%d rom=%s", act,
                                rom_path_buf[0] ? rom_path_buf : "(none)");
 #if defined(RECOMP_LAUNCHER_HAS_NETPLAY_MODE_POLICY)
