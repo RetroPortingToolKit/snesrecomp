@@ -209,13 +209,13 @@ static void test_raster_inspection(void) {
   unsigned lines = line_calls, drawn = drawn_calls, windows = window_calls;
   unsigned oam = oam_calls, shadows = shadow_calls;
   int paused_frame = snes_frame_counter;
-  CHECK(SnesRasterInspectionDraw(latest, 0x1f, inspection_pixels));
+  CHECK(SnesRasterInspectionDraw(inspection, latest, 0x1f, inspection_pixels));
   CHECK(memcmp(inspection_pixels, inspection_original[1], sizeof inspection_pixels) == 0);
-  CHECK(SnesRasterInspectionDraw(past, 0x1f, inspection_pixels));
+  CHECK(SnesRasterInspectionDraw(inspection, past, 0x1f, inspection_pixels));
   CHECK(memcmp(inspection_pixels, inspection_original[0], sizeof inspection_pixels) == 0);
-  CHECK(SnesRasterInspectionDraw(past, 0, inspection_pixels));
+  CHECK(SnesRasterInspectionDraw(inspection, past, 0, inspection_pixels));
   CHECK(inspection_pixels[0] != inspection_original[0][0]);
-  CHECK(SnesRasterInspectionDraw(latest, 0x1f, inspection_pixels));
+  CHECK(SnesRasterInspectionDraw(inspection, latest, 0x1f, inspection_pixels));
   CHECK(memcmp(inspection_pixels, inspection_original[1], sizeof inspection_pixels) == 0);
   CHECK(memcmp(&live, &live_before, sizeof live) == 0);
   CHECK(memcmp(&machine, &inspection_machine_before, sizeof machine) == 0);

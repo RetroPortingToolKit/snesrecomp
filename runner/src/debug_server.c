@@ -5299,7 +5299,7 @@ int debug_server_raster_view(uint32_t frame, unsigned row, unsigned mask, unsign
     if (found) {
         memcpy(&view->registers, line.registers, sizeof(view->registers));
         memcpy(view->palette, line.palette, sizeof(view->palette));
-        found = SnesRasterInspectionDraw(entry, (uint8_t)mask, pixels);
+        found = SnesRasterInspectionDraw(s_raster_inspection, entry, (uint8_t)mask, pixels);
     }
     unlock_mutex();
     return found;
@@ -5353,7 +5353,7 @@ static void raster_inspection_render(unsigned frame, unsigned mask, const char *
     }
     lock_mutex();
     SnesRasterInspectionFrame *entry = SnesRasterInspectionFind(s_raster_inspection, frame);
-    bool rendered = SnesRasterInspectionDraw(entry, (uint8_t)mask, pixels);
+    bool rendered = SnesRasterInspectionDraw(s_raster_inspection, entry, (uint8_t)mask, pixels);
     unlock_mutex();
     FILE *image = rendered ? fopen(path, "wb") : NULL;
     bool written = false;
