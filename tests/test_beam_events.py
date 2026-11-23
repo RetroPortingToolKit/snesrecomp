@@ -102,6 +102,20 @@ def test_exact_rules(tmp_path, test, extra):
     subprocess.run([str(exe)], check=True)
 
 
+@pytest.mark.parametrize('mode', ['plain', 'exact', 'exact-wai'])
+def test_field_end_short_line(tmp_path, mode):
+    cc = shutil.which('gcc') or shutil.which('cc')
+    if cc is None:
+        pytest.skip('C compiler unavailable')
+    exe = tmp_path / 'field_end.exe'
+    subprocess.run([cc, '-std=c11', '-O1', '-DSNESRECOMP_REVERSE_DEBUG=0',
+        '-ffunction-sections', '-fdata-sections', '-Irunner/src',
+        '-Irunner/src/snes', '-Itests/dma', 'tests/frame_driver/field_end_test.c',
+        'runner/src/snes/snes.c', 'runner/src/snes/dma.c',
+        'runner/src/snes/sdd1.c', '-lm', '-o', str(exe)], cwd=ROOT, check=True)
+    subprocess.run([str(exe), mode], check=True)
+
+
 @pytest.mark.parametrize('mode', ['on', 'off'])
 def test_refresh_charge(tmp_path, mode):
     cc = shutil.which('gcc') or shutil.which('cc')

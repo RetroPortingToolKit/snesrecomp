@@ -28,8 +28,8 @@
 extern CpuState g_cpu;
 extern Ppu *g_ppu;
 
-/* One NTSC field: 262 scanlines x 1364 master clocks. */
-#define BFD_MASTER_CYCLES_PER_FIELD 357368ull
+/* One NTSC scanline: 1364 master clocks, except the short line 240
+ * (snes_line_clocks). */
 #define BFD_MASTER_CYCLES_PER_LINE 1364u
 #define BFD_VBLANK_LINE 225u
 
@@ -272,14 +272,22 @@ static void finish_nmi_approach(uint64_t frame_end) {
 /* NMI can still fire late in this field: it is off and RDNMI is still set. */
 static bool late_nmi_possible(void) { return !g_snes->nmiEnabled && g_snes->rdnmiPending; }
 
+/* Clocks from the beam to its next V=225. On V=225 H=0 itself that is a whole
+ * field, which is not always 357,368 clocks: with the short line
+ * (SNESRECOMP_SHORT_LINE) every other field is 4 shorter, and a fixed field
+ * left the beam 4 clocks into line 225 and the NMI that much late. Line 224
+ * always lasts 1364. */
+static uint64_t clocks_to_field_end(void) {
+  const uint32_t to_vblank = snes_master_clocks_until_line(g_snes, BFD_VBLANK_LINE);
+  if (to_vblank) return to_vblank;
+  return (uint64_t)snes_master_clocks_until_line(g_snes, BFD_VBLANK_LINE - 1u) +
+         BFD_MASTER_CYCLES_PER_LINE;
+}
+
 static void run_frame_exact(void) {
   const bool booting = s_resume_pc == 0;
   int slices = 0, late_steps = 0;
-  uint64_t frame_end;
-  {
-    uint32_t to_vblank = snes_master_clocks_until_line(g_snes, BFD_VBLANK_LINE);
-    frame_end = g_snes->beamMasterLast + (to_vblank ? to_vblank : BFD_MASTER_CYCLES_PER_FIELD);
-  }
+  uint64_t frame_end = g_snes->beamMasterLast + clocks_to_field_end();
   if (s_hooks && s_hooks->frame_start) s_hooks->frame_start(frame_end, booting);
   if (booting) {
     s_resume_pc = reset_vector();
@@ -379,11 +387,7 @@ void snes_beam_frame_driver_run_frame(void) {
    * previous frame happened to stop: Doom brackets each VRAM upload with
    * INIDISP=$80 ... $0F in vblank, the $80 landed before a raster walk and the
    * $0F after it, and two of every seven gameplay frames drew black. */
-  {
-    uint32_t to_vblank = snes_master_clocks_until_line(g_snes, BFD_VBLANK_LINE);
-    frame_end = g_snes->beamMasterLast +
-                (to_vblank ? to_vblank : BFD_MASTER_CYCLES_PER_FIELD);
-  }
+  frame_end = g_snes->beamMasterLast + clocks_to_field_end();
 
   if (booting) {
     s_resume_pc = reset_vector();
