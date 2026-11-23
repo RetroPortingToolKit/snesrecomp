@@ -30,6 +30,7 @@
 #if SNESRECOMP_TRACE
 
 typedef struct CpuState CpuState;
+typedef struct SnesRasterInspectionView SnesRasterInspectionView;
 typedef void (*DebugServerGameSendLine)(const char *line);
 typedef int (*DebugServerGameCommandHandler)(
     const char *cmd, const char *args, DebugServerGameSendLine send_line);
@@ -45,6 +46,12 @@ void debug_server_poll(void);
 
 // Shutdown the server.
 void debug_server_shutdown(void);
+
+/* Completed pictures for the native frozen overlay. */
+int debug_server_raster_enabled(void);
+unsigned debug_server_raster_frames(uint32_t *frames, unsigned capacity);
+int debug_server_raster_view(uint32_t frame, unsigned row, unsigned mask, unsigned sprite,
+                             SnesRasterInspectionView *view, uint32_t *pixels);
 
 // Start in paused state (game waits for 'step' or 'continue' command).
 void debug_server_start_paused(void);

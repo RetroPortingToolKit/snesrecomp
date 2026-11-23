@@ -5271,16 +5271,43 @@ static void cmd_raster_journal(const char *args) {
     send_all_bounded("\n", 1);
 }
 
-static void raster_inspection_frames(void) {
-    uint32_t numbers[kSnesInspectionFrames];
+int debug_server_raster_enabled(void) {
+    return raster_inspection_enabled();
+}
+
+unsigned debug_server_raster_frames(uint32_t *frames, unsigned capacity) {
+    if (!s_raster_inspection || !frames) return 0;
     unsigned count = 0;
     lock_mutex();
-    for (unsigned i = 0; i < kSnesInspectionFrames; ++i) {
+    for (unsigned i = 0; i < kSnesInspectionFrames && count < capacity; ++i) {
         const SnesRasterInspectionFrame *entry = s_raster_inspection->history[
             (s_raster_inspection->next + i) % kSnesInspectionFrames];
-        if (entry->count == kSnesInspectionLines) numbers[count++] = entry->number;
+        if (entry->count == kSnesInspectionLines) frames[count++] = entry->number;
     }
     unlock_mutex();
+    return count;
+}
+
+int debug_server_raster_view(uint32_t frame, unsigned row, unsigned mask, unsigned sprite,
+                             SnesRasterInspectionView *view, uint32_t *pixels) {
+    if (!s_raster_inspection || !view) return 0;
+    SnesRasterImageLine line;
+    lock_mutex();
+    SnesRasterInspectionFrame *entry = SnesRasterInspectionFind(s_raster_inspection, frame);
+    bool found = SnesRasterInspectionReadObject(entry, row - 1, sprite, &view->sprite) &&
+                 SnesRasterInspectionReadLine(entry, row - 1, &line);
+    if (found) {
+        memcpy(&view->registers, line.registers, sizeof(view->registers));
+        memcpy(view->palette, line.palette, sizeof(view->palette));
+        found = SnesRasterInspectionDraw(entry, (uint8_t)mask, pixels);
+    }
+    unlock_mutex();
+    return found;
+}
+
+static void raster_inspection_frames(void) {
+    uint32_t numbers[kSnesInspectionFrames];
+    unsigned count = debug_server_raster_frames(numbers, kSnesInspectionFrames);
     char out[128];
     size_t size = (size_t)snprintf(out, sizeof(out), "{\"frames\":[");
     for (unsigned i = 0; i < count; ++i)

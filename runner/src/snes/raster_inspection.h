@@ -32,6 +32,12 @@ typedef struct SnesRasterInspectionObject {
   uint16_t palette[16];
 } SnesRasterInspectionObject;
 
+typedef struct SnesRasterInspectionView {
+  SnesRenderRegisters registers;
+  uint16_t palette[256];
+  SnesRasterInspectionObject sprite;
+} SnesRasterInspectionView;
+
 static inline SnesRasterInspection *SnesRasterInspectionCreate(void) {
   SnesRasterInspection *inspection = calloc(1, sizeof(*inspection));
   if (inspection) {
