@@ -84,6 +84,11 @@ void snes_savestate_menu_note_frame(const uint32_t *fb, int w, int h);
  * made in this menu. Accepts numbered slots and SNES_SAVESTATE_QUICK_SLOT. */
 void snes_savestate_menu_note_slot_saved(int slot);
 
+/* User-facing file save at a completed frame boundary: native snapshot plus
+ * matching composed preview. Does not run the guest; failed saves keep the
+ * prior preview. Internal/rollback snapshots continue to use RtlSaveSnapshot. */
+int snes_savestate_menu_write_slot(int slot);
+
 /* Center a 4:3 panel in physical display pixels. */
 void snes_savestate_menu_viewport(int width, int height,
                                  int *x, int *y, int *w, int *h);

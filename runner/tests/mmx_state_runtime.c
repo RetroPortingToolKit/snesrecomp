@@ -1,5 +1,6 @@
 /* ROM-backed checks for the MMX adapters and the real shared desktop host.
- * The caller supplies an empty working directory; only slot 12 is used. */
+ * The caller supplies an empty working directory; preview cases use slots 1/2,
+ * and the resume check uses slot 12. */
 #define MMX_DESKTOP_ENTRY MmxDesktopMain
 #include "../src/desktop/host_main.c"
 #include MMX_GAME_MAIN
@@ -25,6 +26,7 @@ static void same(const void *a, size_t an, const void *b, size_t bn, const char 
   }
   check(an && an == bn && !memcmp(a, b, an), what);
 }
+#include "screenshot_slot_checks.h"
 int main(int argc, char **argv) {
   check(argc == 2 || argc == 3, "ROM supplied");
   SDL_SetMainReady();
@@ -43,6 +45,10 @@ int main(int argc, char **argv) {
         FindCmdForSdlKey(SDLK_F8, 0) == kKeys_Rewind &&
         FindCmdForSdlKey(SDLK_F11, 0) == kKeys_Load + 6 &&
         FindCmdForSdlKey(SDLK_F12, 0) == kKeys_Load + 7, "F7/F8 and legacy config migration");
+#if !defined(__ANDROID__) && !SNESRECOMP_SDL_GLES2_ONLY
+  check(FindCmdForSdlKey(SDLK_PRINTSCREEN, 0) == kKeys_Screenshot,
+        "desktop capture defaults to PrintScreen without taking an F-key");
+#endif
   HandleInput(SDLK_F7, 0, true); HandleInput(SDLK_F8, 0, true);
   check(g_savestate_menu_hotkey && g_rewind_hotkey, "host dispatches F7/F8");
   g_savestate_menu_hotkey = g_rewind_hotkey = 0;
@@ -57,6 +63,17 @@ int main(int argc, char **argv) {
   ConfigReloadKeyMap("config.ini");
   check(!FindCmdForSdlKey(SDLK_F8, 0) &&
         FindCmdForSdlKey(SDLK_F9, 0) != kKeys_Rewind, "launcher clear persists");
+#if defined(RECOMP_LAUNCHER_HAS_SCREENSHOT_HOTKEY)
+  launcher_binds_set_hotkey(&model, LNG_HK_SCREENSHOT, SDLK_F3, KMOD_CTRL);
+  ConfigReloadKeyMap("config.ini");
+  check(FindCmdForSdlKey(SDLK_F3, KMOD_CTRL) == kKeys_Screenshot,
+        "ordinary launcher screenshot combo reaches the live host");
+  launcher_binds_set_hotkey(&model, LNG_HK_SCREENSHOT, 0, 0);
+  ConfigReloadKeyMap("config.ini");
+  check(FindCmdForSdlKey(SDLK_PRINTSCREEN, 0) != kKeys_Screenshot &&
+        FindCmdForSdlKey(SDLK_F3, KMOD_CTRL) != kKeys_Screenshot,
+        "clearing capture persists rather than reviving its default");
+#endif
   g_launcher_config_path = NULL;
   f = fopen(argv[1], "rb"); check(f != NULL, "ROM opens");
   fseek(f, 0, SEEK_END); long rom_size = ftell(f); rewind(f);
@@ -95,6 +112,7 @@ int main(int argc, char **argv) {
     replay(30); an = RtlSaveSnapshotToMemory(actual, cap);
     same(expected, en, actual, an, "30-frame deterministic replay");
   }
+  check_screenshot_slot_files();
   snes_savestate_menu_poll_open(SNES_PAD_SELECT | SNES_PAD_R);
   check(snes_savestate_menu_is_open(), "save browser opens");
   uint64 clock = g_cpu.master_cycles;

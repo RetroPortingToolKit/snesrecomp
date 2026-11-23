@@ -389,11 +389,13 @@ static void menu_move(int delta)
 
 /* The state and thumbnail of `slot`, written on this peer. In netplay the
  * live audio ring is left out, so peers in one state write one file. */
-static int write_slot(int slot)
+int snes_savestate_menu_write_slot(int slot)
 {
+    if (slot < 0) return 0;
     char path[256];
     RtlEnsureSaveDir();
     slot_path(slot, path, sizeof(path));
+    printf("*** Saving slot %d: %s\n", slot, path);
 #if defined(SNESRECOMP_NET)
     bool saved = snes_netplay_active() ? RtlSaveSnapshotRingBlanked(path) : RtlSaveSnapshot(path);
 #else
@@ -434,7 +436,7 @@ static void menu_submit(int save)
     RtlEnsureSaveDir();
     slot_path(s_selected, path, sizeof(path));
     if (save) {
-        if (!write_slot(s_selected)) {
+        if (!snes_savestate_menu_write_slot(s_selected)) {
             set_local_status("SAVE FAILED: SLOT %02d", "QUICK SAVE FAILED");
             return;
         }
@@ -541,7 +543,7 @@ int snes_savestate_menu_netplay_write_slot(int slot)
 {
     if (slot < 0 || slot >= SNES_SAVESTATE_SLOTS)
         return 0;
-    return write_slot(slot);
+    return snes_savestate_menu_write_slot(slot);
 }
 
 uint32_t snes_savestate_menu_filter_guest_input(uint32_t inputs)
@@ -712,8 +714,9 @@ static void sample_thumb(const uint32_t *fb, int w, int h)
 
 void snes_savestate_menu_note_slot_saved(int slot)
 {
-    if (slot < 0 || slot >= SSM_SLOTS) return;
+    if (slot < 0) return;
     if (s_have_live_thumb) write_thumb(slot, s_live_thumb);
+    if (slot >= SSM_SLOTS) return;
     refresh_thumbs();
     s_dirty = 1;
 }
