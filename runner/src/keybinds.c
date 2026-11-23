@@ -100,6 +100,14 @@ static const ButtonDef s_buttons[] = {
     { NULL, 0 }
 };
 
+/* The shared launcher and PlayStation host already use 512 + SDL button,
+ * stored in INI files as Mouse1 through Mouse5. Keep these outside the SDL
+ * keyboard range even when a binding is inspected by a keyboard-only caller. */
+enum { kMouseBindBase = 512, kMouseBindCount = 5 };
+static const char *const kMouseNames[] = {
+    "Mouse1", "Mouse2", "Mouse3", "Mouse4", "Mouse5",
+};
+
 /* ── INI parsing helpers ──────────────────────────────────────────────────── */
 
 static void trim(char *s) {
@@ -119,6 +127,9 @@ static SDL_Scancode name_to_scancode(const char *name) {
     size_t i = 0;
     for (; name[i] && i < sizeof(buf) - 1; i++) buf[i] = (char)tolower((unsigned char)name[i]);
     buf[i] = '\0';
+    if (!strncmp(buf, "mouse", 5) && buf[5] >= '1' &&
+        buf[5] < '1' + kMouseBindCount && !buf[6])
+        return (SDL_Scancode)(kMouseBindBase + buf[5] - '0');
     if (!strcmp(buf, "enter") || !strcmp(buf, "return")) return SDL_SCANCODE_RETURN;
     if (!strcmp(buf, "tab"))                              return SDL_SCANCODE_TAB;
     if (!strcmp(buf, "space"))                            return SDL_SCANCODE_SPACE;
@@ -135,6 +146,8 @@ static SDL_Scancode name_to_scancode(const char *name) {
 
 static const char *scancode_to_name(SDL_Scancode sc) {
     if (sc == SDL_SCANCODE_UNKNOWN) return "None";
+    if ((int)sc > kMouseBindBase && (int)sc <= kMouseBindBase + kMouseBindCount)
+        return kMouseNames[(int)sc - kMouseBindBase - 1];
     const char *name = SDL_GetScancodeName(sc);
     return (name && name[0]) ? name : "None";
 }
@@ -326,40 +339,61 @@ void keybinds_save(void) {
 /* Keyboard-local joypad bitmask layout; converted to the runner's serial
  * controller mask by the desktop host before RtlRunFrame().
  * Returns 0 if either `keys` is NULL or player is out of range. */
-uint16_t keybinds_read_player_runner(const uint8_t *keys, int player) {
-    if (!keys) return 0;
+static bool binding_is_down(const uint8_t *keys, uint32_t mouse_buttons,
+                            SDL_Scancode sc) {
+    const int code = (int)sc;
+    if (code > kMouseBindBase && code <= kMouseBindBase + kMouseBindCount)
+        return (mouse_buttons & SDL_BUTTON(code - kMouseBindBase)) != 0;
+    return keys && code > SDL_SCANCODE_UNKNOWN && code < SDL_SCANCODE_COUNT &&
+           keys[code];
+}
+
+uint32_t keybinds_mouse_event(uint32_t buttons, uint32_t window_id,
+                              const SDL_Event *event) {
+    if (!window_id) return 0;
+#if SNESRECOMP_SDL3
+    if ((event->type == SDL_EVENT_WINDOW_FOCUS_LOST ||
+         event->type == SDL_EVENT_WINDOW_HIDDEN) && event->window.windowID == window_id)
+        return 0;
+#else
+    if (event->type == SDL_WINDOWEVENT && event->window.windowID == window_id &&
+        (event->window.event == SDL_WINDOWEVENT_FOCUS_LOST ||
+         event->window.event == SDL_WINDOWEVENT_HIDDEN))
+        return 0;
+#endif
+    if (event->type != SDL_MOUSEBUTTONDOWN && event->type != SDL_MOUSEBUTTONUP)
+        return buttons;
+    const unsigned button = event->button.button;
+    if (event->button.windowID != window_id || event->button.which == SDL_TOUCH_MOUSEID ||
+        button < 1 || button > kMouseBindCount)
+        return buttons;
+    return event->type == SDL_MOUSEBUTTONDOWN
+        ? buttons | SDL_BUTTON(button)
+        : buttons & ~SDL_BUTTON(button);
+}
+
+uint16_t keybinds_read_player_desktop(const uint8_t *keys, uint32_t mouse_buttons,
+                                     int player) {
+    if (player < 1 || player > KEYBINDS_MAX_PLAYERS) return 0;
     const PlayerBinds *pb = player_binds(player);
+    /* s_buttons is in INI order. The guest gets the runner's seat layout. */
+    static const uint8_t kRunnerBits[] = { 8, 0, 9, 1, 10, 11, 3, 2, 4, 5, 6, 7 };
     uint16_t b = 0;
-    if (pb->b      != SDL_SCANCODE_UNKNOWN && keys[pb->b])      b |= 1u << 0;
-    if (pb->y      != SDL_SCANCODE_UNKNOWN && keys[pb->y])      b |= 1u << 1;
-    if (pb->select != SDL_SCANCODE_UNKNOWN && keys[pb->select]) b |= 1u << 2;
-    if (pb->start  != SDL_SCANCODE_UNKNOWN && keys[pb->start])  b |= 1u << 3;
-    if (pb->up     != SDL_SCANCODE_UNKNOWN && keys[pb->up])     b |= 1u << 4;
-    if (pb->down   != SDL_SCANCODE_UNKNOWN && keys[pb->down])   b |= 1u << 5;
-    if (pb->left   != SDL_SCANCODE_UNKNOWN && keys[pb->left])   b |= 1u << 6;
-    if (pb->right  != SDL_SCANCODE_UNKNOWN && keys[pb->right])  b |= 1u << 7;
-    if (pb->a      != SDL_SCANCODE_UNKNOWN && keys[pb->a])      b |= 1u << 8;
-    if (pb->x      != SDL_SCANCODE_UNKNOWN && keys[pb->x])      b |= 1u << 9;
-    if (pb->l      != SDL_SCANCODE_UNKNOWN && keys[pb->l])      b |= 1u << 10;
-    if (pb->r      != SDL_SCANCODE_UNKNOWN && keys[pb->r])      b |= 1u << 11;
+    for (int i = 0; s_buttons[i].name; ++i) {
+        const SDL_Scancode sc = *(const SDL_Scancode *)((const char *)pb + s_buttons[i].offset);
+        if (binding_is_down(keys, mouse_buttons, sc)) b |= 1u << kRunnerBits[i];
+    }
     return b;
 }
 
+uint16_t keybinds_read_player_runner(const uint8_t *keys, int player) {
+    return keybinds_read_player_desktop(keys, 0, player);
+}
+
 uint16_t keybinds_read_player(const uint8_t *keys, int player) {
-    if (!keys) return 0;
-    const PlayerBinds *pb = player_binds(player);
-    uint16_t b = 0;
-    if (pb->r      != SDL_SCANCODE_UNKNOWN && keys[pb->r])      b |= 0x0001;
-    if (pb->l      != SDL_SCANCODE_UNKNOWN && keys[pb->l])      b |= 0x0002;
-    if (pb->x      != SDL_SCANCODE_UNKNOWN && keys[pb->x])      b |= 0x0004;
-    if (pb->a      != SDL_SCANCODE_UNKNOWN && keys[pb->a])      b |= 0x0008;
-    if (pb->right  != SDL_SCANCODE_UNKNOWN && keys[pb->right])  b |= 0x0010;
-    if (pb->left   != SDL_SCANCODE_UNKNOWN && keys[pb->left])   b |= 0x0020;
-    if (pb->down   != SDL_SCANCODE_UNKNOWN && keys[pb->down])   b |= 0x0040;
-    if (pb->up     != SDL_SCANCODE_UNKNOWN && keys[pb->up])     b |= 0x0080;
-    if (pb->start  != SDL_SCANCODE_UNKNOWN && keys[pb->start])  b |= 0x0100;
-    if (pb->select != SDL_SCANCODE_UNKNOWN && keys[pb->select]) b |= 0x0200;
-    if (pb->y      != SDL_SCANCODE_UNKNOWN && keys[pb->y])      b |= 0x0400;
-    if (pb->b      != SDL_SCANCODE_UNKNOWN && keys[pb->b])      b |= 0x0800;
-    return b;
+    const uint16_t runner = keybinds_read_player_runner(keys, player);
+    uint16_t keyboard = 0;
+    for (unsigned i = 0; i < 12; ++i)
+        keyboard |= ((runner >> i) & 1u) << (11 - i);
+    return keyboard;
 }

@@ -183,7 +183,7 @@ static int RemapSdlButton(int button);
 static void HandleGamepadInput(GamepadInfo *gi, int button, bool pressed);
 static void HandleInput(int keyCode, int keyMod, bool pressed);
 static void HandleCommand(uint32 j, bool pressed);
-static void PollKeyboardControls(const uint8_t *keys);
+static void PollLocalControls(const uint8_t *keys);
 static void RequestScreenshot(void);
 #if !defined(__ANDROID__) && !SNESRECOMP_SDL_GLES2_ONLY
 void OpenGLRenderer_Create(struct RendererFuncs *funcs);
@@ -271,6 +271,7 @@ SDL_Window *g_window;
 static uint8 g_paused, g_turbo, g_cursor = true;
 static uint8 g_current_window_scale;
 static uint32 g_input_state;
+static uint32 g_mouse_buttons;
 /* Gamepad-driven SNES controller bits, kept separate from g_input_state
  * (keyboard) so the per-frame keybinds.ini polling at the top of the
  * main loop doesn't clear bits the gamepad just set. OR'd into `inputs`
@@ -1800,6 +1801,8 @@ static uint32 OverlayNavInputs(void) {
  * below the event layer, so it never saw it either. Returns true when the
  * event was one of ours. */
 static bool HandleDeviceEvent(const SDL_Event *event) {
+  if (g_window)
+    g_mouse_buttons = keybinds_mouse_event(g_mouse_buttons, SDL_GetWindowID(g_window), event);
   GamepadInfo *gi;
   switch (event->type) {
   case SDL_CONTROLLERDEVICEADDED:
@@ -1927,7 +1930,7 @@ static void PumpOverlayEvents(bool *running, void (*key_down)(int key, int repea
    * browser took Z for B while the game's B is the key labelled Y, and rewind
    * got no keyboard buttons at all. Only controls: slot/reset hotkeys must not
    * change the guest behind a modal panel. */
-  PollKeyboardControls(snesrecomp_sdl_get_keyboard_state());
+  PollLocalControls(snesrecomp_sdl_get_keyboard_state());
 }
 
 /* True when `key` is the physical key keybinds.ini gives one of player 1's
@@ -3062,7 +3065,7 @@ static void NetplayMenuSelftest(uint32_t frame) {
 
 static uint16_t netplay_capture_pad(void *ctx) {
   (void)ctx;
-  PollKeyboardControls(snesrecomp_sdl_get_keyboard_state());
+  PollLocalControls(snesrecomp_sdl_get_keyboard_state());
   const unsigned player = snes_netplay_input_player() == 1 ? 1 : 0;
   return (uint16_t)snes_savestate_menu_filter_guest_input(
       (((g_input_state | g_pad_buttons) >> (player * 12)) |
@@ -3355,6 +3358,9 @@ static void LauncherSeed(RecompLauncherCSettings *ls, RecompLauncherCGameInfo *g
   /* SNES system identity (theme, platform label, ROM noun). One profile
    * call keeps the identity from drifting across SNES titles. */
   launcher_profile_apply("snes", gi);
+#if defined(RECOMP_LAUNCHER_HAS_MOUSE_BUTTON_BINDS)
+  gi->has_mouse_button_binds = 1;
+#endif
   static char region_buf[64];
   gi->name = game->display_name;
   if (game->region && game->region[0]) {
@@ -3635,6 +3641,7 @@ static void RunInGameLauncher(bool *running, const char **exit_reason) {
   const Config before = g_config;
   /* Turbo follows a HELD key; the launcher eats the release. */
   g_turbo = false;
+  g_mouse_buttons = 0;
   size_t mods_before_len = 0;
   uint8 *mods_before = g_mod_state_path[0]
       ? ReadWholeFile(g_mod_state_path, &mods_before_len) : NULL;
@@ -4827,8 +4834,8 @@ error_reading:;
       continue;
     }
 
-    /* Input-source assignments apply to each keyboard map independently. */
-    PollKeyboardControls(snesrecomp_sdl_get_keyboard_state());
+    /* Input-source assignments apply to each keyboard and mouse map independently. */
+    PollLocalControls(snesrecomp_sdl_get_keyboard_state());
 
     /* Seat 0's HUMAN word, kept separate from the script's and the debug
      * server's: the overlays are human facilities, and a repro script must
@@ -5183,15 +5190,17 @@ error_reading:;
  * to draw a second one -- bare white digits in the frame's corner -- so a
  * player who pressed the key saw two counters that disagreed. */
 
-static void PollKeyboardControls(const uint8_t *keys) {
+static void PollLocalControls(const uint8_t *keys) {
   /* Replace the whole keyboard word so changing a seat to Gamepad/None also
    * releases keys held under its previous assignment. Hotkeys remain separate. */
-  uint32 p1 = g_config.player_src[0] == 1 ? keybinds_read_player_runner(keys, 1) : 0;
-  uint32 p2 = g_config.player_src[1] == 1 ? keybinds_read_player_runner(keys, 2) : 0;
+  uint32 p1 = g_config.player_src[0] == 1
+      ? keybinds_read_player_desktop(keys, g_mouse_buttons, 1) : 0;
+  uint32 p2 = g_config.player_src[1] == 1
+      ? keybinds_read_player_desktop(keys, g_mouse_buttons, 2) : 0;
   g_input_state = p1 | (p2 << 12);
   for (int seat = 2; seat < kSnesHostPadSeats; ++seat)
     g_seat_keys[seat] = g_config.player_src[seat] == 1
-        ? keybinds_read_player_runner(keys, seat + 1) : 0;
+        ? keybinds_read_player_desktop(keys, g_mouse_buttons, seat + 1) : 0;
 }
 
 static void HandleCommand(uint32 j, bool pressed) {
