@@ -58,6 +58,7 @@ enum { kKeys_Controls = 1, kKeys_Controls_Last = 12 };
 
 static struct { int player_src[kSnesHostPadSeats]; } g_config = {{1, 1}};
 static uint32 g_input_state;
+static uint32 g_mouse_buttons;
 static uint16 g_seat_keys[kSnesHostPadSeats];
 static uint8_t keyboard[SDL_SCANCODE_COUNT];
 static SDL_Event queue[8];
@@ -85,6 +86,10 @@ static uint16_t keybinds_read_player_runner(const uint8_t *keys, int player) {
   if (player != 1) return 0;
   return (uint16_t)((keys[SC_LABEL_Y] ? PAD_B : 0) | (left_bound && keys[SC_LEFT] ? PAD_LEFT : 0));
 }
+static uint16_t keybinds_read_player_desktop(const uint8_t *keys, uint32 buttons, int player) {
+  return (uint16_t)(keybinds_read_player_runner(keys, player) |
+                    (player == 1 && (buttons & 1) ? PAD_B : 0));
+}
 /* The [KeyMap] controls, by keycode ('z' is SNES B), which HandleInput
  * still applies on key release. */
 static int FindCmdForSdlKey(int key, int mod) { (void)mod; return key == 'z' ? kKeys_Controls + 7 : 0; }
@@ -99,7 +104,7 @@ static bool rewind_open;
 static int commits, closes;
 static void snes_rewind_commit(void) { ++commits; rewind_open = false; }
 static void snes_rewind_close(void) { ++closes; rewind_open = false; }
-static void PollKeyboardControls(const uint8_t *keys);
+static void PollLocalControls(const uint8_t *keys);
 static void RewindKeyDown(int key, int repeat);
 '''
 
@@ -127,6 +132,13 @@ int main(void) {
     assert(!(g_input_state & PAD_B) && "the key labelled Z set B");
     keyboard[SC_LABEL_Z] = 0; push_key(SDL_KEYUP, 'z');
     pump(panels[p]);
+
+    g_mouse_buttons = 1;
+    pump(panels[p]);
+    assert((g_input_state & PAD_B) && "the mouse binding did not reach the panel");
+    g_mouse_buttons = 0;
+    pump(panels[p]);
+    assert(!(g_input_state & PAD_B) && "mouse binding stuck after release");
   }
 
   /* A bound arrow reaches rewind through the pad word, where RunRewindLoop
@@ -186,7 +198,7 @@ int main(void) {
   /* The game's B is held (a dash) when the rewind hotkey opens the strip;
    * the main loop's poll has it in the word already. */
   keyboard[SC_LABEL_Y] = 1;
-  PollKeyboardControls(keyboard);
+  PollLocalControls(keyboard);
   rewind_open = true;
   bool running = true;
   RunRewindLoop(&running);
@@ -225,13 +237,13 @@ def _functions(*names):
 
 def test_overlay_keys_follow_keybinds(tmp_path):
     cc = _compiler()
-    functions = _functions('PollKeyboardControls', 'KeyIsPadControl', 'PumpOverlayEvents',
+    functions = _functions('PollLocalControls', 'KeyIsPadControl', 'PumpOverlayEvents',
                            'RewindKeyDown')
     _build_and_run(tmp_path, cc, 'overlay_keys', STUBS + functions + MAIN)
 
 
 def test_rewind_ignores_a_button_held_at_open(tmp_path):
     cc = _compiler()
-    functions = _functions('PollKeyboardControls', 'KeyIsPadControl', 'PumpOverlayEvents',
+    functions = _functions('PollLocalControls', 'KeyIsPadControl', 'PumpOverlayEvents',
                            'RewindKeyDown', 'RunRewindLoop')
     _build_and_run(tmp_path, cc, 'rewind_held', STUBS + LOOP_STUBS + functions + LOOP_MAIN)
