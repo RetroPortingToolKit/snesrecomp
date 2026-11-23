@@ -30,6 +30,7 @@
 #if SNESRECOMP_TRACE
 
 typedef struct CpuState CpuState;
+typedef struct SnesRasterInspectionView SnesRasterInspectionView;
 typedef void (*DebugServerGameSendLine)(const char *line);
 typedef int (*DebugServerGameCommandHandler)(
     const char *cmd, const char *args, DebugServerGameSendLine send_line);
@@ -45,6 +46,12 @@ void debug_server_poll(void);
 
 // Shutdown the server.
 void debug_server_shutdown(void);
+
+/* Completed pictures for the native frozen overlay. */
+int debug_server_raster_enabled(void);
+unsigned debug_server_raster_frames(uint32_t *frames, unsigned capacity);
+int debug_server_raster_view(uint32_t frame, unsigned row, unsigned mask, unsigned sprite,
+                             SnesRasterInspectionView *view, uint32_t *pixels);
 
 // Start in paused state (game waits for 'step' or 'continue' command).
 void debug_server_start_paused(void);
@@ -118,6 +125,7 @@ void debug_server_on_oam_render(void);
 // Capture the PPU/window registers after per-line HDMA has run and immediately
 // before scanline rendering. Queried through the TCP `ppu_lines` command.
 void debug_server_on_ppu_line(int line);
+void debug_server_publish_raster_frame(uint32_t frame);
 
 // The frame a TITLE-OWNED presenter actually composed, published every time
 // the desktop host's draw_frame hook returns one. Without this the debug
@@ -171,6 +179,7 @@ static inline void debug_server_on_oracle_vram_write(uint32_t byte_addr, uint8_t
 static inline void debug_server_on_oam_write(int is_high, uint16_t index, uint16_t value) { (void)is_high; (void)index; (void)value; }
 static inline void debug_server_on_oam_render(void) { }
 static inline void debug_server_on_ppu_line(int line) { (void)line; }
+static inline void debug_server_publish_raster_frame(uint32_t frame) { (void)frame; }
 static inline void debug_server_note_composed_frame(const void *argb, unsigned pitch,
                                                     int width, int height) {
     (void)argb; (void)pitch; (void)width; (void)height;

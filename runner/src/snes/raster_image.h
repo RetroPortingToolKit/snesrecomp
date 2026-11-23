@@ -19,7 +19,8 @@ typedef bool SnesRasterImageReadLine(const void *context, unsigned y,
     SnesRasterImageLine *line);
 typedef struct SnesRasterImage {
   Ppu origin, work;
-  bool valid, missing[224];
+  bool valid, inspection, missing[224];
+  uint8_t layer_mask;
   unsigned count;
 } SnesRasterImage;
 
@@ -30,6 +31,8 @@ static inline void SnesRasterImageReset(SnesRasterImage *image) {
 }
 static inline void SnesRasterImageBegin(SnesRasterImage *image, const Ppu *p) {
   SnesRasterImageReset(image);
+  image->inspection = false;
+  image->layer_mask = 0xff;
   if (p) { image->origin = *p; image->valid = true; }
 }
 /* Extra drawing callbacks/surfaces require their own capture contract. */
@@ -70,7 +73,9 @@ static inline bool SnesRasterImageMaterializePrefix(SnesRasterImage *image,
   p->hdFrame = NULL; p->hdCapture = NULL;
   p->widescreenLineEnhancer = NULL; p->widescreenLineEnhancerContext = NULL;
   memset(p->overlayRenderBuffer, 0, sizeof(p->overlayRenderBuffer));
-  ppu_drawCapturedLine(p, 0, false);
+  void (*draw_line)(Ppu *, int, bool) = image->inspection ?
+      ppu_drawInspectionLine : ppu_drawCapturedLine;
+  draw_line(p, 0, false);
   for (unsigned y = 0; y < rows; ++y) {
     SnesRasterImageLine line;
     if (!read(context, y, &line)) return false;
@@ -79,7 +84,9 @@ static inline bool SnesRasterImageMaterializePrefix(SnesRasterImage *image,
     memcpy(p->oam, line.oam, sizeof(p->oam));
     memcpy(p->highOam, line.high_oam, sizeof(p->highOam));
     memcpy(p->vram, line.vram, sizeof(p->vram));
-    ppu_drawCapturedLine(p, (int)y + 1, image->missing[y]);
+    p->screenEnabled[0] &= image->layer_mask;
+    p->screenEnabled[1] &= image->layer_mask;
+    draw_line(p, (int)y + 1, image->missing[y]);
   }
   memset(image->missing, 0, rows * sizeof(*image->missing));
   return true;

@@ -1060,6 +1060,13 @@ void ppu_drawCapturedLine(Ppu* ppu, int line, bool pixels) {
   PpuRunLineJob(ppu, line, pixels, false);
 }
 
+void ppu_drawInspectionLine(Ppu* ppu, int line, bool pixels) {
+  if (!ppu || (g_snes && ppu == g_snes->ppu)) return;
+  ++s_detached_line_depth;
+  ppu_drawCapturedLine(ppu, line, pixels);
+  --s_detached_line_depth;
+}
+
 typedef struct PpuWindows {
   // Up to five hardware-window spans plus two margin-gap splits.
   int16 edges[8];
@@ -3295,7 +3302,7 @@ static bool ppu_evaluateSprites(Ppu* ppu, int line) {
         int oam1 = ppu->oam[index + 1];
         int objAdr = (oam1 & 0x100) ? PPU_objTileAdr2(ppu) : PPU_objTileAdr1(ppu);
         if(oam1 & 0x8000) row = spriteSize - 1 - row;
-        int paletteBase = 0x80 + 16 * ((oam1 & 0xe00) >> 9);
+        int paletteBase = (int)PpuObjPaletteBase((uint16_t)oam1);
         int prio = SPRITE_PRIO_TO_PRIO((oam1 & 0x3000) >> 12, (oam1 & 0x800) == 0);
         PpuZbufType z = paletteBase + (prio << 8);
 

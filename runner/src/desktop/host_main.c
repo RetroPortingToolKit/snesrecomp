@@ -82,6 +82,9 @@
 #include "snes_overlay_draw.h"
 #include "snes_osd.h"
 #include "snes_runahead.h"
+#if SNESRECOMP_TRACE
+#include "raster_inspector_panel.h"
+#endif
 
 #if SNESRECOMP_ENABLE_MODS
 #include "mod_runtime.h"
@@ -1669,6 +1672,7 @@ static void DrawPpuFrameWithPerf(void) {
   FrameDump_Present(dump_frame, pixel_buffer, pitch,
                     g_snes_width * render_scale, g_snes_height * render_scale);
   FrameDump_Ppu(dump_frame, g_ppu);
+  debug_server_publish_raster_frame(dump_frame);
   /* SNESRECOMP_SCREENSHOT=<path.ppm> [SNESRECOMP_SCREENSHOT_FRAME=<n>]: write
    * the frame presented at simulated frame n (default: the first) as a PPM,
    * OSD included: it is what the player sees, not the bare field.
@@ -2293,12 +2297,27 @@ static void OverlaySelftestPadTick(unsigned pump) {
  * shapes: the save-state browser is an opaque full-rect panel, the rewind
  * filmstrip belongs across the bottom third of the frame, annotating the
  * moment it describes. */
+#if SNESRECOMP_TRACE
+static RasterInspectorPanel *g_raster_inspector;
+static const char *g_raster_inspector_dump;
+#endif
+
 static void PresentFrozenWithOverlay(void) {
   const uint32_t *panel = NULL;
   int pw = 0, ph = 0;
   int is_menu = snes_savestate_menu_overlay_image(&panel, &pw, &ph) && panel;
   if (!is_menu && !(snes_rewind_overlay_image(&panel, &pw, &ph) && panel))
     panel = NULL;
+  const char *inspector_dump = NULL;
+#if SNESRECOMP_TRACE
+  if (g_raster_inspector) {
+    panel = g_raster_inspector->pixels;
+    pw = kRasterPanelWidth;
+    ph = kRasterPanelHeight;
+    is_menu = 1;
+    inspector_dump = g_raster_inspector_dump;
+  }
+#endif
 
   /* The draw buffer is the FROZEN FRAME at twice its size, whichever panel
    * is up. It used to be the panel's own size, which is right for the
@@ -2348,9 +2367,13 @@ static void PresentFrozenWithOverlay(void) {
    * it from the module reporting itself open. */
   {
     static int dumped_menu = 0, dumped_rewind = 0;
-    const char *dump = is_menu ? HostGetenv("OVERLAY_DUMP") : HostGetenv("REWIND_DUMP");
+    const char *dump = inspector_dump;
     int *dumped = is_menu ? &dumped_menu : &dumped_rewind;
-    if (dump && !*dumped && panel) {
+#if SNESRECOMP_TRACE
+    if (!g_raster_inspector)
+#endif
+      dump = is_menu ? HostGetenv("OVERLAY_DUMP") : HostGetenv("REWIND_DUMP");
+    if (dump && (inspector_dump || !*dumped) && panel) {
       FILE *f = fopen(dump, "wb");
       if (f) {
         fprintf(f, "P6\n%d %d\n255\n", draw_w, draw_h);
@@ -2362,15 +2385,65 @@ static void PresentFrozenWithOverlay(void) {
           }
         }
         fclose(f);
-        *dumped = 1;
+        if (!inspector_dump) *dumped = 1;
         fprintf(stderr, "[overlay_dump] wrote %s (%dx%d, %s)\n", dump, draw_w, draw_h,
-                is_menu ? "save-state browser" : "rewind filmstrip");
+                inspector_dump ? "raster inspector" : is_menu ? "save-state browser" : "rewind filmstrip");
       }
     }
   }
 
   g_renderer_funcs.EndDraw();
 }
+
+#if SNESRECOMP_TRACE
+static void RasterInspectorKeyDown(int key, int repeat) {
+  RasterPanelHandleKey(g_raster_inspector, key, repeat);
+}
+
+static void RunRasterInspector(bool *running, bool selftest) {
+  RasterInspectorPanel *panel = malloc(sizeof(*panel));
+  if (!panel || !RasterPanelOpen(panel)) {
+    fprintf(stderr, "[raster_inspector] No completed native frames. Enable capture with "
+                    "SNESRECOMP_RASTER_INSPECTION=1 and turn off run-ahead.\n");
+    free(panel);
+    return;
+  }
+  const uint8 was_paused = g_paused;
+  g_raster_inspector = panel;
+  g_overlay_modal = true;
+  g_paused = true;
+  SetAudioPaused(true);
+  unsigned presentation = 0;
+  while (panel->open && *running) {
+    PumpOverlayEvents(running, &RasterInspectorKeyDown);
+    if (!panel->open || !*running) break;
+    if (selftest) {
+      if (presentation == 1) RasterInspectorKeyDown(SDLK_HOME, 0);
+      if (presentation == 2) RasterInspectorKeyDown(SDLK_END, 0);
+      if (presentation == 3) {
+        RasterInspectorKeyDown(SDLK_ESCAPE, 0);
+        break;
+      }
+      static const char *const dump_paths[] = {
+        "raster-inspector-latest.ppm", "raster-inspector-oldest.ppm",
+        "raster-inspector-return.ppm",
+      };
+      g_raster_inspector_dump = dump_paths[presentation];
+    }
+    if (panel->dirty) RasterPanelDraw(panel);
+    PresentFrozenWithOverlay();
+    if (!selftest) SDL_Delay(16);
+    ++presentation;
+  }
+  g_raster_inspector_dump = NULL;
+  g_raster_inspector = NULL;
+  free(panel);
+  g_overlay_modal = false;
+  g_paused = was_paused;
+  SetAudioPaused(g_paused);
+  OverlayNoteClosed();
+}
+#endif
 
 /* Save-state browser's modal pump. The guest is FROZEN throughout: this loop
  * never calls RtlRunFrame and never calls the game's draw_ppu_frame, which is
@@ -4485,6 +4558,9 @@ error_reading:;
       g_state_generation = RtlStateGeneration();
     }
     SDL_Event event;
+#if SNESRECOMP_TRACE
+    bool open_raster_inspector = false;
+#endif
 
     /* Inert unless SNESRECOMP_CRASH_TEST is set — support drill for the
      * whole crash-capture pipeline (minidump + report + crash copy). */
@@ -4508,6 +4584,14 @@ error_reading:;
         }
         break;
       case SDL_KEYDOWN:
+#if SNESRECOMP_TRACE
+        if (SNESRECOMP_SDL_EVENT_KEY(event) == SDLK_F10 &&
+            (SNESRECOMP_SDL_EVENT_MOD(event) & KMOD_CTRL) &&
+            debug_server_raster_enabled()) {
+          open_raster_inspector = !SNESRECOMP_SDL_EVENT_REPEAT(event);
+          break;
+        }
+#endif
 #if defined(SNES_HAS_LOBBY_CLIENT)
         if (g_netplay_session && snes_savestate_menu_is_open()) {
           snes_savestate_menu_handle_key(SNESRECOMP_SDL_EVENT_KEY(event),
@@ -4535,6 +4619,22 @@ error_reading:;
     }
     if (!running)
       break;
+#if SNESRECOMP_TRACE
+    /* Match the existing frozen-overlay headless qualification route. */
+    static long raster_selftest_frame = -2;
+    if (raster_selftest_frame == -2) {
+      const char *setting = HostGetenv("RASTER_INSPECTOR_SELFTEST");
+      raster_selftest_frame = setting ? strtol(setting, NULL, 0) : -1;
+    }
+    bool raster_selftest = raster_selftest_frame >= 0 && (long)frameCtr == raster_selftest_frame;
+    if (raster_selftest) raster_selftest_frame = -1;
+    if ((open_raster_inspector || raster_selftest) && !g_netplay_session &&
+        !snes_savestate_menu_is_open() && !snes_rewind_is_open()) {
+      RunRasterInspector(&running, raster_selftest);
+      if (!running) break;
+      continue;
+    }
+#endif
     OverlaySelftestPadMainTick(frameCtr);
     /* SNESRECOMP_VOLUME_DEMO=<frame>: press VolumeDown once at that frame, so
      * a headless screenshot can show the bar. */

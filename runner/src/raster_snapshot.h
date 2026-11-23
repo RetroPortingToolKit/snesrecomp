@@ -50,8 +50,9 @@ static inline bool SnesRasterSnapshotBegin(SnesRasterSnapshotStore *store,
 /* reuse_equal=false is the full-copy correctness/performance reference.
  * Failure leaves existing images intact; the caller must reject the incomplete
  * frame and use its normal presentation fallback. No guest work is skipped. */
-static inline const void *SnesRasterSnapshotCapture(
-        SnesRasterSnapshotStore *store, const void *source, bool reuse_equal) {
+static inline const void *SnesRasterSnapshotCaptureBounded(
+        SnesRasterSnapshotStore *store, const void *source, bool reuse_equal,
+        size_t available_bytes) {
     if (!store || !source || !store->image_bytes) return NULL;
     if (reuse_equal && store->count) {
         const void *previous = store->images[store->count - 1];
@@ -60,6 +61,7 @@ static inline const void *SnesRasterSnapshotCapture(
     }
     if (store->count == store->limit) return NULL;
     if (store->count == store->allocated) {
+        if (store->image_bytes > available_bytes) return NULL;
         void *image = malloc(store->image_bytes);
         if (!image) return NULL;
         store->images[store->allocated++] = image;
@@ -68,6 +70,11 @@ static inline const void *SnesRasterSnapshotCapture(
     memcpy(image, source, store->image_bytes);
     store->copied_bytes += store->image_bytes;
     return image;
+}
+
+static inline const void *SnesRasterSnapshotCapture(
+        SnesRasterSnapshotStore *store, const void *source, bool reuse_equal) {
+    return SnesRasterSnapshotCaptureBounded(store, source, reuse_equal, SIZE_MAX);
 }
 
 #endif
