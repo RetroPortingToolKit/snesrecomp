@@ -2472,6 +2472,24 @@ static void RunRewindLoop(bool *running) {
   GameReset();
 }
 
+/* The main loop's rewind request: the hotkey flag or the pad gesture. True
+ * when the strip opened and ran to its close; the caller then skips the frame
+ * (the guest was frozen). The flag is consumed before the modal loop: the
+ * caller leaves through `continue`, and a flag cleared only after this call
+ * stayed set and reopened the strip right after commit or close. */
+static bool RunRewindRequest(bool *running) {
+  const bool requested = g_rewind_hotkey || PadGesturePressed(&g_rewind_gesture);
+  g_rewind_hotkey = 0;
+  if (!requested || snes_rewind_is_open() || snes_savestate_menu_is_open())
+    return false;
+  /* Refused during netplay by snes_rewind_open() itself: one machine
+   * cannot move its own clock backwards while a peer is watching. */
+  if (!snes_rewind_open())
+    return false;
+  RunRewindLoop(running);
+  return true;
+}
+
 /* ── Audio ────────────────────────────────────────────────────────────────── */
 
 static SDL_mutex *g_audio_mutex;
@@ -4809,16 +4827,8 @@ error_reading:;
       continue;   /* guest was frozen: no frame to run or present */
     }
     g_open_launcher_hotkey = 0;
-    if ((g_rewind_hotkey || PadGesturePressed(&g_rewind_gesture)) && !snes_rewind_is_open() &&
-        !snes_savestate_menu_is_open()) {
-      /* Refused during netplay by snes_rewind_open() itself: one machine
-       * cannot move its own clock backwards while a peer is watching. */
-      if (snes_rewind_open()) {
-        RunRewindLoop(&running);
-        continue;   /* guest was frozen: no frame to run or present */
-      }
-    }
-    g_rewind_hotkey = 0;
+    if (RunRewindRequest(&running))
+      continue;   /* guest was frozen: no frame to run or present */
     /* Exactly ONE poll_open per frame: it latches the previous word to edge
      * detect on, so a second call in the same frame eats the edge. */
     (void)StateMenuPollOpen(human);
