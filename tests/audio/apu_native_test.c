@@ -71,8 +71,34 @@ static void init(Apu *apu, unsigned mode) {
   dsp_write(apu->dsp, 0x4c, 1);
 }
 
+static void check_access_reads(Apu *reference, Apu *native,
+                               const uint8_t *program, size_t size) {
+  init(reference, 1);
+  init(native, 1);
+  memcpy(reference->ram + 0x200, program, size);
+  memcpy(native->ram + 0x200, program, size);
+  reference->timer[0].target = native->timer[0].target = 1;
+  reference->timer[0].cycles = native->timer[0].cycles = 6;
+
+  for (unsigned clock = 0; clock < 256; clock++) {
+    const uint64_t before = g_apu_timer0_total_ticks;
+    apu_cycle(reference);
+    const uint64_t expected = g_apu_timer0_total_ticks;
+    g_apu_timer0_total_ticks = before;
+    apu_runCycles(native, 1);
+    assert(g_apu_timer0_total_ticks == expected);
+    same(reference, native);
+  }
+}
+
 int main(int argc, char **argv) {
+  /* Timer reads on adjacent instructions can expose look-ahead errors to Y. */
+  static const uint8_t timer_reads[] = {0xe5, 0xfd, 0x00, 0xeb, 0xfd, 0x2f, 0xf9};
+  /* Select ENDX, read it through $F3, and repeat across sample boundaries. */
+  static const uint8_t dsp_reads[] = {0xe8, 0x7c, 0xc4, 0xf2, 0xeb, 0xf3, 0x2f, 0xf8};
   Apu *reference = apu_init(), *native = apu_init();
+  check_access_reads(reference, native, timer_reads, sizeof(timer_reads));
+  check_access_reads(reference, native, dsp_reads, sizeof(dsp_reads));
   for (unsigned mode = 0; mode < 3; mode++) {
     init(reference, mode); init(native, mode);
     if (mode == 2) {
