@@ -5327,6 +5327,35 @@ static void raster_inspection_stats(void) {
              "\"peak_owned_bytes\":%zu,\"byte_limit\":%zu}", count, capacity, bytes, peak, limit);
 }
 
+static void raster_inspection_scroll(unsigned frame, unsigned layer) {
+    uint16_t h[kSnesInspectionLines], v[kSnesInspectionLines];
+    uint8_t sub[kSnesInspectionLines];
+    lock_mutex();
+    const SnesRasterInspectionFrame *entry = SnesRasterInspectionFind(s_raster_inspection, frame);
+    bool found = entry != NULL;
+    if (found) {
+        for (unsigned y = 0; y < kSnesInspectionLines; ++y) {
+            SnesRenderRegisters regs;
+            memcpy(&regs, entry->lines[y].registers, sizeof(regs));
+            h[y] = regs.hScroll[layer - 1];
+            v[y] = regs.vScroll[layer - 1];
+            sub[y] = (regs.screenEnabled[1] & (1u << (layer - 1))) != 0;
+        }
+    }
+    unlock_mutex();
+    if (!found) {
+        send_fmt("{\"error\":\"frame unavailable or incomplete\"}");
+        return;
+    }
+    char out[kSnesInspectionLines * 16 + 80];
+    size_t size = (size_t)snprintf(out, sizeof(out), "{\"frame\":%u,\"layer\":%u,\"rows\":[", frame, layer);
+    for (unsigned y = 0; y < kSnesInspectionLines; ++y)
+        size += (size_t)snprintf(out + size, sizeof(out) - size, "%s[%u,%u,%u]", y ? "," : "",
+                                 (unsigned)h[y], (unsigned)v[y], (unsigned)sub[y]);
+    snprintf(out + size, sizeof(out) - size, "]}");
+    send_line(out);
+}
+
 static void raster_inspection_line(unsigned frame, unsigned row, unsigned index) {
     SnesRenderRegisters registers;
     uint16_t color;
@@ -5420,6 +5449,9 @@ static void cmd_raster_inspect(const char *args) {
         raster_inspection_frames();
     else if (!strcmp(action, "stats"))
         raster_inspection_stats();
+    else if (!strcmp(action, "scroll") && sscanf(args, "%*s %u %u", &frame, &index) == 2 &&
+             index >= 1 && index <= 4)
+        raster_inspection_scroll(frame, index);
     else if (!strcmp(action, "line") &&
              sscanf(args, "%*s %u %u %u", &frame, &row, &index) == 3 &&
              row >= 1 && row <= kSnesInspectionLines && index < 256)
@@ -5432,7 +5464,8 @@ static void cmd_raster_inspect(const char *args) {
              sscanf(args, "%*s %u %x %255s", &frame, &mask, path) == 3 && mask <= 0x1f)
         raster_inspection_render(frame, mask, path);
     else
-        send_fmt("{\"error\":\"usage: raster_inspect frames | stats | line <frame> <row> <cgram> | "
+        send_fmt("{\"error\":\"usage: raster_inspect frames | stats | scroll <frame> <layer> | "
+                 "line <frame> <row> <cgram> | "
                  "sprite <frame> <row> <slot> | "
                  "render <frame> <hex-layer-mask> <out.ppm>\"}");
 }

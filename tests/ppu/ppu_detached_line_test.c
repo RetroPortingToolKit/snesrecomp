@@ -144,7 +144,7 @@ static void write_palette(Ppu *ppu, uint8_t index, uint16_t rgb) {
 }
 
 static void test_raster_inspection(void) {
-  SnesRasterInspection *inspection = SnesRasterInspectionCreate();
+  SnesRasterInspection *inspection = SnesRasterInspectionCreateBounded(2, kSnesInspectionBytes);
   CHECK(inspection);
   inspection_capture = inspection;
   ppu_reset(&live);

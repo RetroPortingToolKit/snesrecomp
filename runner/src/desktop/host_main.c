@@ -2418,14 +2418,14 @@ static void RunRasterInspector(bool *running, bool selftest) {
     PumpOverlayEvents(running, &RasterInspectorKeyDown);
     if (!panel->open || !*running) break;
     if (selftest) {
-      if (presentation == 1) RasterInspectorKeyDown(SDLK_LEFT, 0);
-      if (presentation == 2) RasterInspectorKeyDown(SDLK_RIGHT, 0);
+      if (presentation == 1) RasterInspectorKeyDown(SDLK_HOME, 0);
+      if (presentation == 2) RasterInspectorKeyDown(SDLK_END, 0);
       if (presentation == 3) {
         RasterInspectorKeyDown(SDLK_ESCAPE, 0);
         break;
       }
       static const char *const dump_paths[] = {
-        "raster-inspector-latest.ppm", "raster-inspector-previous.ppm",
+        "raster-inspector-latest.ppm", "raster-inspector-oldest.ppm",
         "raster-inspector-return.ppm",
       };
       g_raster_inspector_dump = dump_paths[presentation];

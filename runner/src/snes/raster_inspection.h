@@ -6,8 +6,10 @@
 
 enum {
   kSnesInspectionLines = 224,
-  kSnesInspectionFrames = 2,
-  kSnesInspectionBytes = 64 * 1024 * 1024,
+  /* The original retail X1 camouflage occupies 283 frames including its
+   * subscreen transition. Leave room to inspect the surrounding picture. */
+  kSnesInspectionFrames = 320,
+  kSnesInspectionBytes = 96 * 1024 * 1024,
 };
 
 /* Retain completed fields and one staging frame. Each frame owns its immutable
