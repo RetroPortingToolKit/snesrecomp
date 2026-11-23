@@ -6,12 +6,8 @@
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
-#ifdef _WIN32
-static int test_setenv(const char *name, const char *value, int overwrite) {
-    return !overwrite && getenv(name) ? 0 : _putenv_s(name, value);
-}
-#define setenv test_setenv
-#endif
+/* setenv on Windows, for the tests that include this file and call it. */
+#include "../posix_env_compat.h"
 
 #include "snes/dma.h"
 #include "snes/ppu.h"
