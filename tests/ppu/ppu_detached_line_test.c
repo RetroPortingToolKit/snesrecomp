@@ -195,8 +195,8 @@ static void test_raster_inspection(void) {
   ppu_runLine(&live, 1);
   SnesRasterInspectionPublish(inspection, snes_frame_counter);
   CHECK(!SnesRasterInspectionFind(inspection, snes_frame_counter));
-  SnesRasterInspectionFrame *past = SnesRasterInspectionFind(inspection, first);
-  SnesRasterInspectionFrame *latest = SnesRasterInspectionFind(inspection, first + 1);
+  const SnesRasterInspectionFrame *past = SnesRasterInspectionFind(inspection, first);
+  const SnesRasterInspectionFrame *latest = SnesRasterInspectionFind(inspection, first + 1);
   CHECK(past && latest);
   CHECK(past->lines[111].palette[1] == 0x001f);
   CHECK(past->lines[112].palette[1] == 0x7c00);
@@ -261,6 +261,30 @@ static void test_raster_inspection(void) {
   inspection_capture = NULL;
   SnesRasterInspectionDestroy(inspection);
   puts("ppu_raster_inspection: PASS mid-frame palette and color math; paused state unchanged");
+}
+
+static void test_raster_inspection_budget(void) {
+  const unsigned capacity = 2;
+  const size_t control = sizeof(SnesRasterInspection) + capacity * sizeof(SnesRasterInspectionFrame *);
+  const size_t stable_frame = sizeof(SnesRasterInspectionFrame) +
+      4 * kSnesInspectionLines * sizeof(void *) + PPU_SAVESTATE_MEM_SIZE;
+  const size_t budget = control + 2 * stable_frame - 1;
+  SnesRasterInspection *inspection = SnesRasterInspectionCreateBounded(capacity, budget);
+  CHECK(inspection);
+  ppu_reset(&live);
+  for (unsigned frame = 1; frame <= 4; ++frame) {
+    write_palette(&live, 1, (uint16_t)frame);
+    bool complete = false;
+    for (unsigned line = 1; line <= kSnesInspectionLines; ++line)
+      complete = SnesRasterInspectionCapture(inspection, &live, frame, line);
+    CHECK(complete);
+    SnesRasterInspectionPublish(inspection, frame);
+    CHECK(inspection->bytes == control + stable_frame && inspection->peak_bytes <= budget);
+    CHECK(inspection->count == 1 && SnesRasterInspectionFind(inspection, frame));
+    CHECK(!SnesRasterInspectionFind(inspection, frame - 1));
+  }
+  SnesRasterInspectionDestroy(inspection);
+  puts("ppu_raster_inspection: PASS byte budget evicts complete frames before allocation");
 }
 
 int main(void) {
@@ -343,6 +367,7 @@ int main(void) {
   printf("ppu_detached_line: PASS cases=%u digest=%016llx debug=%u/%u/%u/%u\n",
          cases, (unsigned long long)digest, line_calls, drawn_calls, oam_calls, window_calls);
   test_raster_inspection();
+  test_raster_inspection_budget();
   SnesHdFrameDestroy(private_hd);
   return 0;
 }

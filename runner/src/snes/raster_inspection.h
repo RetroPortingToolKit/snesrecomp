@@ -4,13 +4,17 @@
 #include "../raster_snapshot.h"
 #include "raster_image.h"
 
-enum { kSnesInspectionLines = 224, kSnesInspectionFrames = 2 };
+enum {
+  kSnesInspectionLines = 224,
+  kSnesInspectionFrames = 2,
+  kSnesInspectionBytes = 64 * 1024 * 1024,
+};
 
-/* Keep the last two completed hardware fields plus one being recorded.
- * Reuse equal memory at adjacent lines. Even a different full VRAM image
- * on each line is bounded by the number of lines and these three stores. */
+/* Retain completed fields and one staging frame. Each frame owns its immutable
+ * snapshots, reusing equal images between adjacent lines. */
 typedef struct SnesRasterInspectionFrame {
-  Ppu origin;
+  /* The first immutable line already owns the four PPU memory arrays. */
+  uint8_t origin[offsetof(Ppu, cgram)];
   SnesRasterSnapshotStore vram, palette, oam, high_oam;
   uint8_t registers[kSnesInspectionLines][PPU_SAVESTATE_REGS_SIZE];
   SnesRasterImageLine lines[kSnesInspectionLines];
@@ -20,11 +24,11 @@ typedef struct SnesRasterInspectionFrame {
 } SnesRasterInspectionFrame;
 
 typedef struct SnesRasterInspection {
-  SnesRasterInspectionFrame frames[kSnesInspectionFrames + 1];
   SnesRasterInspectionFrame *recording;
-  SnesRasterInspectionFrame *history[kSnesInspectionFrames];
-  unsigned next;
+  unsigned head, count, capacity;
+  size_t bytes, peak_bytes, byte_limit;
   SnesRasterImage drawing;
+  SnesRasterInspectionFrame *history[];
 } SnesRasterInspection;
 
 typedef struct SnesRasterInspectionObject {
@@ -40,26 +44,89 @@ typedef struct SnesRasterInspectionView {
   SnesRasterInspectionObject sprite;
 } SnesRasterInspectionView;
 
-static inline SnesRasterInspection *SnesRasterInspectionCreate(void) {
-  SnesRasterInspection *inspection = calloc(1, sizeof(*inspection));
+static inline SnesRasterInspection *SnesRasterInspectionCreateBounded(
+    unsigned capacity, size_t byte_limit) {
+  if (!capacity || capacity > kSnesInspectionFrames) return NULL;
+  const size_t bytes = sizeof(SnesRasterInspection) + capacity * sizeof(SnesRasterInspectionFrame *);
+  if (bytes > byte_limit) return NULL;
+  SnesRasterInspection *inspection = calloc(1, bytes);
   if (inspection) {
-    inspection->recording = &inspection->frames[0];
-    for (unsigned i = 0; i < kSnesInspectionFrames; ++i)
-      inspection->history[i] = &inspection->frames[i + 1];
+    inspection->capacity = capacity;
+    inspection->byte_limit = byte_limit;
+    inspection->bytes = inspection->peak_bytes = bytes;
   }
   return inspection;
 }
 
+static inline SnesRasterInspection *SnesRasterInspectionCreate(void) {
+  return SnesRasterInspectionCreateBounded(kSnesInspectionFrames, kSnesInspectionBytes);
+}
+
+static inline size_t SnesRasterInspectionStoreBytes(const SnesRasterSnapshotStore *store) {
+  return store->images ? store->limit * sizeof(void *) + store->allocated * store->image_bytes : 0;
+}
+
+static inline void SnesRasterInspectionFreeFrame(SnesRasterInspection *inspection,
+    SnesRasterInspectionFrame *frame) {
+  if (!frame) return;
+  inspection->bytes -= sizeof(*frame) + SnesRasterInspectionStoreBytes(&frame->vram) +
+      SnesRasterInspectionStoreBytes(&frame->palette) + SnesRasterInspectionStoreBytes(&frame->oam) +
+      SnesRasterInspectionStoreBytes(&frame->high_oam);
+  SnesRasterSnapshotDestroy(&frame->vram);
+  SnesRasterSnapshotDestroy(&frame->palette);
+  SnesRasterSnapshotDestroy(&frame->oam);
+  SnesRasterSnapshotDestroy(&frame->high_oam);
+  free(frame);
+}
+
+static inline SnesRasterInspectionFrame *SnesRasterInspectionTakeOldest(
+    SnesRasterInspection *inspection) {
+  SnesRasterInspectionFrame *frame = inspection->history[inspection->head];
+  inspection->head = (inspection->head + 1) % inspection->capacity;
+  --inspection->count;
+  return frame;
+}
+
 static inline void SnesRasterInspectionDestroy(SnesRasterInspection *inspection) {
   if (!inspection) return;
-  for (unsigned i = 0; i < kSnesInspectionFrames + 1; ++i) {
-    SnesRasterInspectionFrame *frame = &inspection->frames[i];
-    SnesRasterSnapshotDestroy(&frame->vram);
-    SnesRasterSnapshotDestroy(&frame->palette);
-    SnesRasterSnapshotDestroy(&frame->oam);
-    SnesRasterSnapshotDestroy(&frame->high_oam);
-  }
+  while (inspection->count)
+    SnesRasterInspectionFreeFrame(inspection, SnesRasterInspectionTakeOldest(inspection));
+  SnesRasterInspectionFreeFrame(inspection, inspection->recording);
   free(inspection);
+}
+
+static inline bool SnesRasterInspectionMakeRoom(SnesRasterInspection *inspection, size_t bytes) {
+  while (bytes > inspection->byte_limit - inspection->bytes && inspection->count)
+    SnesRasterInspectionFreeFrame(inspection, SnesRasterInspectionTakeOldest(inspection));
+  return bytes <= inspection->byte_limit - inspection->bytes;
+}
+
+static inline void SnesRasterInspectionCharge(SnesRasterInspection *inspection, size_t bytes) {
+  inspection->bytes += bytes;
+  if (inspection->peak_bytes < inspection->bytes) inspection->peak_bytes = inspection->bytes;
+}
+
+static inline bool SnesRasterInspectionBeginStore(SnesRasterInspection *inspection,
+    SnesRasterSnapshotStore *store, size_t image_bytes) {
+  const size_t growth = store->images ? 0 : kSnesInspectionLines * sizeof(void *);
+  if (!SnesRasterInspectionMakeRoom(inspection, growth) ||
+      !SnesRasterSnapshotBegin(store, image_bytes, kSnesInspectionLines)) return false;
+  SnesRasterInspectionCharge(inspection, growth);
+  return true;
+}
+
+static inline const void *SnesRasterInspectionStore(SnesRasterInspection *inspection,
+    SnesRasterSnapshotStore *store, const void *source) {
+  unsigned allocated = store->allocated;
+  size_t available = inspection->byte_limit - inspection->bytes;
+  const void *image = SnesRasterSnapshotCaptureBounded(store, source, true, available);
+  /* Unchanged lines and reusable blocks never evict older frames. */
+  if (!image && store->count == allocated && store->count < store->limit &&
+      store->image_bytes > available &&
+      SnesRasterInspectionMakeRoom(inspection, store->image_bytes))
+    image = SnesRasterSnapshotCapture(store, source, true);
+  if (store->allocated > allocated) SnesRasterInspectionCharge(inspection, store->image_bytes);
+  return image;
 }
 
 static inline bool SnesRasterInspectionCapture(SnesRasterInspection *inspection,
@@ -67,34 +134,43 @@ static inline bool SnesRasterInspectionCapture(SnesRasterInspection *inspection,
   if (!inspection || !ppu || line < 1 || line > kSnesInspectionLines) return false;
   SnesRasterInspectionFrame *frame = inspection->recording;
   if (!SnesRasterImageCanDefer(ppu) || (ppu->setini & 4)) {
-    frame->count = 0;
-    frame->valid = false;
+    if (frame) {
+      frame->count = 0;
+      frame->valid = false;
+    }
     return false;
   }
   if (line == 1) {
+    if (!frame) {
+      if (!SnesRasterInspectionMakeRoom(inspection, sizeof(*frame))) return false;
+      frame = inspection->recording = calloc(1, sizeof(*frame));
+      if (!frame) return false;
+      SnesRasterInspectionCharge(inspection, sizeof(*frame));
+    }
     frame->number = number;
     frame->count = 0;
     frame->valid = false;
-    if (!SnesRasterSnapshotBegin(&frame->vram, sizeof(ppu->vram), kSnesInspectionLines) ||
-        !SnesRasterSnapshotBegin(&frame->palette, sizeof(ppu->cgram), kSnesInspectionLines) ||
-        !SnesRasterSnapshotBegin(&frame->oam, sizeof(ppu->oam), kSnesInspectionLines) ||
-        !SnesRasterSnapshotBegin(&frame->high_oam, sizeof(ppu->highOam), kSnesInspectionLines))
+    if (!SnesRasterInspectionBeginStore(inspection, &frame->vram, sizeof(ppu->vram)) ||
+        !SnesRasterInspectionBeginStore(inspection, &frame->palette, sizeof(ppu->cgram)) ||
+        !SnesRasterInspectionBeginStore(inspection, &frame->oam, sizeof(ppu->oam)) ||
+        !SnesRasterInspectionBeginStore(inspection, &frame->high_oam, sizeof(ppu->highOam)))
       return false;
-    frame->origin = *ppu;
-    frame->origin.renderBuffer = NULL;
+    memcpy(frame->origin, ppu, sizeof(frame->origin));
+    uint8_t *no_output = NULL;
+    memcpy(frame->origin + offsetof(Ppu, renderBuffer), &no_output, sizeof(no_output));
     frame->valid = true;
   }
-  if (!frame->valid || frame->number != number || frame->count + 1 != line)
+  if (!frame || !frame->valid || frame->number != number || frame->count + 1 != line)
     return false;
 
   uint8_t *registers = frame->registers[line - 1];
   memcpy(registers, ppu, PPU_SAVESTATE_REGS_SIZE);
   SnesRasterImageLine captured = {
     .registers = registers,
-    .high_oam = SnesRasterSnapshotCapture(&frame->high_oam, ppu->highOam, true),
-    .palette = SnesRasterSnapshotCapture(&frame->palette, ppu->cgram, true),
-    .oam = SnesRasterSnapshotCapture(&frame->oam, ppu->oam, true),
-    .vram = SnesRasterSnapshotCapture(&frame->vram, ppu->vram, true),
+    .high_oam = SnesRasterInspectionStore(inspection, &frame->high_oam, ppu->highOam),
+    .palette = SnesRasterInspectionStore(inspection, &frame->palette, ppu->cgram),
+    .oam = SnesRasterInspectionStore(inspection, &frame->oam, ppu->oam),
+    .vram = SnesRasterInspectionStore(inspection, &frame->vram, ppu->vram),
   };
   if (!captured.high_oam || !captured.palette || !captured.oam || !captured.vram) {
     frame->valid = false;
@@ -110,35 +186,38 @@ static inline bool SnesRasterInspectionCapture(SnesRasterInspection *inspection,
 static inline void SnesRasterInspectionPublish(SnesRasterInspection *inspection, uint32_t number) {
   if (!inspection) return;
   SnesRasterInspectionFrame *frame = inspection->recording;
-  if (frame->count != kSnesInspectionLines ||
+  if (!frame || frame->count != kSnesInspectionLines ||
       (frame->number != number && frame->number != number + 1)) return;
-  const SnesRasterInspectionFrame *latest = inspection->history[
-      (inspection->next + kSnesInspectionFrames - 1) % kSnesInspectionFrames];
-  if (latest->count == kSnesInspectionLines) {
+  if (inspection->count) {
+    const SnesRasterInspectionFrame *latest = inspection->history[
+        (inspection->head + inspection->count - 1) % inspection->capacity];
     if (number == latest->number) {
       frame->count = 0;
       return;
     }
-    if (number < latest->number) {
-      for (unsigned i = 0; i < kSnesInspectionFrames; ++i)
-        inspection->history[i]->count = 0;
-      inspection->next = 0;
-    }
+    if (number < latest->number)
+      while (inspection->count)
+        SnesRasterInspectionFreeFrame(inspection, SnesRasterInspectionTakeOldest(inspection));
   }
-  unsigned slot = inspection->next;
+  inspection->recording = inspection->count == inspection->capacity ?
+      SnesRasterInspectionTakeOldest(inspection) : NULL;
+  if (inspection->recording) {
+    inspection->recording->count = 0;
+    inspection->recording->valid = false;
+  }
+  const unsigned slot = (inspection->head + inspection->count) % inspection->capacity;
   frame->number = number;
-  inspection->recording = inspection->history[slot];
-  inspection->recording->count = 0;
   inspection->history[slot] = frame;
-  inspection->next = (slot + 1) % kSnesInspectionFrames;
+  ++inspection->count;
 }
 
-static inline SnesRasterInspectionFrame *SnesRasterInspectionFind(
+static inline const SnesRasterInspectionFrame *SnesRasterInspectionFind(
     const SnesRasterInspection *inspection, uint32_t number) {
   if (inspection)
-    for (unsigned i = 0; i < kSnesInspectionFrames; ++i) {
-      SnesRasterInspectionFrame *frame = inspection->history[i];
-      if (frame->count == kSnesInspectionLines && frame->number == number) return frame;
+    for (unsigned i = 0; i < inspection->count; ++i) {
+      const SnesRasterInspectionFrame *frame =
+          inspection->history[(inspection->head + i) % inspection->capacity];
+      if (frame->number == number) return frame;
     }
   return NULL;
 }
@@ -177,7 +256,14 @@ static inline bool SnesRasterInspectionDraw(SnesRasterInspection *inspection,
     uint8_t layer_mask, uint32_t pixels[256 * kSnesInspectionLines]) {
   if (!inspection || !frame || frame->count != kSnesInspectionLines || !pixels) return false;
   SnesRasterImage *drawing = &inspection->drawing;
-  SnesRasterImageBegin(drawing, &frame->origin);
+  const SnesRasterImageLine *first = &frame->lines[0];
+  SnesRasterImageReset(drawing);
+  memcpy(&drawing->origin, frame->origin, sizeof(frame->origin));
+  memcpy(drawing->origin.cgram, first->palette, sizeof(drawing->origin.cgram));
+  memcpy(drawing->origin.oam, first->oam, sizeof(drawing->origin.oam));
+  memcpy(drawing->origin.highOam, first->high_oam, sizeof(drawing->origin.highOam));
+  memcpy(drawing->origin.vram, first->vram, sizeof(drawing->origin.vram));
+  drawing->valid = true;
   drawing->inspection = true;
   drawing->layer_mask = layer_mask;
   for (unsigned line = 1; line <= kSnesInspectionLines; ++line)

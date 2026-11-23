@@ -31,6 +31,8 @@ static void RasterPanelHandleKey(RasterInspectorPanel *panel, int key, int repea
   case SDLK_ESCAPE: panel->open = false; return;
   case SDLK_LEFT: if (panel->cursor > 0) --panel->cursor; break;
   case SDLK_RIGHT: if (panel->cursor + 1 < panel->count) ++panel->cursor; break;
+  case SDLK_HOME: panel->cursor = 0; break;
+  case SDLK_END: panel->cursor = panel->count - 1; break;
   case SDLK_UP: if (panel->row > 1) --panel->row; break;
   case SDLK_DOWN: if (panel->row < kSnesInspectionLines) ++panel->row; break;
   case SDLK_PAGEUP: panel->sprite = (panel->sprite + 127) % 128; break;
@@ -64,7 +66,8 @@ static void RasterPanelDraw(RasterInspectorPanel *panel) {
                      0, 0, kRasterPanelWidth, kRasterPanelHeight, 0xff151b26);
   RasterPanelText(panel, 18, 14, "RASTER INSPECTOR", 2);
   char caption[64];
-  snprintf(caption, sizeof(caption), "PAUSED   FRAME %u   LINE %u", frame, panel->row);
+  snprintf(caption, sizeof(caption), "PAUSED  FRAME %u (%u/%u)  LINE %u",
+           frame, panel->cursor + 1, panel->count, panel->row);
   RasterPanelText(panel, 18, 44, caption, 1);
   if (available) {
     for (unsigned y = 0; y < kSnesInspectionLines; ++y) {
@@ -83,9 +86,14 @@ static void RasterPanelDraw(RasterInspectorPanel *panel) {
     RasterPanelText(panel, 18, 331, caption, 1);
     snprintf(caption, sizeof(caption), "FIXED COLOR %04X", (unsigned)view.registers.fixedColor);
     RasterPanelText(panel, 18, 349, caption, 1);
-    snprintf(caption, sizeof(caption), "BG1 SCROLL %u / %u",
-             (unsigned)view.registers.hScroll[0], (unsigned)view.registers.vScroll[0]);
+    snprintf(caption, sizeof(caption), "BG1 %u/%u   BG2 %u/%u",
+             (unsigned)view.registers.hScroll[0], (unsigned)view.registers.vScroll[0],
+             (unsigned)view.registers.hScroll[1], (unsigned)view.registers.vScroll[1]);
     RasterPanelText(panel, 18, 367, caption, 1);
+    snprintf(caption, sizeof(caption), "BG3 %u/%u   BG4 %u/%u",
+             (unsigned)view.registers.hScroll[2], (unsigned)view.registers.vScroll[2],
+             (unsigned)view.registers.hScroll[3], (unsigned)view.registers.vScroll[3]);
+    RasterPanelText(panel, 18, 382, caption, 1);
 
     RasterPanelText(panel, 302, 69, "CGRAM PALETTE", 1);
     for (unsigned color = 0; color < 256; ++color) {
@@ -109,7 +117,7 @@ static void RasterPanelDraw(RasterInspectorPanel *panel) {
     RasterPanelText(panel, 18, 80, "CAPTURE UNAVAILABLE", 1);
   }
   RasterPanelText(panel, 18, 401, "LEFT/RIGHT FRAME   UP/DOWN LINE   PGUP/PGDN SPRITE", 1);
-  RasterPanelText(panel, 18, 424, "1-4 BACKGROUNDS   5 OBJECTS   ESC CLOSE", 1);
+  RasterPanelText(panel, 18, 424, "1-4 BACKGROUNDS  5 OBJ  HOME/END RANGE  ESC CLOSE", 1);
   panel->dirty = false;
 }
 
