@@ -1060,6 +1060,13 @@ void ppu_drawCapturedLine(Ppu* ppu, int line, bool pixels) {
   PpuRunLineJob(ppu, line, pixels, false);
 }
 
+void ppu_drawInspectionLine(Ppu* ppu, int line, bool pixels) {
+  if (!ppu || (g_snes && ppu == g_snes->ppu)) return;
+  ++s_detached_line_depth;
+  ppu_drawCapturedLine(ppu, line, pixels);
+  --s_detached_line_depth;
+}
+
 typedef struct PpuWindows {
   // Up to five hardware-window spans plus two margin-gap splits.
   int16 edges[8];

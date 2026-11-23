@@ -118,6 +118,7 @@ void debug_server_on_oam_render(void);
 // Capture the PPU/window registers after per-line HDMA has run and immediately
 // before scanline rendering. Queried through the TCP `ppu_lines` command.
 void debug_server_on_ppu_line(int line);
+void debug_server_publish_raster_frame(uint32_t frame);
 
 // The frame a TITLE-OWNED presenter actually composed, published every time
 // the desktop host's draw_frame hook returns one. Without this the debug
@@ -171,6 +172,7 @@ static inline void debug_server_on_oracle_vram_write(uint32_t byte_addr, uint8_t
 static inline void debug_server_on_oam_write(int is_high, uint16_t index, uint16_t value) { (void)is_high; (void)index; (void)value; }
 static inline void debug_server_on_oam_render(void) { }
 static inline void debug_server_on_ppu_line(int line) { (void)line; }
+static inline void debug_server_publish_raster_frame(uint32_t frame) { (void)frame; }
 static inline void debug_server_note_composed_frame(const void *argb, unsigned pitch,
                                                     int width, int height) {
     (void)argb; (void)pitch; (void)width; (void)height;

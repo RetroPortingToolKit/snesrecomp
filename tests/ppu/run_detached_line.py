@@ -21,7 +21,7 @@ def main():
                    str(root / 'runner/src/snes/ppu.c'),
                    str(root / 'runner/src/snes/hd_jobs.c'),
                    str(root / 'runner/src/snes/ppu_legacy.c'),
-                   '-o', str(binary)]
+                   '-o', str(binary), '-lm']
         subprocess.run(command, check=True)
         subprocess.run([str(binary)], check=True)
 

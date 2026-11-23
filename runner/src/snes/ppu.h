@@ -596,6 +596,7 @@ void ppu_renderRasterLine(Ppu *ppu, int line);
 /* Render an immutable caller-owned PPU copy, without recording another live
  * hardware line. Used for explicit reference-image/readback requests. */
 void ppu_drawCapturedLine(Ppu* ppu, int line, bool pixels);
+void ppu_drawInspectionLine(Ppu* ppu, int line, bool pixels);
 
 /* Render a private picture using the ordinary pixel algorithms, without
  * publishing live scanout/debug/write-journal/OAM-history or status effects.

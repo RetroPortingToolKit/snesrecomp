@@ -47,6 +47,11 @@ extern int snes_frame_counter;
 
 // Hardware state access (for exhaustive debug dumps)
 #include "snes/ppu.h"
+#include "snes/raster_inspection.h"
+#include "snes_runahead.h"
+#if defined(SNESRECOMP_NET)
+#include "netplay/snes_netplay.h"
+#endif
 #include "snes/cpu.h"
 #include "common_cpu_infra.h"
 #include "snes/dma.h"
@@ -125,6 +130,13 @@ static int s_thread_created = 0;
 #endif
 static volatile int s_shutdown = 0;
 static volatile int s_server_ready = 0;
+static SnesRasterInspection *s_raster_inspection;
+static bool s_inspection_frame_ready; /* simulation/presentation thread only */
+#ifdef _MSC_VER
+static __declspec(thread) bool s_inspection_redraw;
+#else
+static _Thread_local bool s_inspection_redraw;
+#endif
 
 // Forward declarations for thread function
 #ifdef _WIN32
@@ -1618,11 +1630,14 @@ static void DebugPpuRenderAuthentic(uint8_t *pixels) {
     PpuBeginDrawing(g_ppu, pixels, 256 * 4, save_ppu.renderFlags);
     PpuSetExtraSpace(g_ppu, 0);
     PpuSetWidescreenLineEnhancer(g_ppu, NULL, NULL);
+    bool prior_redraw = s_inspection_redraw;
+    s_inspection_redraw = true;
     if (g_rtl_game_info && g_rtl_game_info->draw_ppu_frame)
         g_rtl_game_info->draw_ppu_frame();
     else
         for (int i = 0; i <= 224; i++)
             ppu_runLine(g_ppu, i);
+    s_inspection_redraw = prior_redraw;
 
     memcpy(g_ppu, &save_ppu, sizeof(Ppu));
     if (have_dma) memcpy(g_snes->dma, save_dma, sizeof(Dma));
@@ -4929,12 +4944,39 @@ typedef struct PpuWindowDebugState {
 
 static PpuWindowDebugState s_ppu_windows[225][6];
 
+static bool raster_inspection_enabled(void) {
+    if (!s_raster_inspection || snes_runahead_frames()) return false;
+#if defined(SNESRECOMP_NET)
+    if (snes_netplay_active()) return false;
+#endif
+    return true;
+}
+
+void debug_server_publish_raster_frame(uint32_t frame) {
+    bool ready = s_inspection_frame_ready;
+    s_inspection_frame_ready = false;
+    if (ready && raster_inspection_enabled() && try_lock_mutex()) {
+        SnesRasterInspectionPublish(s_raster_inspection, frame);
+        unlock_mutex();
+    }
+}
+
 void debug_server_on_ppu_line(int line) {
     if (!g_ppu || line < 0 ||
         line >= (int)(sizeof(s_ppu_lines) / sizeof(s_ppu_lines[0])))
         return;
     PpuLineDebugState *s = &s_ppu_lines[line];
     Ppu *p = g_ppu;
+    /* A missed line makes the candidate field incomplete. Never stall live
+     * gameplay behind the inspector's history reader. */
+    if (!s_inspection_redraw && line > 0 && raster_inspection_enabled()) {
+        if (line == 1) s_inspection_frame_ready = false;
+        if (try_lock_mutex()) {
+            s_inspection_frame_ready = SnesRasterInspectionCapture(
+                s_raster_inspection, p, (uint32_t)snes_frame_counter, (unsigned)line);
+            unlock_mutex();
+        }
+    }
     s->frame = snes_frame_counter;
     s->valid = 1;
     s->w1l = p->window1left;
@@ -5227,6 +5269,104 @@ static void cmd_raster_journal(const char *args) {
     if (n <= 0) { send_fmt("{\"error\":\"journal unavailable\"}"); return; }
     send_all_bounded(buf, n);
     send_all_bounded("\n", 1);
+}
+
+static void raster_inspection_frames(void) {
+    uint32_t numbers[kSnesInspectionFrames];
+    unsigned count = 0;
+    lock_mutex();
+    for (unsigned i = 0; i < kSnesInspectionFrames; ++i) {
+        const SnesRasterInspectionFrame *entry = s_raster_inspection->history[
+            (s_raster_inspection->next + i) % kSnesInspectionFrames];
+        if (entry->count == kSnesInspectionLines) numbers[count++] = entry->number;
+    }
+    unlock_mutex();
+    char out[128];
+    size_t size = (size_t)snprintf(out, sizeof(out), "{\"frames\":[");
+    for (unsigned i = 0; i < count; ++i)
+        size += (size_t)snprintf(out + size, sizeof(out) - size, "%s%u", i ? "," : "",
+                                 (unsigned)numbers[i]);
+    send_fmt("%s]}", out);
+}
+
+static void raster_inspection_line(unsigned frame, unsigned row, unsigned index) {
+    SnesRenderRegisters registers;
+    uint16_t color;
+    SnesRasterImageLine line;
+    lock_mutex();
+    SnesRasterInspectionFrame *entry = SnesRasterInspectionFind(s_raster_inspection, frame);
+    bool found = entry && SnesRasterInspectionReadLine(entry, row - 1, &line);
+    if (found) {
+        memcpy(&registers, line.registers, sizeof(registers));
+        color = line.palette[index];
+    }
+    unlock_mutex();
+    if (!found) {
+        send_fmt("{\"error\":\"frame unavailable or incomplete\"}");
+        return;
+    }
+    send_fmt("{\"frame\":%u,\"line\":%u,\"cgram_index\":%u,\"cgram\":%u,"
+             "\"main\":%u,\"sub\":%u,\"cgadsub\":%u,\"cgwsel\":%u,\"fixed_color\":%u,"
+             "\"hscroll\":[%u,%u,%u,%u],\"vscroll\":[%u,%u,%u,%u]}",
+             frame, row, index, color, registers.screenEnabled[0], registers.screenEnabled[1],
+             registers.cgadsub, registers.cgwsel, registers.fixedColor,
+             registers.hScroll[0], registers.hScroll[1], registers.hScroll[2], registers.hScroll[3],
+             registers.vScroll[0], registers.vScroll[1], registers.vScroll[2], registers.vScroll[3]);
+}
+
+static void raster_inspection_render(unsigned frame, unsigned mask, const char *path) {
+    if (!s_paused || s_step_remaining) {
+        send_fmt("{\"error\":\"inspection rendering requires a paused frame boundary\"}");
+        return;
+    }
+    uint32_t *pixels = malloc(256 * kSnesInspectionLines * sizeof(*pixels));
+    if (!pixels) {
+        send_fmt("{\"error\":\"inspection image allocation failed\"}");
+        return;
+    }
+    lock_mutex();
+    SnesRasterInspectionFrame *entry = SnesRasterInspectionFind(s_raster_inspection, frame);
+    bool rendered = SnesRasterInspectionDraw(entry, (uint8_t)mask, pixels);
+    unlock_mutex();
+    FILE *image = rendered ? fopen(path, "wb") : NULL;
+    bool written = false;
+    if (image) {
+        fprintf(image, "P6\n256 %d\n255\n", kSnesInspectionLines);
+        for (unsigned i = 0; i < 256 * kSnesInspectionLines; ++i) {
+            fputc((int)(pixels[i] >> 16) & 255, image);
+            fputc((int)(pixels[i] >> 8) & 255, image);
+            fputc((int)pixels[i] & 255, image);
+        }
+        written = !ferror(image);
+        if (fclose(image) != 0) written = false;
+    }
+    free(pixels);
+    if (written)
+        send_fmt("{\"ok\":true,\"frame\":%u,\"layer_mask\":%u}", frame, mask);
+    else
+        send_fmt("{\"error\":\"frame unavailable or inspection output failed\"}");
+}
+
+static void cmd_raster_inspect(const char *args) {
+    if (!s_raster_inspection) {
+        send_fmt("{\"error\":\"start the debug host with SNESRECOMP_RASTER_INSPECTION=1\"}");
+        return;
+    }
+    char action[16], path[256];
+    unsigned frame, row, index, mask;
+    if (!args || sscanf(args, "%15s", action) != 1) action[0] = '\0';
+    if (!strcmp(action, "frames"))
+        raster_inspection_frames();
+    else if (!strcmp(action, "line") &&
+             sscanf(args, "%*s %u %u %u", &frame, &row, &index) == 3 &&
+             row >= 1 && row <= kSnesInspectionLines && index < 256)
+        raster_inspection_line(frame, row, index);
+    else if (!strcmp(action, "render") &&
+             sscanf(args, "%*s %u %x %255s", &frame, &mask, path) == 3 && mask <= 0x1f)
+        raster_inspection_render(frame, mask, path);
+    else
+        send_fmt("{\"error\":\"usage: raster_inspect frames | line <frame> <row> <cgram> | "
+                 "render <frame> <hex-layer-mask> <out.ppm>\"}");
 }
 
 /* render_inject <out_bmp> <vram_byte_lo_hex> <vram_bin> [oam_bin] [cgram_bin]
@@ -8879,6 +9019,7 @@ static const CmdEntry s_commands[] = {
     {"dump_oam",      cmd_dump_oam},
     {"get_ppu_state", cmd_get_ppu_state},
     {"raster_journal", cmd_raster_journal},
+    {"raster_inspect", cmd_raster_inspect},
     {"ppu_lines",     cmd_ppu_lines},
     {"ppu_window",    cmd_ppu_window},
     {"get_cpu_state", cmd_get_cpu_state},
@@ -9035,11 +9176,20 @@ int debug_server_init(int port) {
     }
 #endif
 
+    const char *inspection = getenv("SNESRECOMP_RASTER_INSPECTION");
+    if (inspection && !strcmp(inspection, "1")) {
+        s_raster_inspection = SnesRasterInspectionCreate();
+        if (!s_raster_inspection)
+            fprintf(stderr, "[debug_server] raster inspection allocation failed\n");
+    }
+
     // Spawn background network thread
 #ifdef _WIN32
     s_thread = (HANDLE)_beginthreadex(NULL, 0, debug_server_thread, NULL, 0, NULL);
     if (!s_thread) {
         fprintf(stderr, "[debug_server] Failed to create network thread\n");
+        SnesRasterInspectionDestroy(s_raster_inspection);
+        s_raster_inspection = NULL;
         CLOSESOCKET(s_listen_sock);
         s_listen_sock = SOCKET_INVALID;
         return -1;
@@ -9047,6 +9197,8 @@ int debug_server_init(int port) {
 #else
     if (pthread_create(&s_thread, NULL, debug_server_thread, NULL) != 0) {
         fprintf(stderr, "[debug_server] Failed to create network thread\n");
+        SnesRasterInspectionDestroy(s_raster_inspection);
+        s_raster_inspection = NULL;
         CLOSESOCKET(s_listen_sock);
         s_listen_sock = SOCKET_INVALID;
         return -1;
@@ -9332,6 +9484,9 @@ void debug_server_shutdown(void) {
     free(s_composed_pixels);s_composed_pixels=NULL;s_composed_capacity=0;
     free(s_screenshot_pixels);s_screenshot_pixels=NULL;s_screenshot_capacity=0;
     s_composed_valid=0;
+    SnesRasterInspectionDestroy(s_raster_inspection);
+    s_raster_inspection = NULL;
+    s_inspection_frame_ready = false;
 
 #ifdef _WIN32
     if (InterlockedCompareExchange(&s_mutex_state, 2, 2) == 2) {

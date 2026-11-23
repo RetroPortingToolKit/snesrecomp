@@ -1669,6 +1669,7 @@ static void DrawPpuFrameWithPerf(void) {
   FrameDump_Present(dump_frame, pixel_buffer, pitch,
                     g_snes_width * render_scale, g_snes_height * render_scale);
   FrameDump_Ppu(dump_frame, g_ppu);
+  debug_server_publish_raster_frame(dump_frame);
   /* SNESRECOMP_SCREENSHOT=<path.ppm> [SNESRECOMP_SCREENSHOT_FRAME=<n>]: write
    * the frame presented at simulated frame n (default: the first) as a PPM,
    * OSD included: it is what the player sees, not the bare field.
