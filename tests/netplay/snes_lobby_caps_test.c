@@ -15,6 +15,8 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "../posix_env_compat.h"
+
 /* Found through -I lib/recomp-net/src (run_c_tests.sh). */
 #include "lobby/rnet_lobby_client.c"
 #include "../../runner/src/lobby/snes_lobby_client.c"

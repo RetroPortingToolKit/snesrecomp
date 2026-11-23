@@ -8,11 +8,13 @@ CC="${CC:-gcc}"
 mkdir -p "$OUT"
 
 LAUNCHER_LIBS=""
+NET_LIBS=""
 GC_SECTIONS_LINKER="-Wl,--gc-sections"
 FIBER_PLATFORM_FLAGS=""
 case "$(uname -s)" in
     Darwin) GC_SECTIONS_LINKER="-Wl,-dead_strip"; FIBER_PLATFORM_FLAGS="-Wno-error=deprecated-declarations" ;;
-    MINGW*|MSYS*) LAUNCHER_LIBS="-lcomdlg32" ;;
+    # NET_LIBS: Winsock, the route table (rnet_platform.c) and BCryptGenRandom.
+    MINGW*|MSYS*) LAUNCHER_LIBS="-lcomdlg32"; NET_LIBS="-lws2_32 -liphlpapi -lbcrypt" ;;
 esac
 
 echo "=== launcher ==="
@@ -471,7 +473,7 @@ echo "=== SNES lobby caps (widescreen keys over recomp-net's client) ==="
     "$ROOT/lib/recomp-net/src/nat/rnet_host_ice.c" \
     "$ROOT/lib/recomp-net/src/nat/rnet_sig_hold.c" \
     "$ROOT/lib/recomp-net/src/lobby/rnet_ice_rtt.c" \
-    -o "$OUT/snes_lobby_caps_test"
+    $NET_LIBS -o "$OUT/snes_lobby_caps_test"
 "$OUT/snes_lobby_caps_test"
 
 echo "=== keybinds: the runner-layout keyboard word ==="
@@ -487,13 +489,18 @@ elif pkg-config --exists sdl2 2>/dev/null; then
     KB_SDL_LIBS="$(pkg-config --libs sdl2)"
 fi
 if [ -n "$KB_SDL_LIBS" ]; then
-    "$CC" -std=c11 -Wall -Wextra -O1 $KB_SDL_DEF $KB_SDL_CFLAGS \
+    # SDL_MAIN_HANDLED: as for config.ini below, and for keybinds.c too, which
+    # is built with the same flags. On Windows sdl2.pc renames main to
+    # SDL_main and SDL_main.h declares SDL_main(int, char **), which clashes
+    # with these harnesses' int main(void); handled, it does not, and
+    # SDL2main's WinMain still calls it.
+    "$CC" -std=c11 -Wall -Wextra -O1 -DSDL_MAIN_HANDLED $KB_SDL_DEF $KB_SDL_CFLAGS \
         -I "$ROOT/runner/src" \
         "$ROOT/tests/joypad/keybinds_runner_layout_test.c" \
         "$ROOT/runner/src/keybinds.c" \
         $KB_SDL_LIBS -o "$OUT/keybinds_runner_layout_test"
     ( cd "$OUT" && ./keybinds_runner_layout_test )
-    "$CC" -std=c11 -Wall -Wextra -O1 $KB_SDL_DEF $KB_SDL_CFLAGS \
+    "$CC" -std=c11 -Wall -Wextra -O1 -DSDL_MAIN_HANDLED $KB_SDL_DEF $KB_SDL_CFLAGS \
         -I "$ROOT/runner/src" \
         "$ROOT/tests/joypad/keybinds_appimage_test.c" \
         "$ROOT/runner/src/keybinds.c" \
@@ -632,7 +639,8 @@ elif pkg-config --exists sdl2 2>/dev/null; then
 fi
 if [ -n "$OSD_SDL_LIBS" ]; then
     # shellcheck disable=SC2086
-    "$CC" -std=c11 -Wall -Wextra -O1 \
+    # SDL_MAIN_HANDLED: as for the keybinds harnesses (main() on Windows).
+    "$CC" -std=c11 -Wall -Wextra -O1 -DSDL_MAIN_HANDLED \
         -I "$ROOT/runner/src" -I "$ROOT/runner/src/desktop" \
         $OSD_SDL_CFLAGS $OSD_SDL_BACKEND \
         "$ROOT/tests/osd/osd_test.c" \
@@ -652,7 +660,7 @@ echo "=== account secret path (rebuild must not sign you out) ==="
     "$ROOT/lib/recomp-net/src/auth/rnet_open_url.c" \
     "$ROOT/lib/recomp-net/src/auth/rnet_sha256.c" \
     "$ROOT/lib/recomp-net/src/platform/rnet_platform.c" \
-    -lpthread -o "$OUT/secret_path_test"
+    -lpthread $NET_LIBS -o "$OUT/secret_path_test"
 "$OUT/secret_path_test"
 
 echo "=== rewind ring (ordering, clamping, what commit discards) ==="
@@ -717,8 +725,11 @@ echo "=== Super FX PC hooks ==="
 
 # Both include common_rtl.c whole; -fwhole-program drops the host entry
 # points they do not exercise instead of linking the full runtime. Its
-# desktop config header needs SDL headers, not the library.
-RTL_UNIT_FLAGS="$(pkg-config --cflags sdl2) -std=c11 -O2 -flto -fwhole-program -ffunction-sections -fdata-sections -DSNESRECOMP_TRACE=0 -D_POSIX_C_SOURCE=200809L -I $ROOT/runner/src/desktop -I $ROOT/runner/src"
+# desktop config header needs SDL headers, not the library. -Umain undoes the
+# -Dmain=SDL_main that sdl2.pc carries on Windows (no SDL2main is linked here
+# to call SDL_main); SDL_MAIN_HANDLED keeps SDL_main.h from renaming main()
+# again.
+RTL_UNIT_FLAGS="$(pkg-config --cflags sdl2) -Umain -DSDL_MAIN_HANDLED -std=c11 -O2 -flto -fwhole-program -ffunction-sections -fdata-sections -DSNESRECOMP_TRACE=0 -D_POSIX_C_SOURCE=200809L -I $ROOT/runner/src/desktop -I $ROOT/runner/src"
 
 echo "=== audio delivery + console reset ==="
 "$CC" $RTL_UNIT_FLAGS "$ROOT/tests/audio_delivery_test.c" \

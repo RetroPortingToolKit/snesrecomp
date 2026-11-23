@@ -93,6 +93,9 @@ const char *cpu_dispatch_entry_reason(uint32_t pc, uint8_t mx) {
 void tier2_capture_set_entry_probe(const char *(*probe)(uint32_t, uint8_t)) { (void)probe; abort(); }
 void tier2_capture_set_checkpoint_hook(void (*hook)(void)) { (void)hook; abort(); }
 void Tier2CoverageReset(void) { abort(); }
+/* The same for snes_refresh_charge's beam rule (snes.c, not linked here). */
+bool snes_refresh_at_beam(void) { abort(); }
+uint64_t snes_next_refresh(const Snes *snes, uint64_t after) { (void)snes; (void)after; abort(); }
 void sha256_compute(const uint8_t *data, size_t len, uint8_t out[32]) {
   (void)data; (void)len; (void)out; abort();
 }

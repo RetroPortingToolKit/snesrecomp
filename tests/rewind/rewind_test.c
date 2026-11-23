@@ -18,6 +18,8 @@
 #include <stdint.h>
 #include <stdlib.h>
 
+#include "../posix_env_compat.h"
+
 static int failures;
 static void check(int ok, const char *what) {
     printf("  %s  %s\n", ok ? "ok  " : "FAIL", what);

@@ -20,6 +20,38 @@
 #include <sys/types.h>
 #include <time.h>
 
+/* Windows (MinGW): there is no /tmp, mkdir takes one argument, and system()
+ * runs cmd.exe, which strips the first and last quote of a command line that
+ * holds more than one quoted part -- so the whole line is quoted once more. */
+#ifdef _WIN32
+#include <direct.h>
+#include <io.h>
+#define make_dir(path) _mkdir(path)
+#define SHELL_QUOTE "\""
+#else
+#define make_dir(path) mkdir((path), 0700)
+#define SHELL_QUOTE ""
+#endif
+
+static char *temp_dir(char *out, size_t size, const char *stem) {
+#ifdef _WIN32
+    const char *base = getenv("TEMP");
+    if (!base || !*base) base = ".";
+#else
+    const char *base = "/tmp";
+#endif
+    int length = snprintf(out, size, "%s/%s_XXXXXX", base, stem);
+    if (length < 0 || (size_t)length >= size) return NULL;
+#ifdef _WIN32
+    /* Older MinGW runtimes lack mkdtemp. A failed directory creation must
+     * leave the selected path unused by this test. */
+    if (_mktemp_s(out, size) || make_dir(out)) return NULL;
+    return out;
+#else
+    return mkdtemp(out);
+#endif
+}
+
 static int failures;
 static void check(int ok, const char *what) {
     printf("  %s  %s\n", ok ? "ok  " : "FAIL", what);
@@ -43,11 +75,12 @@ static int file_has(const char *path, const char *needle) {
  * destroyed a working sign-in and demanded a fresh Discord login. Port 59999
  * on loopback refuses immediately, so this stays hermetic and fast. */
 static int run_unreachable(void) {
-    char tmpl[] = "/tmp/rnet_unreach_XXXXXX";
-    const char *dir = mkdtemp(tmpl);
+    char tmpl[512];
+    const char *dir;
     char keep[512];
     FILE *f;
     int i, st = 0;
+    dir = temp_dir(tmpl, sizeof(tmpl), "rnet_unreach");
     if (!dir) return 1;
     snprintf(keep, sizeof(keep), "%s/netplay_secret", dir);
     f = fopen(keep, "wb");
@@ -129,15 +162,15 @@ static int run_roundtrip(const char *dir, const char *want_id, const char *want_
 static const char *self_path;
 
 int main(int argc, char **argv) {
-    char tmpl[] = "/tmp/rnet_secret_test_XXXXXX";
+    char tmpl[512];
     const char *dir;
     char newpath[512];
     self_path = argv[0];
     if (argc > 1 && strcmp(argv[1], "--unreachable") == 0) return run_unreachable();
     if (argc > 4 && strcmp(argv[1], "--roundtrip") == 0)
         return run_roundtrip(argv[2], argv[3], argv[4]);
-    dir = mkdtemp(tmpl);
-    if (!dir) { printf("mkdtemp failed\n"); return 1; }
+    dir = temp_dir(tmpl, sizeof(tmpl), "rnet_secret_test");
+    if (!dir) { printf("could not create the test directory\n"); return 1; }
     if (chdir(dir) != 0) { printf("chdir failed\n"); return 1; }
 
     /* A previous run's credential, sitting in the working directory. */
@@ -177,12 +210,13 @@ int main(int argc, char **argv) {
 
         char rt_dir[512];
         snprintf(rt_dir, sizeof(rt_dir), "%s/rt", dir);
-        if (mkdir(rt_dir, 0700) != 0) { check(0, "could not make rt dir"); }
+        if (make_dir(rt_dir) != 0) { check(0, "could not make rt dir"); }
 
         /* Reload in a child: the module loads its secret once per process. */
         {
             char cmd[1024];
-            snprintf(cmd, sizeof(cmd), "\"%s\" --roundtrip \"%s\" \"%s\" \"%s\"",
+            snprintf(cmd, sizeof(cmd),
+                     SHELL_QUOTE "\"%s\" --roundtrip \"%s\" \"%s\" \"%s\"" SHELL_QUOTE,
                      self_path, rt_dir, real_id, long_secret);
             check(system(cmd) == 0,
                   "a 36-char id and a 68-char secret survive the load intact");
@@ -196,7 +230,8 @@ int main(int argc, char **argv) {
     {
         char cmd[1024];
         int rc;
-        snprintf(cmd, sizeof(cmd), "\"%s\" --unreachable", self_path);
+        snprintf(cmd, sizeof(cmd), SHELL_QUOTE "\"%s\" --unreachable" SHELL_QUOTE,
+                 self_path);
         rc = system(cmd);
         check(rc == 0, "an unreachable server is retried, keeps the key, and "
                        "reports the failure (child process)");
