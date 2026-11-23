@@ -11,7 +11,7 @@ extern "C" {
  * first run.
  *
  * Layout matches the SNES gamepad: A, B, X, Y, L, R, Start, Select, and
- * the d-pad. Up to eight players. Each button maps to one SDL_Scancode.
+ * the d-pad. Up to eight players. Each button maps to a key or mouse button.
  *
  * The button bitmask returned by keybinds_read_player() is a keyboard-local
  * layout consumed by the desktop host's remap table. It is not the
@@ -79,6 +79,13 @@ uint16_t keybinds_read_player(const uint8_t *keys, int player);
  * per-game host and reached a player as "the arrow keys all go the wrong
  * way". Having both here means no runner has to know the mirror exists. */
 uint16_t keybinds_read_player_runner(const uint8_t *keys, int player);
+
+/* Read the seat's desktop key and mouse bindings. The mouse mask uses SDL
+ * button bits and comes only from events for the active game window. */
+uint16_t keybinds_read_player_desktop(const uint8_t *keys, uint32_t mouse_buttons,
+                                     int player);
+uint32_t keybinds_mouse_event(uint32_t buttons, uint32_t window_id,
+                              const SDL_Event *event);
 
 /* ── Rebind API (used by the launcher's Configure view) ──────────────────
  * Buttons are indexed 0..keybinds_button_count()-1 in the fixed order

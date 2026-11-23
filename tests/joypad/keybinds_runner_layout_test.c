@@ -24,6 +24,56 @@
 static int fails;
 static void ck(const char *w,int ok){printf("  %-46s %s\n",w,ok?"ok":"FAIL");if(!ok)fails++;}
 
+static void test_mouse_bindings(const uint8_t *keys) {
+    const uint32_t game_window = 101;
+    static const int bindings[] = {3, 4, 7, 0, 1};
+    static const int runner_bits[] = {1, 10, 2, 8, 0};
+    SDL_Event event;
+    SDL_zero(event);
+    uint32_t mouse = 0;
+    for (int i = 0; i < 5; ++i) {
+        keybinds_set_button(1, bindings[i], (SDL_Scancode)(513 + i));
+        event.type = SDL_MOUSEBUTTONDOWN;
+        event.button.windowID = game_window;
+        event.button.button = (Uint8)(i + 1);
+        mouse = keybinds_mouse_event(mouse, game_window, &event);
+        ck("mouse press reaches its configured SNES bit",
+           keybinds_read_player_desktop(keys, mouse, 1) == (1u << runner_bits[i]));
+        ck("mouse press stays out of another seat",
+           keybinds_read_player_desktop(keys, mouse, 2) == 0);
+        event.type = SDL_MOUSEBUTTONUP;
+        mouse = keybinds_mouse_event(mouse, game_window, &event);
+        ck("mouse release clears the SNES bit", !keybinds_read_player_desktop(keys, mouse, 1));
+    }
+    event.type = SDL_MOUSEBUTTONDOWN;
+    event.button.windowID = game_window + 1;
+    ck("other-window clicks are ignored", !keybinds_mouse_event(mouse, game_window, &event));
+    event.button.windowID = game_window;
+    event.button.which = SDL_TOUCH_MOUSEID;
+    ck("touch-generated clicks are ignored", !keybinds_mouse_event(mouse, game_window, &event));
+    event.button.which = 0;
+    mouse = keybinds_mouse_event(mouse, game_window, &event);
+    ck("the physical game-window click is accepted", mouse != 0);
+    SDL_zero(event);
+    event.window.windowID = game_window;
+#if SNESRECOMP_SDL3
+    event.type = SDL_EVENT_WINDOW_FOCUS_LOST;
+#else
+    event.type = SDL_WINDOWEVENT;
+    event.window.event = SDL_WINDOWEVENT_FOCUS_LOST;
+#endif
+    ck("focus loss releases held mouse buttons", !keybinds_mouse_event(mouse, game_window, &event));
+    ck("keyboard-only readers ignore mouse bindings", !keybinds_read_player_runner(keys, 1));
+
+    keybinds_save();
+    keybinds_init(NULL);
+    for (int i = 0; i < 5; ++i)
+        ck("mouse binding survives save and reload",
+           keybinds_get_button(1, bindings[i]) == (SDL_Scancode)(513 + i));
+    keybinds_reset_player(1);
+    keybinds_save();
+}
+
 int main(void){
     keybinds_init(NULL);
     static unsigned char keys[512];
@@ -68,6 +118,8 @@ int main(void){
     keybinds_init(NULL);
     ck("[player3] survives save + reload", keybinds_get_button(3,6) == SDL_SCANCODE_KP_ENTER);
     ck("player 5 still unbound", keybinds_get_button(5,6) == SDL_SCANCODE_UNKNOWN);
+    memset(keys, 0, sizeof keys);
+    test_mouse_bindings(keys);
     printf("\n%s (%d failure%s)\n", fails?"FAILED":"PASSED", fails, fails==1?"":"s");
     return fails?1:0;
 }
