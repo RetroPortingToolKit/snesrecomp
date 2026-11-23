@@ -8,11 +8,11 @@ static unsigned locks, calls;
 void RtlApuLock(void) { ++locks; }
 void RtlApuUnlock(void) { assert(locks); --locks; }
 double RtlAudioOutputRate(void) { return 44100.0; }
-static void pack(const char *path, int16_t sample) {
+static void pack(const char *path, int16_t sample, unsigned frames) {
     FILE *f = fopen(path, "wb"); assert(f);
     const uint8_t header[8] = {'M','S','U','1',0,0,0,0};
     assert(fwrite(header, 1, 8, f) == 8);
-    for (unsigned i=0; i<64; ++i) {
+    for (unsigned i=0; i<frames; ++i) {
         int16_t pair[2] = {sample, -sample};
         assert(fwrite(pair, sizeof(pair), 1, f) == 1);
     }
@@ -34,9 +34,10 @@ static void samples(int16_t expected) {
     for (unsigned i=0; i<4; ++i) { assert(out[2*i] == expected); assert(out[2*i+1] == -expected); }
 }
 int main(void) {
-    pack("msu-route-primary-10.pcm", 111);
-    pack("msu-route-primary-77.pcm", 777);
-    pack("msu-route-secondary-10.pcm", 222);
+    pack("msu-route-primary-10.pcm", 111, 64);
+    pack("msu-route-primary-77.pcm", 777, 64);
+    pack("msu-route-primary-98.pcm", 0, 0);
+    pack("msu-route-secondary-10.pcm", 222, 64);
 #ifdef _WIN32
     _putenv_s("SNESRECOMP_MSU1", "msu-route-primary");
 #else
@@ -51,9 +52,13 @@ int main(void) {
     select_track(10); samples(222); assert(calls == 3);
     msu1_set_track_resolver(NULL, NULL);
     select_track(10); samples(111); assert(calls == 3);
+    select_track(98);
+    assert((msu1_read(0x2000) & 0x18) == 0x08);
+    samples(0);
     select_track(99); assert(msu1_read(0x2000) & 8); /* close active file */
     assert(!remove("msu-route-primary-10.pcm"));
     assert(!remove("msu-route-primary-77.pcm"));
+    assert(!remove("msu-route-primary-98.pcm"));
     assert(!remove("msu-route-secondary-10.pcm"));
     puts("MSU default/override/rejected track resolution and reset passed");
     return 0;

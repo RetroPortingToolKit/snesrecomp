@@ -288,6 +288,15 @@ static void msu_load_track(uint16_t track) {
         g.data_start = 0;
         fseek(f, 0, SEEK_SET);
     }
+    /* Reject missing sample payloads before a caller switches its audio
+     * routes. A complete stereo frame is four bytes. */
+    uint8_t first_frame[4];
+    if (fread(first_frame, 1, sizeof(first_frame), f) != sizeof(first_frame) ||
+        fseek(f, g.data_start, SEEK_SET) != 0) {
+        fclose(f);
+        g.audio_error = true;
+        return;
+    }
     g.track = f;
 }
 
