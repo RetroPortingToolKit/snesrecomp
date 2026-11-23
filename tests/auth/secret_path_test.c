@@ -25,6 +25,7 @@
  * holds more than one quoted part -- so the whole line is quoted once more. */
 #ifdef _WIN32
 #include <direct.h>
+#include <io.h>
 #define make_dir(path) _mkdir(path)
 #define SHELL_QUOTE "\""
 #else
@@ -32,14 +33,23 @@
 #define SHELL_QUOTE ""
 #endif
 
-static void temp_template(char *out, size_t size, const char *stem) {
+static char *temp_dir(char *out, size_t size, const char *stem) {
 #ifdef _WIN32
     const char *base = getenv("TEMP");
     if (!base || !*base) base = ".";
 #else
     const char *base = "/tmp";
 #endif
-    snprintf(out, size, "%s/%s_XXXXXX", base, stem);
+    int length = snprintf(out, size, "%s/%s_XXXXXX", base, stem);
+    if (length < 0 || (size_t)length >= size) return NULL;
+#ifdef _WIN32
+    /* Older MinGW runtimes lack mkdtemp. A failed directory creation must
+     * leave the selected path unused by this test. */
+    if (_mktemp_s(out, size) || make_dir(out)) return NULL;
+    return out;
+#else
+    return mkdtemp(out);
+#endif
 }
 
 static int failures;
@@ -70,8 +80,7 @@ static int run_unreachable(void) {
     char keep[512];
     FILE *f;
     int i, st = 0;
-    temp_template(tmpl, sizeof(tmpl), "rnet_unreach");
-    dir = mkdtemp(tmpl);
+    dir = temp_dir(tmpl, sizeof(tmpl), "rnet_unreach");
     if (!dir) return 1;
     snprintf(keep, sizeof(keep), "%s/netplay_secret", dir);
     f = fopen(keep, "wb");
@@ -160,9 +169,8 @@ int main(int argc, char **argv) {
     if (argc > 1 && strcmp(argv[1], "--unreachable") == 0) return run_unreachable();
     if (argc > 4 && strcmp(argv[1], "--roundtrip") == 0)
         return run_roundtrip(argv[2], argv[3], argv[4]);
-    temp_template(tmpl, sizeof(tmpl), "rnet_secret_test");
-    dir = mkdtemp(tmpl);
-    if (!dir) { printf("mkdtemp failed\n"); return 1; }
+    dir = temp_dir(tmpl, sizeof(tmpl), "rnet_secret_test");
+    if (!dir) { printf("could not create the test directory\n"); return 1; }
     if (chdir(dir) != 0) { printf("chdir failed\n"); return 1; }
 
     /* A previous run's credential, sitting in the working directory. */
