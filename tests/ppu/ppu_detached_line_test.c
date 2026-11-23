@@ -153,6 +153,18 @@ static void test_raster_inspection(void) {
   ppu_write(&live, 0x05, 1);
   ppu_write(&live, 0x07, 4);
   ppu_write(&live, 0x2c, 1);
+  /* Program OAM slot 7 and its high-table select bits through the PPU. */
+  ppu_write(&live, 0x01, 0x20);
+  ppu_write(&live, 0x02, 14);
+  ppu_write(&live, 0x03, 0);
+  ppu_write(&live, 0x04, 250);
+  ppu_write(&live, 0x04, 108);
+  ppu_write(&live, 0x04, 0x2a);
+  ppu_write(&live, 0x04, 0xfb);
+  ppu_write(&live, 0x02, 0);
+  ppu_write(&live, 0x03, 1);
+  ppu_write(&live, 0x04, 0);
+  ppu_write(&live, 0x04, 0xc0);
   for (unsigned y = 0; y < 8; ++y) live.vram[y] = 0x00ff;
   unsigned first = ++snes_frame_counter;
   for (unsigned frame = 0; frame < 2; ++frame) {
@@ -160,12 +172,14 @@ static void test_raster_inspection(void) {
     snes_frame_counter = first + frame + (frame != 0);
     ppu_write(&live, 0x31, 0);
     write_palette(&live, 1, frame ? 0x03e0 : 0x001f);
+    write_palette(&live, 0xd1, frame ? 0x4210 : 0x1234);
     PpuBeginDrawing(&live, (uint8_t *)inspection_original[frame], 256 * 4,
                     kPpuRenderFlags_NewRenderer);
     ppu_runLine(&live, 0);
     for (unsigned line = 1; line <= kSnesInspectionLines; ++line) {
       if (line == 113) {
         write_palette(&live, 1, 0x7c00);
+        write_palette(&live, 0xd1, 0x2468);
         ppu_write(&live, 0x31, 1);
         ppu_write(&live, 0x32, 0x5f);
       }
@@ -209,6 +223,22 @@ static void test_raster_inspection(void) {
   CHECK(paused_frame == snes_frame_counter);
   CHECK(lines == line_calls && drawn == drawn_calls && windows == window_calls);
   CHECK(oam == oam_calls && shadows == shadow_calls);
+
+  SnesRasterInspectionObject sprite;
+  CHECK(SnesRasterInspectionReadObject(past, 111, 7, &sprite));
+  CHECK(sprite.x == -6 && sprite.y == 108 && sprite.tile == 0x12a);
+  CHECK(sprite.priority == 3 && sprite.size_select == 1 && sprite.obj_selection == 0x20);
+  CHECK(sprite.flip_x && sprite.flip_y && sprite.palette_base == 0xd0);
+  CHECK(sprite.palette[1] == 0x1234);
+  CHECK(SnesRasterInspectionReadObject(past, 112, 7, &sprite));
+  CHECK(sprite.palette[1] == 0x2468);
+  CHECK(SnesRasterInspectionReadObject(latest, 111, 7, &sprite));
+  CHECK(sprite.palette[1] == 0x4210);
+  CHECK(!SnesRasterInspectionReadObject(latest, 224, 7, &sprite));
+  CHECK(!SnesRasterInspectionReadObject(latest, 111, 128, &sprite));
+  CHECK(memcmp(&live, &live_before, sizeof live) == 0);
+  CHECK(memcmp(&machine, &inspection_machine_before, sizeof machine) == 0);
+  CHECK(memcmp(&inspection_dma, &inspection_dma_before, sizeof inspection_dma) == 0);
 
   for (unsigned line = 2; line <= kSnesInspectionLines; ++line)
     ppu_runLine(&live, (int)line);

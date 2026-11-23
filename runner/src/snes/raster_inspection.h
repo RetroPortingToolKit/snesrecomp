@@ -25,6 +25,13 @@ typedef struct SnesRasterInspection {
   unsigned next;
 } SnesRasterInspection;
 
+typedef struct SnesRasterInspectionObject {
+  int x;
+  unsigned y, tile, priority, size_select, obj_selection, palette_base;
+  bool flip_x, flip_y;
+  uint16_t palette[16];
+} SnesRasterInspectionObject;
+
 static inline SnesRasterInspection *SnesRasterInspectionCreate(void) {
   SnesRasterInspection *inspection = calloc(1, sizeof(*inspection));
   if (inspection) {
@@ -133,6 +140,27 @@ static inline bool SnesRasterInspectionReadLine(const void *context, unsigned y,
   const SnesRasterInspectionFrame *frame = context;
   if (y >= frame->count) return false;
   *result = frame->lines[y];
+  return true;
+}
+
+static inline bool SnesRasterInspectionReadObject(const SnesRasterInspectionFrame *frame,
+    unsigned y, unsigned slot, SnesRasterInspectionObject *result) {
+  SnesRasterImageLine line;
+  if (!frame || slot >= 128 || !SnesRasterInspectionReadLine(frame, y, &line)) return false;
+  SnesRenderRegisters registers;
+  memcpy(&registers, line.registers, sizeof(registers));
+  uint16_t pos = line.oam[slot * 2], attributes = line.oam[slot * 2 + 1];
+  unsigned high = (line.high_oam[slot / 4] >> ((slot % 4) * 2)) & 3;
+  result->x = (int)(pos & 255) - ((high & 1) ? 256 : 0);
+  result->y = pos >> 8;
+  result->tile = attributes & 0x1ff;
+  result->priority = (attributes >> 12) & 3;
+  result->size_select = high >> 1;
+  result->obj_selection = registers.obsel;
+  result->flip_x = (attributes & 0x4000) != 0;
+  result->flip_y = (attributes & 0x8000) != 0;
+  result->palette_base = PpuObjPaletteBase(attributes);
+  memcpy(result->palette, line.palette + result->palette_base, sizeof(result->palette));
   return true;
 }
 

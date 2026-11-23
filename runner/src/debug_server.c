@@ -5347,6 +5347,29 @@ static void raster_inspection_render(unsigned frame, unsigned mask, const char *
         send_fmt("{\"error\":\"frame unavailable or inspection output failed\"}");
 }
 
+static void raster_inspection_sprite(unsigned frame, unsigned row, unsigned slot) {
+    SnesRasterInspectionObject object;
+    lock_mutex();
+    const SnesRasterInspectionFrame *entry = SnesRasterInspectionFind(s_raster_inspection, frame);
+    bool found = SnesRasterInspectionReadObject(entry, row - 1, slot, &object);
+    unlock_mutex();
+    if (!found) {
+        send_fmt("{\"error\":\"frame unavailable or incomplete\"}");
+        return;
+    }
+    char colors[112];
+    size_t size = 0;
+    for (unsigned i = 0; i < 16; ++i)
+        size += (size_t)snprintf(colors + size, sizeof(colors) - size, "%s%u", i ? "," : "",
+                                 (unsigned)object.palette[i]);
+    send_fmt("{\"frame\":%u,\"line\":%u,\"slot\":%u,\"x\":%d,\"y\":%u,\"tile\":%u,"
+             "\"priority\":%u,\"size_select\":%u,\"obsel\":%u,\"flip_x\":%s,\"flip_y\":%s,"
+             "\"cgram_base\":%u,\"cgram\":[%s]}",
+             frame, row, slot, object.x, object.y, object.tile, object.priority,
+             object.size_select, object.obj_selection, object.flip_x ? "true" : "false",
+             object.flip_y ? "true" : "false", object.palette_base, colors);
+}
+
 static void cmd_raster_inspect(const char *args) {
     if (!s_raster_inspection) {
         send_fmt("{\"error\":\"start the debug host with SNESRECOMP_RASTER_INSPECTION=1\"}");
@@ -5361,11 +5384,16 @@ static void cmd_raster_inspect(const char *args) {
              sscanf(args, "%*s %u %u %u", &frame, &row, &index) == 3 &&
              row >= 1 && row <= kSnesInspectionLines && index < 256)
         raster_inspection_line(frame, row, index);
+    else if (!strcmp(action, "sprite") &&
+             sscanf(args, "%*s %u %u %u", &frame, &row, &index) == 3 &&
+             row >= 1 && row <= kSnesInspectionLines && index < 128)
+        raster_inspection_sprite(frame, row, index);
     else if (!strcmp(action, "render") &&
              sscanf(args, "%*s %u %x %255s", &frame, &mask, path) == 3 && mask <= 0x1f)
         raster_inspection_render(frame, mask, path);
     else
         send_fmt("{\"error\":\"usage: raster_inspect frames | line <frame> <row> <cgram> | "
+                 "sprite <frame> <row> <slot> | "
                  "render <frame> <hex-layer-mask> <out.ppm>\"}");
 }
 

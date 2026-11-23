@@ -437,6 +437,9 @@ extern uint8_t g_snes_ppu_dbg_layer_mask;
 #define PPU_objSize(ppu) (ppu->obsel >> 5)
 #define PPU_objTileAdr1(ppu) ((ppu->obsel & 7) << 13)
 #define PPU_objTileAdr2(ppu) (PPU_objTileAdr1(ppu) + (((ppu->obsel & 0x18) + 8) << 9))
+static inline unsigned PpuObjPaletteBase(uint16_t attributes) {
+  return 0x80 + 16 * ((attributes >> 9) & 7);
+}
 
 #define PPU_objPriority(ppu) (ppu->oamaddh & 0x80)
 
