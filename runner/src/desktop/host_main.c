@@ -1888,14 +1888,6 @@ static void PumpOverlayEvents(bool *running, void (*key_down)(int key, int repea
       *running = false;
       break;
     case SDL_KEYDOWN:
-      /* The browser consumes SNES control bits too. Dispatch only controls;
-       * slot/reset hotkeys must not change the guest behind a modal panel. */
-      if (key_down == snes_savestate_menu_handle_key) {
-        int cmd = FindCmdForSdlKey(SNESRECOMP_SDL_EVENT_KEY(event),
-                                  SNESRECOMP_SDL_EVENT_MOD(event));
-        if (cmd >= kKeys_Controls && cmd <= kKeys_Controls_Last)
-          HandleCommand(cmd, true);
-      }
       key_down(SNESRECOMP_SDL_EVENT_KEY(event), SNESRECOMP_SDL_EVENT_REPEAT(event));
       break;
     case SDL_KEYUP:
@@ -1905,6 +1897,27 @@ static void PumpOverlayEvents(bool *running, void (*key_down)(int key, int repea
       break;
     }
   }
+  /* Both panels consume SNES control bits too (the browser navigates; in
+   * rewind A commits and B closes), so a keyboard player's buttons must reach
+   * them, from the same physical keys as in the game: keybinds.ini by
+   * scancode, read the way the main loop reads it. The [KeyMap] controls this
+   * used before name keycodes, not key positions, so on a QWERTZ keyboard the
+   * browser took Z for B while the game's B is the key labelled Y, and rewind
+   * got no keyboard buttons at all. Only controls: slot/reset hotkeys must not
+   * change the guest behind a modal panel. */
+  PollKeyboardControls(snesrecomp_sdl_get_keyboard_state());
+}
+
+/* True when `key` is the physical key keybinds.ini gives one of player 1's
+ * SNES buttons while the keyboard plays player 1: the pad word then already
+ * carries it, and a panel must not act on the key event a second time. */
+static bool KeyIsPadControl(int key) {
+  uint8_t keys[SDL_SCANCODE_COUNT] = {0};
+  const SDL_Scancode sc = snesrecomp_sdl_scancode_from_key(key);
+  if (g_config.player_src[0] != 1 || sc <= SDL_SCANCODE_UNKNOWN || sc >= SDL_SCANCODE_COUNT)
+    return false;
+  keys[sc] = 1;
+  return keybinds_read_player_runner(keys, 1) != 0;
 }
 
 /* Controller gestures, from config.ini [Controller]: RewindGesture (default
@@ -2240,9 +2253,13 @@ static void RunSavestateMenuLoop(bool *running) {
 
 static void RewindKeyDown(int key, int repeat) {
   (void)repeat;
+  /* An arrow bound to the d-pad already reaches the pad word, where
+   * RunRewindLoop scrubs with hold-to-repeat; stepping here as well would
+   * move two snapshots per press. */
+  const bool control = KeyIsPadControl(key);
   switch (key) {
-  case SDLK_LEFT:   snes_rewind_step(-1); break;
-  case SDLK_RIGHT:  snes_rewind_step(+1); break;
+  case SDLK_LEFT:   if (!control) snes_rewind_step(-1); break;
+  case SDLK_RIGHT:  if (!control) snes_rewind_step(+1); break;
   case SDLK_RETURN:
   case SDLK_SPACE:  snes_rewind_commit(); break;
   case SDLK_ESCAPE: snes_rewind_close();  break;
@@ -2255,7 +2272,9 @@ static void RewindKeyDown(int key, int repeat) {
  * ports: Left/Right scrub (hold to keep scrubbing), Enter or Space commits,
  * Escape cancels, and the pad mirrors them. */
 static void RunRewindLoop(bool *running) {
-  uint32 prev_pad = 0;
+  /* A or B held when the strip opens (a dash, a jump) is not a press: it
+   * would commit or close the strip at once. */
+  uint32 prev_pad = OverlayNavInputs();
   uint32 held_dir = 0;
   uint32 held_since = 0, last_repeat = 0;
   unsigned frames = 0;
