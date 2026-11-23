@@ -1033,6 +1033,20 @@ function(snesrecomp_target_generated_code target gen_dir)
                 "so the zip cannot carry ROM-derived output by accident. Remove "
                 "${gen_dir}/*.c (and recomp/funcs.h) or configure without the option.")
         endif()
+        set(_dispatch "${gen_dir}/dispatch_v2.c")
+        if(EXISTS "${_dispatch}")
+            # Every current v2 dispatcher defines this count, even when the
+            # program has no native continuations.
+            set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${_dispatch}")
+            file(STRINGS "${_dispatch}" _resume_count LIMIT_COUNT 1
+                REGEX "^const unsigned g_aot_resume_count[ \t]*=")
+            if(NOT _resume_count)
+                message(FATAL_ERROR
+                    "${_dispatch} was generated for an older snesrecomp runtime.\n"
+                    "Run bash tools/regen.sh with your verified ROM using the current "
+                    "snesrecomp checkout, then configure and build again.")
+            endif()
+        endif()
         target_sources(${target} PRIVATE ${_gen_sources})
         # Generated C is machine output: it is not held to the runner's
         # warning bar, and treating it as such buries real warnings from the
