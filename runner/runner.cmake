@@ -288,6 +288,7 @@ set(SNESRECOMP_RUNNER_SOURCES
     ${SNESRECOMP_RUNNER_ROOT}/src/diagnostics/trace_writer.c
     ${SNESRECOMP_RUNNER_ROOT}/src/diagnostics/replay_writer.c
     ${SNESRECOMP_RUNNER_ROOT}/src/host_args.c
+    ${SNESRECOMP_RUNNER_ROOT}/src/desktop/headless_capture.c
     ${SNESRECOMP_RUNNER_ROOT}/src/launcher.c
     ${SNESRECOMP_RUNNER_ROOT}/src/launcher_cache.c
     ${SNESRECOMP_RUNNER_ROOT}/src/launcher_picker.c

@@ -5,6 +5,7 @@
 #include "snes/tier2_capture.h"
 
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 static const char *absolutize(const char *path, char *buf, size_t size) {
@@ -33,6 +34,13 @@ void snesrecomp_host_args_usage(const char *program, const char *extra) {
           "  --paused              start paused.\n"
           "  --script <path>       run an input script.\n"
           "  --framedump <dir>     write frames to this directory.\n"
+          "  --capture-out <dir>   headless: write presented frames (PNG) here.\n"
+          "  --capture-size WxH    drawable size a window would have (default native).\n"
+          "  --capture-from/--capture-to N, --capture-every K   frame range.\n"
+          "  --capture-wav <file>  headless: mixed audio (16-bit stereo).\n"
+          "  --input-script <file> frame-indexed input: '<frame> [P:]BUTTONS'.\n"
+          "  --exit-at-frame N     stop after N simulated frames.\n"
+          "  --load-state <path>   load this save state before the first frame (kept).\n"
           "  --resume-state <path> load this save state before the first frame,\n"
           "                        then delete it (the in-game launcher's restart).\n"
           "  --help, -h            this message.\n");
@@ -55,6 +63,8 @@ int snesrecomp_host_args_parse(int *argc_io, char ***argv_io,
                                SnesrecompHostArgs *out) {
   if (!argc_io || !argv_io || !out) return 0;
   memset(out, 0, sizeof(*out));
+  out->capture_from = out->capture_to = out->exit_at_frame = -1;
+  out->capture_every = 1;
   out->coverage_capture = -1;
 
   int argc = *argc_io;
@@ -65,7 +75,8 @@ int snesrecomp_host_args_parse(int *argc_io, char ***argv_io,
   const char *rom_pos = NULL;    /* first bare positional */
   const char *config_raw = NULL;
   const char *script_raw = NULL;
-  const char *framedump_raw = NULL;
+  const char *framedump_raw = NULL, *load_raw = NULL;
+  const char *capture_out_raw = NULL, *capture_wav_raw = NULL, *input_script_raw = NULL;
   const char *resume_raw = NULL;
 
   /* Single order-independent pass. argv[0] is kept; everything this function
@@ -94,12 +105,45 @@ int snesrecomp_host_args_parse(int *argc_io, char ***argv_io,
       continue;
     }
 
+    /* Headless capture contract (desktop/headless_capture.h). */
+    if (!strcmp(a, "--capture-out") || !strcmp(a, "--capture-wav") ||
+        !strcmp(a, "--input-script") || !strcmp(a, "--capture-size") ||
+        !strcmp(a, "--capture-from") || !strcmp(a, "--capture-to") ||
+        !strcmp(a, "--capture-every") || !strcmp(a, "--exit-at-frame")) {
+      if (i + 1 >= argc || !argv[i + 1]) {
+        fprintf(stderr, "%s requires a value\n\n", a);
+        snesrecomp_host_args_usage(program, NULL);
+        return 0;
+      }
+      const char *v = argv[++i];
+      if (!strcmp(a, "--capture-out")) capture_out_raw = v;
+      else if (!strcmp(a, "--capture-wav")) capture_wav_raw = v;
+      else if (!strcmp(a, "--input-script")) input_script_raw = v;
+      else if (!strcmp(a, "--capture-size")) {
+        int cw = 0, ch = 0;
+        if (sscanf(v, "%dx%d", &cw, &ch) != 2 || cw < 16 || ch < 16 ||
+            cw > 16384 || ch > 16384) {
+          fprintf(stderr, "--capture-size expects WxH, got '%s'\n", v);
+          return 0;
+        }
+        out->capture_width = cw; out->capture_height = ch;
+      }
+      else if (!strcmp(a, "--capture-from")) out->capture_from = atol(v);
+      else if (!strcmp(a, "--capture-to")) out->capture_to = atol(v);
+      else if (!strcmp(a, "--capture-every")) {
+        out->capture_every = atoi(v);
+        if (out->capture_every < 1) out->capture_every = 1;
+      }
+      else out->exit_at_frame = atol(v);
+      continue;
+    }
+
     /* Flags taking a value. A missing value is a usage error rather than a
      * silently dropped flag, which is how `--script` with nothing after it
      * used to behave. */
     if (strcmp(a, "--rom") == 0 || strcmp(a, "--config") == 0 ||
         strcmp(a, "--script") == 0 || strcmp(a, "--framedump") == 0 ||
-        strcmp(a, "--resume-state") == 0) {
+        strcmp(a, "--resume-state") == 0 || strcmp(a, "--load-state") == 0) {
       if (i + 1 >= argc || !argv[i + 1]) {
         fprintf(stderr, "%s requires a path\n\n", a);
         snesrecomp_host_args_usage(program, NULL);
@@ -110,6 +154,7 @@ int snesrecomp_host_args_parse(int *argc_io, char ***argv_io,
       else if (strcmp(a, "--config") == 0) config_raw = v;
       else if (strcmp(a, "--script") == 0) script_raw = v;
       else if (strcmp(a, "--resume-state") == 0) resume_raw = v;
+      else if (strcmp(a, "--load-state") == 0) load_raw = v;
       else framedump_raw = v;
       continue;
     }
@@ -145,8 +190,16 @@ int snesrecomp_host_args_parse(int *argc_io, char ***argv_io,
                                 sizeof(out->script_buf));
   out->framedump_dir = absolutize(framedump_raw, out->framedump_buf,
                                   sizeof(out->framedump_buf));
+  out->load_state = absolutize(load_raw, out->load_state_buf,
+                               sizeof(out->load_state_buf));
   out->resume_state = absolutize(resume_raw, out->resume_buf,
                                  sizeof(out->resume_buf));
+  out->capture_out = absolutize(capture_out_raw, out->capture_out_buf,
+                                sizeof(out->capture_out_buf));
+  out->capture_wav = absolutize(capture_wav_raw, out->capture_wav_buf,
+                                sizeof(out->capture_wav_buf));
+  out->input_script = absolutize(input_script_raw, out->input_script_buf,
+                                 sizeof(out->input_script_buf));
   tier2_capture_configure(out->expose_coverage_mod, -1, out->coverage_capture);
   return 1;
 }

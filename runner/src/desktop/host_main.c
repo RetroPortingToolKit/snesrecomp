@@ -72,6 +72,7 @@
 #include "launcher_cache.h"
 #include "host_paths.h"
 #include "host_args.h"
+#include "headless_capture.h"
 #include "host_relaunch.h"
 #include "keybinds.h"
 #include "host_report.h"
@@ -1661,8 +1662,9 @@ static void DrawPpuFrameWithPerf(void) {
   }
   if (g_hd_osd_active) for (unsigned y = 0; y < hd_view.height; ++y)
     memcpy(g_hd_osd + y * hd_view.width, hd_view.lines[y].overlay, hd_view.width * 4);
-  ComposeOsd(pixel_buffer, pitch, g_snes_width * render_scale,
-             g_snes_height * render_scale, 2);
+  if (!HeadlessCapture_Enabled())   /* OSD/toasts stay out of captured footage */
+    ComposeOsd(pixel_buffer, pitch, g_snes_width * render_scale,
+               g_snes_height * render_scale, 2);
 #if !defined(__ANDROID__) && !SNESRECOMP_SDL_GLES2_ONLY
   if (g_config.output_method == kOutputMethod_OpenGL && g_hd_osd_active)
     snesrecomp_opengl_set_hd(hd, g_hd_osd, g_snes_width * 4);
@@ -2363,7 +2365,8 @@ static void PresentFrozenWithOverlay(void) {
                                0, draw_h - strip_h, draw_w, strip_h);
     }
   }
-  ComposeOsd(pixel_buffer, pitch, draw_w, draw_h, draw_w >= 512 ? 1 : 2);
+  if (!HeadlessCapture_Enabled())
+    ComposeOsd(pixel_buffer, pitch, draw_w, draw_h, draw_w >= 512 ? 1 : 2);
   /* SNESRECOMP_OVERLAY_DUMP=<path> (browser) / SNESRECOMP_REWIND_DUMP=<path>
    * (filmstrip): write the composited overlay frame as a PPM. The overlays can only be driven by a human, so this is the only way
    * to check that a panel actually reaches the screen rather than inferring
@@ -2866,6 +2869,64 @@ static void SdlRenderer_Reconfigure(void) {
   if (g_texture)
     snesrecomp_sdl_set_texture_linear(g_texture, g_config.linear_filtering);
 }
+
+/* Headless presenter: the same viewport maths as the SDL presenter, into a CPU
+ * canvas that headless_capture.c writes out. No window, no GPU. */
+static uint8 *g_cap_buf;
+static size_t g_cap_buf_size;
+static int g_cap_w, g_cap_h, g_cap_pitch;
+static SnesDisplayViewport g_cap_viewport;
+
+static bool CaptureRenderer_Init(SDL_Window *window) {
+  (void)window;
+  return true;
+}
+static void CaptureRenderer_Destroy(void) {
+  free(g_cap_buf);
+  g_cap_buf = NULL;
+  g_cap_buf_size = 0;
+}
+static void CaptureRenderer_GetOutputSize(int *width, int *height) {
+  HeadlessCapture_OutputSize(width, height);
+}
+static void CaptureRenderer_BeginDraw(int width, int height, uint8 **pixels, int *pitch) {
+  size_t need = (size_t)width * (size_t)height * 4u;
+  if (need > g_cap_buf_size) {
+    uint8 *grown = (uint8 *)realloc(g_cap_buf, need);
+    if (!grown) { *pixels = NULL; return; }
+    g_cap_buf = grown;
+    g_cap_buf_size = need;
+  }
+  g_cap_w = width;
+  g_cap_h = height;
+  g_cap_pitch = width * 4;
+  int output_width = 0, output_height = 0;
+  HeadlessCapture_OutputSize(&output_width, &output_height);
+  SnesDisplayAspect_ComputeViewport(width, height, output_width, output_height,
+                                    SnesDisplayAspect_Clamp(g_config.display_aspect),
+                                    g_config.ignore_aspect_ratio, false, &g_cap_viewport);
+  if (g_game->compute_viewport)
+    g_game->compute_viewport(width, height, output_width, output_height, &g_cap_viewport);
+  *pixels = g_cap_buf;
+  *pitch = g_cap_pitch;
+}
+static void CaptureRenderer_EndDraw(void) {
+  if (!g_cap_buf) return;
+  HeadlessCapture_Present(g_cap_buf, g_cap_pitch, g_cap_w, g_cap_h,
+                          g_cap_viewport.x, g_cap_viewport.y,
+                          g_cap_viewport.width, g_cap_viewport.height,
+                          g_present_frame);
+}
+static void CaptureRenderer_Reconfigure(void) {}
+
+static const struct RendererFuncs kCaptureRendererFuncs = {
+  &CaptureRenderer_Init,
+  &CaptureRenderer_Destroy,
+  &CaptureRenderer_GetOutputSize,
+  &CaptureRenderer_BeginDraw,
+  &CaptureRenderer_EndDraw,
+  &CaptureRenderer_Reconfigure,
+};
 
 static const struct RendererFuncs kSdlRendererFuncs = {
   &SdlRenderer_Init,
@@ -3831,9 +3892,14 @@ int snesrecomp_desktop_main(const SnesDesktopHostGame *game, int argc, char **ar
     return 2;
   argc--, argv++;
   const int force_launcher = args.force_launcher;
-  const int no_launcher = args.no_launcher;
+  /* Headless capture selects the dummy SDL drivers, so it must be configured
+   * before SDL_Init and implies a straight boot. */
+  const bool capture_mode = HeadlessCapture_Configure(&args);
+  const int no_launcher = args.no_launcher || capture_mode;
   const int start_paused = args.start_paused;
   const char *script_file = args.script_file;
+  const long capture_exit_frame = args.exit_at_frame;
+  (void)capture_exit_frame;
   const char *framedump_dir = args.framedump_dir;
   const char *config_file = args.config_file;
   if (!config_file) {
@@ -4233,6 +4299,7 @@ int snesrecomp_desktop_main(const SnesDesktopHostGame *game, int argc, char **ar
       g_current_window_scale * WindowBaseHeight();
 
   RendererApply(RendererChoice());
+  if (capture_mode) g_config.output_method = kOutputMethod_SDL;
 #if !defined(__ANDROID__) && !SNESRECOMP_SDL_GLES2_ONLY
   if (g_config.output_method == kOutputMethod_OpenGL) {
     SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_CORE);
@@ -4248,6 +4315,7 @@ int snesrecomp_desktop_main(const SnesDesktopHostGame *game, int argc, char **ar
      * is not compiled there. */
     g_renderer_funcs = kSdlRendererFuncs;
   }
+  if (capture_mode) g_renderer_funcs = kCaptureRendererFuncs;
 
   /* Load the SNES ROM. argv[0] is the resolved path. */
   uint8 *kRom = NULL;
@@ -4403,7 +4471,15 @@ error_reading:;
   }
 
   int audio_output_rate = 0;
-  if (g_config.enable_audio) {
+  if (capture_mode) {
+    /* No audio device: the mixer is pulled once per simulated frame instead,
+     * so the capture is deterministic, unpaced and sample-aligned. */
+    g_audio_channels = 2;
+    RtlSetAudioOutputRate(HeadlessCapture_AudioRate());
+    audio_output_rate = HeadlessCapture_AudioRate();
+    host_report_breadcrumb("capture mode: audio mixed per frame at %d Hz",
+                           audio_output_rate);
+  } else if (g_config.enable_audio) {
     /* Enumerate output devices into the breadcrumb ring: which device
      * SDL picks (and what else was available) is exactly the per-machine
      * variable a non-reproducible audio/boot crash report needs. */
@@ -4491,6 +4567,14 @@ error_reading:;
     if (resumed) remove(args.resume_state);
   }
 
+  if (args.load_state) {
+    bool loaded = RtlLoadSnapshot(args.load_state);
+    if (loaded) GameReset();
+    host_report_breadcrumb("load state %s: %s", loaded ? "loaded" : "FAILED to load",
+                           args.load_state);
+    if (!loaded && capture_mode) return 3;
+  }
+
   if (script_file)
     LoadScript(script_file);
 
@@ -4513,6 +4597,7 @@ error_reading:;
   snes_runahead_set_capture(&RunaheadCapture, &frameCtr);
   const char *run_frames_env = HostGetenv("RUN_FRAMES");
   unsigned run_frames = run_frames_env ? (unsigned)strtoul(run_frames_env, NULL, 10) : 0;
+  if (HeadlessCapture_ExitFrame()) run_frames = HeadlessCapture_ExitFrame();
   const char *trace_path = HostGetenv("STATE_TRACE");
   FILE *state_trace = trace_path ? fopen(trace_path, "w") : NULL;
   /* Keep a final-state correctness check without timing a full-WRAM CRC
@@ -4800,7 +4885,7 @@ error_reading:;
     /* Pacing. A title that decouples presentation (presentation_hz hook)
      * gets re-presented between simulated frames from the captured field;
      * everyone else presents once per simulated frame. */
-    bool paced_realtime = !g_turbo && !g_config.disable_frame_delay;
+    bool paced_realtime = !g_turbo && !g_config.disable_frame_delay && !capture_mode;
     bool paced_custom = PresentationDecoupled() && paced_realtime;
     double video_now = MonotonicSeconds();
     if (video_now >= next_display_check) {
@@ -4969,6 +5054,7 @@ error_reading:;
      * iteration that opened a panel consumed a script frame the guest never
      * saw, and every later scripted press landed a frame early. */
     inputs |= TickScript();
+    inputs |= HeadlessCapture_InputWord(frameCtr + 1);
     if (g_script_quit) {
       running = false;
       exit_reason = g_script_failed ? "script until timed out" : "script quit";
@@ -4999,6 +5085,13 @@ error_reading:;
     ProfileEnd(kProfileGuest, profile_start);
     frameCtr++;
     g_present_frame = frameCtr;
+    if (capture_mode && HeadlessCapture_AudioEnabled()) {
+      static int16 capture_audio[4096 * 2];
+      int n = HeadlessCapture_AudioFramesFor(frameCtr);
+      if (n > 4096) n = 4096;
+      RtlRenderAudio(capture_audio, n, 2);
+      HeadlessCapture_Audio(capture_audio, n, frameCtr);
+    }
     if (game->after_run_frame) {
       profile_start = ProfileStart();
       double now = MonotonicSeconds();
@@ -5088,6 +5181,7 @@ error_reading:;
     free(g_frame_timings);
     g_frame_timings = NULL;
   }
+  HeadlessCapture_Finish();
   host_report_breadcrumb("exit: %s after %u frames", exit_reason, frameCtr);
   host_report_breadcrumb("video totals: simulations=%u presentations=%llu seconds=%.3f",
                          frameCtr, (unsigned long long)presentations,

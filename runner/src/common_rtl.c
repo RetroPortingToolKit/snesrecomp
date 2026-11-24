@@ -814,6 +814,14 @@ static void recomp_dspout_begin_frame(void) {
     }
   }
 }
+/* A dropped span ends the capture; only SNESRECOMP_DSPOUT_STRICT=1 (a
+ * qualification run that must not accept a truncated stream) aborts the host.
+ * A capture request must never take the game down with it. */
+static void dspout_failed(void) {
+  const char *strict = getenv("SNESRECOMP_DSPOUT_STRICT");
+  if (strict && strict[0] == '1') exit(EXIT_FAILURE);
+  s_dspout_enabled = 0;
+}
 static void recomp_dspout_capture(void) {
   static FILE *f;
   if (g_rtl_speculative_frame || !s_dspout_enabled ||
