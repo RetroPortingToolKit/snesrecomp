@@ -3896,8 +3896,7 @@ int snesrecomp_desktop_main(const SnesDesktopHostGame *game, int argc, char **ar
     return 2;
   argc--, argv++;
   const int force_launcher = args.force_launcher;
-  /* Headless capture selects the dummy SDL drivers, so it must be configured
-   * before SDL_Init and implies a straight boot. */
+  /* Prepare unattended outputs before SDL and skip the launcher. */
   const bool capture_mode = HeadlessCapture_Configure(&args);
   if (HeadlessCapture_Failed()) {
     HeadlessCapture_Finish();
@@ -4260,7 +4259,10 @@ int snesrecomp_desktop_main(const SnesDesktopHostGame *game, int argc, char **ar
   g_ppu_render_flags = g_config.new_renderer * kPpuRenderFlags_NewRenderer |
     g_config.no_sprite_limits * kPpuRenderFlags_NoSpriteLimits;
 
-  if (g_config.fullscreen == 1)
+  if (capture_mode) {
+    g_config.fullscreen = 0;
+    g_win_flags = SDL_WINDOW_HIDDEN;
+  } else if (g_config.fullscreen == 1)
     g_win_flags ^= SNESRECOMP_SDL_WINDOW_FULLSCREEN_DESKTOP;
   else if (g_config.fullscreen == 2)
     g_win_flags ^= SDL_WINDOW_FULLSCREEN;
@@ -4284,6 +4286,10 @@ int snesrecomp_desktop_main(const SnesDesktopHostGame *game, int argc, char **ar
 
   // set up SDL
   SDL_SetMainReady();
+  if (capture_mode) {
+    RendererApply(RendererChoice());
+    HeadlessCapture_SelectVideoDriver(g_config.output_method == kOutputMethod_OpenGL);
+  }
   /* Return convention flipped in SDL3 (0 == success became true == success),
    * so this MUST go through the shim. */
   const uint32 sdl_flags = capture_mode ? SDL_INIT_VIDEO
@@ -4306,24 +4312,25 @@ int snesrecomp_desktop_main(const SnesDesktopHostGame *game, int argc, char **ar
   int window_height = custom_size ? g_config.window_height :
       g_current_window_scale * WindowBaseHeight();
 
-  RendererApply(RendererChoice());
-  if (capture_mode) g_config.output_method = kOutputMethod_SDL;
+  if (capture_mode)
+    HeadlessCapture_OutputSize(&window_width, &window_height);
+  else
+    RendererApply(RendererChoice());
 #if !defined(__ANDROID__) && !SNESRECOMP_SDL_GLES2_ONLY
   if (g_config.output_method == kOutputMethod_OpenGL) {
     SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_CORE);
     SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 3);
     SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 3);
     g_win_flags |= SDL_WINDOW_OPENGL;
-    snesrecomp_opengl_set_vsync(VSyncInterval());
+    snesrecomp_opengl_set_vsync(capture_mode ? 0 : VSyncInterval());
     OpenGLRenderer_Create(&g_renderer_funcs);
   } else
 #endif
   {
     /* Android: always SDL_Renderer (GLES-backed); the desktop-GL presenter
      * is not compiled there. */
-    g_renderer_funcs = kSdlRendererFuncs;
+    g_renderer_funcs = capture_mode ? kCaptureRendererFuncs : kSdlRendererFuncs;
   }
-  if (capture_mode) g_renderer_funcs = kCaptureRendererFuncs;
 
   /* Load the SNES ROM. argv[0] is the resolved path. */
   uint8 *kRom = NULL;
@@ -4426,7 +4433,7 @@ error_reading:;
   SDL_Window *window = snesrecomp_sdl_create_window(
       g_window_title, window_width, window_height, g_win_flags);
 #if !defined(__ANDROID__) && !SNESRECOMP_SDL_GLES2_ONLY
-  if (!window && g_config.output_method == kOutputMethod_OpenGL) {
+  if (!window && !capture_mode && g_config.output_method == kOutputMethod_OpenGL) {
     g_win_flags &= ~SDL_WINDOW_OPENGL;
     g_config.output_method = kOutputMethod_SDL;
     g_renderer_funcs = kSdlRendererFuncs;
@@ -4445,7 +4452,7 @@ error_reading:;
 
   if (!g_renderer_funcs.Initialize(window)) {
 #if !defined(__ANDROID__) && !SNESRECOMP_SDL_GLES2_ONLY
-    if (g_config.output_method == kOutputMethod_OpenGL) {
+    if (!capture_mode && g_config.output_method == kOutputMethod_OpenGL) {
       host_report_breadcrumb("desktop GL unavailable; native SDL presentation");
       SDL_DestroyWindow(window);
       g_win_flags &= ~SDL_WINDOW_OPENGL;
@@ -5096,6 +5103,10 @@ error_reading:;
     ProfileEnd(kProfileGuest, profile_start);
     frameCtr++;
     g_present_frame = frameCtr;
+#if !defined(__ANDROID__) && !SNESRECOMP_SDL_GLES2_ONLY
+    if (capture_mode && g_config.output_method == kOutputMethod_OpenGL)
+      snesrecomp_opengl_capture_frame(frameCtr);
+#endif
     if (capture_mode && HeadlessCapture_AudioEnabled()) {
       static int16 capture_audio[4096 * 2];
       int n = HeadlessCapture_AudioFramesFor(frameCtr);

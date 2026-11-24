@@ -5,6 +5,7 @@
 
 #include <ctype.h>
 #include <errno.h>
+#include <stddef.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -296,14 +297,23 @@ bool HeadlessCapture_Configure(const struct SnesrecompHostArgs *args) {
       return true;
     }
   }
-  /* No window, no audio device: SDL's dummy drivers. Must precede SDL_Init. */
-  HC_SETENV("SDL_VIDEODRIVER", "dummy");
-  HC_SETENV("SDL_AUDIODRIVER", "dummy");
   return true;
 }
 
 bool HeadlessCapture_Enabled(void) { return g_hc.enabled; }
 bool HeadlessCapture_Failed(void) { return g_hc.failed; }
+
+void HeadlessCapture_SelectVideoDriver(bool opengl) {
+  if (!opengl) {
+    HC_SETENV("SDL_VIDEODRIVER", "dummy");
+  }
+#if defined(__linux__) && !defined(__ANDROID__)
+  else if (!getenv("SDL_VIDEODRIVER") && !getenv("DISPLAY") &&
+           !getenv("WAYLAND_DISPLAY")) {
+    HC_SETENV("SDL_VIDEODRIVER", "offscreen");
+  }
+#endif
+}
 
 void HeadlessCapture_OutputSize(int *width, int *height) {
   if (width) *width = g_hc.width;
@@ -321,13 +331,17 @@ static bool frame_in_range(uint32_t frame) {
 
 bool HeadlessCapture_FrameWanted(uint32_t frame) {
   const long base = g_hc.from >= 0 ? g_hc.from : 1;
-  return frame_in_range(frame) && ((long)frame - base) % g_hc.every == 0;
+  return g_hc.canvas && frame_in_range(frame) && ((long)frame - base) % g_hc.every == 0;
 }
 
 void HeadlessCapture_Present(const uint8_t *bgra, int pitch, int w, int h,
                              int vx, int vy, int vw, int vh, uint32_t frame) {
-  if (!g_hc.out_dir[0] || !g_hc.canvas || !bgra || w <= 0 || h <= 0) return;
   if (!HeadlessCapture_FrameWanted(frame)) return;
+  if (!bgra || w <= 0 || h <= 0) {
+    fprintf(stderr, "capture: no presented pixels for frame %u\n", frame);
+    g_hc.failed = true;
+    return;
+  }
   const int W = g_hc.width, H = g_hc.height;
   memset(g_hc.canvas, 0, (size_t)W * (size_t)H * 3);
   if (vw <= 0 || vh <= 0) { vx = 0; vy = 0; vw = W; vh = H; }
@@ -335,7 +349,7 @@ void HeadlessCapture_Present(const uint8_t *bgra, int pitch, int w, int h,
     int oy = vy + y;
     if (oy < 0 || oy >= H) continue;
     int sy = (int)(((int64_t)y * h) / vh);
-    const uint32_t *srow = (const uint32_t *)(bgra + (size_t)sy * (size_t)pitch);
+    const uint32_t *srow = (const uint32_t *)(bgra + (ptrdiff_t)sy * pitch);
     uint8_t *drow = g_hc.canvas + (size_t)oy * (size_t)W * 3;
     for (int x = 0; x < vw; x++) {
       int ox = vx + x;

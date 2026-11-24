@@ -15,11 +15,9 @@
  *                            Each line holds until that pad's next line.
  *   --exit-at-frame N        stop after N simulated frames
  *
- * Capture mode replaces the SDL presenter with a CPU presenter that runs the
- * same viewport maths a window uses, so adaptive widescreen, DisplayAspect and
- * every title's compute_viewport hook behave as they do on screen. It forces
- * SDL's dummy video/audio drivers (no window, no audio device), runs unpaced,
- * mixes audio deterministically per simulated frame, and leaves the OSD off.
+ * Capture mode uses the shared viewport maths in the CPU presenter or reads
+ * the final OpenGL back buffer, including effects and shaders. It has no
+ * visible window or playback device and mixes audio per simulated frame.
  */
 #ifndef SNESRECOMP_HEADLESS_CAPTURE_H
 #define SNESRECOMP_HEADLESS_CAPTURE_H
@@ -34,11 +32,12 @@ extern "C" {
 struct SnesrecompHostArgs;
 
 /* Reads the capture/input flags (and SNESRECOMP_CAPTURE_* environment
- * equivalents). Returns true when capture mode is on; must run before SDL is
- * initialised because it selects SDL's dummy drivers. */
+ * equivalents). Returns true when capture mode is on. */
 bool HeadlessCapture_Configure(const struct SnesrecompHostArgs *args);
 bool HeadlessCapture_Enabled(void);
 bool HeadlessCapture_Failed(void);
+/* Select the capture video driver before SDL video is initialised. */
+void HeadlessCapture_SelectVideoDriver(bool opengl);
 
 /* The drawable size the presenter reports. */
 void HeadlessCapture_OutputSize(int *width, int *height);
@@ -47,7 +46,7 @@ void HeadlessCapture_OutputSize(int *width, int *height);
 int HeadlessCapture_AudioRate(void);
 bool HeadlessCapture_AudioEnabled(void);
 
-/* Simulated frames [from, to] / every K are kept. `frame` counts from 1. */
+/* True when a PNG was requested for this 1-based simulated frame. */
 bool HeadlessCapture_FrameWanted(uint32_t frame);
 
 /* Present one frame: BGRA source `w`x`h` placed in the viewport (vx,vy,vw,vh)
