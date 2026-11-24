@@ -15,9 +15,9 @@
  *                            Each line holds until that pad's next line.
  *   --exit-at-frame N        stop after N simulated frames
  *
- * Capture mode uses the shared viewport maths in the CPU presenter or reads
- * the final OpenGL back buffer, including effects and shaders. It has no
- * visible window or playback device and mixes audio per simulated frame.
+ * Capture mode reads the completed SDL or OpenGL back buffer, including
+ * presentation filters. It has no visible window or playback device and
+ * mixes audio per simulated frame.
  */
 #ifndef SNESRECOMP_HEADLESS_CAPTURE_H
 #define SNESRECOMP_HEADLESS_CAPTURE_H

@@ -2855,12 +2855,46 @@ static void SdlRenderer_BeginDraw(int width, int height, uint8 **pixels, int *pi
   }
 }
 
+static void CaptureSdlFrame(uint32 frame) {
+#if SNESRECOMP_SDL3
+  SDL_Surface *native_surface = SDL_RenderReadPixels(g_renderer, NULL);
+  SDL_Surface *argb = native_surface;
+  if (native_surface && native_surface->format != SDL_PIXELFORMAT_ARGB8888) {
+    argb = SDL_ConvertSurface(native_surface, SDL_PIXELFORMAT_ARGB8888);
+    SDL_DestroySurface(native_surface);
+  }
+  if (argb) {
+    HeadlessCapture_Present(argb->pixels, argb->pitch, argb->w, argb->h,
+                           0, 0, argb->w, argb->h, frame);
+    SDL_DestroySurface(argb);
+    return;
+  }
+#else
+  int width, height;
+  SdlRenderer_GetOutputSize(&width, &height);
+  if (width > 0 && height > 0) {
+    const int pitch = width * 4;
+    uint8 *pixels = malloc((size_t)pitch * height);
+    if (pixels && SDL_RenderReadPixels(g_renderer, NULL, SDL_PIXELFORMAT_ARGB8888,
+                                      pixels, pitch) == 0) {
+      HeadlessCapture_Present(pixels, pitch, width, height, 0, 0, width, height, frame);
+      free(pixels);
+      return;
+    }
+    free(pixels);
+  }
+#endif
+  HeadlessCapture_Present(NULL, 0, 0, 0, 0, 0, 0, 0, frame);
+}
+
 static void SdlRenderer_EndDraw(void) {
   SDL_UnlockTexture(g_texture);
   SDL_RenderClear(g_renderer);
   /* SDL3's SDL_RenderTexture takes SDL_FRect, not SDL_Rect. */
   snesrecomp_sdl_render_texture(g_renderer, g_texture, &g_sdl_renderer_rect,
                                 &g_sdl_present_rect);
+  if (HeadlessCapture_FrameWanted(g_present_frame))
+    CaptureSdlFrame(g_present_frame);
   SDL_RenderPresent(g_renderer);
 }
 
@@ -2873,64 +2907,6 @@ static void SdlRenderer_Reconfigure(void) {
   if (g_texture)
     snesrecomp_sdl_set_texture_linear(g_texture, g_config.linear_filtering);
 }
-
-/* Headless presenter: the same viewport maths as the SDL presenter, into a CPU
- * canvas that headless_capture.c writes out. No window, no GPU. */
-static uint8 *g_cap_buf;
-static size_t g_cap_buf_size;
-static int g_cap_w, g_cap_h, g_cap_pitch;
-static SnesDisplayViewport g_cap_viewport;
-
-static bool CaptureRenderer_Init(SDL_Window *window) {
-  (void)window;
-  return true;
-}
-static void CaptureRenderer_Destroy(void) {
-  free(g_cap_buf);
-  g_cap_buf = NULL;
-  g_cap_buf_size = 0;
-}
-static void CaptureRenderer_GetOutputSize(int *width, int *height) {
-  HeadlessCapture_OutputSize(width, height);
-}
-static void CaptureRenderer_BeginDraw(int width, int height, uint8 **pixels, int *pitch) {
-  size_t need = (size_t)width * (size_t)height * 4u;
-  if (need > g_cap_buf_size) {
-    uint8 *grown = (uint8 *)realloc(g_cap_buf, need);
-    if (!grown) { *pixels = NULL; return; }
-    g_cap_buf = grown;
-    g_cap_buf_size = need;
-  }
-  g_cap_w = width;
-  g_cap_h = height;
-  g_cap_pitch = width * 4;
-  int output_width = 0, output_height = 0;
-  HeadlessCapture_OutputSize(&output_width, &output_height);
-  SnesDisplayAspect_ComputeViewport(width, height, output_width, output_height,
-                                    SnesDisplayAspect_Clamp(g_config.display_aspect),
-                                    g_config.ignore_aspect_ratio, false, &g_cap_viewport);
-  if (g_game->compute_viewport)
-    g_game->compute_viewport(width, height, output_width, output_height, &g_cap_viewport);
-  *pixels = g_cap_buf;
-  *pitch = g_cap_pitch;
-}
-static void CaptureRenderer_EndDraw(void) {
-  if (!g_cap_buf) return;
-  HeadlessCapture_Present(g_cap_buf, g_cap_pitch, g_cap_w, g_cap_h,
-                          g_cap_viewport.x, g_cap_viewport.y,
-                          g_cap_viewport.width, g_cap_viewport.height,
-                          g_present_frame);
-}
-static void CaptureRenderer_Reconfigure(void) {}
-
-static const struct RendererFuncs kCaptureRendererFuncs = {
-  &CaptureRenderer_Init,
-  &CaptureRenderer_Destroy,
-  &CaptureRenderer_GetOutputSize,
-  &CaptureRenderer_BeginDraw,
-  &CaptureRenderer_EndDraw,
-  &CaptureRenderer_Reconfigure,
-};
 
 static const struct RendererFuncs kSdlRendererFuncs = {
   &SdlRenderer_Init,
@@ -4288,7 +4264,9 @@ int snesrecomp_desktop_main(const SnesDesktopHostGame *game, int argc, char **ar
   SDL_SetMainReady();
   if (capture_mode) {
     RendererApply(RendererChoice());
-    HeadlessCapture_SelectVideoDriver(g_config.output_method == kOutputMethod_OpenGL);
+    const bool capture_gl = g_config.output_method == kOutputMethod_OpenGL;
+    HeadlessCapture_SelectVideoDriver(capture_gl);
+    if (!capture_gl) g_config.output_method = kOutputMethod_SDLSoftware;
   }
   /* Return convention flipped in SDL3 (0 == success became true == success),
    * so this MUST go through the shim. */
@@ -4329,7 +4307,7 @@ int snesrecomp_desktop_main(const SnesDesktopHostGame *game, int argc, char **ar
   {
     /* Android: always SDL_Renderer (GLES-backed); the desktop-GL presenter
      * is not compiled there. */
-    g_renderer_funcs = capture_mode ? kCaptureRendererFuncs : kSdlRendererFuncs;
+    g_renderer_funcs = kSdlRendererFuncs;
   }
 
   /* Load the SNES ROM. argv[0] is the resolved path. */
