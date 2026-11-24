@@ -40,6 +40,7 @@
 #include "config.h"
 #include "display_aspect.h"
 #include "hd_gpu.h"
+#include "headless_capture.h"
 #include "host_report.h"
 #include "present_shader.h"
 #if SNESRECOMP_SDL3
@@ -53,6 +54,9 @@
 static SDL_Window *g_window;
 static uint8 *g_screen_buffer;
 static size_t g_screen_buffer_size;
+static uint8 *g_capture_pixels;
+static size_t g_capture_pixels_size;
+static uint32_t g_capture_frame;
 static int g_draw_width, g_draw_height;
 static unsigned int g_program, g_flash_program, g_VAO;
 static GlTextureWithSize g_texture;
@@ -69,6 +73,10 @@ void snesrecomp_opengl_set_hd(const SnesHdFrame *frame,
 static bool g_want_screenshot;
 static double g_screenshot_flash_start_time = -1.0;
 static const double kScreenshotFlashSeconds = 0.15;
+
+void snesrecomp_opengl_capture_frame(uint32_t frame) {
+  g_capture_frame = frame;
+}
 
 extern void MkDir(const char *s);
 
@@ -331,6 +339,7 @@ static void OpenGLRenderer_Destroy(void) {
   glDeleteProgram(g_program); glDeleteProgram(g_flash_program);
   glDeleteVertexArrays(1, &g_VAO);
   free(g_screen_buffer); g_screen_buffer = NULL; g_screen_buffer_size = 0;
+  free(g_capture_pixels); g_capture_pixels = NULL; g_capture_pixels_size = 0;
   DeleteGlContext(g_context); g_context = NULL;
 }
 
@@ -440,6 +449,31 @@ static void OpenGLRenderer_BeginDraw(int width, int height, uint8 **pixels, int 
   *pitch = width * 4;
 }
 
+static void CaptureBackBuffer(int width, int height, uint32_t frame) {
+  int wanted_width, wanted_height;
+  HeadlessCapture_OutputSize(&wanted_width, &wanted_height);
+  if (width == wanted_width && height == wanted_height) {
+    const size_t bytes = (size_t)width * (size_t)height * 4;
+    if (bytes > g_capture_pixels_size) {
+      uint8 *grown = realloc(g_capture_pixels, bytes);
+      if (grown) {
+        g_capture_pixels = grown;
+        g_capture_pixels_size = bytes;
+      }
+    }
+    if (g_capture_pixels_size >= bytes) {
+      glReadPixels(0, 0, width, height, GL_BGRA, GL_UNSIGNED_BYTE, g_capture_pixels);
+      if (glGetError() == GL_NO_ERROR) {
+        const int pitch = width * 4;
+        HeadlessCapture_Present(g_capture_pixels + bytes - pitch, -pitch,
+                               width, height, 0, 0, width, height, frame);
+        return;
+      }
+    }
+  }
+  HeadlessCapture_Present(NULL, 0, 0, 0, 0, 0, 0, 0, frame);
+}
+
 static void OpenGLRenderer_EndDraw(void) {
   int drawable_width, drawable_height;
 
@@ -496,6 +530,13 @@ static void OpenGLRenderer_EndDraw(void) {
   } else {
     GlslShader_Render(g_glsl_shader, &image, viewport.x, viewport.y,
                       viewport.width, viewport.height);
+  }
+
+  if (g_capture_frame) {
+    const uint32_t frame = g_capture_frame;
+    g_capture_frame = 0;
+    if (HeadlessCapture_FrameWanted(frame))
+      CaptureBackBuffer(drawable_width, drawable_height, frame);
   }
 
   if (g_want_screenshot) {

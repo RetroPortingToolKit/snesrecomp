@@ -60,10 +60,20 @@ typedef struct SnesrecompHostArgs {
   const char *framedump_dir;  /* --framedump <dir> */
   /* --resume-state <path>: a save state to load before the first frame and then
    * delete. Written by the in-game launcher when an edit needs a restart. */
+  /* --load-state <path>: like --resume-state but the file is kept (capture). */
+  const char *load_state;
   const char *resume_state;
   int start_paused;           /* --paused */
   int force_launcher;         /* --launcher */
   int no_launcher;            /* --no-launcher */
+  /* Headless capture (see desktop/headless_capture.h). All optional. */
+  const char *capture_out;    /* --capture-out <dir>: presented frames */
+  const char *capture_wav;    /* --capture-wav <file>: mixed audio */
+  const char *input_script;   /* --input-script <file>: frame-indexed input */
+  int capture_width, capture_height;  /* --capture-size WxH (0 = native) */
+  long capture_from, capture_to;      /* --capture-from/--capture-to (-1 = unset) */
+  int capture_every;                  /* --capture-every K */
+  long exit_at_frame;                 /* --exit-at-frame N (-1 = unset) */
   int expose_coverage_mod;
   int coverage_capture; /* -1 absent, 0 off, 1 on */
   int help;                   /* --help / -h: the port should print and exit 0 */
@@ -74,6 +84,10 @@ typedef struct SnesrecompHostArgs {
   char script_buf[SNESRECOMP_HOST_ARGS_PATH_MAX];
   char framedump_buf[SNESRECOMP_HOST_ARGS_PATH_MAX];
   char resume_buf[SNESRECOMP_HOST_ARGS_PATH_MAX];
+  char load_state_buf[SNESRECOMP_HOST_ARGS_PATH_MAX];
+  char capture_out_buf[SNESRECOMP_HOST_ARGS_PATH_MAX];
+  char capture_wav_buf[SNESRECOMP_HOST_ARGS_PATH_MAX];
+  char input_script_buf[SNESRECOMP_HOST_ARGS_PATH_MAX];
 } SnesrecompHostArgs;
 
 /* Consume the engine-owned arguments from *argc / *argv, in place.
