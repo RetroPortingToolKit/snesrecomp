@@ -1306,12 +1306,16 @@ static int HostPadSeats(void) {
 
 /* Hand seats 2.. to the multitap model. Netplay publishes remote seats
  * through the same door, so a session leaves them to it. */
-static void PushExtraSeats(void) {
+static void PushExtraSeats(uint32 frame) {
   if (g_netplay_session) return;
   const int seats = HostPadSeats();
-  for (int seat = 2; seat < seats; ++seat)
+  for (int seat = 2; seat < seats; ++seat) {
+    const uint16 scripted = HeadlessCapture_HasInput()
+        ? HeadlessCapture_Pad((unsigned)seat, frame) : 0;
     RtlSetPadState(seat, (uint16)(g_seat_keys[seat] | g_seat_keymap[seat] |
-                                  g_seat_pad[seat] | g_gamepad[seat].axis_buttons));
+                                  g_seat_pad[seat] | g_gamepad[seat].axis_buttons |
+                                  scripted));
+  }
 }
 
 void ChangeWindowScale(int scale_step) {
@@ -3895,11 +3899,13 @@ int snesrecomp_desktop_main(const SnesDesktopHostGame *game, int argc, char **ar
   /* Headless capture selects the dummy SDL drivers, so it must be configured
    * before SDL_Init and implies a straight boot. */
   const bool capture_mode = HeadlessCapture_Configure(&args);
+  if (HeadlessCapture_Failed()) {
+    HeadlessCapture_Finish();
+    return 3;
+  }
   const int no_launcher = args.no_launcher || capture_mode;
   const int start_paused = args.start_paused;
   const char *script_file = args.script_file;
-  const long capture_exit_frame = args.exit_at_frame;
-  (void)capture_exit_frame;
   const char *framedump_dir = args.framedump_dir;
   const char *config_file = args.config_file;
   if (!config_file) {
@@ -4280,7 +4286,9 @@ int snesrecomp_desktop_main(const SnesDesktopHostGame *game, int argc, char **ar
   SDL_SetMainReady();
   /* Return convention flipped in SDL3 (0 == success became true == success),
    * so this MUST go through the shim. */
-  if (!snesrecomp_sdl_init(SDL_INIT_VIDEO | SDL_INIT_AUDIO | SDL_INIT_GAMECONTROLLER)) {
+  const uint32 sdl_flags = capture_mode ? SDL_INIT_VIDEO
+      : SDL_INIT_VIDEO | SDL_INIT_AUDIO | SDL_INIT_GAMECONTROLLER;
+  if (!snesrecomp_sdl_init(sdl_flags)) {
     host_report_breadcrumb("SDL_Init FAILED: %s", SDL_GetError());
     printf("Failed to init SDL: %s\n", SDL_GetError());
     return 1;
@@ -4572,7 +4580,10 @@ error_reading:;
     if (loaded) GameReset();
     host_report_breadcrumb("load state %s: %s", loaded ? "loaded" : "FAILED to load",
                            args.load_state);
-    if (!loaded && capture_mode) return 3;
+    if (!loaded && capture_mode) {
+      HeadlessCapture_Finish();
+      return 3;
+    }
   }
 
   if (script_file)
@@ -4636,7 +4647,7 @@ error_reading:;
   snes_savestate_menu_set_compose(ComposeStateThumbnail);
   host_report_breadcrumb("entering main loop");
 
-  while (running) {
+  while (running && !HeadlessCapture_Failed()) {
     g_profile_frame = frameCtr + 1;
     if (profile_requested && !g_profile && g_profile_frame >= profile_first) {
       g_profile = true;
@@ -5063,7 +5074,7 @@ error_reading:;
     inputs |= debug_server_get_controller_inputs();
     double profile_start = ProfileStart();
     double guest_start = MonotonicSeconds();
-    PushExtraSeats();
+    PushExtraSeats(frameCtr + 1);
     if (game->before_run_frame) game->before_run_frame();
     g_audio_producer_active = paced_realtime && g_audio_device != 0;
     /* Run-ahead owns the whole frame when it is on: it advances the guest
@@ -5274,7 +5285,7 @@ error_reading:;
     }
     host_report_breadcrumb("in-game launcher: restarted");
   }
-  return g_script_failed ? 3 : g_selftest_pad_failed ? 4 : 0;
+  return (g_script_failed || HeadlessCapture_Failed()) ? 3 : g_selftest_pad_failed ? 4 : 0;
 }
 
 /* ── Input plumbing ───────────────────────────────────────────────────────── */

@@ -5,7 +5,7 @@
  *   --capture-size WxH       the drawable size a window of that size would have
  *                            (default 1920x1080; 2560x1080 for 21:9)
  *   --capture-from/-to N     simulated-frame range (default: all)
- *   --capture-every K        keep every Kth frame of the range
+ *   --capture-every K        keep every Kth picture of the range
  *   --capture-wav FILE       the mixed output (post resampler), 48 kHz stereo,
  *                            starting at --capture-from so it lines up with the
  *                            first frame written
@@ -38,6 +38,7 @@ struct SnesrecompHostArgs;
  * initialised because it selects SDL's dummy drivers. */
 bool HeadlessCapture_Configure(const struct SnesrecompHostArgs *args);
 bool HeadlessCapture_Enabled(void);
+bool HeadlessCapture_Failed(void);
 
 /* The drawable size the presenter reports. */
 void HeadlessCapture_OutputSize(int *width, int *height);

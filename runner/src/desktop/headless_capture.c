@@ -25,8 +25,8 @@
 
 static struct {
   bool enabled;
+  bool failed;
   char out_dir[1024];
-  char wav_path[1024];
   int width, height;
   long from, to;
   int every;
@@ -42,7 +42,6 @@ static struct {
   int step_count;
   int next_step;
   uint16_t held[4];
-  uint32_t last_input_frame;
 } g_hc;
 
 /* ---- helpers ---- */
@@ -143,13 +142,13 @@ static bool write_png(const char *path, const uint8_t *rgb, int w, int h) {
   zo += 4;
   write_chunk(f, "IDAT", z, zo);
   write_chunk(f, "IEND", NULL, 0);
-  fclose(f);
-  return true;
+  const bool wrote = !ferror(f);
+  return fclose(f) == 0 && wrote;
 }
 
 /* ---- WAV ---- */
 
-static void wav_header(FILE *f, uint32_t data_bytes) {
+static bool wav_header(FILE *f, uint32_t data_bytes) {
   uint8_t h[44];
   memcpy(h, "RIFF", 4);
   uint32_t v = 36 + data_bytes;
@@ -164,8 +163,7 @@ static void wav_header(FILE *f, uint32_t data_bytes) {
   memcpy(h + 32, &align, 2); memcpy(h + 34, &bits, 2);
   memcpy(h + 36, "data", 4);
   memcpy(h + 40, &data_bytes, 4);
-  fseek(f, 0, SEEK_SET);
-  fwrite(h, 1, 44, f);
+  return fseek(f, 0, SEEK_SET) == 0 && fwrite(h, 1, sizeof(h), f) == sizeof(h);
 }
 
 /* ---- input schedule ---- */
@@ -204,14 +202,15 @@ static int cmp_step(const void *x, const void *y) {
 
 static bool load_input(const char *path) {
   FILE *f = fopen(path, "rb");
-  if (!f) {
-    fprintf(stderr, "capture: cannot open input script '%s'\n", path);
-    return false;
-  }
+  if (!f) return false;
   int cap = 64;
   g_hc.steps = (struct Step *)malloc((size_t)cap * sizeof(struct Step));
+  if (!g_hc.steps) {
+    fclose(f);
+    return false;
+  }
   char line[512];
-  while (g_hc.steps && fgets(line, sizeof(line), f)) {
+  while (fgets(line, sizeof(line), f)) {
     char *c = strchr(line, '#');
     if (c) *c = 0;
     char *p = line;
@@ -232,13 +231,18 @@ static bool load_input(const char *path) {
     uint16_t b = (*p == '-') ? 0 : parse_buttons(p);
     if (g_hc.step_count == cap) {
       cap *= 2;
-      g_hc.steps = (struct Step *)realloc(g_hc.steps, (size_t)cap * sizeof(struct Step));
-      if (!g_hc.steps) break;
+      struct Step *grown = (struct Step *)realloc(g_hc.steps, (size_t)cap * sizeof(struct Step));
+      if (!grown) {
+        fclose(f);
+        return false;
+      }
+      g_hc.steps = grown;
     }
     g_hc.steps[g_hc.step_count++] = (struct Step){frame, pad, b};
   }
-  fclose(f);
-  if (g_hc.steps) qsort(g_hc.steps, (size_t)g_hc.step_count, sizeof(struct Step), cmp_step);
+  const bool read = !ferror(f);
+  if (fclose(f) != 0 || !read) return false;
+  qsort(g_hc.steps, (size_t)g_hc.step_count, sizeof(struct Step), cmp_step);
   return true;
 }
 
@@ -258,25 +262,40 @@ bool HeadlessCapture_Configure(const struct SnesrecompHostArgs *args) {
   g_hc.to = args ? args->capture_to : -1;
   g_hc.every = args && args->capture_every > 0 ? args->capture_every : 1;
   g_hc.exit_frame = args ? args->exit_at_frame : -1;
+  if (in && !load_input(in)) {
+    fprintf(stderr, "capture: could not read input script '%s'\n", in);
+    g_hc.failed = true;
+    return false;
+  }
   if (!out && !wav) {
     /* Input scripting and --exit-at-frame alone do not imply capture mode. */
-    if (in) load_input(in);
     return false;
   }
   g_hc.enabled = true;
   if (out) {
-    snprintf(g_hc.out_dir, sizeof(g_hc.out_dir), "%s", out);
-    HC_MKDIR(g_hc.out_dir);
+    if (strlen(out) >= sizeof(g_hc.out_dir) ||
+        (HC_MKDIR(out) != 0 && errno != EEXIST)) {
+      fprintf(stderr, "capture: cannot create frame directory '%s'\n", out);
+      g_hc.failed = true;
+      return true;
+    }
+    memcpy(g_hc.out_dir, out, strlen(out) + 1);
     g_hc.canvas = (uint8_t *)malloc((size_t)g_hc.width * (size_t)g_hc.height * 3);
-    if (!g_hc.canvas) g_hc.out_dir[0] = 0;
+    if (!g_hc.canvas) {
+      fprintf(stderr, "capture: cannot allocate %dx%d frame canvas\n",
+              g_hc.width, g_hc.height);
+      g_hc.failed = true;
+      return true;
+    }
   }
   if (wav) {
-    snprintf(g_hc.wav_path, sizeof(g_hc.wav_path), "%s", wav);
-    g_hc.wav = fopen(g_hc.wav_path, "wb");
-    if (g_hc.wav) wav_header(g_hc.wav, 0);
-    else fprintf(stderr, "capture: cannot open %s\n", g_hc.wav_path);
+    g_hc.wav = fopen(wav, "wb");
+    if (!g_hc.wav || !wav_header(g_hc.wav, 0)) {
+      fprintf(stderr, "capture: cannot start WAV '%s'\n", wav);
+      g_hc.failed = true;
+      return true;
+    }
   }
-  if (in) load_input(in);
   /* No window, no audio device: SDL's dummy drivers. Must precede SDL_Init. */
   HC_SETENV("SDL_VIDEODRIVER", "dummy");
   HC_SETENV("SDL_AUDIODRIVER", "dummy");
@@ -284,6 +303,7 @@ bool HeadlessCapture_Configure(const struct SnesrecompHostArgs *args) {
 }
 
 bool HeadlessCapture_Enabled(void) { return g_hc.enabled; }
+bool HeadlessCapture_Failed(void) { return g_hc.failed; }
 
 void HeadlessCapture_OutputSize(int *width, int *height) {
   if (width) *width = g_hc.width;
@@ -293,11 +313,15 @@ void HeadlessCapture_OutputSize(int *width, int *height) {
 int HeadlessCapture_AudioRate(void) { return HC_AUDIO_RATE; }
 bool HeadlessCapture_AudioEnabled(void) { return g_hc.enabled; }
 
-bool HeadlessCapture_FrameWanted(uint32_t frame) {
+static bool frame_in_range(uint32_t frame) {
   if (g_hc.from >= 0 && (long)frame < g_hc.from) return false;
   if (g_hc.to >= 0 && (long)frame > g_hc.to) return false;
-  long base = g_hc.from >= 0 ? g_hc.from : 1;
-  return ((long)frame - base) % g_hc.every == 0;
+  return true;
+}
+
+bool HeadlessCapture_FrameWanted(uint32_t frame) {
+  const long base = g_hc.from >= 0 ? g_hc.from : 1;
+  return frame_in_range(frame) && ((long)frame - base) % g_hc.every == 0;
 }
 
 void HeadlessCapture_Present(const uint8_t *bgra, int pitch, int w, int h,
@@ -324,7 +348,12 @@ void HeadlessCapture_Present(const uint8_t *bgra, int pitch, int w, int h,
   }
   char path[1200];
   snprintf(path, sizeof(path), "%s/frame_%06u.png", g_hc.out_dir, frame);
-  if (write_png(path, g_hc.canvas, W, H)) g_hc.png_count++;
+  if (write_png(path, g_hc.canvas, W, H)) {
+    g_hc.png_count++;
+  } else {
+    fprintf(stderr, "capture: failed to write frame '%s'\n", path);
+    g_hc.failed = true;
+  }
 }
 
 int HeadlessCapture_AudioFramesFor(uint32_t frame) {
@@ -334,8 +363,12 @@ int HeadlessCapture_AudioFramesFor(uint32_t frame) {
 }
 
 void HeadlessCapture_Audio(const int16_t *samples, int frames, uint32_t frame) {
-  if (!g_hc.wav || !HeadlessCapture_FrameWanted(frame)) return;
-  fwrite(samples, 4, (size_t)frames, g_hc.wav);
+  if (!g_hc.wav || !frame_in_range(frame)) return;
+  if (fwrite(samples, 4, (size_t)frames, g_hc.wav) != (size_t)frames) {
+    fprintf(stderr, "capture: WAV sample write failed\n");
+    g_hc.failed = true;
+    return;
+  }
   g_hc.wav_frames += (uint64_t)frames;
 }
 
@@ -365,10 +398,20 @@ uint32_t HeadlessCapture_ExitFrame(void) {
 
 void HeadlessCapture_Finish(void) {
   if (g_hc.wav) {
-    wav_header(g_hc.wav, (uint32_t)(g_hc.wav_frames * 4));
-    fclose(g_hc.wav);
+    const bool header_ok = wav_header(g_hc.wav, (uint32_t)(g_hc.wav_frames * 4));
+    if (fclose(g_hc.wav) != 0 || !header_ok) {
+      fprintf(stderr, "capture: WAV finalization failed\n");
+      g_hc.failed = true;
+    }
     g_hc.wav = NULL;
   }
+  free(g_hc.steps);
+  free(g_hc.canvas);
+  free(g_hc.png_buf);
+  g_hc.steps = NULL;
+  g_hc.canvas = NULL;
+  g_hc.png_buf = NULL;
+  g_hc.png_cap = 0;
   if (g_hc.enabled)
     fprintf(stderr,
             "capture: %llu frames written, %llu audio samples, present size %dx%d\n",
