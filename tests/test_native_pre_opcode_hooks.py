@@ -32,7 +32,7 @@ static void redirect(CpuState *c,uint32_t pc) { (void)c;(void)pc; calls++; inter
 static void zero_redirect(CpuState *c,uint32_t pc) { (void)c;(void)pc; interp_bridge_pre_opcode_redirect(0); }
 static void nested(CpuState *c,uint32_t pc) {
   (void)pc; uint32_t target=0; interp_bridge_pre_opcode_redirect(0x808200);
-  nested_ok=interp_bridge_run_native_pre_opcode_hooks(c,0x809000,&target,NULL) && target==0x808100;
+  nested_ok=interp_bridge_run_native_pre_opcode_hooks(c,0x809000,&target,NULL,NULL) && target==0x808100;
 }
 int main(void) {
   CpuState cpu={0}; uint8_t ram[0x20000]={0}; cpu.ram=ram;
@@ -40,37 +40,42 @@ int main(void) {
   CHECK(interp_bridge_add_pre_opcode_hook(0x008000,first));
   CHECK(interp_bridge_add_pre_opcode_hook(0x808000,first)); /* idempotent mirror */
   CHECK(interp_bridge_add_pre_opcode_hook(0x008000,second));
-  CHECK(!interp_bridge_run_native_pre_opcode_hooks(&cpu,0x808000,&target,NULL));
+  CHECK(!interp_bridge_run_native_pre_opcode_hooks(&cpu,0x808000,&target,NULL,NULL));
   CHECK(calls==2 && cpu.A==1 && cpu.X==2 && ram[0]==1);
   bool invoked=true;
-  CHECK(!interp_bridge_run_native_pre_opcode_hooks(&cpu,0x018000,&target,&invoked));
+  CHECK(!interp_bridge_run_native_pre_opcode_hooks(&cpu,0x018000,&target,&invoked,NULL));
   CHECK(!invoked);
   CHECK(calls==2); /* PC16 filter collisions never change full-key identity */
   interp_bridge_set_pre_opcode_hook(0x008000,replace);
-  CHECK(!interp_bridge_run_native_pre_opcode_hooks(&cpu,0x008000,&target,NULL));
+  CHECK(!interp_bridge_run_native_pre_opcode_hooks(&cpu,0x008000,&target,NULL,NULL));
   CHECK(calls==4 && cpu.A==11 && cpu.X==4);
   interp_bridge_set_pre_opcode_hook(0,NULL);
-  CHECK(!interp_bridge_run_native_pre_opcode_hooks(&cpu,0x808000,&target,NULL) && calls==4);
+  CHECK(!interp_bridge_run_native_pre_opcode_hooks(&cpu,0x808000,&target,NULL,NULL) && calls==4);
   CHECK(!interp_bridge_add_pre_opcode_hook(0x008000,NULL));
   for(unsigned i=0;i<1024;++i) CHECK(interp_bridge_add_pre_opcode_hook(0x008000+i,first));
   CHECK(!interp_bridge_add_pre_opcode_hook(0x009000,first));
-  CHECK(!interp_bridge_run_native_pre_opcode_hooks(&cpu,0x80812c,&target,NULL) && calls==5);
+  CHECK(!interp_bridge_run_native_pre_opcode_hooks(&cpu,0x80812c,&target,NULL,NULL) && calls==5);
   interp_bridge_set_pre_opcode_hook(0,NULL);
   CHECK(interp_bridge_add_pre_opcode_hook(0x008000,redirect));
   CHECK(interp_bridge_add_pre_opcode_hook(0x008000,second));
-  CHECK(interp_bridge_run_native_pre_opcode_hooks(&cpu,0x808000,&target,NULL) && target==0x808100);
+  CHECK(interp_bridge_run_native_pre_opcode_hooks(&cpu,0x808000,&target,NULL,NULL) && target==0x808100);
   CHECK(calls==6); /* redirect stops later callbacks */
   interp_bridge_set_pre_opcode_hook(0,NULL);
   CHECK(interp_bridge_add_pre_opcode_hook(0x008000,nested));
   CHECK(interp_bridge_add_pre_opcode_hook(0x009000,redirect));
-  CHECK(interp_bridge_run_native_pre_opcode_hooks(&cpu,0x808000,&target,NULL));
+  CHECK(interp_bridge_run_native_pre_opcode_hooks(&cpu,0x808000,&target,NULL,NULL));
   CHECK(nested_ok && target==0x808200 && calls==7);
   interp_bridge_set_pre_opcode_hook(0,NULL);
   CHECK(!interp_bridge_native_hooks_armed(0x808000));
   CHECK(interp_bridge_add_pre_opcode_hook(0x008000,zero_redirect));
   target=0xabcdef; invoked=false;
-  CHECK(interp_bridge_run_native_pre_opcode_hooks(&cpu,0x808000,&target,&invoked));
+  CHECK(interp_bridge_run_native_pre_opcode_hooks(&cpu,0x808000,&target,&invoked,NULL));
   CHECK(invoked && target==0);
+  interp_bridge_set_pre_opcode_hook(0,NULL); calls=0; cpu.A=cpu.X=ram[0]=0;
+  CHECK(interp_bridge_add_pre_opcode_hook(0x008000,first));
+  CHECK(interp_bridge_add_pre_opcode_hook(0x008000,second));
+  CHECK(!interp_bridge_run_native_pre_opcode_hooks(&cpu,0x008000,&target,&invoked,first));
+  CHECK(invoked && calls==1 && cpu.A==0 && cpu.X==2 && ram[0]==0);
   puts("native hooks: mutation, composition, replacement, capacity, identity and nested redirects passed");
   return 0;
 }

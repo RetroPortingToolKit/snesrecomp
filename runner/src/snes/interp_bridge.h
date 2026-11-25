@@ -154,6 +154,8 @@ void interp_bridge_pre_opcode_redirect(uint32_t pc24);
  * explicit destination through non-NULL redirect_pc24; the generated caller
  * must select a checked native continuation for its live M/X and preserve the
  * enclosing return context. Nested invocations preserve pending redirects.
+ * native_owned may identify one callback whose corresponding native effect
+ * has already executed at this exact boundary; other composed owners still run.
  * This is separate from the immutable observational entry_hook contract. */
 extern const uint8_t *const g_interp_bridge_pre_opcode_filter;
 static inline bool interp_bridge_native_hooks_armed(uint32_t pc24) {
@@ -162,7 +164,8 @@ static inline bool interp_bridge_native_hooks_armed(uint32_t pc24) {
 }
 bool interp_bridge_run_native_pre_opcode_hooks(CpuState *cpu, uint32_t pc24,
                                                uint32_t *redirect_pc24,
-                                               bool *invoked);
+                                               bool *invoked,
+                                               InterpPreOpcodeHook native_owned);
 
 /* Declare the instruction at pc24 the poll of a pure interrupt wait: what it
  * reads changes only when an interrupt handler runs. Under a master deadline,

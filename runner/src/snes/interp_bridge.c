@@ -614,7 +614,8 @@ void interp_bridge_pre_opcode_redirect(uint32_t pc24) {
 
 bool interp_bridge_run_native_pre_opcode_hooks(CpuState *cpu, uint32_t pc24,
                                                uint32_t *redirect_pc24,
-                                               bool *invoked) {
+                                               bool *invoked,
+                                               InterpPreOpcodeHook native_owned) {
     const uint32_t key = pc24 & 0x7FFFFFu;
     if (invoked) *invoked = false;
     if (!(s_pre_opcode_hook_bits[(key & 0xFFFFu) >> 3] & (1u << (key & 7))))
@@ -626,6 +627,7 @@ bool interp_bridge_run_native_pre_opcode_hooks(CpuState *cpu, uint32_t pc24,
     bool redirected = false;
     for (int i = 0; i < s_pre_opcode_hook_count; ++i) {
         if (s_pre_opcode_hooks[i].pc24 != key) continue;
+        if (s_pre_opcode_hooks[i].hook == native_owned) continue;
         if (invoked) *invoked = true;
         cpu_mirrors_to_p(cpu);
         s_pre_opcode_redirect_valid = 0;
