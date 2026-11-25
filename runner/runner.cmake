@@ -1,13 +1,9 @@
-# Qualified on Windows x64; retain the reference default on other targets.
-# An explicit cache selection always wins, including an existing LLE build.
-set(_SNESRECOMP_FRAME_DEFAULT "LLE")
+# Native HLE is the default on every host. An explicit reference selection
+# remains available for accuracy work; never choose it just from the host ABI.
+set(_SNESRECOMP_FRAME_DEFAULT "HLE")
 string(TOLOWER "${CMAKE_SYSTEM_PROCESSOR}" _SNESRECOMP_FRAME_PROCESSOR)
-if(WIN32 AND CMAKE_SIZEOF_VOID_P EQUAL 8 AND
-   _SNESRECOMP_FRAME_PROCESSOR MATCHES "^(amd64|x86_64|x64)$")
-    set(_SNESRECOMP_FRAME_DEFAULT "HLE")
-endif()
 set(SNESRECOMP_FRAME_IMPL "${_SNESRECOMP_FRAME_DEFAULT}" CACHE STRING
-    "Desktop frame composition (LLE or HLE; Windows x64 defaults to HLE)")
+    "Desktop frame composition (LLE or HLE; defaults to HLE)")
 set_property(CACHE SNESRECOMP_FRAME_IMPL PROPERTY STRINGS LLE HLE)
 if(NOT SNESRECOMP_FRAME_IMPL MATCHES "^(LLE|HLE)$")
     message(FATAL_ERROR "SNESRECOMP_FRAME_IMPL must be LLE or HLE")
@@ -16,12 +12,11 @@ set_property(SOURCE "${CMAKE_CURRENT_LIST_DIR}/src/desktop/host_main.c"
     APPEND PROPERTY COMPILE_DEFINITIONS
     SNESRECOMP_FRAME_STAGING_HLE=$<STREQUAL:${SNESRECOMP_FRAME_IMPL},HLE>)
 message(STATUS "SNES desktop frame composition: ${SNESRECOMP_FRAME_IMPL}")
-# Game-by-game qualification covers Windows x64. Other targets keep the
-# portable reference defaults; both implementations remain selectable.
-set(_SNESRECOMP_APU_DEFAULT "LLE")
+# Portable native audio is independent of the host-specific CRC choice.
+set(_SNESRECOMP_APU_DEFAULT "NATIVE")
 set(_SNESRECOMP_CRC_DEFAULT "BYTE")
-if(_SNESRECOMP_FRAME_DEFAULT STREQUAL "HLE")
-    set(_SNESRECOMP_APU_DEFAULT "NATIVE")
+if(WIN32 AND CMAKE_SIZEOF_VOID_P EQUAL 8 AND
+   _SNESRECOMP_FRAME_PROCESSOR MATCHES "^(amd64|x86_64|x64)$")
     set(_SNESRECOMP_CRC_DEFAULT "SLICE8")
 endif()
 set(SNESRECOMP_APU_TIME_IMPL "${_SNESRECOMP_APU_DEFAULT}" CACHE STRING
@@ -34,7 +29,7 @@ set_property(SOURCE "${CMAKE_CURRENT_LIST_DIR}/src/snes/apu.c"
     APPEND PROPERTY COMPILE_DEFINITIONS
     SNESRECOMP_APU_NATIVE=$<STREQUAL:${SNESRECOMP_APU_TIME_IMPL},NATIVE>)
 message(STATUS "SNES audio time advancement: ${SNESRECOMP_APU_TIME_IMPL}")
-set(SNESRECOMP_DSP_MIX_IMPL "LLE" CACHE STRING "DSP voice mixing (LLE or NATIVE)")
+set(SNESRECOMP_DSP_MIX_IMPL "NATIVE" CACHE STRING "DSP voice mixing (LLE or NATIVE)")
 set_property(CACHE SNESRECOMP_DSP_MIX_IMPL PROPERTY STRINGS LLE NATIVE)
 if(NOT SNESRECOMP_DSP_MIX_IMPL MATCHES "^(LLE|NATIVE)$")
     message(FATAL_ERROR "SNESRECOMP_DSP_MIX_IMPL must be LLE or NATIVE")
@@ -407,10 +402,9 @@ endif()
 # reproducing a player's bug report.
 #
 # Vocabulary is recomp-ai-rules/OPTIMIZATION.md Â§2: off|on|force|verify|auto.
-# Dev builds want "off" (prove the floor). A port flips its release default to
-# "on" only after a replacement has cleared its promotion gates â€” and there is
-# nothing to promote until a port actually has an optimized path.
-set(SNESRECOMP_EXECUTION_DEFAULT "off" CACHE STRING
+# Development and release builds use native HLE by default. Required
+# provider gaps must be reported and fixed, not hidden by an old default.
+set(SNESRECOMP_EXECUTION_DEFAULT "on" CACHE STRING
     "Default execution policy: off|on|force|verify|auto (runtime-overridable)")
 set_property(CACHE SNESRECOMP_EXECUTION_DEFAULT PROPERTY STRINGS
     off on force verify auto)
