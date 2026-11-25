@@ -98,6 +98,16 @@ echo "=== PPU hi-res surface (sub-screen column of modes 5/6 and pseudo hi-res) 
     -lm -o "$OUT/ppu_hires_surface_test"
 "$OUT/ppu_hires_surface_test"
 
+echo "=== PPU hi-res surface (native Mode7 line) ==="
+"$CC" -std=c11 -Wall -Wextra -O1 \
+    -DSNESRECOMP_REVERSE_DEBUG=0 -DSNESRECOMP_LEGACY_MODE7_NATIVE=1 \
+    -I "$ROOT/runner/src" -I "$ROOT/runner/src/snes" \
+    "$ROOT/tests/ppu/ppu_hires_surface_test.c" \
+    "$ROOT/runner/src/snes/hd_jobs.c" "$ROOT/runner/src/snes/ppu.c" \
+    "$ROOT/runner/src/snes/ppu_legacy.c" \
+    -lm -o "$OUT/ppu_hires_surface_native_mode7_test"
+"$OUT/ppu_hires_surface_native_mode7_test"
+
 echo "=== PPU mosaic source grid at clipped window edges ==="
 "$CC" -std=c11 -Wall -Wextra -O1 -DSNESRECOMP_REVERSE_DEBUG=0 \
     -I "$ROOT/runner/src" -I "$ROOT/runner/src/snes" \

@@ -8,7 +8,8 @@
  *
  * Each case gives the two columns different colours (red sub, blue main), so
  * a swapped or missing column shows. Covered: modes 5 and 6, pseudo hi-res
- * in mode 1, a frame mixing 256- and 512-dot lines, a host that binds
+ * in modes 1 and 7 (including native Mode 7), main-only clip/math, a frame
+ * mixing 256- and 512-dot lines, a host that binds
  * nothing (renderBuffer unchanged, no marks), and an anchored widescreen
  * frame whose origin is not the centre.
  *
@@ -127,10 +128,25 @@ static void setup_pseudo_hires(Ppu *ppu) {
     fill_tile(ppu, 0x2000 + 1 * 16, 1, 1);
 }
 
+/* Mode 7 EXTBG resolves the same texel as blue BG1 on main and red BG2 on
+ * sub: BG1 keeps palette index 0x82, BG2 uses its lower seven bits. */
+static void setup_mode7_pseudo_hires(Ppu *ppu) {
+    base_setup(ppu);
+    ppu->bgmode = 7;
+    ppu->setini = 0x48;                         /* EXTBG + pseudo hi-res */
+    ppu->screenEnabled[0] = 1;
+    ppu->screenEnabled[1] = 2;
+    ppu->m7matrix[0] = ppu->m7matrix[3] = 0x100;
+    for (size_t i = 0; i < sizeof ppu->vram / sizeof ppu->vram[0]; i++)
+        ppu->vram[i] = 0x8201;                  /* tile 1, texel 0x82 */
+    ppu->cgram[0x82] = kBlue;
+    ppu->cgram[2] = kRed;
+}
+
 static bool pixel_is(const uint8_t *row, int column, uint16_t bgr15) {
     const uint8_t *p = row + (size_t)column * 4;   /* BGRX, full brightness */
     uint8_t r = (bgr15 & 0x1f) ? 0xff : 0, b = (bgr15 & 0x7c00) ? 0xff : 0;
-    return p[0] == b && p[1] == 0 && p[2] == r;
+    return p[0] == b && p[1] == 0 && p[2] == r && p[3] == 0;
 }
 
 /* Lines 0..count of one frame. */
@@ -214,6 +230,24 @@ int main(void) {
         snprintf(msg, sizeof msg, "pseudo hi-res (%s): empty sub screen shows CGRAM[0], not COLDATA", renderer);
         failures += check(row_is(sub_px, 0, 256, kRed), msg);
 
+        /* The selected native Mode 7 line service must publish the same raw
+         * sub dot, including when main-only clip or math changes main output. */
+        for (int effect = 0; effect < 4; effect++) {
+            setup_mode7_pseudo_hires(ppu);
+            if (effect == 1) ppu->cgwsel = 0xc0;
+            if (effect == 2) { ppu->cgwsel = 0x02; ppu->cgadsub = 0x01; }
+            if (effect == 3) ppu->inidisp |= 0x80;
+            memset(sub_px, kSentinel, sizeof sub_px);
+            failures += check(PpuBindHiresSurface(ppu, sub_px, kPitch), "Mode 7 surface binds");
+            draw(ppu, main_px, kPitch, kFlags[f], 1);
+            const uint16_t main_color = effect == 1 || effect == 3 ? 0 : effect == 2 ? kRed | kBlue : kBlue;
+            const uint16_t sub_color = effect == 3 ? 0 : kRed;
+            snprintf(msg, sizeof msg, "Mode 7 pseudo (%s, effect %d): main clip/math retained", renderer, effect);
+            failures += check(row_is(main_px, 0, 256, main_color), msg);
+            snprintf(msg, sizeof msg, "Mode 7 pseudo (%s, effect %d): raw sub dot and current row mark", renderer, effect);
+            failures += check(row_is(sub_px, 0, 256, sub_color) && PpuHiresLine(ppu, 1) && PpuHiresFrame(ppu), msg);
+        }
+
         /* One frame, lines 1-2 in mode 1 (256 dots), lines 3-4 in mode 5. */
         setup_true_hires(ppu, 1);
         memset(sub_px, kSentinel, sizeof sub_px);
@@ -245,11 +279,15 @@ int main(void) {
         failures += check(!PpuHiresLine(ppu, 1) && !PpuHiresFrame(ppu), msg);
 
         /* A host that binds nothing gets the same renderBuffer and no marks. */
-        for (int scene = 0; scene < 3; scene++) {
-            if (scene < 2) setup_true_hires(ppu, (uint8_t)(5 + scene)); else setup_pseudo_hires(ppu);
+        for (int scene = 0; scene < 4; scene++) {
+            if (scene < 2) setup_true_hires(ppu, (uint8_t)(5 + scene));
+            else if (scene == 2) setup_pseudo_hires(ppu);
+            else setup_mode7_pseudo_hires(ppu);
             failures += check(PpuBindHiresSurface(ppu, sub_px, kPitch), "surface binds");
             draw(ppu, main_px, kPitch, kFlags[f], kLines);
-            if (scene < 2) setup_true_hires(ppu, (uint8_t)(5 + scene)); else setup_pseudo_hires(ppu);
+            if (scene < 2) setup_true_hires(ppu, (uint8_t)(5 + scene));
+            else if (scene == 2) setup_pseudo_hires(ppu);
+            else setup_mode7_pseudo_hires(ppu);
             failures += check(PpuBindHiresSurface(ppu, NULL, 0), "surface unbinds");
             draw(ppu, plain_px, kPitch, kFlags[f], kLines);
             snprintf(msg, sizeof msg, "unbound (%s, scene %d): renderBuffer as with a surface", renderer, scene);
@@ -257,6 +295,31 @@ int main(void) {
             snprintf(msg, sizeof msg, "unbound (%s, scene %d): no hi-res marks", renderer, scene);
             failures += check(!PpuHiresFrame(ppu) && !PpuHiresLine(ppu, 1), msg);
         }
+    }
+
+    /* The native Mode 7 output shares the caller's anchored frame origin.
+     * A one-row allocation with accessible canaries catches an extra offset
+     * without asking the renderer to write outside the backing test object. */
+    {
+        enum { kExtra = 16, kGuard = 64, kWidePitch = (kPpuXPixels + 2 * kExtra) * 4 };
+        static uint8_t wide_main[kGuard + kWidePitch + kGuard];
+        static uint8_t wide_sub[kGuard + kWidePitch + kGuard];
+        setup_mode7_pseudo_hires(ppu);
+        PpuSetExtraSpace(ppu, kExtra);
+        PpuSetWidescreenViewAnchor(ppu, true);
+        PpuSetExtraSideSpace(ppu, 0, 2 * kExtra, 0);
+        memset(wide_main, kSentinel, sizeof wide_main);
+        memset(wide_sub, kSentinel, sizeof wide_sub);
+        failures += check(PpuBindHiresSurface(ppu, wide_sub + kGuard, kWidePitch), "anchored Mode 7 surface binds");
+        draw(ppu, wide_main + kGuard, kWidePitch, 0, 1);
+        failures += check(row_is(wide_main + kGuard, 0, 256 + 2 * kExtra, kBlue) &&
+                          row_is(wide_sub + kGuard, 0, 256 + 2 * kExtra, kRed) && PpuHiresLine(ppu, 1),
+                          "anchored Mode 7: both surfaces use the frame origin and full row");
+        failures += check(row_untouched(wide_main, kGuard) &&
+                          row_untouched(wide_main + kGuard + kWidePitch, kGuard) &&
+                          row_untouched(wide_sub, kGuard) &&
+                          row_untouched(wide_sub + kGuard + kWidePitch, kGuard),
+                          "anchored Mode 7: main/sub canaries stay untouched");
     }
 
     /* Anchored widescreen: the origin slides to frame column 0, away from the
