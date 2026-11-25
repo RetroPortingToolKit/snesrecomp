@@ -88,6 +88,16 @@ echo "=== PPU modes 4-6 fall back to the compatibility renderer ==="
 "$CC" -std=c11 -Wall -Wextra -O1     -DSNESRECOMP_REVERSE_DEBUG=0     -I "$ROOT/runner/src" -I "$ROOT/runner/src/snes"     "$ROOT/tests/ppu/ppu_hires_mode_test.c"     "$ROOT/runner/src/snes/hd_jobs.c" "$ROOT/runner/src/snes/ppu.c"     "$ROOT/runner/src/snes/ppu_legacy.c"     -lm -o "$OUT/ppu_hires_mode_test"
 "$OUT/ppu_hires_mode_test"
 
+echo "=== PPU hi-res surface (sub-screen column of modes 5/6 and pseudo hi-res) ==="
+"$CC" -std=c11 -Wall -Wextra -O1 \
+    -DSNESRECOMP_REVERSE_DEBUG=0 \
+    -I "$ROOT/runner/src" -I "$ROOT/runner/src/snes" \
+    "$ROOT/tests/ppu/ppu_hires_surface_test.c" \
+    "$ROOT/runner/src/snes/hd_jobs.c" "$ROOT/runner/src/snes/ppu.c" \
+    "$ROOT/runner/src/snes/ppu_legacy.c" \
+    -lm -o "$OUT/ppu_hires_surface_test"
+"$OUT/ppu_hires_surface_test"
+
 echo "=== PPU mosaic source grid at clipped window edges ==="
 "$CC" -std=c11 -Wall -Wextra -O1 -DSNESRECOMP_REVERSE_DEBUG=0 \
     -I "$ROOT/runner/src" -I "$ROOT/runner/src/snes" \

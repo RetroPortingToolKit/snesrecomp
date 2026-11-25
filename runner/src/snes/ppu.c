@@ -120,6 +120,8 @@ void ppu_reset(Ppu* ppu) {
     uint32_t renderFlags = ppu->renderFlags;
     SnesHdCapture *hdCapture = ppu->hdCapture;
     SnesHdCaptureReset(hdCapture);
+    uint8_t *hiresBuffer = ppu->hiresBuffer;
+    uint32_t hiresPitch = ppu->hiresPitch;
     uint32_t overlayPitch[kPpuOverlaySource_Count];
     uint8_t *overlayBuffer[kPpuOverlaySource_Count];
     memcpy(overlayPitch, ppu->overlayRenderPitch, sizeof(overlayPitch));
@@ -129,6 +131,8 @@ void ppu_reset(Ppu* ppu) {
     ppu->renderPitch = (uint32_t)pitch;
     ppu->renderFlags = renderFlags;
     ppu->hdCapture = hdCapture;
+    ppu->hiresBuffer = hiresBuffer;
+    ppu->hiresPitch = hiresPitch;
     memcpy(ppu->overlayRenderPitch, overlayPitch, sizeof(overlayPitch));
     memcpy(ppu->overlayRenderBuffer, overlayBuffer, sizeof(overlayBuffer));
   }
@@ -238,6 +242,29 @@ void PpuSetWidescreenLineEnhancer(Ppu *ppu,
                                   void *context) {
   ppu->widescreenLineEnhancer = enhancer;
   ppu->widescreenLineEnhancerContext = enhancer ? context : NULL;
+}
+
+bool PpuBindHiresSurface(Ppu *ppu, uint8_t *pixels, size_t pitch) {
+  if (!ppu) return false;
+  if (!pixels) {
+    ppu->hiresBuffer = NULL;
+    ppu->hiresPitch = 0;
+    memset(ppu->hiresLines, 0, sizeof(ppu->hiresLines));
+    ppu->hiresAny = false;
+    return true;
+  }
+  if (pitch < kPpuXPixels * 4 || pitch > kPpuBufWidth * 4 || pitch % 4) return false;
+  ppu->hiresBuffer = pixels;
+  ppu->hiresPitch = (uint32_t)pitch;
+  return true;
+}
+
+bool PpuHiresLine(const Ppu *ppu, int y) {
+  return ppu && y > 0 && y < 240 && ppu->hiresLines[y];
+}
+
+bool PpuHiresFrame(const Ppu *ppu) {
+  return ppu && ppu->hiresAny;
 }
 
 void PpuClearOverlayCaptures(Ppu *ppu) {
@@ -946,9 +973,12 @@ static void PpuDrawVisibleLine(Ppu *ppu, int line, bool pixels, bool live) {
 
   if (!pixels) return;
 
+  /* With a hi-res surface bound, pseudo hi-res lines take the compatibility
+   * renderer too: it computes both dots of each column. */
   if ((ppu->renderFlags & kPpuRenderFlags_NewRenderer) &&
       !(PPU_mode(ppu) == 7 && (PPU_m7extBg(ppu) || PPU_directColor(ppu))) &&
-      PpuOptimizedRendererHandlesMode(PPU_mode(ppu))) {
+      PpuOptimizedRendererHandlesMode(PPU_mode(ppu)) &&
+      !(ppu->hiresBuffer && PPU_pseudoHires(ppu))) {
     if (live)
       debug_server_on_ppu_line_drawn(line, 1, ppu->bgmode);
     PPU_T0; PpuDrawWholeLine(ppu, line); PPU_ACC(g_ppu_sec_line_ms);
@@ -1037,6 +1067,12 @@ static void PpuRunLineJob(Ppu* ppu, int line, bool pixels, bool live) {
     ppu->timeOver = false;
     ppu->evenFrame = !ppu->evenFrame;
   } else {
+    /* A frame-model host draws lines 1..224 and never passes line 0, so the
+     * hi-res marks of the previous frame are cleared on line 1. */
+    if (line == 1) {
+      memset(ppu->hiresLines, 0, sizeof(ppu->hiresLines));
+      ppu->hiresAny = false;
+    }
     PpuDrawVisibleLine(ppu, line, pixels, live);
   }
 }
