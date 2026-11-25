@@ -15,7 +15,7 @@ class HostContext(unittest.TestCase):
         if not cc:self.skipTest('C compiler required')
         cpu=(ROOT/'runner/src/common_cpu_infra.c').read_text()
         bridge=(ROOT/'runner/src/snes/interp_bridge.c').read_text()
-        source='#include <stdlib.h>\n#include <string.h>\n#include "common_cpu_infra.h"\n#include "cpu_state.h"\n#include "snes/interp_bridge.h"\n'
+        source='#include <stdlib.h>\n#include <string.h>\n#include <setjmp.h>\n#include "common_cpu_infra.h"\n#include "cpu_state.h"\n#include "snes/interp_bridge.h"\n'
         source+=cpu[cpu.index('const char *g_last_recomp_func'):cpu.index('#define UNRESOLVED_ABANDON_MAX')]
         for name in ('g_wlog_aot_slot','g_recomp_yield_popped_top'):
             source+=re.search(r'^(?:static )?int '+name+r'[^\n]*;',cpu,re.M)[0]+'\n'
@@ -67,8 +67,13 @@ static void second_task(void *arg) {
   interp_bridge_guest_scope_unwind();cpu_guest_scope_unwind();g_aot_resume_pc=0;
   c->host_return_valid=0;pending=99;
 }
+static jmp_buf completed;
+static void complete_and_run_next_task(void *arg) {
+  second_task(arg);
+  longjmp(completed,1); /* The scheduler deletes the completed fiber. */
+}
 int main(void) {
-  CpuState c={0};uint8_t ram[1]={0};c.ram=ram;c.master_cycles=10;c.host_return_valid=3;
+  static CpuState c;static uint8_t ram[1];c.ram=ram;c.master_cycles=10;c.host_return_valid=3;
   g_recomp_stack_top=2;g_recomp_stack[0]="outer";g_recomp_stack[1]="tail";
   g_cpu_entry_s[0]=0x13d;g_cpu_entry_s[1]=0x139;g_cpu_entry_s_valid[0]=g_cpu_entry_s_valid[1]=1;
   g_cpu_entry_return_frame[0]=3;g_cpu_entry_hrv[0]=3;g_cpu_entry_tailcall[1]=1;
@@ -94,6 +99,15 @@ int main(void) {
   CHECK(aot_resume_take_handback(0x808888) && !aot_resume_take_handback(0x808888));
   CHECK(s_pre_opcode_redirect_valid && s_pre_opcode_redirect_pc24==0 && s_pre_opcode_redirect_is_return);
   CHECK(ram[0]==2 && c.master_cycles==210 && pending==99 && flushes==2 && c.host_return_valid==3);
+  aot_resume_note_handback(0x808888,0x808888);
+  if(!setjmp(completed)) {
+    interp_bridge_with_host_context(&c,complete_and_run_next_task,&c);
+    CHECK(0); /* A dead task must never regain its old guest caller. */
+  }
+  CHECK(interp_bridge_guest_scope_idle() && !g_recomp_stack_top && !cpu_interrupt_context_active());
+  CHECK(!g_tailcall_context_valid && !g_aot_resume_pc && !c.host_return_valid);
+  CHECK(!s_aot_resume_n && !aot_resume_take_handback(0x808888));
+  CHECK(ram[0]==4 && c.master_cycles==410 && pending==99 && flushes==4);
   puts("host call context: separate nested task ownership, exact ancestor/return metadata, shared RAM/clocks/APU progress");
   return 0;
 }
