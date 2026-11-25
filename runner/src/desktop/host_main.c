@@ -1,5 +1,5 @@
 /*
- * host_main.c — the framework's desktop host. See host_main.h.
+ * host_main.c â€” the framework's desktop host. See host_main.h.
  *
  * Ported from SuperMetroidRecomp/src/main.c, which was the most complete host
  * in the ecosystem at the time (in-game overlays with a frozen-frame present,
@@ -45,6 +45,7 @@
 #ifdef __ANDROID__
 #include "android_host.h"
 #endif
+#include "runner_input.h"
 
 #include "snes/ppu.h"
 #include "snes/hd_jobs.h"
@@ -130,7 +131,7 @@
 #endif
 #endif
 
-/* ─────────────────────────────────────────────────────────────────────────── */
+/* â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
 
 static const SnesDesktopHostGame *g_game;
 static SnesHdCapture *g_hd_capture;
@@ -185,13 +186,14 @@ static void HandleGamepadInput(GamepadInfo *gi, int button, bool pressed);
 static void HandleInput(int keyCode, int keyMod, bool pressed);
 static void HandleCommand(uint32 j, bool pressed);
 static void PollLocalControls(const uint8_t *keys);
+static uint16_t PollTitleActions(void);
 static void RequestScreenshot(void);
 #if !defined(__ANDROID__) && !SNESRECOMP_SDL_GLES2_ONLY
 void OpenGLRenderer_Create(struct RendererFuncs *funcs);
 #include "opengl.h"   /* snesrecomp_opengl_set_vsync */
 #endif
 
-/* ── Symbols the framework leaves to the host ─────────────────────────────── */
+/* â”€â”€ Symbols the framework leaves to the host â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
 
 bool g_new_ppu = true;
 
@@ -1188,7 +1190,7 @@ static uint32 TickScript(void) {
   if (g_script_phase == 1) {
     // waiting
     if (g_script_counter > 0) { g_script_counter--; return 0; }
-    // done waiting — start hold
+    // done waiting â€” start hold
     g_script_phase = 0;
     g_script_counter = e->hold_frames;
   }
@@ -1260,7 +1262,7 @@ static uint32 TickScript(void) {
       }
       return e->mask;
     }
-    // hold done — advance
+    // hold done â€” advance
     g_script_index++;
     if (g_script_index < g_script_count) {
       e = &g_script_entries[g_script_index];
@@ -1787,7 +1789,7 @@ static void DrawPpuFrameWithPerf(void) {
   RecordFrameTiming(g_present_frame);
 }
 
-/* Seat-0 input word the overlays navigate with — the same sources the guest
+/* Seat-0 input word the overlays navigate with â€” the same sources the guest
  * gets, minus the script (an overlay is a human facility). */
 static uint32 OverlayNavInputs(void) {
   return g_input_state | g_pad_buttons | g_gamepad[0].axis_buttons
@@ -2042,6 +2044,58 @@ static bool PadGesturePressed(PadGesture *g) {
   const bool pressed = held && !g->was_held;
   g->was_held = held;
   return pressed;
+}
+
+static uint16_t PollTitleActions(void) {
+  if (!g_game->input_action_labels || g_game->input_action_count <= 0 ||
+      !(SDL_GetWindowFlags(g_window) & SDL_WINDOW_INPUT_FOCUS) ||
+      snes_savestate_menu_is_open() || snes_rewind_is_open()) return 0;
+  GamepadInfo *seat = &g_gamepad[0];
+  uint32_t buttons = 0;
+  int16_t axes[6] = {0};
+  const bool assigned = ConfigHasPlayerSource(0)
+      ? g_config.player_src[0] == 2 : g_config.enable_gamepad[0];
+  if (assigned && seat->joystick_id != (SDL_JoystickID)-1) {
+    if (seat->raw_joystick && seat->joystick) {
+      buttons = seat->modifiers & 0x7fffu;
+#if SNESRECOMP_SDL3
+      const int count = SDL_GetNumJoystickAxes(seat->joystick);
+      for (int a = 0; a < count && a < 6; ++a)
+        axes[a] = SDL_GetJoystickAxis(seat->joystick, a);
+#else
+      const int count = SDL_JoystickNumAxes(seat->joystick);
+      for (int a = 0; a < count && a < 6; ++a)
+        axes[a] = SDL_JoystickGetAxis(seat->joystick, a);
+#endif
+    } else {
+      /* Query the opened device directly. A missing/disconnected handle is
+       * neutral, and the host does not need a second cached axis layout. */
+#if SNESRECOMP_SDL3
+      SDL_Gamepad *pad = SDL_GetGamepadFromID(seat->joystick_id);
+      if (pad) {
+        for (int b = 0; b < SDL_GAMEPAD_BUTTON_COUNT && b < 32; ++b)
+          if (SDL_GetGamepadButton(pad, (SDL_GamepadButton)b)) buttons |= 1u << b;
+        for (int a = 0; a < 6; ++a) axes[a] = SDL_GetGamepadAxis(pad, (SDL_GamepadAxis)a);
+      }
+#else
+      SDL_GameController *pad = SDL_GameControllerFromInstanceID(seat->joystick_id);
+      if (pad) {
+        for (int b = 0; b < SDL_CONTROLLER_BUTTON_MAX && b < 32; ++b)
+          if (SDL_GameControllerGetButton(pad, (SDL_GameControllerButton)b)) buttons |= 1u << b;
+        for (int a = 0; a < 6; ++a) axes[a] = SDL_GameControllerGetAxis(pad, (SDL_GameControllerAxis)a);
+      }
+#endif
+    }
+  }
+  const uint8_t *keys = snesrecomp_sdl_get_keyboard_state();
+  uint16_t actions = 0;
+  for (int i = 0; i < g_game->input_action_count && i < SNES_INPUT_ACTION_COUNT; ++i) {
+    const bool key = g_config.player_src[0] == 1 && keybinds_binding_down(
+        keys, g_mouse_buttons, g_config.input_action_key[i]);
+    if (key || SnesHostPadBindingDown(g_config.input_action_pad[i], buttons, axes))
+      actions |= (uint16_t)(1u << (12 + i));
+  }
+  return actions;
 }
 
 /* One controller shortcut owner. KeyMap remains the keyboard owner; this
@@ -2592,7 +2646,7 @@ static bool RunRewindRequest(bool *running) {
   return true;
 }
 
-/* ── Audio ────────────────────────────────────────────────────────────────── */
+/* â”€â”€ Audio â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
 
 static SDL_mutex *g_audio_mutex;
 static uint8 *g_audiobuffer, *g_audiobuffer_cur, *g_audiobuffer_end;
@@ -2748,7 +2802,7 @@ static void SetAudioPaused(bool paused) {
 #endif
 }
 
-/* ── SDL_Renderer presenter ───────────────────────────────────────────────── */
+/* â”€â”€ SDL_Renderer presenter â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
 
 static SDL_Renderer *g_renderer;
 static SDL_Texture *g_texture;
@@ -2925,7 +2979,7 @@ void MkDir(const char *s) {
 #endif
 }
 
-/* ── Crash pipeline ───────────────────────────────────────────────────────── */
+/* â”€â”€ Crash pipeline â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
 
 static void dump_cpu_state(void) {
   fprintf(stderr, "  CpuState: A=%04X X=%04X Y=%04X S=%04X D=%04X DB=%02X PB=%02X "
@@ -2940,8 +2994,8 @@ static void crash_handler(int sig) {
           sig, g_last_recomp_func ? g_last_recomp_func : "(unknown)");
   dump_cpu_state();
   RecompStackDump();
-  cpu_trace_dump_dbpb("CRASH — DB/PB mutations");
-  cpu_trace_dump_recent("CRASH — main trace ring", 256);
+  cpu_trace_dump_dbpb("CRASH â€” DB/PB mutations");
+  cpu_trace_dump_recent("CRASH â€” main trace ring", 256);
   fflush(stderr);
   recomp_post_mortem_dump("signal", NULL);
   _exit(128 + sig);
@@ -2964,8 +3018,8 @@ static LONG WINAPI seh_handler(EXCEPTION_POINTERS* info) {
   }
   dump_cpu_state();
   RecompStackDump();
-  cpu_trace_dump_dbpb("SEH CRASH — DB/PB mutations");
-  cpu_trace_dump_recent("SEH CRASH — main trace ring", 256);
+  cpu_trace_dump_dbpb("SEH CRASH â€” DB/PB mutations");
+  cpu_trace_dump_recent("SEH CRASH â€” main trace ring", 256);
   fflush(stderr);
   recomp_post_mortem_dump("seh", info);
   return EXCEPTION_EXECUTE_HANDLER;
@@ -2976,7 +3030,7 @@ static void post_mortem_atexit(void) {
   recomp_post_mortem_dump("atexit", NULL);
 }
 
-/* ── Mods / launcher / netplay glue ───────────────────────────────────────── */
+/* â”€â”€ Mods / launcher / netplay glue â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
 
 #if SNESRECOMP_ENABLE_MODS
 static int g_mods_ready;
@@ -3108,9 +3162,15 @@ static uint16_t netplay_capture_pad(void *ctx) {
   (void)ctx;
   PollLocalControls(snesrecomp_sdl_get_keyboard_state());
   const unsigned player = snes_netplay_input_player() == 1 ? 1 : 0;
-  return (uint16_t)snes_savestate_menu_filter_guest_input(
+  uint16_t pad = (uint16_t)snes_savestate_menu_filter_guest_input(
       (((g_input_state | g_pad_buttons) >> (player * 12)) |
        g_gamepad[player].axis_buttons) & 0x0fffu);
+#if SNESRECOMP_ENABLE_MODS
+  if (g_mods_ready) pad = ModTransformSeat(pad, (int)player);
+#endif
+  /* Local title actions follow the assigned local netplay seat. */
+  pad |= PollTitleActions();
+  return pad;
 }
 
 static void netplay_poll_events(void *ctx, int *want_soft_exit) {
@@ -3141,7 +3201,7 @@ static void netplay_poll_events(void *ctx, int *want_soft_exit) {
 #endif /* SNES_HAS_LOBBY_CLIENT */
 
 /* The dump this project was generated from, if the player parked a copy next
- * to the executable or in the working directory. Not a requirement — it is
+ * to the executable or in the working directory. Not a requirement â€” it is
  * the habit tools/regen.sh documents, and skipping the prompt for someone
  * who already followed it is the whole point. */
 static int FindRomBesideExe(char *out, size_t cap) {
@@ -3166,9 +3226,9 @@ static int FindRomBesideExe(char *out, size_t cap) {
   return 0;
 }
 
-/* ── main ─────────────────────────────────────────────────────────────────── */
+/* â”€â”€ main â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
 
-/* ── The launcher, before boot and mid-game ──────────────────────────────── */
+/* â”€â”€ The launcher, before boot and mid-game â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
 
 /* The ROM this binary was generated from. File scope because both launcher
  * entries hand it to recomp-ui, and the console resolver checks against it. */
@@ -3485,6 +3545,27 @@ static void LauncherSeed(RecompLauncherCSettings *ls, RecompLauncherCGameInfo *g
     ls->assist_pad_bind[0] = g_config.state_menu_pad_binding;
   }
 #endif
+#if defined(RECOMP_LAUNCHER_HAS_ASSIST_KEY_MASK)
+  if (game->input_action_labels && game->input_action_count > 0 && game->input_action_count <= SNES_INPUT_ACTION_COUNT) {
+    static const char *labels[RECOMP_LAUNCHER_MAX_ASSIST_BINDINGS];
+    static int keys[RECOMP_LAUNCHER_MAX_ASSIST_BINDINGS], pads[RECOMP_LAUNCHER_MAX_ASSIST_BINDINGS];
+    const int first = game->editable_state_menu_controller ? 1 : 0;
+    memset(keys, 0, sizeof(keys)); memset(pads, 0, sizeof(pads));
+    if (first) { labels[0] = "Save states"; pads[0] = SNES_HOST_STATE_MENU_PAD_DEFAULT; }
+    for (int i = 0; i < game->input_action_count; ++i) {
+      labels[first+i] = game->input_action_labels[i];
+      ls->assist_key_bind[first+i] = g_config.input_action_key[i];
+      ls->assist_pad_bind[first+i] = g_config.input_action_pad[i];
+    }
+    gi->assist_binding_labels = labels;
+    gi->assist_binding_count = first + game->input_action_count;
+    gi->assist_pad_only = 0;
+    gi->assist_key_disabled_mask = first ? 1u : 0u;
+    gi->assist_direct_pad_bind_action = first + 1;
+    gi->assist_tools_note = "Game actions use Player 1's assigned input device. Save-state keyboard shortcuts are in Hotkeys.";
+    gi->assist_default_key_bind = keys; gi->assist_default_pad_bind = pads;
+  }
+#endif
 #if defined(SNES_HAS_LOBBY_CLIENT)
   /* The netplay button is capability-gated: these two fields are what
    * make the launcher show it. */
@@ -3495,7 +3576,7 @@ static void LauncherSeed(RecompLauncherCSettings *ls, RecompLauncherCGameInfo *g
   }
 #endif
 #if defined(SNESRECOMP_HOST_HAS_CODEGEN)
-  /* Wire "Generate & rebuild…". No-ops when the SDK, CMake or the build
+  /* Wire "Generate & rebuildâ€¦". No-ops when the SDK, CMake or the build
    * tree is absent, which is the normal state of a shipped build. */
   if (!in_session)
     snesrecomp_codegen_host_autowire(gi, gi->name);
@@ -3569,6 +3650,12 @@ static void LauncherCommit(const RecompLauncherCSettings *ls, const char *config
       g_state_menu_pad_was_held = false;
     }
 #endif
+  }
+  for (int i = 0; i < g_game->input_action_count && i < SNES_INPUT_ACTION_COUNT; ++i) {
+    const int row = (g_game->editable_state_menu_controller ? 1 : 0) + i;
+    g_config.input_action_key[i] = ls->assist_key_bind[row];
+    int pad = ls->assist_pad_bind[row];
+    if (SnesHostPadBindingValid(pad)) g_config.input_action_pad[i] = pad > 0 ? pad : 0;
   }
   WriteConfigFile(config_file);
   /* The launcher's Hotkeys and controller editors write [KeyMap] and
@@ -3790,6 +3877,7 @@ int snesrecomp_desktop_main(const SnesDesktopHostGame *game, int argc, char **ar
     return 2;
   }
   g_game = game;
+  ConfigEnableInputActions(game->input_action_count);
   if (game->window_title && game->window_title[0])
     snprintf(g_window_title, sizeof(g_window_title), "%s", game->window_title);
   else
@@ -3809,7 +3897,7 @@ int snesrecomp_desktop_main(const SnesDesktopHostGame *game, int argc, char **ar
 #ifndef _WIN32
   /* On Windows, do NOT install a SIGSEGV handler: the CRT's signal shim
    * intercepts access violations BEFORE SetUnhandledExceptionFilter, so
-   * crashes would reach crash_handler with no EXCEPTION_POINTERS — no
+   * crashes would reach crash_handler with no EXCEPTION_POINTERS â€” no
    * exception record in the minidump/report. With SIGSEGV uninstalled,
    * AVs reach the SEH filter below with full fault context. */
   signal(SIGSEGV, crash_handler);
@@ -3850,7 +3938,7 @@ int snesrecomp_desktop_main(const SnesDesktopHostGame *game, int argc, char **ar
    * SNESRECOMP_CPU_TRACE_RING_ENTRIES). */
   cpu_trace_init();
   cpu_trace_arm_default_watches();
-  /* Capture program path before argv shift — used to place keybinds.ini
+  /* Capture program path before argv shift â€” used to place keybinds.ini
    * next to the executable. */
   const char *program_path = (argc >= 1) ? argv[0] : NULL;
   g_program_path = program_path;
@@ -4224,7 +4312,7 @@ int snesrecomp_desktop_main(const SnesDesktopHostGame *game, int argc, char **ar
     if (start_paused) {
       debug_server_start_paused();
 #if SNESRECOMP_TRACE
-      fprintf(stderr, "[main] Started paused — send 'step N' or 'continue' via TCP\n");
+      fprintf(stderr, "[main] Started paused â€” send 'step N' or 'continue' via TCP\n");
 #endif
     }
   }
@@ -4650,7 +4738,7 @@ error_reading:;
     bool open_raster_inspector = false;
 #endif
 
-    /* Inert unless SNESRECOMP_CRASH_TEST is set — support drill for the
+    /* Inert unless SNESRECOMP_CRASH_TEST is set â€” support drill for the
      * whole crash-capture pipeline (minidump + report + crash copy). */
     host_report_crash_test_tick();
 
@@ -5049,6 +5137,7 @@ error_reading:;
      * without running a frame. Ticked above the overlay checks, an
      * iteration that opened a panel consumed a script frame the guest never
      * saw, and every later scripted press landed a frame early. */
+    inputs |= SnesInputPackSeat(PollTitleActions(), 0);
     inputs |= TickScript();
     inputs |= HeadlessCapture_InputWord(frameCtr + 1);
     if (g_script_quit) {
@@ -5277,7 +5366,7 @@ error_reading:;
   return (g_script_failed || HeadlessCapture_Failed()) ? 3 : g_selftest_pad_failed ? 4 : 0;
 }
 
-/* ── Input plumbing ───────────────────────────────────────────────────────── */
+/* â”€â”€ Input plumbing â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
 
 /* The FPS readout is the framework OSD's (snes_osd.c: grey panel, turbo and
  * save-slot toasts share it), toggled by [KeyMap] DisplayPerf. The host used
@@ -5677,7 +5766,7 @@ static void HandleGamepadAxisInput(GamepadInfo *gi, int axis, Sint16 value) {
   }
 }
 
-/* ── config.ini discovery ─────────────────────────────────────────────────── */
+/* â”€â”€ config.ini discovery â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
 
 // Go some steps up and find config.ini
 static void SwitchDirectory(void) {

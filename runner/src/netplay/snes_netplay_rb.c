@@ -1,3 +1,4 @@
+#include "runner_input.h"
 #include "snes_netplay_rb.h"
 
 #include <stdio.h>
@@ -35,7 +36,7 @@ extern Snes *g_snes;
  * 12-bit rows can never legitimately be 0xFFFF, so the sentinel is still
  * mapped to neutral here should one arrive over the wire from an older peer. */
 #define RB_PSX_NEUTRAL 0xFFFFu
-#define RB_BUTTON_MASK 0x0FFFu
+#define RB_BUTTON_MASK SNES_INPUT_SEAT_MASK
 
 static struct {
     SnesNetplayRbBindings b;
@@ -212,7 +213,7 @@ static uint32_t rb_run_frame_inputs(void)
     /* Seats 0 and 1 ride the packed word; 2..7 were already applied by
      * publish, which routes them through RtlSetPadState. Both seats plugged,
      * matching snes_netplay_active_mask(). */
-    return p1 | (p2 << 12) | (3u << 30);
+    return SnesInputPackSeat((uint16_t)p1, 0) | SnesInputPackSeat((uint16_t)p2, 1) | (3u << 30);
 }
 
 /* A replayed tick. Inline: an SNES tick is a plain RtlRunFrame that returns,

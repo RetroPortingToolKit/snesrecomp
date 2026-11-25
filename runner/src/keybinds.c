@@ -348,6 +348,10 @@ static bool binding_is_down(const uint8_t *keys, uint32_t mouse_buttons,
            keys[code];
 }
 
+int keybinds_binding_down(const uint8_t *keys, uint32_t mouse_buttons, int binding) {
+    return binding_is_down(keys, mouse_buttons, (SDL_Scancode)binding);
+}
+
 uint32_t keybinds_mouse_event(uint32_t buttons, uint32_t window_id,
                               const SDL_Event *event) {
     if (!window_id) return 0;

@@ -225,6 +225,11 @@ typedef struct SnesDesktopHostGame {
    * Default both stick clicks; the player can capture another chord or clear it.
    * Zero retains the established Select+R behavior for existing consumers. */
   int editable_state_menu_controller;
+  /* Optional Player 1 title actions, initially unbound. At most three; the
+   * canonical word carries them beside both SNES pads (runner_input.h).
+   * The title consumes them after recording, before guest controller reads. */
+  const char *const *input_action_labels;
+  int input_action_count;
 } SnesDesktopHostGame;
 
 /* The whole program. Returns the process exit code. */
