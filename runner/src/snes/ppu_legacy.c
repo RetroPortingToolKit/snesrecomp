@@ -84,9 +84,9 @@ void ppu_draw_whole_line_legacy(Ppu *ppu, int line) {
 #endif
   int left = -ppu->extraLeftCur;
   int right = 256 + ppu->extraRightCur;
-  if (ppu->hiresBuffer && line > 0 && line < 240 &&
+  if (ppu->hiresBuffer && line > 0 && line <= 240 &&
       (PPU_pseudoHires(ppu) || PPU_mode(ppu) == 5 || PPU_mode(ppu) == 6)) {
-    ppu->hiresLines[line] = 1;
+    ppu->hiresLines[line == 240 ? 0 : line] = 1;
     ppu->hiresAny = true;
   }
   for (int x = left; x < right; x++) {

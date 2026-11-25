@@ -235,6 +235,10 @@ void PpuBeginDrawing(Ppu *ppu, uint8_t *pixels, size_t pitch, uint32_t render_fl
   ppu->renderPitch = (uint)pitch;
   ppu->renderBuffer = pixels;
   ppu->renderFlags = render_flags;
+  if (ppu->hiresBuffer) {
+    memset(ppu->hiresLines, 0, sizeof(ppu->hiresLines));
+    ppu->hiresAny = false;
+  }
 }
 
 void PpuSetWidescreenLineEnhancer(Ppu *ppu,
@@ -260,7 +264,7 @@ bool PpuBindHiresSurface(Ppu *ppu, uint8_t *pixels, size_t pitch) {
 }
 
 bool PpuHiresLine(const Ppu *ppu, int y) {
-  return ppu && y > 0 && y < 240 && ppu->hiresLines[y];
+  return ppu && y > 0 && y <= 240 && ppu->hiresLines[y == 240 ? 0 : y];
 }
 
 bool PpuHiresFrame(const Ppu *ppu) {

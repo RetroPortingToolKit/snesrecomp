@@ -77,8 +77,8 @@ static void ppu_draw_mode7_line_native(Ppu *p, int line) {
   uint8_t *dst = p->renderBuffer + (line - 1) * p->renderPitch +
       (p->extraFrameLeft + left) * 4;
   uint8_t *sub_dst = NULL;
-  if (p->hiresBuffer && line > 0 && line < 240 && PPU_pseudoHires(p)) {
-    p->hiresLines[line] = 1;
+  if (p->hiresBuffer && line > 0 && line <= 240 && PPU_pseudoHires(p)) {
+    p->hiresLines[line == 240 ? 0 : line] = 1;
     p->hiresAny = true;
     sub_dst = p->hiresBuffer + (line - 1) * p->hiresPitch +
         (p->extraFrameLeft + left) * 4;

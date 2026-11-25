@@ -354,7 +354,8 @@ struct Ppu {
   SnesHdFrame *hdFrame; /* Optional presentation builder; never serialized. */
   SnesHdCapture *hdCapture; /* Optional host-owned lazy publisher. */
   /* Optional hi-res surface (PpuBindHiresSurface): host memory, never guest
-   * state. hiresLines[y] marks the rows of the current frame drawn into it. */
+   * state. hiresLines[y % 240] marks beam lines 1..240. Beginning a new
+   * drawing field clears these marks. Prefer PpuHiresLine to raw indexing. */
   uint8_t *hiresBuffer;
   uint32_t hiresPitch;
   uint8_t hiresLines[240];
