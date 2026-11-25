@@ -340,6 +340,34 @@ int main(void) {
                           "anchored: main and sub columns share the frame origin");
     }
 
+    /* The final overscan row is beam line 240. Its mark occupies slot zero
+     * so the additive host metadata keeps the existing Ppu layout. Exercise
+     * the captured-raster entry, which does not call the live line-1 reset. */
+    {
+        static uint32_t tall_main[240 * 256], tall_sub[240 * 256];
+        for (int mode7 = 0; mode7 < 2; ++mode7) {
+            if (mode7) setup_mode7_pseudo_hires(ppu);
+            else setup_true_hires(ppu, 5);
+            memset(tall_main, 0, sizeof tall_main);
+            memset(tall_sub, kSentinel, sizeof tall_sub);
+            failures += check(PpuBindHiresSurface(ppu, (uint8_t *)tall_sub, kPitch),
+                              "overscan sub surface binds");
+            PpuBeginDrawing(ppu, (uint8_t *)tall_main, kPitch, kPpuRenderFlags_NewRenderer);
+            ppu_renderRasterLine(ppu, 240);
+            failures += check(PpuHiresFrame(ppu) && PpuHiresLine(ppu, 240) &&
+                              !PpuHiresLine(ppu, 0) && !PpuHiresLine(ppu, 241),
+                              "final visible overscan line is marked without changing layout");
+            failures += check(row_is((uint8_t *)(tall_main + 239 * 256), 0, 256, kBlue) &&
+                              row_is((uint8_t *)(tall_sub + 239 * 256), 0, 256, kRed),
+                              "native Mode5/Mode7 final row exports both colors");
+            PpuBeginDrawing(ppu, (uint8_t *)tall_main, kPitch, kPpuRenderFlags_NewRenderer);
+            ppu->bgmode = 1; ppu->setini = 0;
+            ppu_renderRasterLine(ppu, 1);
+            failures += check(!PpuHiresFrame(ppu) && !PpuHiresLine(ppu, 240),
+                              "beginning a captured field clears previous hi-res marks");
+        }
+    }
+
     ppu_free(ppu);
     if (failures) {
         fprintf(stderr, "%d check(s) failed\n", failures);
