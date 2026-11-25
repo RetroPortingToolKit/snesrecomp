@@ -58,6 +58,10 @@ static uint8 *g_capture_pixels;
 static size_t g_capture_pixels_size;
 static uint32_t g_capture_frame;
 static int g_draw_width, g_draw_height;
+static int g_horizontal_scale = 1;
+void snesrecomp_opengl_set_horizontal_scale(int scale) {
+  g_horizontal_scale = scale == 2 ? 2 : 1;
+}
 static unsigned int g_program, g_flash_program, g_VAO;
 static GlTextureWithSize g_texture;
 static GlslShader *g_glsl_shader;
@@ -483,11 +487,12 @@ static void OpenGLRenderer_EndDraw(void) {
    * all three pixel aspects the config offers, and centres on both axes. */
   SnesDisplayViewport viewport;
   SnesDisplayAspect_ComputeViewport(
-      g_draw_width, g_draw_height, drawable_width, drawable_height,
+      g_draw_width / g_horizontal_scale, g_draw_height, drawable_width, drawable_height,
       SnesDisplayAspect_Clamp(g_config.display_aspect),
       g_config.ignore_aspect_ratio, false, &viewport);
   if (g_compute_viewport)
-    g_compute_viewport(g_draw_width, g_draw_height, drawable_width, drawable_height, &viewport);
+    g_compute_viewport(g_draw_width / g_horizontal_scale, g_draw_height,
+                       drawable_width, drawable_height, &viewport);
 
   GlTextureWithSize image = g_texture;
   SnesHdGpuImage hd_image;

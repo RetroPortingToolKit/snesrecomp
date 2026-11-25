@@ -209,6 +209,17 @@ struct SpcPlayer *g_spc_player;
  * runs guest code in the middle of it). Sized for the runner's maximum
  * side-space budget. */
 static uint8_t g_my_pixels[kPpuMaxFrameWidth * 4 * 240];
+static uint8_t g_hires_pixels[kPpuMaxFrameWidth * 4 * 240];
+static int g_present_horizontal_scale = 1;
+static uint8_t *g_hires_preview;
+static size_t g_hires_preview_capacity;
+
+static void SetPresenterDotScale(int scale) {
+  g_present_horizontal_scale = scale;
+#if !defined(__ANDROID__) && !SNESRECOMP_SDL_GLES2_ONLY
+  snesrecomp_opengl_set_horizontal_scale(scale);
+#endif
+}
 
 extern uint8_t g_ram[0x20000];
 
@@ -508,7 +519,7 @@ void snesrecomp_request_exit(void) {
 
 /* The last field actually presented, kept so an overlay can freeze the guest
  * and still have something to draw behind itself. Sized like g_my_pixels. */
-static uint8_t g_frozen_frame[kSnesDesktopMaxFrameWidth * 4 * 240];
+static uint8_t g_frozen_frame[kSnesDesktopMaxFrameWidth * 8 * 240];
 static int g_frozen_w, g_frozen_h;
 /* The simulated frame the next present shows. Read by SNESRECOMP_SCREENSHOT
  * and by frame blending, which advances its kept frame once per simulated
@@ -521,7 +532,7 @@ static unsigned g_present_frame;
 #if defined(SNESRECOMP_HOST_HAS_BLEND) || SNESRECOMP_FRAME_STAGING_HLE
 /* Compose where reads are cheap, then upload with a write-only row copy.
  * The frozen overlay snapshot and optional OSD/blend read this frame. */
-static uint8 g_frame_stage[kSnesDesktopMaxFrameWidth * 4 * 240];
+static uint8 g_frame_stage[kSnesDesktopMaxFrameWidth * 8 * 240];
 #endif
 
 static GamepadInfo g_gamepad[kSnesHostPadSeats];
@@ -817,6 +828,10 @@ static void PreparePpuFrame(void) {
   PpuBeginDrawing(g_ppu, g_my_pixels,
                   (g_game->native_widescreen ? fw : 256) * 4, flags);
   PpuSetExtraSpace(g_ppu, (uint16_t)g_ws_extra);
+  /* Custom compositors own both columns through the additive hi-res hook. */
+  PpuBindHiresSurface(g_ppu,
+      !g_game->draw_frame || g_game->draw_hires_frame ? g_hires_pixels : NULL,
+      (g_game->native_widescreen ? fw : 256) * 4);
   if (g_config.mode7.enabled && !g_game->hd_frame &&
       g_config.output_method == kOutputMethod_OpenGL) {
     if (!g_hd_capture) g_hd_capture = SnesHdCaptureCreate();
@@ -1429,13 +1444,47 @@ static void RunaheadCapture(void *context, int for_picture) {
     g_rtl_game_info->draw_ppu_frame();
 }
 
+static bool HasHiresField(void) {
+  return PpuHiresFrame(g_ppu) &&
+      (!g_game->draw_frame || g_game->draw_hires_frame);
+}
+
+static int ComposeHiresFrame(uint8_t *dst, size_t pitch) {
+  SnesHiresField field = {g_my_pixels, g_hires_pixels, g_ppu->hiresLines,
+      g_ppu->renderPitch, g_ppu->hiresPitch,
+      g_game->native_widescreen ? g_snes_width : 256, g_snes_height};
+  if (g_game->draw_hires_frame &&
+      g_game->draw_hires_frame(dst, pitch, &field, g_snes_width,
+                               g_snes_height, g_present_alpha)) return 1;
+  return SnesHiresPresent(dst, pitch, &field, g_snes_width);
+}
+
+static int ReserveHiresPreview(void) {
+  size_t bytes = (size_t)g_snes_width * g_snes_height * 12;
+  if (bytes > g_hires_preview_capacity) {
+    uint8_t *p = realloc(g_hires_preview, bytes);
+    if (!p) return 0;
+    g_hires_preview = p;
+    g_hires_preview_capacity = bytes;
+  }
+  return 1;
+}
+
 /* A slot's thumbnail, composed the way the player sees it. A title-owned
  * compositor (MMX's co-op renderer draws the partner over the PPU frame)
  * draws from the frame it captured, so asking it again while paused yields
  * the saved frame without touching the guest. */
 static int ComposeStateThumbnail(uint32_t *dst, size_t cap, int *w, int *h) {
-  if (!g_game->draw_frame || (size_t)g_snes_width * (size_t)g_snes_height > cap)
-    return 0;
+  size_t pixels = (size_t)g_snes_width * g_snes_height;
+  if (pixels > cap) return 0;
+  if (HasHiresField()) {
+    if (!ReserveHiresPreview() ||
+        !ComposeHiresFrame(g_hires_preview, (size_t)g_snes_width * 8)) return 0;
+    SnesHiresPreview(dst, (const uint32_t *)g_hires_preview, pixels);
+    *w = g_snes_width; *h = g_snes_height;
+    return 1;
+  }
+  if (!g_game->draw_frame) return 0;
   if (!g_game->draw_frame((uint8 *)dst, (size_t)g_snes_width * 4, g_my_pixels,
                           g_snes_width, g_snes_height, 1.0))
     return 0;
@@ -1447,8 +1496,15 @@ static int ComposeStateThumbnail(uint32_t *dst, size_t cap, int *w, int *h) {
 static void NoteStateFrame(void) {
   if (g_ppu && g_ppu->renderBuffer) {
     int width = g_game->native_widescreen ? g_snes_width : 256;
-    snes_savestate_menu_note_frame((const uint32_t *)g_ppu->renderBuffer, width, g_snes_height);
-    snes_rewind_note_framebuffer((const uint32_t *)g_ppu->renderBuffer, width, g_snes_height);
+    const uint32_t *frame = (const uint32_t *)g_ppu->renderBuffer;
+    if (HasHiresField() && ReserveHiresPreview()) {
+      size_t pixels = (size_t)g_snes_width * g_snes_height;
+      uint32_t *preview = (uint32_t *)(g_hires_preview + pixels * 8);
+      int height;
+      if (ComposeStateThumbnail(preview, pixels, &width, &height)) frame = preview;
+    }
+    snes_savestate_menu_note_frame(frame, width, g_snes_height);
+    snes_rewind_note_framebuffer(frame, width, g_snes_height);
   }
   snes_rewind_note_frame();
 }
@@ -1457,6 +1513,13 @@ void RtlDrawPpuFrame(uint8 *pixel_buffer, size_t pitch, uint32 render_flags) {
   (void)render_flags;
   if (!pixel_buffer) return;
   g_custom_frame = false;
+  if (g_present_horizontal_scale == 2 && HasHiresField()) {
+    if (!ComposeHiresFrame(pixel_buffer, pitch)) Die("Invalid hi-res frame surface");
+    g_custom_frame = g_game->draw_hires_frame != NULL;
+    debug_server_note_composed_frame(pixel_buffer, (unsigned)pitch,
+                                     g_snes_width * 2, g_snes_height);
+    return;
+  }
   if (g_game->draw_frame &&
       g_game->draw_frame(pixel_buffer, pitch, g_my_pixels, g_snes_width,
                          g_snes_height, g_present_alpha)) {
@@ -1495,20 +1558,21 @@ static void HdOsdRect(const uint32_t *src, int sw, int sh, int dx, int dy,
   }
 }
 static void ComposeOsd(uint8 *dst, int pitch, int dst_w, int dst_h, int scale_div) {
+  const int sx = g_present_horizontal_scale;
   const uint32_t *px = NULL;
   int w = 0, h = 0;
   if (snes_osd_image(&px, &w, &h) && px && w > 0 && h > 0) {
     snes_ovl_blit_panel_rect(dst, pitch, dst_w, dst_h, px, w, h,
-                             4 / scale_div, 4 / scale_div, w / scale_div, h / scale_div);
-    HdOsdRect(px, w, h, 4 / scale_div, 4 / scale_div, w / scale_div, h / scale_div, dst_w, dst_h);
+                             4 * sx / scale_div, 4 / scale_div, w * sx / scale_div, h / scale_div);
+    HdOsdRect(px, w, h, 4 * sx / scale_div, 4 / scale_div, w * sx / scale_div, h / scale_div, dst_w, dst_h);
   }
   /* The volume bar sits at the right edge, vertically centred, while the
    * volume was just changed. */
   if (snes_osd_volume_image(&px, &w, &h) && px && w > 0 && h > 0) {
-    const int bw = w / scale_div, bh = h / scale_div;
+    const int bw = w * sx / scale_div, bh = h / scale_div;
     snes_ovl_blit_panel_rect(dst, pitch, dst_w, dst_h, px, w, h,
-                             dst_w - bw - 4 / scale_div, (dst_h - bh) / 2, bw, bh);
-    HdOsdRect(px, w, h, dst_w - bw - 4 / scale_div, (dst_h - bh) / 2, bw, bh, dst_w, dst_h);
+                             dst_w - bw - 4 * sx / scale_div, (dst_h - bh) / 2, bw, bh);
+    HdOsdRect(px, w, h, dst_w - bw - 4 * sx / scale_div, (dst_h - bh) / 2, bw, bh, dst_w, dst_h);
   }
   snes_osd_present_done();
 }
@@ -1559,12 +1623,15 @@ static void WritePpm(const char *path, const uint8 *pixel_buffer, int pitch,
 
 static void DrawPpuFrameWithPerf(void) {
   double profile_start = ProfileStart();
-  PreparePpuFrame();
+  /* The completed simulation owns raster dimensions and line marks. A
+   * present must not rebind its buffers to a newer window size. */
+  SetPresenterDotScale(HasHiresField() ? 2 : 1);
+  const int present_width = g_snes_width * g_present_horizontal_scale;
   const int render_scale = 1;
   uint8 *present_buffer = 0;
   int present_pitch = 0;
 
-  g_renderer_funcs.BeginDraw(g_snes_width * render_scale,
+  g_renderer_funcs.BeginDraw(present_width * render_scale,
                              g_snes_height * render_scale,
                              &present_buffer, &present_pitch);
   ProfileEnd(kProfileAcquire, profile_start);
@@ -1581,18 +1648,18 @@ static void DrawPpuFrameWithPerf(void) {
   uint8 *pixel_buffer = present_buffer;
   int pitch = present_pitch;
 #if defined(SNESRECOMP_HOST_HAS_BLEND) || SNESRECOMP_FRAME_STAGING_HLE
-  const size_t frame_bytes = (size_t)(g_snes_width * render_scale) *
+  const size_t frame_bytes = (size_t)(present_width * render_scale) *
                              (size_t)(g_snes_height * render_scale) * 4u;
   bool staged = SNESRECOMP_FRAME_STAGING_HLE &&
                 frame_bytes <= sizeof(g_frame_stage);
 #if defined(SNESRECOMP_HOST_HAS_BLEND)
   const bool blending = g_config.frame_blend && g_blend &&
-                        frame_bytes <= (size_t)kPpuMaxFrameWidth * 4u * 240u;
+                        frame_bytes <= sizeof(g_frame_stage);
   staged |= blending;
 #endif
   if (staged) {
     pixel_buffer = g_frame_stage;
-    pitch = g_snes_width * render_scale * 4;
+    pitch = present_width * render_scale * 4;
   }
 #endif
 
@@ -1613,7 +1680,7 @@ static void DrawPpuFrameWithPerf(void) {
    * never reached 1 across 2,481 presents, so every frame came out identical
    * with the setting on and off while the launcher reported it on. */
   if (blending) {
-    const int w = g_snes_width * render_scale, h = g_snes_height * render_scale;
+    const int w = present_width * render_scale, h = g_snes_height * render_scale;
     if (g_present_frame != g_blend_frame) {
       recomp_frame_blend_apply(g_blend, pixel_buffer, w, h, (size_t)pitch);
       g_blend_frame = g_present_frame;
@@ -1640,19 +1707,19 @@ static void DrawPpuFrameWithPerf(void) {
    * save-state browser was opened. */
   {
     const int rows = g_snes_height * render_scale;
-    const int row_bytes = g_snes_width * render_scale * 4;
+    const int row_bytes = present_width * render_scale * 4;
     if (rows > 0 && row_bytes > 0 &&
         (size_t)rows * (size_t)row_bytes <= sizeof(g_frozen_frame)) {
       for (int y = 0; y < rows; y++)
         memcpy(g_frozen_frame + (size_t)y * (size_t)row_bytes,
                pixel_buffer + (size_t)y * (size_t)pitch, (size_t)row_bytes);
-      g_frozen_w = g_snes_width * render_scale;
+      g_frozen_w = present_width * render_scale;
       g_frozen_h = rows;
     }
   }
   const SnesHdFrame *hd = NULL;
   SnesHdView hd_view;
-  if (g_config.mode7.enabled && !g_config.frame_blend) {
+  if (g_present_horizontal_scale == 1 && g_config.mode7.enabled && !g_config.frame_blend) {
     hd = g_game->hd_frame ? g_game->hd_frame() :
          !g_custom_frame ? SnesHdCaptureFrame(g_hd_capture) : NULL;
   }
@@ -1667,7 +1734,7 @@ static void DrawPpuFrameWithPerf(void) {
   if (g_hd_osd_active) for (unsigned y = 0; y < hd_view.height; ++y)
     memcpy(g_hd_osd + y * hd_view.width, hd_view.lines[y].overlay, hd_view.width * 4);
   if (!HeadlessCapture_Enabled())   /* OSD/toasts stay out of captured footage */
-    ComposeOsd(pixel_buffer, pitch, g_snes_width * render_scale,
+    ComposeOsd(pixel_buffer, pitch, present_width * render_scale,
                g_snes_height * render_scale, 2);
 #if !defined(__ANDROID__) && !SNESRECOMP_SDL_GLES2_ONLY
   if (g_config.output_method == kOutputMethod_OpenGL && g_hd_osd_active)
@@ -1677,7 +1744,7 @@ static void DrawPpuFrameWithPerf(void) {
   /* Use the same completed simulation index as the common WRAM dumper. */
   const uint32 dump_frame = snes_frame_counter ? snes_frame_counter - 1 : 0;
   FrameDump_Present(dump_frame, pixel_buffer, pitch,
-                    g_snes_width * render_scale, g_snes_height * render_scale);
+                    present_width * render_scale, g_snes_height * render_scale);
   FrameDump_Ppu(dump_frame, g_ppu);
   debug_server_publish_raster_frame(dump_frame);
   /* SNESRECOMP_SCREENSHOT=<path.ppm> [SNESRECOMP_SCREENSHOT_FRAME=<n>]: write
@@ -1695,7 +1762,7 @@ static void DrawPpuFrameWithPerf(void) {
     }
     const char *path = shot_done ? NULL : HostGetenv("SCREENSHOT");
     if (path && (long)g_present_frame >= shot_frame) {
-      WritePpm(path, pixel_buffer, pitch, g_snes_width * render_scale,
+      WritePpm(path, pixel_buffer, pitch, present_width * render_scale,
                g_snes_height * render_scale, g_present_frame, true);
       shot_done = 1;
     }
@@ -1734,7 +1801,7 @@ static void DrawPpuFrameWithPerf(void) {
     if ((dir || log_path) && (long)g_present_frame >= from &&
         (long)g_present_frame <= to) {
       char path[1024];
-      const int w = g_snes_width * render_scale, h = g_snes_height * render_scale;
+      const int w = present_width * render_scale, h = g_snes_height * render_scale;
       if (!csv) {
         if (log_path) snprintf(path, sizeof(path), "%s", log_path);
         else snprintf(path, sizeof(path), "%s/presents.csv", dir);
@@ -1773,7 +1840,7 @@ static void DrawPpuFrameWithPerf(void) {
    * pattern write-combined memory is good at. */
   if (staged) {
     const int rows = g_snes_height * render_scale;
-    const int row_bytes = g_snes_width * render_scale * 4;
+    const int row_bytes = present_width * render_scale * 4;
     for (int y = 0; y < rows; y++)
       memcpy(present_buffer + (size_t)y * (size_t)present_pitch,
              pixel_buffer + (size_t)y * (size_t)pitch, (size_t)row_bytes);
@@ -2334,16 +2401,22 @@ static void PresentFrozenWithOverlay(void) {
    * filmstrip, whose image is a 512x176 strip: the whole frozen game was
    * squashed into a strip-high buffer and presented letterboxed in the
    * middle of the window. */
-  const int base_w = g_frozen_w > 0 ? g_frozen_w : g_snes_width;
+  const int field_dot_scale = g_present_horizontal_scale;
+  const int base_w = g_frozen_w > 0 ? g_frozen_w / field_dot_scale : g_snes_width;
   const int base_h = g_frozen_h > 0 ? g_frozen_h : g_snes_height;
   const int draw_w = base_w * 2;
   const int draw_h = base_h * 2;
   uint8 *pixel_buffer = 0;
   int pitch = 0;
 
+  /* Panels are authored at twice the logical field size. A hi-res backdrop
+   * already has that horizontal density: retain all its dots and double only
+   * its rows. Panel fonts then keep the ordinary pixel aspect. */
+  SetPresenterDotScale(1);
   g_renderer_funcs.BeginDraw(draw_w, draw_h, &pixel_buffer, &pitch);
   if (!pixel_buffer) {
     g_renderer_funcs.EndDraw();
+    SetPresenterDotScale(field_dot_scale);
     return;
   }
 
@@ -2403,6 +2476,7 @@ static void PresentFrozenWithOverlay(void) {
   }
 
   g_renderer_funcs.EndDraw();
+  SetPresenterDotScale(field_dot_scale);
 }
 
 #if SNESRECOMP_TRACE
@@ -2836,11 +2910,12 @@ static void SdlRenderer_BeginDraw(int width, int height, uint8 **pixels, int *pi
   int output_width = 0, output_height = 0;
   SdlRenderer_GetOutputSize(&output_width, &output_height);
   SnesDisplayViewport viewport;
-  SnesDisplayAspect_ComputeViewport(width, height, output_width, output_height,
+  SnesDisplayAspect_ComputeViewport(width / g_present_horizontal_scale, height, output_width, output_height,
                                     SnesDisplayAspect_Clamp(g_config.display_aspect),
                                     g_config.ignore_aspect_ratio, false, &viewport);
   if (g_game->compute_viewport)
-    g_game->compute_viewport(width, height, output_width, output_height, &viewport);
+    g_game->compute_viewport(width / g_present_horizontal_scale, height,
+                              output_width, output_height, &viewport);
   g_sdl_present_rect.x = viewport.x;
   g_sdl_present_rect.y = viewport.y;
   g_sdl_present_rect.w = viewport.width;
@@ -5233,6 +5308,8 @@ error_reading:;
 #endif
 
   if (game->on_shutdown) game->on_shutdown();
+  free(g_hires_preview); g_hires_preview = NULL; g_hires_preview_capacity = 0;
+  g_present_horizontal_scale = 1;
 
   // clean sdl
   SetAudioPaused(true);

@@ -23,6 +23,9 @@ void snesrecomp_opengl_set_vsync(int interval);
 void snesrecomp_opengl_capture_frame(uint32_t frame);
 void snesrecomp_opengl_set_viewport(void (*compute)(int, int, int, int,
                                                    SnesDisplayViewport *));
+/* Physical hi-res dots are half a logical column wide. This affects display
+ * geometry only, including custom viewport callbacks, never texture data. */
+void snesrecomp_opengl_set_horizontal_scale(int scale);
 
 /* Capture the next fully composited OpenGL frame to screenshots/*.bmp. */
 void OpenGLRenderer_RequestScreenshot(void);
