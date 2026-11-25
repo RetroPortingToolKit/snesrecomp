@@ -3332,6 +3332,16 @@ static struct {
 } g_relaunch;
 
 /* Every gamepad SDL knows about, seated by OpenOneGamepad's rules. */
+bool snesrecomp_request_launcher(void) {
+  if (!snesrecomp_host_frame_is_live() || g_netplay_session || !g_rom_path[0])
+    return false;
+  g_relaunch.pending = g_relaunch.launcher = true;
+  g_relaunch.with_state = false;
+  snprintf(g_relaunch.rom, sizeof(g_relaunch.rom), "%s", g_rom_path);
+  snesrecomp_request_exit();
+  return true;
+}
+
 static void OpenAllGamepads(void) {
 #if SNESRECOMP_SDL3
   int njs = 0;

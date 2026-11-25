@@ -1944,6 +1944,7 @@ def decode_function(rom: bytes, bank: int, start: int,
                      stop_on_unknown_callee_exit: bool = False,
                      hle_entry_pcs: Optional[set] = None,
                      live_operand_sites: Optional[set] = None,
+                     mod_operand_sites: Optional[set] = None,
                      mod_hook_sites: Optional[set] = None,
                      mod_hook_target_sites: Optional[set] = None,
                     ) -> "FunctionDecodeGraph":
@@ -1953,6 +1954,10 @@ def decode_function(rom: bytes, bank: int, start: int,
     process-local; callers must treat the returned graph as immutable
     (it is shared across cache hits with the same key). v2_regen.py
     calls clear_decode_cache() between phases to bound memory."""
+    # Both interfaces have runtime values, so neither may seed constant folds.
+    # Emission still distinguishes cartridge reads from mod-owned values.
+    live_operand_sites = (set(live_operand_sites or ()) |
+                          set(mod_operand_sites or ())) or None
     if inline_arg_map is None:
         inline_arg_map = _ACTIVE_INLINE_ARG_MAP
     if not _DECODE_CACHE_ENABLED:

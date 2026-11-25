@@ -137,6 +137,15 @@ def test_live_cartridge_operands_remain_supported():
     assert cfg.mod_operand == {0x8002}
 
 
+@pytest.mark.parametrize('lines', [
+    'live_operand 8000\nmod_operand 8000\n',
+    'mod_operand 8000\nlive_operand 8000\n',
+])
+def test_conflicting_operand_owners_are_rejected(lines):
+    with pytest.raises(ValueError, match='duplicate'):
+        _load('bank = 00\n' + lines)
+
+
 @pytest.mark.parametrize('site', ['-1', '10000', '038B27', '838B27'])
 def test_operand_site_must_be_in_the_cfg_bank(site):
     with pytest.raises(ValueError, match='16-bit'):

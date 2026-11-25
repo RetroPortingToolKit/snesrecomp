@@ -667,7 +667,7 @@ pub fn parse_bank_cfg(text: &str, path: &str) -> Result<BankCfg, String> {
                     tokens[1]
                 ));
             }
-            if !cfg.live_operand.insert(site_pc16) {
+            if cfg.mod_operand.contains(&site_pc16) || !cfg.live_operand.insert(site_pc16) {
                 return Err(format!(
                     "{path}: live_operand duplicate site ${site_pc16:04X}"
                 ));
@@ -689,7 +689,7 @@ pub fn parse_bank_cfg(text: &str, path: &str) -> Result<BankCfg, String> {
                     tokens[1]
                 ));
             }
-            if !cfg.mod_operand.insert(site_pc16) {
+            if cfg.live_operand.contains(&site_pc16) || !cfg.mod_operand.insert(site_pc16) {
                 return Err(format!(
                     "{path}: mod_operand duplicate site ${site_pc16:04X}"
                 ));
