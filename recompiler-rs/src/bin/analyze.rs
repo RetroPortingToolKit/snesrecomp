@@ -2097,6 +2097,15 @@ mod tests {
             .successors
             .iter()
             .any(|k| k.pc == 0x009000 && k.m == 1 && k.x == 1));
+        assert_eq!(analyze_function_exit_mx(&graph, None), (Some(1), Some(1)));
+        let returns = function_return_stack_delta_states(&graph);
+        assert_eq!(returns.get(&0x009000), Some(&vec![Some(0)]));
+        let mut literal_push = graph.clone();
+        let mut literal_pha = pha.clone();
+        literal_pha.insn.dispatch_terminal = false;
+        literal_pha.insn.dispatch_entries = None;
+        literal_push.insert(literal_pha);
+        assert_eq!(analyze_function_exit_mx(&literal_push, None), (None, None));
         // Ordinary dispatches preserve the live widths. Merely being terminal
         // or carrying a target table does not imply SEP #$30.
         let mut ordinary = pha.clone();

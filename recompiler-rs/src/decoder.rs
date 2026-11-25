@@ -2317,6 +2317,12 @@ fn return_stack_delta_states(graph: &FunctionDecodeGraph) -> HashMap<u32, HashSe
         if ins.mnem == "PEI" && ins.dispatch_stack_pointer {
             return Some(0);
         }
+        // The decoded PHA tail dispatcher consumes the synthetic PHA/RTS
+        // pair and applies SEP #$30 before its successors. The handler sees
+        // the inherited caller frame, with no additional local stack bytes.
+        if ins.mnem == "PHA" && ins.dispatch_terminal && ins.dispatch_entries.is_some() {
+            return Some(0);
+        }
         match ins.mnem {
             "PEA" | "PEI" | "PER" | "PHD" => Some(2),
             "PHP" | "PHB" | "PHK" => Some(1),
