@@ -70,7 +70,7 @@ SnesrecompExecutionMode snesrecomp_execution_mode(
  * place, instead of by a literal in each game's frame loop.
  */
 #ifndef SNESRECOMP_EXECUTION_DEFAULT_MODE
-#define SNESRECOMP_EXECUTION_DEFAULT_MODE SNESRECOMP_EXECUTION_MODE_OFF
+#define SNESRECOMP_EXECUTION_DEFAULT_MODE SNESRECOMP_EXECUTION_MODE_ON
 #endif
 static inline SnesrecompExecutionMode snesrecomp_execution_policy(void) {
   return snesrecomp_execution_mode(SNESRECOMP_EXECUTION_DEFAULT_MODE);

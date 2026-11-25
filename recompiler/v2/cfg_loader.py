@@ -737,6 +737,7 @@ def load_bank_cfg(path: str) -> BankCfg:
 
                 idx_reg: Optional[str] = None
                 table_bases: Tuple[int, ...] = ()
+                targets: List[int] = []
                 for t in tokens[3:]:
                     if t.startswith('idx:'):
                         v = t[len('idx:'):].upper()
@@ -755,17 +756,25 @@ def load_bank_cfg(path: str) -> BankCfg:
                         except ValueError as e:
                             raise ValueError(
                                 f"{path}: indirect_dispatch tables: bad hex {t!r}: {e}")
+                    elif t.startswith('targets:'):
+                        targets = [_parse_hex(v) & 0xFFFFFF for v in
+                                   t[len('targets:'):].split(',') if v]
+                        if len(targets) != count:
+                            raise ValueError(f"{path}: indexed target count must equal count")
                     else:
                         raise ValueError(
                             f"{path}: indirect_dispatch unknown option {t!r}")
                 if idx_reg is None:
                     raise ValueError(
                         f"{path}: indirect_dispatch needs idx:X or idx:Y — got: {stripped!r}")
+                if targets and table_bases:
+                    raise ValueError(f"{path}: choose indexed targets or ROM tables")
                 cfg.indirect_dispatch.append({
                     'site_pc16': site_pc16,
                     'count': count,
                     'idx_reg': idx_reg,
                     'table_bases': table_bases,
+                    **({'targets': targets} if targets else {}),
                 })
                 continue
 

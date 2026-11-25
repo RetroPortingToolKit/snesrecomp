@@ -588,10 +588,41 @@ fn target_key(site: u32, raw: u32, kind: Option<&str>, m: u8, x: u8) -> VariantK
     VariantKey::new(pc24, m, x)
 }
 
+fn dispatch_target_key(
+    decoded: &snesrecomp_analyzer::decoder::DecodedInsn,
+    raw: u32,
+) -> VariantKey {
+    let insn = &decoded.insn;
+    // The decoded PHA tail dispatcher consumes PHA; SEP #$30; RTS as one
+    // transfer. Its handlers receive the post-SEP widths, not PHA's widths.
+    let (m, x) = if insn.mnem == "PHA" && insn.dispatch_terminal {
+        (1, 1)
+    } else {
+        (insn.m_flag, insn.x_flag)
+    };
+    target_key(insn.addr, raw, insn.dispatch_kind.as_deref(), m, x)
+}
+
 fn has_truncated_call_continuation(graph: &FunctionDecodeGraph) -> bool {
     graph.insns().iter().any(|decoded| {
+        // An inline jump-table helper consumes its call frame and tail-
+        // dispatches to these decoded destinations. Its following bytes are
+        // pointer data, not a missing returning-call continuation. Returning
+        // dispatches and unresolved/empty tables retain the ordinary check.
+        let tail_dispatch = decoded
+            .insn
+            .dispatch_entries
+            .as_ref()
+            .is_some_and(|entries| entries.iter().any(|&target| target != 0))
+            && matches!(
+                decoded.insn.dispatch_kind.as_deref(),
+                Some("short" | "long")
+            )
+            && !decoded.insn.dispatch_call
+            && !decoded.insn.dispatch_local_goto;
         matches!(decoded.insn.mnem, "JSR" | "JSL")
             && !decoded.insn.terminal_jsr
+            && !tail_dispatch
             && decoded.successors.is_empty()
     })
 }
@@ -628,13 +659,7 @@ fn summarize(
                     if raw == 0 {
                         continue;
                     }
-                    let target = target_key(
-                        site,
-                        raw,
-                        insn.dispatch_kind.as_deref(),
-                        insn.m_flag,
-                        insn.x_flag,
-                    );
+                    let target = dispatch_target_key(decoded, raw);
                     let resolution = if target_is_code(target, inputs, rom, mapping) {
                         "aot_exact"
                     } else {
@@ -1985,6 +2010,116 @@ mod tests {
         };
         let graph = decode_function(&rom, 0, 0x8000, 1, 1, None, &env);
         assert!(!has_truncated_call_continuation(&graph));
+    }
+
+    #[test]
+    fn inline_tail_dispatch_has_no_return_into_pointer_data() {
+        for (kind, stride) in [("short", 2usize), ("long", 3usize)] {
+            let mut rom = vec![0u8; 0x8000];
+            rom[..4].copy_from_slice(&[0x22, 0x00, 0xE0, 0x00]);
+            rom[4..4 + stride].copy_from_slice(&0x009000u32.to_le_bytes()[..stride]);
+            rom[0x1000] = 0x6B;
+            let helpers = HashMap::from([(0x00E000, kind.to_string())]);
+            let regions = [(0, 0x8004, 0x8004 + stride as u32)];
+            let env = DecodeEnv {
+                dispatch_helpers: Some(&helpers),
+                data_regions: Some(&regions),
+                stop_on_unknown_callee_exit: true,
+                ..DecodeEnv::default()
+            };
+            let graph = decode_function(&rom, 0, 0x8000, 1, 1, None, &env);
+            let mut call = graph.insns()[0].clone();
+            assert_eq!(call.insn.mnem, "JSL");
+            assert_eq!(call.insn.dispatch_entries.as_deref(), Some(&[0x009000][..]));
+            assert!(call.successors.is_empty());
+            assert!(!has_truncated_call_continuation(&graph), "{kind}");
+
+            // A returning table call still needs a continuation. Decoded
+            // destinations alone do not establish the helper's tail ABI.
+            let mut returning = graph.clone();
+            call.insn.dispatch_call = true;
+            returning.insert(call.clone());
+            assert!(has_truncated_call_continuation(&returning), "{kind}");
+
+            // Neither a local dispatch with missing successors nor an empty
+            // target set may authorize an ordinary call leaf.
+            let mut local = graph.clone();
+            call.insn.dispatch_call = false;
+            call.insn.dispatch_local_goto = true;
+            local.insert(call.clone());
+            assert!(has_truncated_call_continuation(&local), "{kind}");
+            let mut empty = graph.clone();
+            call.insn.dispatch_local_goto = false;
+            call.insn.dispatch_entries = Some(Vec::new());
+            empty.insert(call.clone());
+            assert!(has_truncated_call_continuation(&empty), "{kind}");
+            let mut null_slots = graph.clone();
+            call.insn.dispatch_entries = Some(vec![0, 0]);
+            null_slots.insert(call);
+            assert!(has_truncated_call_continuation(&null_slots), "{kind}");
+        }
+    }
+
+    #[test]
+    fn pha_tail_dispatch_demands_post_sep_widths() {
+        let mut rom = vec![0u8; 0x8000];
+        // REP #$30; LDA $9000,Y; DEC A; PHA; SEP #$30; RTS.
+        rom[..10].copy_from_slice(&[0xC2, 0x30, 0xB9, 0x00, 0x90, 0x3A, 0x48, 0xE2, 0x30, 0x60]);
+        rom[0x1000] = 0x60;
+        let sites = HashMap::from([(
+            0x008006,
+            IndirectDispatchSite {
+                count: 1,
+                idx_reg: 'Y',
+                table_bases: vec![],
+                ptr_call: false,
+                return_pc: None,
+                frame_size: None,
+                pointer_match: false,
+                popped_call_frame: false,
+                rts_stack: false,
+                targets: vec![0x9000],
+            },
+        )]);
+        let env = DecodeEnv {
+            indirect_dispatch: Some(&sites),
+            ..DecodeEnv::default()
+        };
+        let graph = decode_function(&rom, 0, 0x8000, 1, 1, None, &env);
+        let pha = graph.insns().iter().find(|d| d.insn.mnem == "PHA").unwrap();
+        assert_eq!((pha.insn.m_flag, pha.insn.x_flag), (0, 0));
+        assert!(pha.insn.dispatch_terminal);
+        assert_eq!(
+            dispatch_target_key(pha, 0x9000),
+            VariantKey::new(0x009000, 1, 1)
+        );
+        assert!(pha
+            .successors
+            .iter()
+            .any(|k| k.pc == 0x009000 && k.m == 1 && k.x == 1));
+        assert_eq!(analyze_function_exit_mx(&graph, None), (Some(1), Some(1)));
+        let returns = function_return_stack_delta_states(&graph);
+        assert_eq!(returns.get(&0x009000), Some(&vec![Some(0)]));
+        let mut literal_push = graph.clone();
+        let mut literal_pha = pha.clone();
+        literal_pha.insn.dispatch_terminal = false;
+        literal_pha.insn.dispatch_entries = None;
+        literal_push.insert(literal_pha);
+        assert_eq!(analyze_function_exit_mx(&literal_push, None), (None, None));
+        // Ordinary dispatches preserve the live widths. Merely being terminal
+        // or carrying a target table does not imply SEP #$30.
+        let mut ordinary = pha.clone();
+        ordinary.insn.mnem = "JMP";
+        assert_eq!(
+            dispatch_target_key(&ordinary, 0x9000),
+            VariantKey::new(0x009000, 0, 0)
+        );
+        ordinary.insn.mnem = "PHA";
+        ordinary.insn.dispatch_terminal = false;
+        assert_eq!(
+            dispatch_target_key(&ordinary, 0x9000),
+            VariantKey::new(0x009000, 0, 0)
+        );
     }
 
     fn equation(

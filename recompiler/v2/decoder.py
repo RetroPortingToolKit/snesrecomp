@@ -3173,6 +3173,11 @@ def _return_stack_delta_states(
             # The authorized PEI is fused with its immediately following RTS;
             # the synthetic two-byte frame is consumed by that transfer.
             return 0
+        if (mnem == 'PHA' and getattr(ins, 'dispatch_terminal', False)
+                and getattr(ins, 'dispatch_entries', None) is not None):
+            # PHA; SEP #$30; RTS is fused into the handler transfer. Its
+            # synthetic frame has been consumed before every successor.
+            return 0
         if mnem in ('PEA', 'PEI', 'PER', 'PHD'):
             return 2
         if mnem in ('PHP', 'PHB', 'PHK'):
@@ -3316,7 +3321,9 @@ def _return_site_is_partial_nlr(graph: 'FunctionDecodeGraph', ins,
 
     With local delta ``d`` and return-frame size ``f``, ``0 < d < f`` means
     the RTS/RTL consumes the remaining local bytes *and part of its caller's
-    frame*. It cannot resume the immediate compiled caller normally. Codegen
+    frame*. A negative delta has already discarded caller bytes, as in an
+    overflow handler that pops two return frames and restores outer PHP/PHB.
+    Neither path can resume the immediate compiled caller normally. Codegen
     routes this runtime shape through the rewritten-return interpreter bridge,
     so it is not a callable M/X exit fact.
     """
@@ -3326,7 +3333,8 @@ def _return_site_is_partial_nlr(graph: 'FunctionDecodeGraph', ins,
     states = (states_by_pc or _return_stack_delta_states(graph)).get(
         ins.addr & 0xFFFFFF, set())
     return bool(states) and all(
-        state is not None and 0 < state < frame for state in states)
+        state is not None and (state < 0 or 0 < state < frame)
+        for state in states)
 
 
 def _has_unproven_nonlocal_return(graph: 'FunctionDecodeGraph') -> bool:

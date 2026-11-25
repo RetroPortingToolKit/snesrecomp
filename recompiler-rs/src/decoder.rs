@@ -2317,6 +2317,12 @@ fn return_stack_delta_states(graph: &FunctionDecodeGraph) -> HashMap<u32, HashSe
         if ins.mnem == "PEI" && ins.dispatch_stack_pointer {
             return Some(0);
         }
+        // The decoded PHA tail dispatcher consumes the synthetic PHA/RTS
+        // pair and applies SEP #$30 before its successors. The handler sees
+        // the inherited caller frame, with no additional local stack bytes.
+        if ins.mnem == "PHA" && ins.dispatch_terminal && ins.dispatch_entries.is_some() {
+            return Some(0);
+        }
         match ins.mnem {
             "PEA" | "PEI" | "PER" | "PHD" => Some(2),
             "PHP" | "PHB" | "PHK" => Some(1),
@@ -2405,6 +2411,9 @@ fn return_frame_size(ins: &Insn) -> Option<i32> {
     }
 }
 
+// A negative delta has already consumed caller bytes. Its eventual return
+// belongs to an outer caller, not to the function being summarized. The same
+// exclusion applies to a positive partial frame rewritten by RTS/RTL.
 fn return_site_is_partial_nlr(
     ins: &Insn,
     states_by_pc: &HashMap<u32, HashSet<Option<i32>>>,
@@ -2416,9 +2425,9 @@ fn return_site_is_partial_nlr(
         return false;
     };
     !states.is_empty()
-        && states
-            .iter()
-            .all(|state| matches!(state, Some(value) if *value > 0 && *value < frame))
+        && states.iter().all(
+            |state| matches!(state, Some(value) if *value < 0 || (*value > 0 && *value < frame)),
+        )
 }
 
 fn has_unproven_nonlocal_return(
@@ -4794,6 +4803,37 @@ mod tests {
         let insn = decode_insn(&rom, 0, 0x8000, 0, 1, 1).unwrap();
         assert_eq!(insn.length, 3);
         assert!(is_long_dispatch(&insn, &[]));
+    }
+
+    #[test]
+    fn outer_caller_cleanup_does_not_contaminate_ordinary_exit() {
+        let rom = rom_at_8000(&[
+            0xD0, 0x01, 0x60, // BNE cleanup; ordinary RTS
+            0xFA, 0xFA, // discard two JSR frames with 16-bit PLX
+            0xC2, 0x20, 0xAB, 0x28, 0x60, // outer PHB/PHP cleanup + RTS
+        ]);
+        let graph = decode_function(&rom, 0, 0x8000, 1, 0, None, &DecodeEnv::default());
+        assert_eq!(
+            analyze_function_exit_mx_modes(&graph, None),
+            Some(vec![(1, 0)])
+        );
+    }
+
+    #[test]
+    fn pure_outer_caller_return_has_no_ordinary_exit() {
+        let rom = rom_at_8000(&[0xFA, 0xFA, 0xAB, 0x28, 0x60]);
+        let graph = decode_function(&rom, 0, 0x8000, 1, 0, None, &DecodeEnv::default());
+        assert_eq!(analyze_function_exit_mx_modes(&graph, None), Some(vec![]));
+    }
+
+    #[test]
+    fn shared_return_site_preserves_its_normal_path() {
+        let rom = rom_at_8000(&[0xD0, 0x01, 0xFA, 0x60]);
+        let graph = decode_function(&rom, 0, 0x8000, 1, 0, None, &DecodeEnv::default());
+        assert_eq!(
+            analyze_function_exit_mx_modes(&graph, None),
+            Some(vec![(1, 0)])
+        );
     }
 
     #[test]

@@ -542,6 +542,7 @@ pub fn parse_bank_cfg(text: &str, path: &str) -> Result<BankCfg, String> {
 
             let mut idx_reg: Option<char> = None;
             let mut table_bases: Vec<u32> = Vec::new();
+            let mut targets: Vec<u32> = Vec::new();
             for t in &tokens[3..] {
                 if let Some(v) = t.strip_prefix("idx:") {
                     let v = v.to_ascii_uppercase();
@@ -567,6 +568,16 @@ pub fn parse_bank_cfg(text: &str, path: &str) -> Result<BankCfg, String> {
                         );
                     }
                     table_bases = bases;
+                } else if let Some(raw) = t.strip_prefix("targets:") {
+                    targets = raw
+                        .split(',')
+                        .filter(|v| !v.is_empty())
+                        .map(|v| parse_hex(v).map(|pc| pc & 0xFFFFFF))
+                        .collect::<Result<Vec<_>, _>>()
+                        .map_err(|e| format!("{path}: indirect_dispatch targets: {e}"))?;
+                    if targets.len() != count as usize {
+                        return Err(format!("{path}: indexed target count must equal count"));
+                    }
                 } else {
                     return Err(format!("{path}: indirect_dispatch unknown option {t:?}"));
                 }
@@ -574,6 +585,9 @@ pub fn parse_bank_cfg(text: &str, path: &str) -> Result<BankCfg, String> {
             let idx_reg = idx_reg.ok_or_else(|| {
                 format!("{path}: indirect_dispatch needs idx:X or idx:Y — got: {stripped:?}")
             })?;
+            if !targets.is_empty() && !table_bases.is_empty() {
+                return Err(format!("{path}: choose indexed targets or ROM tables"));
+            }
             cfg.indirect_dispatch.push(IndirectDispatch {
                 site_pc16,
                 count: count as u32,
@@ -585,7 +599,7 @@ pub fn parse_bank_cfg(text: &str, path: &str) -> Result<BankCfg, String> {
                 pointer_match: false,
                 popped_call_frame: false,
                 rts_stack: false,
-                targets: Vec::new(),
+                targets,
             });
             continue;
         }
@@ -1285,6 +1299,26 @@ exit_mx_set 028000 M0X0 M0X1
         let rts = &cfg.indirect_dispatch[2];
         assert!(!rts.ptr_call && !rts.pointer_match);
         assert!(!rts.popped_call_frame && rts.rts_stack);
+    }
+
+    #[test]
+    fn indexed_explicit_targets_preserve_slots_and_reject_ambiguous_authority() {
+        let cfg = parse_bank_cfg(
+            "bank = 00\nindirect_dispatch 8005 3 idx:Y targets:009000,000000,009100\n",
+            "t",
+        )
+        .unwrap();
+        let site = &cfg.indirect_dispatch[0];
+        assert_eq!(site.idx_reg, 'Y');
+        assert_eq!(site.targets, vec![0x009000, 0, 0x009100]);
+        assert!(!site.pointer_match && !site.rts_stack && site.table_bases.is_empty());
+        for line in [
+            "indirect_dispatch 8005 2 idx:Y targets:009000",
+            "indirect_dispatch 8005 2 idx:Y targets:",
+            "indirect_dispatch 8005 1 idx:Y tables:8100 targets:009000",
+        ] {
+            assert!(parse_bank_cfg(&format!("bank = 00\n{line}\n"), "t").is_err());
+        }
     }
 
     #[test]
