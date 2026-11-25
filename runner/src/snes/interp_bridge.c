@@ -558,6 +558,7 @@ static int s_pre_opcode_hook_count;
 /* A cheap PC16 filter for native instruction boundaries. Bank collisions only
  * cause a full-key scan; callbacks still require the exact normalized key. */
 static uint8_t s_pre_opcode_hook_bits[0x2000];
+const uint8_t *const g_interp_bridge_pre_opcode_filter = s_pre_opcode_hook_bits;
 static int s_pre_opcode_redirect_valid;
 static uint32_t s_pre_opcode_redirect_pc24;
 
@@ -612,8 +613,10 @@ void interp_bridge_pre_opcode_redirect(uint32_t pc24) {
 }
 
 bool interp_bridge_run_native_pre_opcode_hooks(CpuState *cpu, uint32_t pc24,
-                                               uint32_t *redirect_pc24) {
+                                               uint32_t *redirect_pc24,
+                                               bool *invoked) {
     const uint32_t key = pc24 & 0x7FFFFFu;
+    if (invoked) *invoked = false;
     if (!(s_pre_opcode_hook_bits[(key & 0xFFFFu) >> 3] & (1u << (key & 7))))
         return false;
     /* A hook can make a nested native guest call. Do not consume its caller's
@@ -623,6 +626,7 @@ bool interp_bridge_run_native_pre_opcode_hooks(CpuState *cpu, uint32_t pc24,
     bool redirected = false;
     for (int i = 0; i < s_pre_opcode_hook_count; ++i) {
         if (s_pre_opcode_hooks[i].pc24 != key) continue;
+        if (invoked) *invoked = true;
         cpu_mirrors_to_p(cpu);
         s_pre_opcode_redirect_valid = 0;
         s_pre_opcode_hooks[i].hook(cpu, pc24);
