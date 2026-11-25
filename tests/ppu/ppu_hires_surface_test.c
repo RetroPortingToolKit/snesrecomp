@@ -186,6 +186,22 @@ int main(void) {
         failures += check(row_is(main_px, 0, 256, kBlue) && row_is(sub_px, 0, 256, kRed) &&
                           PpuHiresLine(ppu, 1), msg);
 
+        /* The surface contract exposes the raw resolved sub dot. Main-screen
+         * clipping and addition must not accidentally modify that output. */
+        setup_pseudo_hires(ppu);
+        ppu->cgwsel = 0xc0;                     /* clip the main screen always */
+        failures += check(PpuBindHiresSurface(ppu, sub_px, kPitch), "surface binds");
+        draw(ppu, main_px, kPitch, kFlags[f], 1);
+        failures += check(row_is(main_px, 0, 256, 0) && row_is(sub_px, 0, 256, kRed),
+                          "main clip-to-black leaves the documented raw sub dot red");
+        setup_pseudo_hires(ppu);
+        ppu->cgwsel = 0x02;                     /* use the sub screen as operand */
+        ppu->cgadsub = 0x01;                    /* add to main BG1 */
+        failures += check(PpuBindHiresSurface(ppu, sub_px, kPitch), "surface binds");
+        draw(ppu, main_px, kPitch, kFlags[f], 1);
+        failures += check(row_is(main_px, 0, 256, kRed | kBlue) && row_is(sub_px, 0, 256, kRed),
+                          "main addition produces magenta while the raw sub dot stays red");
+
         /* Nothing on the sub screen: the even dot is the backdrop, CGRAM[0],
          * not the fixed colour (COLDATA), as hardware does in hi-res. */
         setup_pseudo_hires(ppu);
