@@ -549,12 +549,15 @@ static void sync_interp_to_cpu(const Interp816 *in, CpuState *c) {
  * runs. */
 /* MW widescreen + H2H vert-widen registers ~125 unique PCs. MMX co-op,
  * weapon hooks and Boss Rush together need more than the former 192 slots. */
-enum { kInterpPreOpcodeHookSlots = 256 };
+enum { kInterpPreOpcodeHookSlots = 1024 };
 static struct {
     uint32_t pc24;
     InterpPreOpcodeHook hook;
 } s_pre_opcode_hooks[kInterpPreOpcodeHookSlots];
 static int s_pre_opcode_hook_count;
+/* A cheap PC16 filter for native instruction boundaries. Bank collisions only
+ * cause a full-key scan; callbacks still require the exact normalized key. */
+static uint8_t s_pre_opcode_hook_bits[0x2000];
 static int s_pre_opcode_redirect_valid;
 static uint32_t s_pre_opcode_redirect_pc24;
 
@@ -568,6 +571,7 @@ bool interp_bridge_add_pre_opcode_hook(uint32_t pc24, InterpPreOpcodeHook hook) 
     s_pre_opcode_hooks[s_pre_opcode_hook_count].pc24=key;
     s_pre_opcode_hooks[s_pre_opcode_hook_count].hook=hook;
     ++s_pre_opcode_hook_count;
+    s_pre_opcode_hook_bits[(key & 0xFFFFu) >> 3] |= (uint8_t)(1u << (key & 7));
     return true;
 }
 
@@ -575,6 +579,7 @@ void interp_bridge_set_pre_opcode_hook(uint32_t pc24,
                                        InterpPreOpcodeHook hook) {
     if (!hook) {
         s_pre_opcode_hook_count = 0;
+        memset(s_pre_opcode_hook_bits, 0, sizeof(s_pre_opcode_hook_bits));
         return;
     }
     const uint32_t key = pc24 & 0x7FFFFFu;
@@ -588,6 +593,7 @@ void interp_bridge_set_pre_opcode_hook(uint32_t pc24,
         s_pre_opcode_hooks[s_pre_opcode_hook_count].pc24 = key;
         s_pre_opcode_hooks[s_pre_opcode_hook_count].hook = hook;
         s_pre_opcode_hook_count++;
+        s_pre_opcode_hook_bits[(key & 0xFFFFu) >> 3] |= (uint8_t)(1u << (key & 7));
     } else {
         static int warned;
         if (!warned) {
@@ -603,6 +609,32 @@ void interp_bridge_set_pre_opcode_hook(uint32_t pc24,
 void interp_bridge_pre_opcode_redirect(uint32_t pc24) {
     s_pre_opcode_redirect_pc24 = pc24 & 0xFFFFFFu;
     s_pre_opcode_redirect_valid = 1;
+}
+
+bool interp_bridge_run_native_pre_opcode_hooks(CpuState *cpu, uint32_t pc24,
+                                               uint32_t *redirect_pc24) {
+    const uint32_t key = pc24 & 0x7FFFFFu;
+    if (!(s_pre_opcode_hook_bits[(key & 0xFFFFu) >> 3] & (1u << (key & 7))))
+        return false;
+    /* A hook can make a nested native guest call. Do not consume its caller's
+     * pending redirect, and do not leak this invocation's redirect outward. */
+    const int saved_valid = s_pre_opcode_redirect_valid;
+    const uint32_t saved_pc = s_pre_opcode_redirect_pc24;
+    bool redirected = false;
+    for (int i = 0; i < s_pre_opcode_hook_count; ++i) {
+        if (s_pre_opcode_hooks[i].pc24 != key) continue;
+        cpu_mirrors_to_p(cpu);
+        s_pre_opcode_redirect_valid = 0;
+        s_pre_opcode_hooks[i].hook(cpu, pc24);
+        if (s_pre_opcode_redirect_valid) {
+            *redirect_pc24 = s_pre_opcode_redirect_pc24;
+            redirected = true;
+            break;
+        }
+    }
+    s_pre_opcode_redirect_valid = saved_valid;
+    s_pre_opcode_redirect_pc24 = saved_pc;
+    return redirected;
 }
 
 /* BRK bridge seam. The bounce is via explicit JSR/JSL interception below, not

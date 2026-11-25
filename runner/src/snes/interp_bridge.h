@@ -139,7 +139,7 @@ static inline bool interp_bridge_use_absolute_apu_timeline(
  * pay only the address check. At a match it synchronizes registers into
  * CpuState, invokes the callback, then copies any changes back.
  *
- * Up to 192 registrations may be armed (LoROM FastROM bit7 is masked). Calling with a
+ * Up to 1024 registrations may be armed (LoROM FastROM bit7 is masked). Calling with a
  * non-NULL hook adds/replaces that PC; hook=NULL clears all slots. */
 typedef void (*InterpPreOpcodeHook)(CpuState *cpu, uint32_t pc24);
 void interp_bridge_set_pre_opcode_hook(uint32_t pc24,
@@ -149,6 +149,14 @@ void interp_bridge_set_pre_opcode_hook(uint32_t pc24,
  * in registration order; a redirect completes handling for that original PC. */
 bool interp_bridge_add_pre_opcode_hook(uint32_t pc24, InterpPreOpcodeHook hook);
 void interp_bridge_pre_opcode_redirect(uint32_t pc24);
+/* Explicit stateful native boundary over the SAME registrations. Callbacks
+ * retain their CPU/RAM/MMIO writes and registration order. True supplies an
+ * explicit destination through non-NULL redirect_pc24; the generated caller
+ * must select a checked native continuation for its live M/X and preserve the
+ * enclosing return context. Nested invocations preserve pending redirects.
+ * This is separate from the immutable observational entry_hook contract. */
+bool interp_bridge_run_native_pre_opcode_hooks(CpuState *cpu, uint32_t pc24,
+                                               uint32_t *redirect_pc24);
 
 /* Declare the instruction at pc24 the poll of a pure interrupt wait: what it
  * reads changes only when an interrupt handler runs. Under a master deadline,
