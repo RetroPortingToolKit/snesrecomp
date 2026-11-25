@@ -1192,6 +1192,45 @@ typedef struct AotResumeRec {
 static AotResumeRec s_aot_resume[AOT_RESUME_RECS];
 static int s_aot_resume_n;
 
+void interp_bridge_with_host_context(CpuState *cpu, void (*host)(void *), void *argument) {
+    /* Pending guest time is shared with the host/NMI/other tasks, unlike the
+     * suspended fiber's call-control metadata. Settle it, never snapshot it. */
+    bridge_apu_flush(cpu);
+    const int depth=s_interp_bridge_depth, sched_depth=s_lle_sched_depth;
+    const int bounce_depth=s_interp_bounce_owner_depth, bounce_base=s_interp_bounce_recomp_base;
+    const uint16_t owner_s=s_interp_owner_exit_s, flag_addr=s_sched_yield_flag_addr;
+    const int owner_valid=s_interp_owner_exit_valid, owner_sched=s_interp_owner_is_scheduler;
+    const uint32_t yield_pc=s_sched_yield_pc, unwind_pc=s_lle_unwind_pc24;
+    const uint8_t flag_value=s_sched_yield_flag_value;
+    const int unwind_active=s_lle_unwind_active, unwind_depth=s_lle_unwind_owner_depth;
+    const int unwind_deadline=s_lle_unwind_is_deadline, next_deadline=s_lle_next_unwind_is_deadline;
+    const int resume_n=s_aot_resume_n, apu_driving=g_interp_apu_driving;
+    const uint32_t wlog_pc=g_interp_wlog_pc24, redirect_pc=s_pre_opcode_redirect_pc24;
+    const int redirect_valid=s_pre_opcode_redirect_valid, redirect_return=s_pre_opcode_redirect_is_return;
+    AotResumeRec resumes[AOT_RESUME_RECS];
+    memcpy(resumes,s_aot_resume,sizeof resumes);
+    interp_bridge_guest_scope_unwind();
+    g_interp_apu_driving=0;
+    s_pre_opcode_redirect_valid=s_pre_opcode_redirect_is_return=0;
+    cpu_with_host_context(cpu,host,argument);
+    if (!interp_bridge_guest_scope_idle()) {
+        fprintf(stderr,"[interp_bridge] host context returned with an unfinished guest bridge\n");
+        abort();
+    }
+    s_interp_bridge_depth=depth; s_lle_sched_depth=sched_depth;
+    s_interp_bounce_owner_depth=bounce_depth; s_interp_bounce_recomp_base=bounce_base;
+    s_interp_owner_exit_s=owner_s; s_interp_owner_exit_valid=owner_valid;
+    s_interp_owner_is_scheduler=owner_sched;
+    s_sched_yield_pc=yield_pc; s_sched_yield_flag_addr=flag_addr; s_sched_yield_flag_value=flag_value;
+    s_lle_unwind_active=unwind_active; s_lle_unwind_pc24=unwind_pc;
+    s_lle_unwind_owner_depth=unwind_depth; s_lle_unwind_is_deadline=unwind_deadline;
+    s_lle_next_unwind_is_deadline=next_deadline;
+    memcpy(s_aot_resume,resumes,sizeof resumes); s_aot_resume_n=resume_n;
+    g_interp_apu_driving=apu_driving; g_interp_wlog_pc24=wlog_pc;
+    s_pre_opcode_redirect_pc24=redirect_pc; s_pre_opcode_redirect_valid=redirect_valid;
+    s_pre_opcode_redirect_is_return=redirect_return;
+}
+
 static int lle_yield_bounce_enabled(void);
 static int aot_resume_on(void) {
     static int on = -1;

@@ -197,6 +197,10 @@ int interp_bridge_run(CpuState *cpu, uint32_t entry_pc24);
  * Simulation residue must separately be restored by the scope owner. */
 bool interp_bridge_guest_scope_idle(void);
 void interp_bridge_guest_scope_unwind(void);
+/* Run the native host scheduler outside this live coroutine's bridge/CPU
+ * call ownership, then restore that ownership when the coroutine resumes.
+ * This is live host-stack state, never a persisted execution snapshot. */
+void interp_bridge_with_host_context(CpuState *cpu, void (*host)(void *), void *argument);
 
 /* Faithful LLE of an infinite cooperative-scheduler loop (e.g. MMX's $8099 task
  * scheduler): run the real ROM scheduler under interp816 from entry_pc24 and

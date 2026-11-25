@@ -11,6 +11,7 @@
 
 typedef struct Snes Snes;
 typedef struct Cpu Cpu;
+typedef struct CpuState CpuState;
 
 extern Snes *g_snes;
 extern Cpu *g_snes_cpu;
@@ -116,6 +117,10 @@ int cpu_interrupt_context_active(void);
 /* Discard host frames after an isolated guest budget abort. Caller must have
  * entered the scope with no guest/interrupt frames on its own host stack. */
 void cpu_guest_scope_unwind(void);
+/* Temporarily leave the live guest host-call stack (for a native coroutine
+ * scheduler). The callback must return normally with its guest calls complete.
+ * RAM, architectural CPU state and guest clocks are not rolled back. */
+void cpu_with_host_context(CpuState *cpu, void (*host)(void *), void *argument);
 #include <setjmp.h>
 extern jmp_buf g_watchdog_jmp;
 extern int g_watchdog_tripped;
