@@ -549,14 +549,19 @@ static void sync_interp_to_cpu(const Interp816 *in, CpuState *c) {
  * runs. */
 /* MW widescreen + H2H vert-widen registers ~125 unique PCs. MMX co-op,
  * weapon hooks and Boss Rush together need more than the former 192 slots. */
-enum { kInterpPreOpcodeHookSlots = 256 };
+enum { kInterpPreOpcodeHookSlots = 1024 };
 static struct {
     uint32_t pc24;
     InterpPreOpcodeHook hook;
 } s_pre_opcode_hooks[kInterpPreOpcodeHookSlots];
 static int s_pre_opcode_hook_count;
+/* A cheap PC16 filter for native instruction boundaries. Bank collisions only
+ * cause a full-key scan; callbacks still require the exact normalized key. */
+static uint8_t s_pre_opcode_hook_bits[0x2000];
+const uint8_t *const g_interp_bridge_pre_opcode_filter = s_pre_opcode_hook_bits;
 static int s_pre_opcode_redirect_valid;
 static uint32_t s_pre_opcode_redirect_pc24;
+static int s_pre_opcode_redirect_is_return;
 
 bool interp_bridge_add_pre_opcode_hook(uint32_t pc24, InterpPreOpcodeHook hook) {
     if (!hook) return false;
@@ -568,6 +573,7 @@ bool interp_bridge_add_pre_opcode_hook(uint32_t pc24, InterpPreOpcodeHook hook) 
     s_pre_opcode_hooks[s_pre_opcode_hook_count].pc24=key;
     s_pre_opcode_hooks[s_pre_opcode_hook_count].hook=hook;
     ++s_pre_opcode_hook_count;
+    s_pre_opcode_hook_bits[(key & 0xFFFFu) >> 3] |= (uint8_t)(1u << (key & 7));
     return true;
 }
 
@@ -575,6 +581,7 @@ void interp_bridge_set_pre_opcode_hook(uint32_t pc24,
                                        InterpPreOpcodeHook hook) {
     if (!hook) {
         s_pre_opcode_hook_count = 0;
+        memset(s_pre_opcode_hook_bits, 0, sizeof(s_pre_opcode_hook_bits));
         return;
     }
     const uint32_t key = pc24 & 0x7FFFFFu;
@@ -588,6 +595,7 @@ void interp_bridge_set_pre_opcode_hook(uint32_t pc24,
         s_pre_opcode_hooks[s_pre_opcode_hook_count].pc24 = key;
         s_pre_opcode_hooks[s_pre_opcode_hook_count].hook = hook;
         s_pre_opcode_hook_count++;
+        s_pre_opcode_hook_bits[(key & 0xFFFFu) >> 3] |= (uint8_t)(1u << (key & 7));
     } else {
         static int warned;
         if (!warned) {
@@ -603,6 +611,46 @@ void interp_bridge_set_pre_opcode_hook(uint32_t pc24,
 void interp_bridge_pre_opcode_redirect(uint32_t pc24) {
     s_pre_opcode_redirect_pc24 = pc24 & 0xFFFFFFu;
     s_pre_opcode_redirect_valid = 1;
+    s_pre_opcode_redirect_is_return = 0;
+}
+
+void interp_bridge_pre_opcode_return(uint32_t pc24) {
+    interp_bridge_pre_opcode_redirect(pc24);
+    s_pre_opcode_redirect_is_return = 1;
+}
+
+bool interp_bridge_run_native_pre_opcode_hooks(CpuState *cpu, uint32_t pc24,
+                                               uint32_t *redirect_pc24,
+                                               bool *invoked,
+                                               InterpPreOpcodeHook native_owned) {
+    const uint32_t key = pc24 & 0x7FFFFFu;
+    if (invoked) *invoked = false;
+    if (!(s_pre_opcode_hook_bits[(key & 0xFFFFu) >> 3] & (1u << (key & 7))))
+        return false;
+    /* A hook can make a nested native guest call. Do not consume its caller's
+     * pending redirect, and do not leak this invocation's redirect outward. */
+    const int saved_valid = s_pre_opcode_redirect_valid;
+    const uint32_t saved_pc = s_pre_opcode_redirect_pc24;
+    const int saved_is_return = s_pre_opcode_redirect_is_return;
+    bool redirected = false;
+    for (int i = 0; i < s_pre_opcode_hook_count; ++i) {
+        if (s_pre_opcode_hooks[i].pc24 != key) continue;
+        if (s_pre_opcode_hooks[i].hook == native_owned) continue;
+        if (invoked) *invoked = true;
+        cpu_mirrors_to_p(cpu);
+        s_pre_opcode_redirect_valid = 0;
+        s_pre_opcode_redirect_is_return = 0;
+        s_pre_opcode_hooks[i].hook(cpu, pc24);
+        if (s_pre_opcode_redirect_valid) {
+            *redirect_pc24 = s_pre_opcode_redirect_pc24;
+            redirected = true;
+            break;
+        }
+    }
+    s_pre_opcode_redirect_valid = saved_valid;
+    s_pre_opcode_redirect_pc24 = saved_pc;
+    s_pre_opcode_redirect_is_return = saved_is_return;
+    return redirected;
 }
 
 /* BRK bridge seam. The bounce is via explicit JSR/JSL interception below, not
@@ -1143,6 +1191,50 @@ typedef struct AotResumeRec {
 #define AOT_RESUME_RECS 64
 static AotResumeRec s_aot_resume[AOT_RESUME_RECS];
 static int s_aot_resume_n;
+/* One instruction handed back by this guest call chain, or all ones. */
+static uint32_t s_aot_resume_skip = 0xFFFFFFFFu;
+
+void interp_bridge_with_host_context(CpuState *cpu, void (*host)(void *), void *argument) {
+    /* Pending guest time is shared with the host/NMI/other tasks, unlike the
+     * suspended fiber's call-control metadata. Settle it, never snapshot it. */
+    bridge_apu_flush(cpu);
+    const int depth=s_interp_bridge_depth, sched_depth=s_lle_sched_depth;
+    const int bounce_depth=s_interp_bounce_owner_depth, bounce_base=s_interp_bounce_recomp_base;
+    const uint16_t owner_s=s_interp_owner_exit_s, flag_addr=s_sched_yield_flag_addr;
+    const int owner_valid=s_interp_owner_exit_valid, owner_sched=s_interp_owner_is_scheduler;
+    const uint32_t yield_pc=s_sched_yield_pc, unwind_pc=s_lle_unwind_pc24;
+    const uint8_t flag_value=s_sched_yield_flag_value;
+    const int unwind_active=s_lle_unwind_active, unwind_depth=s_lle_unwind_owner_depth;
+    const int unwind_deadline=s_lle_unwind_is_deadline, next_deadline=s_lle_next_unwind_is_deadline;
+    const int resume_n=s_aot_resume_n, apu_driving=g_interp_apu_driving;
+    const uint32_t resume_skip=s_aot_resume_skip;
+    const uint32_t wlog_pc=g_interp_wlog_pc24, redirect_pc=s_pre_opcode_redirect_pc24;
+    const int redirect_valid=s_pre_opcode_redirect_valid, redirect_return=s_pre_opcode_redirect_is_return;
+    AotResumeRec resumes[AOT_RESUME_RECS];
+    memcpy(resumes,s_aot_resume,sizeof resumes);
+    interp_bridge_guest_scope_unwind();
+    s_aot_resume_skip=0xFFFFFFFFu;
+    g_interp_apu_driving=0;
+    s_pre_opcode_redirect_valid=s_pre_opcode_redirect_is_return=0;
+    cpu_with_host_context(cpu,host,argument);
+    if (!interp_bridge_guest_scope_idle()) {
+        fprintf(stderr,"[interp_bridge] host context returned with an unfinished guest bridge\n");
+        abort();
+    }
+    s_interp_bridge_depth=depth; s_lle_sched_depth=sched_depth;
+    s_interp_bounce_owner_depth=bounce_depth; s_interp_bounce_recomp_base=bounce_base;
+    s_interp_owner_exit_s=owner_s; s_interp_owner_exit_valid=owner_valid;
+    s_interp_owner_is_scheduler=owner_sched;
+    s_sched_yield_pc=yield_pc; s_sched_yield_flag_addr=flag_addr; s_sched_yield_flag_value=flag_value;
+    s_lle_unwind_active=unwind_active; s_lle_unwind_pc24=unwind_pc;
+    s_lle_unwind_owner_depth=unwind_depth; s_lle_unwind_is_deadline=unwind_deadline;
+    s_lle_next_unwind_is_deadline=next_deadline;
+    memcpy(s_aot_resume,resumes,sizeof resumes); s_aot_resume_n=resume_n;
+    s_aot_resume_skip=resume_skip;
+    g_interp_apu_driving=apu_driving; g_interp_wlog_pc24=wlog_pc;
+    s_pre_opcode_redirect_pc24=redirect_pc; s_pre_opcode_redirect_valid=redirect_valid;
+    s_pre_opcode_redirect_is_return=redirect_return;
+}
 
 static int lle_yield_bounce_enabled(void);
 static int aot_resume_on(void) {
@@ -1206,10 +1298,15 @@ static void aot_resume_capture(const CpuState *cpu, uint32_t pc24) {
 static int s_aot_captured;
 /* The instruction compiled code last handed back to the interpreter in place
  * (a tail transfer to its own PC), or all ones. */
-static uint32_t s_aot_resume_skip = 0xFFFFFFFFu;
 static void aot_resume_note_handback(uint32_t target_pc24, uint32_t site_pc24) {
     if (aot_resume_on() && cpu_dispatch_pc_matches(target_pc24, site_pc24))
         s_aot_resume_skip = target_pc24 & 0xFFFFFFu;
+}
+static int aot_resume_take_handback(uint32_t pc24) {
+    const int skip=s_aot_resume_skip!=0xFFFFFFFFu &&
+        cpu_dispatch_pc_matches(s_aot_resume_skip,pc24);
+    s_aot_resume_skip=0xFFFFFFFFu;
+    return skip;
 }
 static void aot_resume_capture_tail(const CpuState *cpu, uint32_t pc24,
                                     uint16_t entry_s, uint8_t hrv) {
@@ -2522,12 +2619,27 @@ static int _interp_run_core(CpuState *cpu, uint32_t entry_pc24,
                 if (s_pre_opcode_hooks[hi].pc24 == key) {
                     sync_interp_to_cpu(&in, cpu);
                     s_pre_opcode_redirect_valid = 0;
+                    s_pre_opcode_redirect_is_return = 0;
                     s_pre_opcode_hooks[hi].hook(cpu, pc_before);
                     sync_cpu_to_interp(cpu, &in);
                     if (s_pre_opcode_redirect_valid) {
                         in.k = (uint8_t)((s_pre_opcode_redirect_pc24 >> 16) & 0xFF);
                         in.pc = (uint16_t)(s_pre_opcode_redirect_pc24 & 0xFFFF);
                         s_pre_opcode_redirect_valid = 0;
+                        /* A native primitive may have consumed a real guest
+                         * return frame (including a tail-inherited frame).
+                         * Honor the same watermark as an interpreted RTS/RTL;
+                         * do not execute its caller inside this bridge frame. */
+                        if (s_pre_opcode_redirect_is_return && !yield_pc &&
+                            !stop_on_rti && (uint16_t)in.sp > s_enter) {
+                            if (out_return_pc)
+                                *out_return_pc = ((uint32_t)in.k << 16) | in.pc;
+                            s_pre_opcode_redirect_is_return = 0;
+                            sync_interp_to_cpu(&in, cpu);
+                            bridge_apu_flush(cpu);
+                            return 1;
+                        }
+                        s_pre_opcode_redirect_is_return = 0;
                         redirected = true;
                         break;
                     }
@@ -2977,9 +3089,7 @@ static int _interp_run_core(CpuState *cpu, uint32_t entry_pc24,
             /* Compiled code just handed this instruction back (a region-paced
              * fallback: unmodeled, MMIO, a pointer it cannot preview). Run it here
              * once; resuming at it again would hand it back again, forever. */
-            const int resume_skip = s_aot_resume_skip != 0xFFFFFFFFu &&
-                                    cpu_dispatch_pc_matches(s_aot_resume_skip, pc_before);
-            s_aot_resume_skip = 0xFFFFFFFFu;
+            const int resume_skip = aot_resume_take_handback(pc_before);
             if (s_aot_resume_n && !in.e && !resume_skip) {
                 /* A suspended frame continues here (its record's S). */
                 while (s_aot_resume_n && in.sp > s_aot_resume[s_aot_resume_n - 1].s)

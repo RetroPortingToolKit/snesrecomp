@@ -139,7 +139,7 @@ static inline bool interp_bridge_use_absolute_apu_timeline(
  * pay only the address check. At a match it synchronizes registers into
  * CpuState, invokes the callback, then copies any changes back.
  *
- * Up to 192 registrations may be armed (LoROM FastROM bit7 is masked). Calling with a
+ * Up to 1024 registrations may be armed (LoROM FastROM bit7 is masked). Calling with a
  * non-NULL hook adds/replaces that PC; hook=NULL clears all slots. */
 typedef void (*InterpPreOpcodeHook)(CpuState *cpu, uint32_t pc24);
 void interp_bridge_set_pre_opcode_hook(uint32_t pc24,
@@ -149,6 +149,27 @@ void interp_bridge_set_pre_opcode_hook(uint32_t pc24,
  * in registration order; a redirect completes handling for that original PC. */
 bool interp_bridge_add_pre_opcode_hook(uint32_t pc24, InterpPreOpcodeHook hook);
 void interp_bridge_pre_opcode_redirect(uint32_t pc24);
+/* After a native primitive consumes its guest RTS/RTL frame, redirect to the
+ * popped continuation and honor the active interpreter's return watermark.
+ * Ordinary redirects deliberately do not imply a return. */
+void interp_bridge_pre_opcode_return(uint32_t pc24);
+/* Explicit stateful native boundary over the SAME registrations. Callbacks
+ * retain their CPU/RAM/MMIO writes and registration order. True supplies an
+ * explicit destination through non-NULL redirect_pc24; the generated caller
+ * must select a checked native continuation for its live M/X and preserve the
+ * enclosing return context. Nested invocations preserve pending redirects.
+ * native_owned may identify one callback whose corresponding native effect
+ * has already executed at this exact boundary; other composed owners still run.
+ * This is separate from the immutable observational entry_hook contract. */
+extern const uint8_t *const g_interp_bridge_pre_opcode_filter;
+static inline bool interp_bridge_native_hooks_armed(uint32_t pc24) {
+  const uint32_t pc16 = pc24 & 0xFFFFu;
+  return (g_interp_bridge_pre_opcode_filter[pc16 >> 3] & (1u << (pc16 & 7))) != 0;
+}
+bool interp_bridge_run_native_pre_opcode_hooks(CpuState *cpu, uint32_t pc24,
+                                               uint32_t *redirect_pc24,
+                                               bool *invoked,
+                                               InterpPreOpcodeHook native_owned);
 
 /* Declare the instruction at pc24 the poll of a pure interrupt wait: what it
  * reads changes only when an interrupt handler runs. Under a master deadline,
@@ -176,6 +197,10 @@ int interp_bridge_run(CpuState *cpu, uint32_t entry_pc24);
  * Simulation residue must separately be restored by the scope owner. */
 bool interp_bridge_guest_scope_idle(void);
 void interp_bridge_guest_scope_unwind(void);
+/* Run the native host scheduler outside this live coroutine's bridge/CPU
+ * call ownership, then restore that ownership when the coroutine resumes.
+ * This is live host-stack state, never a persisted execution snapshot. */
+void interp_bridge_with_host_context(CpuState *cpu, void (*host)(void *), void *argument);
 
 /* Faithful LLE of an infinite cooperative-scheduler loop (e.g. MMX's $8099 task
  * scheduler): run the real ROM scheduler under interp816 from entry_pc24 and
