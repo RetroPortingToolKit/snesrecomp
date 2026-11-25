@@ -2425,9 +2425,9 @@ fn return_site_is_partial_nlr(
         return false;
     };
     !states.is_empty()
-        && states
-            .iter()
-            .all(|state| matches!(state, Some(value) if *value < 0 || (*value > 0 && *value < frame)))
+        && states.iter().all(
+            |state| matches!(state, Some(value) if *value < 0 || (*value > 0 && *value < frame)),
+        )
 }
 
 fn has_unproven_nonlocal_return(
@@ -4813,7 +4813,10 @@ mod tests {
             0xC2, 0x20, 0xAB, 0x28, 0x60, // outer PHB/PHP cleanup + RTS
         ]);
         let graph = decode_function(&rom, 0, 0x8000, 1, 0, None, &DecodeEnv::default());
-        assert_eq!(analyze_function_exit_mx_modes(&graph, None), Some(vec![(1, 0)]));
+        assert_eq!(
+            analyze_function_exit_mx_modes(&graph, None),
+            Some(vec![(1, 0)])
+        );
     }
 
     #[test]
@@ -4827,7 +4830,10 @@ mod tests {
     fn shared_return_site_preserves_its_normal_path() {
         let rom = rom_at_8000(&[0xD0, 0x01, 0xFA, 0x60]);
         let graph = decode_function(&rom, 0, 0x8000, 1, 0, None, &DecodeEnv::default());
-        assert_eq!(analyze_function_exit_mx_modes(&graph, None), Some(vec![(1, 0)]));
+        assert_eq!(
+            analyze_function_exit_mx_modes(&graph, None),
+            Some(vec![(1, 0)])
+        );
     }
 
     #[test]

@@ -3173,6 +3173,11 @@ def _return_stack_delta_states(
             # The authorized PEI is fused with its immediately following RTS;
             # the synthetic two-byte frame is consumed by that transfer.
             return 0
+        if (mnem == 'PHA' and getattr(ins, 'dispatch_terminal', False)
+                and getattr(ins, 'dispatch_entries', None) is not None):
+            # PHA; SEP #$30; RTS is fused into the handler transfer. Its
+            # synthetic frame has been consumed before every successor.
+            return 0
         if mnem in ('PEA', 'PEI', 'PER', 'PHD'):
             return 2
         if mnem in ('PHP', 'PHB', 'PHK'):

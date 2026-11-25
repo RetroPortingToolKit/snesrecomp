@@ -34,3 +34,19 @@ def test_unknown_stack_height_remains_unproven():
 
 def test_internal_stack_dispatch_remains_unproven():
     assert exits([0xF4, 0xFF, 0x8F, 0x60]) is None
+
+
+def test_pha_tail_dispatch_consumes_synthetic_frame():
+    rom = make_lorom_bank0({
+        0x8000: bytes([0xC2, 0x30, 0xB9, 0x00, 0x90, 0x3A, 0x48,
+                       0xE2, 0x30, 0x60]),
+        0x9000: bytes([0x60]),
+    })
+    graph = decode_function(rom, 0, 0x8000, 1, 1, indirect_dispatch={
+        0x008006: {'count': 1, 'idx_reg': 'Y', 'targets': [0x009000]},
+    })
+    assert analyze_function_exit_mx_modes(graph) == {(1, 1)}
+
+
+def test_literal_pha_is_still_an_unproven_return_frame():
+    assert exits([0xC2, 0x30, 0x48, 0xE2, 0x30, 0x60], 1, 1) is None
