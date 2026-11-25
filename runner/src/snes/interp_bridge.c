@@ -561,6 +561,7 @@ static uint8_t s_pre_opcode_hook_bits[0x2000];
 const uint8_t *const g_interp_bridge_pre_opcode_filter = s_pre_opcode_hook_bits;
 static int s_pre_opcode_redirect_valid;
 static uint32_t s_pre_opcode_redirect_pc24;
+static int s_pre_opcode_redirect_is_return;
 
 bool interp_bridge_add_pre_opcode_hook(uint32_t pc24, InterpPreOpcodeHook hook) {
     if (!hook) return false;
@@ -610,6 +611,12 @@ void interp_bridge_set_pre_opcode_hook(uint32_t pc24,
 void interp_bridge_pre_opcode_redirect(uint32_t pc24) {
     s_pre_opcode_redirect_pc24 = pc24 & 0xFFFFFFu;
     s_pre_opcode_redirect_valid = 1;
+    s_pre_opcode_redirect_is_return = 0;
+}
+
+void interp_bridge_pre_opcode_return(uint32_t pc24) {
+    interp_bridge_pre_opcode_redirect(pc24);
+    s_pre_opcode_redirect_is_return = 1;
 }
 
 bool interp_bridge_run_native_pre_opcode_hooks(CpuState *cpu, uint32_t pc24,
@@ -624,6 +631,7 @@ bool interp_bridge_run_native_pre_opcode_hooks(CpuState *cpu, uint32_t pc24,
      * pending redirect, and do not leak this invocation's redirect outward. */
     const int saved_valid = s_pre_opcode_redirect_valid;
     const uint32_t saved_pc = s_pre_opcode_redirect_pc24;
+    const int saved_is_return = s_pre_opcode_redirect_is_return;
     bool redirected = false;
     for (int i = 0; i < s_pre_opcode_hook_count; ++i) {
         if (s_pre_opcode_hooks[i].pc24 != key) continue;
@@ -631,6 +639,7 @@ bool interp_bridge_run_native_pre_opcode_hooks(CpuState *cpu, uint32_t pc24,
         if (invoked) *invoked = true;
         cpu_mirrors_to_p(cpu);
         s_pre_opcode_redirect_valid = 0;
+        s_pre_opcode_redirect_is_return = 0;
         s_pre_opcode_hooks[i].hook(cpu, pc24);
         if (s_pre_opcode_redirect_valid) {
             *redirect_pc24 = s_pre_opcode_redirect_pc24;
@@ -640,6 +649,7 @@ bool interp_bridge_run_native_pre_opcode_hooks(CpuState *cpu, uint32_t pc24,
     }
     s_pre_opcode_redirect_valid = saved_valid;
     s_pre_opcode_redirect_pc24 = saved_pc;
+    s_pre_opcode_redirect_is_return = saved_is_return;
     return redirected;
 }
 
@@ -2560,12 +2570,27 @@ static int _interp_run_core(CpuState *cpu, uint32_t entry_pc24,
                 if (s_pre_opcode_hooks[hi].pc24 == key) {
                     sync_interp_to_cpu(&in, cpu);
                     s_pre_opcode_redirect_valid = 0;
+                    s_pre_opcode_redirect_is_return = 0;
                     s_pre_opcode_hooks[hi].hook(cpu, pc_before);
                     sync_cpu_to_interp(cpu, &in);
                     if (s_pre_opcode_redirect_valid) {
                         in.k = (uint8_t)((s_pre_opcode_redirect_pc24 >> 16) & 0xFF);
                         in.pc = (uint16_t)(s_pre_opcode_redirect_pc24 & 0xFFFF);
                         s_pre_opcode_redirect_valid = 0;
+                        /* A native primitive may have consumed a real guest
+                         * return frame (including a tail-inherited frame).
+                         * Honor the same watermark as an interpreted RTS/RTL;
+                         * do not execute its caller inside this bridge frame. */
+                        if (s_pre_opcode_redirect_is_return && !yield_pc &&
+                            !stop_on_rti && (uint16_t)in.sp > s_enter) {
+                            if (out_return_pc)
+                                *out_return_pc = ((uint32_t)in.k << 16) | in.pc;
+                            s_pre_opcode_redirect_is_return = 0;
+                            sync_interp_to_cpu(&in, cpu);
+                            bridge_apu_flush(cpu);
+                            return 1;
+                        }
+                        s_pre_opcode_redirect_is_return = 0;
                         redirected = true;
                         break;
                     }

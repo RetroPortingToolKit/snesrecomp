@@ -10,6 +10,60 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 class NativeMutableHooks(unittest.TestCase):
+    def test_native_return_uses_actual_interpreter_watermark(self):
+        compiler = os.environ.get('CC') or shutil.which('cc') or shutil.which('gcc')
+        if not compiler:
+            self.skipTest('C compiler required')
+        bridge = (ROOT / 'runner/src/snes/interp_bridge.c').read_text()
+        start = bridge.index('enum { kInterpPreOpcodeHookSlots')
+        registry = bridge[start:bridge.index('/* BRK bridge seam.', start)]
+        start = bridge.index('        if (s_pre_opcode_hook_count > 0) {')
+        end = bridge.index('        /* Opt-in control-flow tripwire:', start)
+        boundary = bridge[start:end]
+        source = '#include <string.h>\n#include "cpu_state.h"\n#include "snes/interp_bridge.h"\n' + registry
+        source += r'''
+typedef struct { uint16_t sp,pc; uint8_t k; } ProbeInterp;
+static void sync_interp_to_cpu(ProbeInterp *in,CpuState *c) { c->S=in->sp; c->PB=in->k; }
+static void sync_cpu_to_interp(CpuState *c,ProbeInterp *in) { in->sp=c->S; }
+static void bridge_apu_flush(CpuState *c) { (void)c; }
+static int ordinary;
+static void consume(CpuState *c,uint32_t pc) {
+  (void)pc; c->S+=2;
+  if(ordinary) interp_bridge_pre_opcode_redirect(0);
+  else interp_bridge_pre_opcode_return(0);
+}
+static int actual_boundary(CpuState *cpu,uint16_t s_enter,uint32_t yield_pc,int stop_on_rti,uint32_t *out_return_pc) {
+  ProbeInterp in={cpu->S,0x8100,0};
+  for(unsigned n=0;n<3;++n) {
+    uint32_t pc_before=((uint32_t)in.k<<16)|in.pc;
+'''
+        source += boundary
+        source += r'''
+    return 2; /* ordinary opcode would execute */
+  }
+  return 3;
+}
+#define CHECK(x) do { if(!(x)) { fprintf(stderr,"failed line %d: %s\n",__LINE__,#x);return 1; } } while(0)
+int main(void) {
+  CpuState c={0}; uint32_t ret=0xabcdef;
+  CHECK(interp_bridge_add_pre_opcode_hook(0x8100,consume));
+  c.S=0x100; CHECK(actual_boundary(&c,0x100,0,0,&ret)==1 && c.S==0x102 && ret==0);
+  c.S=0xfe; ret=0xabcdef; CHECK(actual_boundary(&c,0x100,0,0,&ret)==2 && c.S==0x100 && ret==0xabcdef);
+  ordinary=1; c.S=0x100; CHECK(actual_boundary(&c,0x100,0,0,&ret)==2);
+  ordinary=0; c.S=0x100; CHECK(actual_boundary(&c,0x100,0x8121,0,&ret)==2);
+  c.S=0x100; CHECK(actual_boundary(&c,0x100,0,1,&ret)==2);
+  CHECK(!s_pre_opcode_redirect_is_return);
+  puts("native returns: real boundary honors inherited frame, zero PC, nested depth and interrupt ownership");
+  return 0;
+}
+'''
+        with tempfile.TemporaryDirectory(prefix='snes-native-return-') as directory:
+            path = Path(directory)
+            c, exe = path/'test.c', path/('test.exe' if os.name=='nt' else 'test')
+            c.write_text(source)
+            subprocess.run([compiler,'-std=c11','-O2','-Wall','-Wextra','-I'+str(ROOT/'runner/src'),str(c),'-o',str(exe)],check=True)
+            subprocess.run([str(exe)],check=True)
+
     def test_actual_registry_mutation_composition_and_redirects(self):
         compiler = os.environ.get('CC') or shutil.which('cc') or shutil.which('gcc')
         if not compiler:

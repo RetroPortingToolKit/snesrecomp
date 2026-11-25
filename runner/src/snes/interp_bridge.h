@@ -149,6 +149,10 @@ void interp_bridge_set_pre_opcode_hook(uint32_t pc24,
  * in registration order; a redirect completes handling for that original PC. */
 bool interp_bridge_add_pre_opcode_hook(uint32_t pc24, InterpPreOpcodeHook hook);
 void interp_bridge_pre_opcode_redirect(uint32_t pc24);
+/* After a native primitive consumes its guest RTS/RTL frame, redirect to the
+ * popped continuation and honor the active interpreter's return watermark.
+ * Ordinary redirects deliberately do not imply a return. */
+void interp_bridge_pre_opcode_return(uint32_t pc24);
 /* Explicit stateful native boundary over the SAME registrations. Callbacks
  * retain their CPU/RAM/MMIO writes and registration order. True supplies an
  * explicit destination through non-NULL redirect_pc24; the generated caller
