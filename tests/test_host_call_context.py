@@ -36,6 +36,10 @@ class HostContext(unittest.TestCase):
         source+=function(bridge,'bool interp_bridge_guest_scope_idle(')
         source+=function(bridge,'void interp_bridge_guest_scope_unwind(')
         source+=function(bridge,'void interp_bridge_with_host_context(')
+        source+='static int aot_resume_on(void) { return 1; }\n'
+        source+='int cpu_dispatch_pc_matches(uint32 a,uint32 b) { return a==b; }\n'
+        source+=function(bridge,'static void aot_resume_note_handback(')
+        source+=function(bridge,'static int aot_resume_take_handback(')
         source+=r'''
 #define CHECK(x) do { if(!(x)) { fprintf(stderr,"failed line %d: %s\n",__LINE__,#x);exit(1); } } while(0)
 static void clean_host(void *arg) {
@@ -43,6 +47,7 @@ static void clean_host(void *arg) {
   CHECK(interp_bridge_guest_scope_idle() && g_recomp_stack_top==0 && !cpu_interrupt_context_active());
   CHECK(!g_tailcall_context_valid && !g_aot_resume_pc && c->host_return_valid==0);
   CHECK(!g_interp_apu_driving && !s_pre_opcode_redirect_valid && pending==0);
+  CHECK(!aot_resume_take_handback(0x808888) && !aot_resume_take_handback(0x809000));
   c->ram[0]++;c->master_cycles+=100;
 }
 static void second_task(void *arg) {
@@ -52,11 +57,13 @@ static void second_task(void *arg) {
   s_interp_bridge_depth=1;s_interp_bounce_owner_depth=1;s_interp_bounce_recomp_base=0;
   s_interp_owner_exit_s=0x2bd;s_interp_owner_exit_valid=1;
   s_aot_resume_n=1;s_aot_resume[0].pc=0x809000;
+  aot_resume_note_handback(0x809000,0x809000);
   g_last_recomp_func="second";c->host_return_valid=2;pending=7;
   interp_bridge_with_host_context(c,clean_host,c);
   CHECK(g_recomp_stack_top==1 && !strcmp(g_recomp_stack[0],"second"));
   CHECK(s_interp_bridge_depth==1 && s_interp_bounce_owner_depth==1 && s_interp_owner_exit_s==0x2bd);
   CHECK(c->host_return_valid==2 && s_aot_resume[0].pc==0x809000 && s_aot_resume_n==1);
+  CHECK(aot_resume_take_handback(0x809000) && !aot_resume_take_handback(0x809000));
   interp_bridge_guest_scope_unwind();cpu_guest_scope_unwind();g_aot_resume_pc=0;
   c->host_return_valid=0;pending=99;
 }
@@ -71,6 +78,7 @@ int main(void) {
   s_interp_bridge_depth=2;s_interp_bounce_owner_depth=2;s_interp_bounce_recomp_base=1;
   s_interp_owner_exit_s=0x13d;s_interp_owner_exit_valid=1;g_interp_apu_driving=1;
   s_aot_resume_n=1;s_aot_resume[0].pc=0x808888;
+  aot_resume_note_handback(0x808888,0x808888);
   s_pre_opcode_redirect_valid=1;s_pre_opcode_redirect_pc24=0;s_pre_opcode_redirect_is_return=1;
   g_interp_wlog_pc24=0x808100;pending=10;
   interp_bridge_with_host_context(&c,second_task,&c);
@@ -83,6 +91,7 @@ int main(void) {
   CHECK(s_interp_bridge_depth==2 && s_interp_bounce_owner_depth==2 && s_interp_bounce_recomp_base==1);
   CHECK(s_interp_owner_exit_s==0x13d && s_interp_owner_exit_valid && g_interp_apu_driving==1);
   CHECK(s_aot_resume_n==1 && s_aot_resume[0].pc==0x808888 && g_interp_wlog_pc24==0x808100);
+  CHECK(aot_resume_take_handback(0x808888) && !aot_resume_take_handback(0x808888));
   CHECK(s_pre_opcode_redirect_valid && s_pre_opcode_redirect_pc24==0 && s_pre_opcode_redirect_is_return);
   CHECK(ram[0]==2 && c.master_cycles==210 && pending==99 && flushes==2 && c.host_return_valid==3);
   puts("host call context: separate nested task ownership, exact ancestor/return metadata, shared RAM/clocks/APU progress");

@@ -1191,6 +1191,8 @@ typedef struct AotResumeRec {
 #define AOT_RESUME_RECS 64
 static AotResumeRec s_aot_resume[AOT_RESUME_RECS];
 static int s_aot_resume_n;
+/* One instruction handed back by this guest call chain, or all ones. */
+static uint32_t s_aot_resume_skip = 0xFFFFFFFFu;
 
 void interp_bridge_with_host_context(CpuState *cpu, void (*host)(void *), void *argument) {
     /* Pending guest time is shared with the host/NMI/other tasks, unlike the
@@ -1205,11 +1207,13 @@ void interp_bridge_with_host_context(CpuState *cpu, void (*host)(void *), void *
     const int unwind_active=s_lle_unwind_active, unwind_depth=s_lle_unwind_owner_depth;
     const int unwind_deadline=s_lle_unwind_is_deadline, next_deadline=s_lle_next_unwind_is_deadline;
     const int resume_n=s_aot_resume_n, apu_driving=g_interp_apu_driving;
+    const uint32_t resume_skip=s_aot_resume_skip;
     const uint32_t wlog_pc=g_interp_wlog_pc24, redirect_pc=s_pre_opcode_redirect_pc24;
     const int redirect_valid=s_pre_opcode_redirect_valid, redirect_return=s_pre_opcode_redirect_is_return;
     AotResumeRec resumes[AOT_RESUME_RECS];
     memcpy(resumes,s_aot_resume,sizeof resumes);
     interp_bridge_guest_scope_unwind();
+    s_aot_resume_skip=0xFFFFFFFFu;
     g_interp_apu_driving=0;
     s_pre_opcode_redirect_valid=s_pre_opcode_redirect_is_return=0;
     cpu_with_host_context(cpu,host,argument);
@@ -1226,6 +1230,7 @@ void interp_bridge_with_host_context(CpuState *cpu, void (*host)(void *), void *
     s_lle_unwind_owner_depth=unwind_depth; s_lle_unwind_is_deadline=unwind_deadline;
     s_lle_next_unwind_is_deadline=next_deadline;
     memcpy(s_aot_resume,resumes,sizeof resumes); s_aot_resume_n=resume_n;
+    s_aot_resume_skip=resume_skip;
     g_interp_apu_driving=apu_driving; g_interp_wlog_pc24=wlog_pc;
     s_pre_opcode_redirect_pc24=redirect_pc; s_pre_opcode_redirect_valid=redirect_valid;
     s_pre_opcode_redirect_is_return=redirect_return;
@@ -1293,10 +1298,15 @@ static void aot_resume_capture(const CpuState *cpu, uint32_t pc24) {
 static int s_aot_captured;
 /* The instruction compiled code last handed back to the interpreter in place
  * (a tail transfer to its own PC), or all ones. */
-static uint32_t s_aot_resume_skip = 0xFFFFFFFFu;
 static void aot_resume_note_handback(uint32_t target_pc24, uint32_t site_pc24) {
     if (aot_resume_on() && cpu_dispatch_pc_matches(target_pc24, site_pc24))
         s_aot_resume_skip = target_pc24 & 0xFFFFFFu;
+}
+static int aot_resume_take_handback(uint32_t pc24) {
+    const int skip=s_aot_resume_skip!=0xFFFFFFFFu &&
+        cpu_dispatch_pc_matches(s_aot_resume_skip,pc24);
+    s_aot_resume_skip=0xFFFFFFFFu;
+    return skip;
 }
 static void aot_resume_capture_tail(const CpuState *cpu, uint32_t pc24,
                                     uint16_t entry_s, uint8_t hrv) {
@@ -3079,9 +3089,7 @@ static int _interp_run_core(CpuState *cpu, uint32_t entry_pc24,
             /* Compiled code just handed this instruction back (a region-paced
              * fallback: unmodeled, MMIO, a pointer it cannot preview). Run it here
              * once; resuming at it again would hand it back again, forever. */
-            const int resume_skip = s_aot_resume_skip != 0xFFFFFFFFu &&
-                                    cpu_dispatch_pc_matches(s_aot_resume_skip, pc_before);
-            s_aot_resume_skip = 0xFFFFFFFFu;
+            const int resume_skip = aot_resume_take_handback(pc_before);
             if (s_aot_resume_n && !in.e && !resume_skip) {
                 /* A suspended frame continues here (its record's S). */
                 while (s_aot_resume_n && in.sp > s_aot_resume[s_aot_resume_n - 1].s)
