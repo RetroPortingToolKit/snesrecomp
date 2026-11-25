@@ -7,12 +7,12 @@ static struct {
     int pending;
     const char *refusal;
     uint32_t started_ms;
-} g_profiles;
+} g_profiles={.qualification=SNES_INPUT_SCHEMA_ID,.profiles=1u};
 void snes_netplay_set_profile_caps(uint32_t qualification,uint32_t cpu_features,
     uint32_t backends,uint32_t profiles,uint32_t architecture,
     void (*settled)(uint32_t,uint32_t))
 {
-    g_profiles.qualification=qualification;g_profiles.cpu=cpu_features;
+    g_profiles.qualification=SnesInputQualification(qualification);g_profiles.cpu=cpu_features;
     g_profiles.backends=backends;g_profiles.profiles=profiles;
     g_profiles.architecture=architecture;g_profiles.settled=settled;
 }

@@ -8,6 +8,14 @@
  * Guest joypads still receive only the original twelve buttons. */
 #define SNES_INPUT_ACTION_COUNT 3
 #define SNES_INPUT_SEAT_MASK 0x7fffu
+/* Startup profiles are namespaced by this canonical layout, independently of
+ * game version, build diagnostics or the initial machine-state digest. */
+#define SNES_INPUT_SCHEMA_ID 0x534e4101u
+static inline uint32_t SnesInputQualification(uint32_t qualification) {
+  if (!qualification) return SNES_INPUT_SCHEMA_ID;
+  uint32_t result=(qualification ^ SNES_INPUT_SCHEMA_ID) * 0x01000193u;
+  return result ? result : SNES_INPUT_SCHEMA_ID;
+}
 static inline uint16_t SnesInputSeat(uint32_t word, unsigned seat) {
   if (seat > 1) return 0;
   return (uint16_t)(((word >> (seat * 12)) & 0xfffu) |
