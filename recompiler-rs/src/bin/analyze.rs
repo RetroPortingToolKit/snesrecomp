@@ -590,8 +590,21 @@ fn target_key(site: u32, raw: u32, kind: Option<&str>, m: u8, x: u8) -> VariantK
 
 fn has_truncated_call_continuation(graph: &FunctionDecodeGraph) -> bool {
     graph.insns().iter().any(|decoded| {
+        // An inline jump-table helper consumes its call frame and tail-
+        // dispatches to these decoded destinations. Its following bytes are
+        // pointer data, not a missing returning-call continuation. Returning
+        // dispatches and unresolved/empty tables retain the ordinary check.
+        let tail_dispatch = decoded
+            .insn
+            .dispatch_entries
+            .as_ref()
+            .is_some_and(|entries| entries.iter().any(|&target| target != 0))
+            && matches!(decoded.insn.dispatch_kind.as_deref(), Some("short" | "long"))
+            && !decoded.insn.dispatch_call
+            && !decoded.insn.dispatch_local_goto;
         matches!(decoded.insn.mnem, "JSR" | "JSL")
             && !decoded.insn.terminal_jsr
+            && !tail_dispatch
             && decoded.successors.is_empty()
     })
 }
@@ -1985,6 +1998,54 @@ mod tests {
         };
         let graph = decode_function(&rom, 0, 0x8000, 1, 1, None, &env);
         assert!(!has_truncated_call_continuation(&graph));
+    }
+
+    #[test]
+    fn inline_tail_dispatch_has_no_return_into_pointer_data() {
+        for (kind, stride) in [("short", 2usize), ("long", 3usize)] {
+            let mut rom = vec![0u8; 0x8000];
+            rom[..4].copy_from_slice(&[0x22, 0x00, 0xE0, 0x00]);
+            rom[4..4 + stride].copy_from_slice(&0x009000u32.to_le_bytes()[..stride]);
+            rom[0x1000] = 0x6B;
+            let helpers = HashMap::from([(0x00E000, kind.to_string())]);
+            let regions = [(0, 0x8004, 0x8004 + stride as u32)];
+            let env = DecodeEnv {
+                dispatch_helpers: Some(&helpers),
+                data_regions: Some(&regions),
+                stop_on_unknown_callee_exit: true,
+                ..DecodeEnv::default()
+            };
+            let graph = decode_function(&rom, 0, 0x8000, 1, 1, None, &env);
+            let mut call = graph.insns()[0].clone();
+            assert_eq!(call.insn.mnem, "JSL");
+            assert_eq!(call.insn.dispatch_entries.as_deref(), Some(&[0x009000][..]));
+            assert!(call.successors.is_empty());
+            assert!(!has_truncated_call_continuation(&graph), "{kind}");
+
+            // A returning table call still needs a continuation. Decoded
+            // destinations alone do not establish the helper's tail ABI.
+            let mut returning = graph.clone();
+            call.insn.dispatch_call = true;
+            returning.insert(call.clone());
+            assert!(has_truncated_call_continuation(&returning), "{kind}");
+
+            // Neither a local dispatch with missing successors nor an empty
+            // target set may authorize an ordinary call leaf.
+            let mut local = graph.clone();
+            call.insn.dispatch_call = false;
+            call.insn.dispatch_local_goto = true;
+            local.insert(call.clone());
+            assert!(has_truncated_call_continuation(&local), "{kind}");
+            let mut empty = graph.clone();
+            call.insn.dispatch_local_goto = false;
+            call.insn.dispatch_entries = Some(Vec::new());
+            empty.insert(call.clone());
+            assert!(has_truncated_call_continuation(&empty), "{kind}");
+            let mut null_slots = graph.clone();
+            call.insn.dispatch_entries = Some(vec![0, 0]);
+            null_slots.insert(call);
+            assert!(has_truncated_call_continuation(&null_slots), "{kind}");
+        }
     }
 
     fn equation(
