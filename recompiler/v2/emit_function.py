@@ -1,7 +1,7 @@
 """snesrecomp.recompiler.v2.emit_function
 
-Per-function v2 emit driver: decode_function â†’ build_cfg â†’ IR lowering
-â†’ codegen â†’ C function source.
+Per-function v2 emit driver: decode_function → build_cfg → IR lowering
+→ codegen → C function source.
 
 Replaces v1's `emit_function()` (recomp.py:5930+, ~2200 lines including
 EmitCtx state plumbing + heuristic phi machinery). The v2 driver is
@@ -285,7 +285,7 @@ def _dynamic_charge_lines(insn, speed_expr: str = "8") -> List[str]:
                 f"if ((0x{base:04X} & 0xFF00) != ((0x{base:04X} + cpu->Y) & 0xFF00))"
                 f" {{ cpu->cycles += 1; cpu->master_cycles += {speed_expr}; }}"
                 f"  /* abs,Y read page-cross */")
-        # INDIR_Y (dp),Y: effective pointer is loaded at runtime from DP â€” not
+        # INDIR_Y (dp),Y: effective pointer is loaded at runtime from DP — not
         # reconstructable from the static operand; left as a measured residual.
     return out
 
@@ -416,13 +416,13 @@ def scan_tail_call_stack_delta(
     each block exit whose successor PC is in `sibling_entry_pcs`.
 
     Returns {target_pc16: delta} where delta > 0 means net push (cpu->S
-    decreased from entry â€” the typical PHB/PHK-then-PLB pattern).  The
+    decreased from entry — the typical PHB/PHK-then-PLB pattern).  The
     callee at target_pc16 should record `_entry_s = cpu->S + delta` so
     the host-return check passes after the callee's matching PLB epilogue.
 
     Only entries where ALL control-flow paths agree on the same non-zero
     integer delta are returned.  Indeterminate paths (TCS/TXS) or
-    divergent paths are silently omitted â€” the cfg `entry_s_offset` hint
+    divergent paths are silently omitted — the cfg `entry_s_offset` hint
     remains available as a manual override for those cases.
 
     Returns {} on decode error, no tail-call exits, or no agreed delta.
@@ -449,7 +449,7 @@ def scan_tail_call_stack_delta(
         return {}
 
     # Dataflow: each state is either an int (net delta from entry) or None
-    # (indeterminate â€” saw TCS/TXS).  We propagate sets of these values
+    # (indeterminate — saw TCS/TXS).  We propagate sets of these values
     # along CFG edges, mirroring _classify_trampoline_returns.
     in_states: Dict[DecodeKey, set] = {cfg.entry: {0}}
     worklist: List[DecodeKey] = [cfg.entry]
@@ -502,9 +502,9 @@ def scan_tail_call_stack_delta(
     result = {}
     for pc16, deltas in exit_deltas.items():
         if None in deltas:
-            continue  # indeterminate path â€” skip; use manual entry_s_offset
+            continue  # indeterminate path — skip; use manual entry_s_offset
         if len(deltas) != 1:
-            continue  # divergent paths disagree â€” skip
+            continue  # divergent paths disagree — skip
         delta = next(iter(deltas))
         if delta != 0:
             result[pc16] = delta
@@ -531,9 +531,9 @@ def scan_rts_stack_deltas(
     function observe the same deterministic stack height, or None if
     any exit is indeterminate (TCS/TXS) or the exits disagree.
 
-    delta > 0 means net push (cpu->S decreased from entry â€” e.g. PHB at
+    delta > 0 means net push (cpu->S decreased from entry — e.g. PHB at
     entry that isn't matched by PLB before RTL).
-    delta < 0 means net pop  (cpu->S increased from entry â€” e.g. PLB
+    delta < 0 means net pop  (cpu->S increased from entry — e.g. PLB
     before RTL restoring a PHB pushed by the tail-call caller).
     delta = 0 means stack-balanced (standard case).
     """
@@ -642,12 +642,12 @@ def emit_function(rom: bytes, bank: int, start: int,
     """Emit a complete v2 C function source for one 65816 function.
 
     Pipeline:
-        rom + (bank, start, entry_m, entry_x) â†’ decode_function
-                                              â†’ build_cfg
+        rom + (bank, start, entry_m, entry_x) → decode_function
+                                              → build_cfg
         for each block:
-            lower(insn) â†’ IR ops
-            emit_op(op)  â†’ C lines
-        block-end op â†’ goto / fall-through wiring
+            lower(insn) → IR ops
+            emit_op(op)  → C lines
+        block-end op → goto / fall-through wiring
     """
     if region_paced and not instruction_blocks:
         raise ValueError("region-paced emission requires instruction-blocks")
@@ -659,7 +659,7 @@ def emit_function(rom: bytes, bank: int, start: int,
     # standard SNES SPC upload protocol is a length/target/data block
     # stream pointed to by a 24-bit ROM pointer in direct page; the
     # runtime walks it directly and writes into apu->ram. Game-agnostic
-    # â€” works for any project that uses the standard protocol (verified
+    # — works for any project that uses the standard protocol (verified
     # on SMW's HandleSPCUploads_Inner $00:8079 and ALttP's LoadSongBank
     # $00:8888).
     if hle_spc_upload and (start & 0xFFFF) in set(hle_spc_upload):
@@ -841,17 +841,17 @@ def emit_function(rom: bytes, bank: int, start: int,
             has_lle_memory_poll = True
             break
 
-    # â”€â”€ PEI-trampoline detector (2026-05-24, narrow variant) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    # ── PEI-trampoline detector (2026-05-24, narrow variant) ──────────
     #
     # Scan the function's decoded insns for PEI / PEA / PER mnemonics.
     # Each is a 2-byte push that doesn't have a matching pop in the
     # canonical asm-balanced shape (PHP/PLP, PHA/PLA, etc.). A function
-    # containing any of them is a CANDIDATE PEI-trampoline â€” at its
+    # containing any of them is a CANDIDATE PEI-trampoline — at its
     # RTS/RTL, the topmost cpu->S bytes may be a computed return target
     # rather than the caller's pushed JSR/JSL frame.
     #
     # Flagging is per-function: every Return in a candidate function
-    # gets `source_pc24 âˆˆ _TRAMPOLINE_RETURNS`. Codegen.py's _emit_return
+    # gets `source_pc24 ∈ _TRAMPOLINE_RETURNS`. Codegen.py's _emit_return
     # then emits a runtime balance check (cpu->S vs _entry_s) and on
     # the unbalanced path tail-calls cpu_dispatch_pc with the popped
     # (PB:PC+1) target. The runtime check filters out balanced paths
@@ -874,7 +874,7 @@ def emit_function(rom: bytes, bank: int, start: int,
     trampoline_returns_local = _classify_trampoline_returns(cfg)
     if has_pei:
         # Every Return in this function may execute on an unbalanced path
-        # (we don't do path-level discrimination â€” the runtime check is
+        # (we don't do path-level discrimination — the runtime check is
         # the final discriminator). Collect every RTS/RTL/RTI source_pc24
         # and add to the codegen-level set.
         for blk in cfg.blocks.values():
@@ -921,7 +921,7 @@ def emit_function(rom: bytes, bank: int, start: int,
             order_blocks(s)
     order_blocks(cfg.entry)
 
-    # Any cfg block not reached via DFS (defensive â€” shouldn't happen for
+    # Any cfg block not reached via DFS (defensive — shouldn't happen for
     # a well-formed v2 graph) gets appended at the end.
     for k in cfg.blocks:
         if k not in visited:
@@ -966,16 +966,16 @@ def emit_function(rom: bytes, bank: int, start: int,
                         f"{next(iter(td))} but the hook at {next(iter(hd))}; "
                         "a redirect must not change S")
 
-    # â”€â”€ Pre-lower IR for every block â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    # ── Pre-lower IR for every block ────────────────────────────────────
     # CRITICAL: lower() advances the per-function value-id counter `vf`,
     # so it must be called EXACTLY ONCE per insn. The 2026-05-02
     # GameMode-oscillation black-screen regression was a duplicate
-    # lower() bug â€” the pre-pass and the emit loop both called lower(),
+    # lower() bug — the pre-pass and the emit loop both called lower(),
     # bumping vids out of sync with codegen's _v() mapping.
     #
-    # block_per_insn_ir[key] holds (Insn, [IROp]) pairs â€” emit needs
+    # block_per_insn_ir[key] holds (Insn, [IROp]) pairs — emit needs
     # the source Insn for Call dispatch detection.
-    # block_ir[key] holds the flat list of IROps â€” used by the NLR
+    # block_ir[key] holds the flat list of IROps — used by the NLR
     # detector below.
     block_per_insn_ir: Dict[DecodeKey, List[Tuple[object, List[IROp]]]] = {}
     block_ir: Dict[DecodeKey, List[IROp]] = {}
@@ -987,7 +987,7 @@ def emit_function(rom: bytes, bank: int, start: int,
         # the tail callee inherits THIS function's host-return validity (a
         # tail-call hands off our return obligation) and THIS function's
         # entry-S baseline (a split shared suffix may pop bytes pushed before
-        # the tail transfer). NLR is no longer signalled via _pending_skip â€”
+        # the tail transfer). NLR is no longer signalled via _pending_skip —
         # it flows through cpu->S + dispatch, so nlr_info_for_block is
         # ignored here.
         del nlr_info_for_block
@@ -1039,24 +1039,24 @@ def emit_function(rom: bytes, bank: int, start: int,
         block_per_insn_ir[key] = pairs
         block_ir[key] = flat
 
-    # â”€â”€ Non-local-return idiom detection â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    # ── Non-local-return idiom detection ────────────────────────────────
     # A basic block is an NLR-block if its IR has the shape
-    #   [<setup ops>] + [PullReg(A) Ã— N] + (Goto | Return)
+    #   [<setup ops>] + [PullReg(A) × N] + (Goto | Return)
     # where N is a multiple of the return-PC byte count (2 for RTS, 3
     # for RTL). Setup ops are anything OTHER than Push/Pull/Call (those
     # would interfere with stack accounting). Three sub-cases:
-    #   (a) Block ends in its own Return â€” single-block PLA*N RTS,
+    #   (a) Block ends in its own Return — single-block PLA*N RTS,
     #       e.g. a leaf "SkipCaller" function. Skip = N / unit.
     #   (b) Block ends in a Goto whose successor block ends in Return
-    #       (no further stack manipulation in successor) â€” multi-block
+    #       (no further stack manipulation in successor) — multi-block
     #       BNE NLRBlock; NLRBlock: PLA*N + BRA tail; tail: work + RTS.
     #   (c) Block has setup work + PLA*N + JMP cross-fn. The JMP target
     #       is decoded INTO this function's CFG (v2 inlines cross-fn
     #       branch targets), and that target eventually RTSes. The
-    #       setup ops are real game-state changes â€” they MUST be
+    #       setup ops are real game-state changes — they MUST be
     #       emitted; only the PLAs and the SKIP emit are special.
     #       Yoshi-block 2026-05-02: $00:F005 has this pattern with
-    #       JMP $EE35 â€” Mario-on-Yoshi-vs-koopa-slope death root.
+    #       JMP $EE35 — Mario-on-Yoshi-vs-koopa-slope death root.
     # Returns a dict {skip:int, pla_start_ir_idx:int, pla_count:int}
     # so the emit loop can preserve setup ops, skip just the PLAs, and
     # set _pending_skip before the terminator.
@@ -1072,10 +1072,10 @@ def emit_function(rom: bytes, bank: int, start: int,
             _dbg('REJECT: no ops')
             return None
         # Three terminator shapes:
-        #   - Block ends in Return â€” the RTS picks up _pending_skip.
-        #   - Block ends in Goto â€” the goto's successor must be a
+        #   - Block ends in Return — the RTS picks up _pending_skip.
+        #   - Block ends in Goto — the goto's successor must be a
         #     Return-terminated block.
-        #   - Block ends in something else (e.g. PullReg, Read, Write) â€”
+        #   - Block ends in something else (e.g. PullReg, Read, Write) —
         #     the block has NO terminator IR, just an implicit
         #     fall-through to its single CFG successor. Same NLR
         #     handling as the Goto case (chase successor).
@@ -1097,14 +1097,14 @@ def emit_function(rom: bytes, bank: int, start: int,
              f'terminator={type(terminator).__name__ if terminator else "fall-through"}')
         if pull_count < 2:
             return None
-        # Setup region (before PLAs) must not contain Call/IndirectGoto â€”
+        # Setup region (before PLAs) must not contain Call/IndirectGoto —
         # those would interfere with stack accounting. Goto/CondBranch in
         # the middle would mean the block isn't straight-line, which isn't
         # possible at this stage of v2 (each basic block has exactly one
         # terminator), but check defensively.
         #
         # Push/Pull ops in the setup region are TOLERATED if they balance
-        # against function-wide PHA/PLA accounting â€” see check below. This
+        # against function-wide PHA/PLA accounting — see check below. This
         # handles the F971 idiom where a function does:
         #   PHA / PHA / ... / PLA STA / PLA STA / PLA PLA RTS
         # The first two PLAs are paired with the two PHAs (intra-function
@@ -1132,7 +1132,7 @@ def emit_function(rom: bytes, bank: int, start: int,
         else:
             # Goto OR implicit fall-through: chase the lone successor.
             # Must be a local block ending in Return (no further stack
-            # manipulation in successor â€” its RTS will pick up the
+            # manipulation in successor — its RTS will pick up the
             # _pending_skip we set here).
             block = cfg.blocks[key]
             succs = block.successors
@@ -1194,7 +1194,7 @@ def emit_function(rom: bytes, bank: int, start: int,
                 _dbg(f'REJECT: succ last op = {type(last).__name__} (not Return)')
                 return None
             # Successor must not contain Push/Pull (they'd interfere with
-            # stack accounting). Call/IndirectGoto are tolerated â€” the
+            # stack accounting). Call/IndirectGoto are tolerated — the
             # callee is balanced and doesn't affect THIS function's stack
             # frame relative to entry. Old detector pre-2026-05-02 only
             # rejected Push/Pull/Call but not IndirectGoto; my prior
@@ -1202,7 +1202,7 @@ def emit_function(rom: bytes, bank: int, start: int,
             # (its successor block has ALU/load/store ops only, no Call,
             # but the over-tightening in earlier draft erroneously also
             # required absence of Call which DOES match real NLR shapes
-            # like the koopa-shell fix â€” keep loose like the original).
+            # like the koopa-shell fix — keep loose like the original).
             for sop in succ_ops:
                 if isinstance(sop, (PushReg, PullReg, Push, Pull)):
                     _dbg(f'REJECT: succ has {type(sop).__name__}')
@@ -1221,7 +1221,7 @@ def emit_function(rom: bytes, bank: int, start: int,
         # the trailing-PLA chase) contains PLAs that aren't paired with
         # PHAs in the same block, those PLAs MUST be paired with PHAs
         # elsewhere in the function. Otherwise the function's net stack
-        # delta would consume MORE than just the NLR-skip bytes â€” the
+        # delta would consume MORE than just the NLR-skip bytes — the
         # `pull_count` we computed would not be the true "extra pops".
         #
         # Accept iff (function-wide PLAs) - (function-wide PHAs) == pull_count
@@ -1246,7 +1246,7 @@ def emit_function(rom: bytes, bank: int, start: int,
             'pla_count': pull_count,
         }
 
-    # â”€â”€ Extended NLR detector: PLA*N at block START + branching tail â”€â”€
+    # ── Extended NLR detector: PLA*N at block START + branching tail ──
     #
     # Sub-case (d), 2026-05-14: PLA*N at the START of a block followed
     # by intermediate stateless logic and a conditional or
@@ -1256,7 +1256,7 @@ def emit_function(rom: bytes, bank: int, start: int,
     # address; the subsequent logic runs; the eventual RTS uses the
     # grandparent's return address.
     #
-    # Canonical case: $00:9AEA HandleSelectionCursor.CheckMovement â€”
+    # Canonical case: $00:9AEA HandleSelectionCursor.CheckMovement —
     #   PLA PLA              ; eat parent return
     #   LDA $15 / AND / LSR  ; cursor-direction logic
     #   BEQ .Return          ; branch to RTS
@@ -1264,7 +1264,7 @@ def emit_function(rom: bytes, bank: int, start: int,
     # .Return: RTS
     #
     # The existing detector (cases a/b/c) misses this because the
-    # PLAs aren't immediately adjacent to a Return/Goto terminator â€”
+    # PLAs aren't immediately adjacent to a Return/Goto terminator —
     # they're at the start of the block, with stateless logic + a
     # CondBranch between them and the function's RTS.
     #
@@ -1297,7 +1297,7 @@ def emit_function(rom: bytes, bank: int, start: int,
             terminator = None
         # Middle region (between PLAs and terminator): no stack ops, no
         # call, no nested goto/return/condbranch (each block has exactly
-        # one terminator at end â€” defensive).
+        # one terminator at end — defensive).
         for op in ops[pla_end:scan_end_excl]:
             if isinstance(op, (PushReg, PullReg, Push, Pull)):
                 _dbg(f'REJECT: middle has {type(op).__name__}')
@@ -1309,7 +1309,7 @@ def emit_function(rom: bytes, bank: int, start: int,
                 _dbg(f'REJECT: middle has {type(op).__name__}')
                 return None
         # If the block ends in its own Return, skip = pull_count / unit
-        # and we're done â€” but that's case (a) which the primary
+        # and we're done — but that's case (a) which the primary
         # detector already caught. Bail to avoid double-detection.
         if isinstance(terminator, Return):
             return None
@@ -1370,7 +1370,7 @@ def emit_function(rom: bytes, bank: int, start: int,
             _dbg('REJECT: no Return reached')
             return None
         # All reached Returns must use the same width (mixing RTS and
-        # RTL in one function's NLR pattern would be exotic â€” bail).
+        # RTL in one function's NLR pattern would be exotic — bail).
         if len(set(unit_seen)) != 1:
             _dbg(f'REJECT: mixed return widths {unit_seen}')
             return None
@@ -1399,7 +1399,7 @@ def emit_function(rom: bytes, bank: int, start: int,
     # idiom is now handled by emitting the PLAs as NORMAL cpu->S pops and
     # letting RTS/RTL consume the exposed return frame (host_return_valid +
     # cpu_dispatch_pc). The detector is retained for DIAGNOSTICS ONLY and no
-    # longer drives emission, so `nlr_skip_by_block` stays EMPTY â€” the emit
+    # longer drives emission, so `nlr_skip_by_block` stays EMPTY — the emit
     # loop then emits every PLA/PLP and every Return normally.
     nlr_skip_by_block: Dict[DecodeKey, dict] = {}
     nlr_diag_by_block: Dict[DecodeKey, dict] = {}  # diagnostics only; NOT used for emit
@@ -1412,7 +1412,7 @@ def emit_function(rom: bytes, bank: int, start: int,
 
     # Bank where THIS function's body lives. Used to compute the 24-bit
     # address of cross-function targets (which always lie within the same
-    # bank â€” cross-BANK jumps go through Call/JSL machinery, not Goto).
+    # bank — cross-BANK jumps go through Call/JSL machinery, not Goto).
     _SAME_BANK = bank & 0xFF
 
     def _goto_or_return(target: DecodeKey, prefix: str = "",
@@ -1421,12 +1421,12 @@ def emit_function(rom: bytes, bank: int, start: int,
         if label in local_labels:
             return f"{prefix}goto {label};"
         # HLE-replacement check: cfg `exclude_range S E` carves out a
-        # data region â€” by convention, asm whose lifted form is replaced
+        # data region — by convention, asm whose lifted form is replaced
         # by host-side HLE (e.g. the SMW asm main loop at $00:806B-$8078,
         # which the runner replaces with SmwRunOneFrameOfGame).
         # A cross-fn jump TARGETING such a range can never reach asm
         # code: there isn't any. The runner owns control-flow at that
-        # address. The right shape is `return to host` â€” let the
+        # address. The right shape is `return to host` — let the
         # outer-frame's HLE mechanism take over.
         # Skip auto-promote recording so the target doesn't get
         # synthesized as an empty BankEntry next pass.
@@ -1439,7 +1439,7 @@ def emit_function(rom: bytes, bank: int, start: int,
                         f"/* {label} HLE-replaced "
                         f"(cfg exclude_range {lo:04X}-{hi:04X}) */"
                     )
-        # cfg `tail_call:<addr>` directive â€” declared sibling fall-through.
+        # cfg `tail_call:<addr>` directive — declared sibling fall-through.
         # When the decoder's `end:` boundary cuts a routine that
         # deliberately falls into a separately-named adjacent fn (real
         # ROM idiom: two callable entry points sharing a body), cfg
@@ -1455,7 +1455,7 @@ def emit_function(rom: bytes, bank: int, start: int,
             # the sibling's cfg-declared default. Without this, the
             # C linker fails with "unresolved external _M{m}X{x}" when
             # the boundary's (m, x) doesn't match the cfg-default of
-            # the sibling â€” exactly what tripped the zelda3 cross-
+            # the sibling — exactly what tripped the zelda3 cross-
             # variant externals (NMI_RunTileMapUpdateDMA_M0X1,
             # SpotlightInternal_M1X0, etc.) on the 2026-05-17
             # tail-call-past-end class fix.
@@ -1486,7 +1486,7 @@ def emit_function(rom: bytes, bank: int, start: int,
         # function. 2026-05-17 class fix for the inline-cross-fn-blocks
         # gap: zelda3 (and SMW's adjacent-entrypoint idiom) has functions
         # that fall through directly into the next sibling function with
-        # no RTS â€” the asm is balanced end-to-end, but the C boundary the
+        # no RTS — the asm is balanced end-to-end, but the C boundary the
         # cfg/ingester drew has to be honoured. Without this case the
         # decoder would either (a) inline the whole sibling body and any
         # transitive fall-throughs into the current C function (the bug
@@ -1500,7 +1500,7 @@ def emit_function(rom: bytes, bank: int, start: int,
         # cross-bank gotos don't reach this code path (they're emitted
         # via Call/JML machinery upstream).
         #
-        # Variant: tail-call to the (m, x) of the target DecodeKey â€” the
+        # Variant: tail-call to the (m, x) of the target DecodeKey — the
         # decode state at the boundary. register_call_demand records the
         # demand so v2_regen's auto-promote synthesizes the variant if
         # it isn't already in cfg.
@@ -1532,14 +1532,14 @@ def emit_function(rom: bytes, bank: int, start: int,
         # cfg `end:` boundary directly into THIS function's CFG, so the
         # vast majority of intra-bank cross-fn jumps resolve as local
         # labels above. Anything that reaches HERE is one of:
-        #   - a cross-BANK jump (JML/long-JMP â€” the decoder doesn't decode
+        #   - a cross-BANK jump (JML/long-JMP — the decoder doesn't decode
         #     other banks; out of scope for in-bank inlining),
         #   - a target outside [0x8000, 0xFFFF] (data/header region),
         #   - a pathological cfg setup we couldn't import.
         #
         # We do NOT auto-promote the target into a separate C function:
         # that was the prior policy and it stranded PHB/PLB pairs across
-        # C scopes (caused DB=$C0 at dispatch entry â€” the title-screen
+        # C scopes (caused DB=$C0 at dispatch entry — the title-screen
         # regression). Auto-promote only synthesizes for true subroutine
         # entries (JSR/JSL targets), not for arbitrary jump destinations.
         #
@@ -1547,14 +1547,14 @@ def emit_function(rom: bytes, bank: int, start: int,
         # RECOMP_RETURN_NORMAL. Goes through cpu_trace_unresolved_goto_trap
         # which captures (gen function name + source_pc24 + target label)
         # so a hit unambiguously identifies WHICH gen variant ran the
-        # unresolvable goto â€” disambiguating sibling variants that
+        # unresolvable goto — disambiguating sibling variants that
         # happen to share source PCs. The trap returns NORMAL after
         # capture (Release path) or aborts (Oracle/debug); see
         # runner/src/cpu_trace.c.
         # Braced compound statement (mirrors _tail_call_stmt): `prefix` may
         # be a conditional, and the explicit RecompStackPop replaces the
         # per-line scanner's auto-injection (the line no longer starts with
-        # "return"). Account the hit, then abandon balanced â€” the bare
+        # "return"). Account the hit, then abandon balanced — the bare
         # `return ..._goto_trap(...)` this replaces returned NORMAL with
         # the caller's frame + locals still on cpu->S (orphaned-frame leak
         # class, 2026-06-09).
@@ -1565,7 +1565,7 @@ def emit_function(rom: bytes, bank: int, start: int,
             f"RecompStackPop(); "
             f"return cpu_unresolved_abandon_balanced(cpu, "
             f"0x{src_pc24:06X}u, _entry_s, _hrv); }}"
-            f" /* {label} unresolvable cross-fn goto â€” "
+            f" /* {label} unresolvable cross-fn goto — "
             f"target outside this bank's import range */"
         )
 
@@ -1581,22 +1581,22 @@ def emit_function(rom: bytes, bank: int, start: int,
 
         # Iterate the pre-lowered (Insn, [IROp]) pairs. Calling lower()
         # again here would mint fresh Value-ids and break codegen's
-        # vid â†’ C-var mapping (GameMode00â†”01 oscillation 2026-05-02).
+        # vid → C-var mapping (GameMode00↔01 oscillation 2026-05-02).
         #
         # Pre-scan #1: identify JML-with-dispatch_entries (PHK+PER+JML or
         # PHK+PEA+JML inline-dispatch trampoline; e.g. GenerateTile_Dispatch
         # at $00:BFBC). The PHK / PEA / PER immediately preceding such a JML
         # are TRAMPOLINE SETUP that the runtime dispatcher (ExecutePtr /
-        # ExecutePtrLong) would consume â€” under the synthesized C switch
+        # ExecutePtrLong) would consume — under the synthesized C switch
         # we inline the dispatch directly, so those pushes would leak 3
         # garbage bytes onto the simulated SNES stack. Skip emit for them.
-        # Yoshi-block freeze ROOT 2026-05-02 â€” see project memory.
+        # Yoshi-block freeze ROOT 2026-05-02 — see project memory.
         #
         # Pre-scan #2: NLR PLA idiom. If this block was detected as NLR
         # (PLA*N at the END of the block before a Goto/Return), figure
         # out the INSN-LEVEL indices of the PLA insns so we can skip
         # their literal-pop emit. The setup ops BEFORE the PLAs MUST
-        # still emit â€” they're real game-state changes (e.g. STA $1DFC
+        # still emit — they're real game-state changes (e.g. STA $1DFC
         # in $00:F005's L_F024 block sets the Yoshi-knockoff sound).
         # The SKIP_N _pending_skip set is injected before the terminator
         # insn so the eventual RTS picks it up.
@@ -1636,7 +1636,7 @@ def emit_function(rom: bytes, bank: int, start: int,
                 # Case-d: PLAs are the FIRST `pla_count` insns of the
                 # block; terminator can be Goto, Return, or CondBranch
                 # (any). Inject the SKIP setter BEFORE the terminator
-                # insn so its eventual RTS picks it up â€” works for
+                # insn so its eventual RTS picks it up — works for
                 # CondBranch too since both legs reach a clean Return.
                 pla_first_insn = 0
                 pla_last_excl = pla_count
@@ -1660,7 +1660,7 @@ def emit_function(rom: bytes, bank: int, start: int,
                 else:
                     pla_first_insn = len(pairs) - pla_count
                     pla_last_excl = len(pairs)
-                    inject_at = None  # no terminator insn â†’ emit after loop
+                    inject_at = None  # no terminator insn → emit after loop
             if pla_first_insn < 0:
                 nlr_info = None
             else:
@@ -1718,12 +1718,12 @@ def emit_function(rom: bytes, bank: int, start: int,
             if ii in skip_emit_idx:
                 if ii in nlr_pla_insn_indices:
                     lines.append(
-                        f"/* PLA skipped â€” NLR idiom; SKIP_{nlr_info['skip']} "
+                        f"/* PLA skipped — NLR idiom; SKIP_{nlr_info['skip']} "
                         f"set on _pending_skip above */"
                     )
                 else:
                     lines.append(
-                        f"/* trampoline setup {di_insn.mnem} skipped â€” "
+                        f"/* trampoline setup {di_insn.mnem} skipped — "
                         f"inlined into synthesized dispatch below */"
                     )
                 continue
@@ -1758,7 +1758,7 @@ def emit_function(rom: bytes, bank: int, start: int,
                     # ExecutePtrLong). Bytes after the JML are a function-
                     # pointer table; the decoder already read them into
                     # insn.dispatch_entries. Synthesize a C switch that
-                    # directly invokes each handler â€” this replaces the
+                    # directly invokes each handler — this replaces the
                     # asm trampoline and keeps the simulated SNES stack
                     # balanced (PHK+PER setup was skipped above).
                     insn = di_insn
@@ -1779,16 +1779,16 @@ def emit_function(rom: bytes, bank: int, start: int,
                             # resolves to a registered named function in
                             # ANY bank, emit a tail-call to its
                             # M{m}X{x} variant (using the JML instruction's
-                            # (m, x) â€” JML doesn't touch the status
+                            # (m, x) — JML doesn't touch the status
                             # register's M/X bits). This is the cross-
                             # bank analogue of the same-bank tail-call-
                             # past-end: case handled in _goto_or_return.
-                            # Closes the zelda Intro_FadeInBg â†’
+                            # Closes the zelda Intro_FadeInBg →
                             # Palette_FadeIntro2 JML $00:ED8F gap that
                             # was producing a `return RECOMP_RETURN_NORMAL;
                             # /* Goto with no successor */` stub (block
                             # silently bailed instead of decrementing
-                            # palette_filter_countdown â€” title screen
+                            # palette_filter_countdown — title screen
                             # never advanced to attract demo).
                             target_pc24 = None
                             if (getattr(insn, 'mnem', '') == 'JMP'
@@ -1818,7 +1818,7 @@ def emit_function(rom: bytes, bank: int, start: int,
                                     # JML changes PB on real hardware
                                     # (the destination bank byte becomes
                                     # the new PB). A same-bank tail-call
-                                    # past end: doesn't need this â€” BRA
+                                    # past end: doesn't need this — BRA
                                     # / BRL / JMP-abs leave PB
                                     # unchanged. For cross-bank we MUST
                                     # set cpu->PB so the callee's PB-
@@ -1828,7 +1828,7 @@ def emit_function(rom: bytes, bank: int, start: int,
                                     # save/restore: this is a tail-call,
                                     # the callee's RTL returns out to
                                     # the caller's caller (just like the
-                                    # asm did) â€” that caller's JSL
+                                    # asm did) — that caller's JSL
                                     # wrapper restores PB itself.
                                     lines.append(
                                         f"cpu->PB = 0x{tgt_bank:02X}; /* JML "
@@ -1851,7 +1851,7 @@ def emit_function(rom: bytes, bank: int, start: int,
                                             f"authoritative LLE */"))
                                     block_terminated = True
                                     break  # exit `for op in ir_ops`
-                            # No name resolved yet â€” for a CROSS-BANK
+                            # No name resolved yet — for a CROSS-BANK
                             # JML the target is unambiguously a tail-call
                             # destination (PB changes; current function's
                             # successor block is past `end:` or in another
@@ -1859,7 +1859,7 @@ def emit_function(rom: bytes, bank: int, start: int,
                             # next auto-promote pass synthesizes a func
                             # entry at the target. Then RE-EMIT this site
                             # as a placeholder tail-call to the synthesized
-                            # `bank_BB_AAAA_MmXx` name â€” v2_regen will
+                            # `bank_BB_AAAA_MmXx` name — v2_regen will
                             # have created the entry by the next pass.
                             #
                             # This is the cross-bank tail-call class fix:
@@ -1868,7 +1868,7 @@ def emit_function(rom: bytes, bank: int, start: int,
                             # demand pipeline to close the gap.
                             # In-function (same-bank) Gotos are NOT
                             # promoted (see the v2_regen.py "Goto targets
-                            # are no longer auto-promoted" comment) â€” that
+                            # are no longer auto-promoted" comment) — that
                             # would split asm routines. CROSS-bank is the
                             # safe subset: the bank change implies a
                             # function boundary.
@@ -1890,16 +1890,16 @@ def emit_function(rom: bytes, bank: int, start: int,
                                     # Cross-bank JML to a non-code address
                                     # (beyond ROM extent or < $8000 RAM):
                                     # the decoder followed a garbage operand
-                                    # past an RTS â€” data decoded as code.
+                                    # past an RTS — data decoded as code.
                                     # Don't auto-promote a function at a
                                     # non-code target; emit a no-op return,
                                     # mirroring _emit_call's skip for this
                                     # exact class. (Would crash on real HW
-                                    # too â€” never reached in correct play.)
+                                    # too — never reached in correct play.)
                                     lines.append(
                                         f"return RECOMP_RETURN_NORMAL; "
                                         f"/* cross-bank JML to "
-                                        f"${target_pc24:06X} skipped â€” not a "
+                                        f"${target_pc24:06X} skipped — not a "
                                         f"valid LoROM code address (decoder "
                                         f"followed garbage operand past an "
                                         f"RTS) */")
@@ -1935,7 +1935,7 @@ def emit_function(rom: bytes, bank: int, start: int,
                                             f"M{jml_m}X{jml_x} body -> "
                                             f"authoritative LLE */"))
                             else:
-                                # Account the hit, then abandon balanced â€”
+                                # Account the hit, then abandon balanced —
                                 # the bare `return ..._goto_trap(...)` this
                                 # replaces returned NORMAL with the caller's
                                 # frame + any locals still on cpu->S
@@ -1948,7 +1948,7 @@ def emit_function(rom: bytes, bank: int, start: int,
                                 lines.append(
                                     f"return cpu_unresolved_abandon_balanced(cpu, "
                                     f"0x{src_pc24:06X}u, _entry_s, _hrv);"
-                                    f"  /* unresolvable cross-bank goto â€” "
+                                    f"  /* unresolvable cross-bank goto — "
                                     f"no named function at target */"
                                 )
                         block_terminated = True
@@ -1961,7 +1961,7 @@ def emit_function(rom: bytes, bank: int, start: int,
                     # decoder stamped `dispatch_entries` + `dispatch_idx_reg`
                     # on the insn. Route through _emit_indirect_dispatch
                     # to emit a real switch with direct tail-calls. Class
-                    # fix for the IndirectGoto stub class â€” never emit a
+                    # fix for the IndirectGoto stub class — never emit a
                     # `/* IndirectGoto */` stub here. Unresolved sites
                     # are caught at v2_regen via graph.unresolved_indirects.
                     insn = di_insn
@@ -1976,7 +1976,7 @@ def emit_function(rom: bytes, bank: int, start: int,
                     else:
                         # No resolution. Two sub-cases:
                         #   (a) cfg `hle_dispatch <pc16> <c_helper>` claims
-                        #       this site â€” emit a tail-call to the named
+                        #       this site — emit a tail-call to the named
                         #       C helper (host-side dispatcher).
                         #   (b) Otherwise emit the runtime trap so the
                         #       site is captured if execution ever reaches
@@ -2069,7 +2069,7 @@ def emit_function(rom: bytes, bank: int, start: int,
                                     f"{{ extern RecompReturn {c_helper}(CpuState *cpu); "
                                     f"RecompReturn _r = {c_helper}(cpu); "
                                     f"RecompStackPop(); return _r; }} "
-                                    f"/* hle_dispatch ${site_pc24:06X} â€” "
+                                    f"/* hle_dispatch ${site_pc24:06X} — "
                                     f"host-side dispatcher */"
                                 )
                         else:
@@ -2079,7 +2079,7 @@ def emit_function(rom: bytes, bank: int, start: int,
                             # `return cpu_trace_dispatch_oob(...)` this
                             # replaces orphaned the caller's frame AND any
                             # locals (PHP/PHX/PHY) still on cpu->S at the
-                            # unresolved JMP â€” the SM cinematic
+                            # unresolved JMP — the SM cinematic
                             # sub-dispatcher 4-7 B/frame leak (2026-06-09).
                             lines.append(
                                 f"(void)cpu_trace_dispatch_oob(cpu, "
@@ -2110,10 +2110,10 @@ def emit_function(rom: bytes, bank: int, start: int,
                 elif isinstance(op, Call):
                     # Dispatch-helper JSL: the decoder marked the insn
                     # with `dispatch_entries`. Two routes:
-                    #   (a) JSL ExecutePtr helper â€” index by A, switch
+                    #   (a) JSL ExecutePtr helper — index by A, switch
                     #       through `_emit_dispatch`.
                     #   (b) JSR (abs,X) authorised by `indirect_dispatch`
-                    #       directive â€” index by X (or Y if cfg said so),
+                    #       directive — index by X (or Y if cfg said so),
                     #       switch through `_emit_indirect_dispatch`.
                     # JSL ExecutePtr helpers are terminators. JSR
                     # (abs,X) dispatches are ordinary calls: the selected
@@ -2121,7 +2121,7 @@ def emit_function(rom: bytes, bank: int, start: int,
                     insn = di_insn
                     if getattr(insn, 'dispatch_runtime', False):
                         # Runtime-pointer JSR (abs,X) (WRAM handler pointer,
-                        # not statically enumerable â€” SM enemy/PLM/eproj AI).
+                        # not statically enumerable — SM enemy/PLM/eproj AI).
                         # Read the pointer + dispatch the live (m,x) variant
                         # at run time (AOT body or interpreter tier). A JSR
                         # call: handler returns, execution falls through to
@@ -2147,7 +2147,7 @@ def emit_function(rom: bytes, bank: int, start: int,
                         if op.terminal:
                             block_terminated = True
                 else:
-                    # ReadReg, ALU, Read/Write, etc. â€” non-terminating.
+                    # ReadReg, ALU, Read/Write, etc. — non-terminating.
                     for ln in emit_op(op, getattr(di_insn, 'addr', None)):
                         lines.append(ln)
         # NLR with no terminator IR (block IR was pure-PullReg, like
@@ -2175,7 +2175,7 @@ def emit_function(rom: bytes, bank: int, start: int,
             )
 
         # Block didn't end with a control-flow op. Emit the explicit edge
-        # to its lone CFG successor (linear fall-through) â€” never rely on
+        # to its lone CFG successor (linear fall-through) — never rely on
         # textual fall-through into whatever block_order put next, which
         # may have already been emitted earlier in DFS order. Without
         # this, e.g. L_809F's "fall through to L_80A0" silently became
@@ -2214,7 +2214,7 @@ def emit_function(rom: bytes, bank: int, start: int,
                 # No terminator AND no successor = the decoder TRUNCATED here.
                 # The usual cause is a call (JSR/JSL) whose callee published no
                 # exit (m,x), so the fall-through instruction's width is unknown
-                # and it was never decoded (two-fixpoints gap, COVERAGE.md Â§2).
+                # and it was never decoded (two-fixpoints gap, COVERAGE.md §2).
                 #
                 # Emitting `return RECOMP_RETURN_NORMAL` here is a stub: it
                 # host-returns to the caller WITHOUT the guest ever executing
@@ -2222,12 +2222,12 @@ def emit_function(rom: bytes, bank: int, start: int,
                 # left unpopped. Measured on Gundam Wing: $04:8654 reaches
                 # $04:8664 `JSL $02:80FE`; $02:80FE publishes no exit mode, so
                 # the RTS at $04:866A was never emitted and this stub ran
-                # instead â€” leaking 2 stack bytes per call. Two calls/frame
+                # instead — leaking 2 stack bytes per call. Two calls/frame
                 # misaligned the stack, the enclosing RTL at $04:83F6 popped a
                 # garbage bank ($D1), and the interpreter ran off into
                 # $D1:83DA, corrupting game_state and blanking the screen.
                 #
-                # Bridge honestly instead (PRINCIPLES: no stubs â€” never
+                # Bridge honestly instead (PRINCIPLES: no stubs — never
                 # synthesize a result to get past uncovered code): tier down to
                 # the interpreter at the fall-through PC. It runs the real
                 # continuation (including the guest RTS/RTL that pops this
@@ -2249,13 +2249,13 @@ def emit_function(rom: bytes, bank: int, start: int,
     # Compose the function source with labels per block.
     src: List[str] = []
     src.append(f"RecompReturn {func_name}(CpuState *cpu) {{")
-    # Diagnostics â€” same call-stack plumbing v1 emitted, so the runtime
+    # Diagnostics — same call-stack plumbing v1 emitted, so the runtime
     # debug_server's `call_stack` cmd and crash-handler attribution work.
     src.append(f'  extern const char *g_last_recomp_func;')
     src.append(f'  g_last_recomp_func = "{func_name}";')
     src.append(f'  RecompStackPush("{func_name}");')
     src.append(f'  cpu_dbg_funcname("{func_name}");')
-    # Trace ring: function entry (carries name hash) â€” first entry per call.
+    # Trace ring: function entry (carries name hash) — first entry per call.
     fn_entry_pc = (bank << 16) | (start & 0xFFFF)
     src.append(f'  cpu_trace_func_entry(cpu, 0x{fn_entry_pc:06X}, "{func_name}");')
     # A profile-promoted AOT call tree can stay native across enough guest
@@ -2275,11 +2275,11 @@ def emit_function(rom: bytes, bank: int, start: int,
             f'    return interp_bridge_lle_yield_unwind(cpu, {_transfer_target_expr(fn_entry_pc, False)});'
         )
         src.append('  }')
-    # Function-local NLR pending-skip â€” NOT cpu state. NLR-pattern blocks
+    # Function-local NLR pending-skip — NOT cpu state. NLR-pattern blocks
     # set this before fall-through to the Return-terminated successor;
     # the Return op reads + clears it. Local-scoped so:
     #   1. NLR signaling is C control-flow state, not 65816 hardware
-    #      state â€” no reason to keep it on CpuState.
+    #      state — no reason to keep it on CpuState.
     #   2. The optimizer can keep it in a register; no aliasing
     #      concerns through the cpu pointer.
     #   3. Different generated functions can't see each other's
@@ -2289,7 +2289,7 @@ def emit_function(rom: bytes, bank: int, start: int,
     src.append(f'  RecompReturn _pending_skip = RECOMP_RETURN_NORMAL;')
     src.append(f'  (void)_pending_skip;  /* unused if no NLR site in this fn */')
     # cpu->S balance marker for the PEI-trampoline detector (2026-05-24,
-    # narrow variant). Captured at function entry â€” codegen._emit_return
+    # narrow variant). Captured at function entry — codegen._emit_return
     # consults it when a Return op's source_pc24 is in _TRAMPOLINE_RETURNS.
     #
     # ALWAYS emitted, not gated on this variant's local `has_pei`: the
@@ -2303,7 +2303,7 @@ def emit_function(rom: bytes, bank: int, start: int,
         sign = '+' if entry_s_offset > 0 else '-'
         src.append(
             f'  uint16 _entry_s = (uint16)(cpu->S {sign} {abs(entry_s_offset)}u);'
-            f'  /* entry_s_offset:{entry_s_offset} â€” caller left stack imbalanced */')
+            f'  /* entry_s_offset:{entry_s_offset} — caller left stack imbalanced */')
     else:
         src.append(f'  uint16 _entry_s = cpu->S;')
     # Option-1 cpu->S return-frame ABI (see docs/MULTI_TIER.md): capture whether
@@ -2329,7 +2329,7 @@ def emit_function(rom: bytes, bank: int, start: int,
     # established the ACTUAL invocation's _entry_s/_hrv (incl. tail-call
     # context), tier the whole body to the interpreter if this node's PC is in
     # the runtime deny set. Uses the runtime continuation, so it is sound for
-    # every entry path â€” enabling rebuild-free subset bisection of a seeded AOT
+    # every entry path — enabling rebuild-free subset bisection of a seeded AOT
     # set against the interpreter oracle. Off unless SNESRECOMP_EMIT_AOT_DENY_GATE.
     if os.environ.get('SNESRECOMP_EMIT_AOT_DENY_GATE'):
         src.append(
@@ -2406,7 +2406,7 @@ def emit_function(rom: bytes, bank: int, start: int,
                    'unsigned slot, uint32 pc24);')
     for i, key in enumerate(block_order):
         src.append(f"  {_label_for(key)}:")
-        # Trace block entry â€” gives us the SNES PC chain in the trace ring.
+        # Trace block entry — gives us the SNES PC chain in the trace ring.
         block_pc24 = (bank << 16) | (key.pc & 0xFFFF)
         src.append(f'    cpu_trace_block(cpu, 0x{block_pc24:06X});')
         # Watchdog: per-block heartbeat so tight inner loops trip the 5s

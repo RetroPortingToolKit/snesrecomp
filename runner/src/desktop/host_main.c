@@ -1,5 +1,5 @@
 /*
- * host_main.c â€” the framework's desktop host. See host_main.h.
+ * host_main.c — the framework's desktop host. See host_main.h.
  *
  * Ported from SuperMetroidRecomp/src/main.c, which was the most complete host
  * in the ecosystem at the time (in-game overlays with a frozen-frame present,
@@ -132,7 +132,7 @@
 #endif
 #endif
 
-/* â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
+/* ─────────────────────────────────────────────────────────────────────────── */
 
 static const SnesDesktopHostGame *g_game;
 static SnesHdCapture *g_hd_capture;
@@ -196,7 +196,7 @@ void OpenGLRenderer_Create(struct RendererFuncs *funcs);
 #include "opengl.h"   /* snesrecomp_opengl_set_vsync */
 #endif
 
-/* â”€â”€ Symbols the framework leaves to the host â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
+/* ── Symbols the framework leaves to the host ─────────────────────────────── */
 
 bool g_new_ppu = true;
 
@@ -1193,7 +1193,7 @@ static uint32 TickScript(void) {
   if (g_script_phase == 1) {
     // waiting
     if (g_script_counter > 0) { g_script_counter--; return 0; }
-    // done waiting â€” start hold
+    // done waiting — start hold
     g_script_phase = 0;
     g_script_counter = e->hold_frames;
   }
@@ -1265,7 +1265,7 @@ static uint32 TickScript(void) {
       }
       return e->mask;
     }
-    // hold done â€” advance
+    // hold done — advance
     g_script_index++;
     if (g_script_index < g_script_count) {
       e = &g_script_entries[g_script_index];
@@ -1792,7 +1792,7 @@ static void DrawPpuFrameWithPerf(void) {
   RecordFrameTiming(g_present_frame);
 }
 
-/* Seat-0 input word the overlays navigate with â€” the same sources the guest
+/* Seat-0 input word the overlays navigate with — the same sources the guest
  * gets, minus the script (an overlay is a human facility). */
 static uint32 OverlayNavInputs(void) {
   return g_input_state | g_pad_buttons | g_gamepad[0].axis_buttons
@@ -2649,7 +2649,7 @@ static bool RunRewindRequest(bool *running) {
   return true;
 }
 
-/* â”€â”€ Audio â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
+/* ── Audio ────────────────────────────────────────────────────────────────── */
 
 static SDL_mutex *g_audio_mutex;
 static uint8 *g_audiobuffer, *g_audiobuffer_cur, *g_audiobuffer_end;
@@ -2805,7 +2805,7 @@ static void SetAudioPaused(bool paused) {
 #endif
 }
 
-/* â”€â”€ SDL_Renderer presenter â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
+/* ── SDL_Renderer presenter ───────────────────────────────────────────────── */
 
 static SDL_Renderer *g_renderer;
 static SDL_Texture *g_texture;
@@ -2982,7 +2982,7 @@ void MkDir(const char *s) {
 #endif
 }
 
-/* â”€â”€ Crash pipeline â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
+/* ── Crash pipeline ───────────────────────────────────────────────────────── */
 
 static void dump_cpu_state(void) {
   fprintf(stderr, "  CpuState: A=%04X X=%04X Y=%04X S=%04X D=%04X DB=%02X PB=%02X "
@@ -2997,8 +2997,8 @@ static void crash_handler(int sig) {
           sig, g_last_recomp_func ? g_last_recomp_func : "(unknown)");
   dump_cpu_state();
   RecompStackDump();
-  cpu_trace_dump_dbpb("CRASH â€” DB/PB mutations");
-  cpu_trace_dump_recent("CRASH â€” main trace ring", 256);
+  cpu_trace_dump_dbpb("CRASH — DB/PB mutations");
+  cpu_trace_dump_recent("CRASH — main trace ring", 256);
   fflush(stderr);
   recomp_post_mortem_dump("signal", NULL);
   _exit(128 + sig);
@@ -3021,8 +3021,8 @@ static LONG WINAPI seh_handler(EXCEPTION_POINTERS* info) {
   }
   dump_cpu_state();
   RecompStackDump();
-  cpu_trace_dump_dbpb("SEH CRASH â€” DB/PB mutations");
-  cpu_trace_dump_recent("SEH CRASH â€” main trace ring", 256);
+  cpu_trace_dump_dbpb("SEH CRASH — DB/PB mutations");
+  cpu_trace_dump_recent("SEH CRASH — main trace ring", 256);
   fflush(stderr);
   recomp_post_mortem_dump("seh", info);
   return EXCEPTION_EXECUTE_HANDLER;
@@ -3033,7 +3033,7 @@ static void post_mortem_atexit(void) {
   recomp_post_mortem_dump("atexit", NULL);
 }
 
-/* â”€â”€ Mods / launcher / netplay glue â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
+/* ── Mods / launcher / netplay glue ───────────────────────────────────────── */
 
 #if SNESRECOMP_ENABLE_MODS
 static int g_mods_ready;
@@ -3222,7 +3222,7 @@ static void netplay_poll_events(void *ctx, int *want_soft_exit) {
 #endif /* SNES_HAS_LOBBY_CLIENT */
 
 /* The dump this project was generated from, if the player parked a copy next
- * to the executable or in the working directory. Not a requirement â€” it is
+ * to the executable or in the working directory. Not a requirement — it is
  * the habit tools/regen.sh documents, and skipping the prompt for someone
  * who already followed it is the whole point. */
 static int FindRomBesideExe(char *out, size_t cap) {
@@ -3247,9 +3247,9 @@ static int FindRomBesideExe(char *out, size_t cap) {
   return 0;
 }
 
-/* â”€â”€ main â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
+/* ── main ─────────────────────────────────────────────────────────────────── */
 
-/* â”€â”€ The launcher, before boot and mid-game â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
+/* ── The launcher, before boot and mid-game ──────────────────────────────── */
 
 /* The ROM this binary was generated from. File scope because both launcher
  * entries hand it to recomp-ui, and the console resolver checks against it. */
@@ -3597,7 +3597,7 @@ static void LauncherSeed(RecompLauncherCSettings *ls, RecompLauncherCGameInfo *g
   }
 #endif
 #if defined(SNESRECOMP_HOST_HAS_CODEGEN)
-  /* Wire "Generate & rebuildâ€¦". No-ops when the SDK, CMake or the build
+  /* Wire "Generate & rebuild…". No-ops when the SDK, CMake or the build
    * tree is absent, which is the normal state of a shipped build. */
   if (!in_session)
     snesrecomp_codegen_host_autowire(gi, gi->name);
@@ -3918,7 +3918,7 @@ int snesrecomp_desktop_main(const SnesDesktopHostGame *game, int argc, char **ar
 #ifndef _WIN32
   /* On Windows, do NOT install a SIGSEGV handler: the CRT's signal shim
    * intercepts access violations BEFORE SetUnhandledExceptionFilter, so
-   * crashes would reach crash_handler with no EXCEPTION_POINTERS â€” no
+   * crashes would reach crash_handler with no EXCEPTION_POINTERS — no
    * exception record in the minidump/report. With SIGSEGV uninstalled,
    * AVs reach the SEH filter below with full fault context. */
   signal(SIGSEGV, crash_handler);
@@ -3959,7 +3959,7 @@ int snesrecomp_desktop_main(const SnesDesktopHostGame *game, int argc, char **ar
    * SNESRECOMP_CPU_TRACE_RING_ENTRIES). */
   cpu_trace_init();
   cpu_trace_arm_default_watches();
-  /* Capture program path before argv shift â€” used to place keybinds.ini
+  /* Capture program path before argv shift — used to place keybinds.ini
    * next to the executable. */
   const char *program_path = (argc >= 1) ? argv[0] : NULL;
   g_program_path = program_path;
@@ -4333,7 +4333,7 @@ int snesrecomp_desktop_main(const SnesDesktopHostGame *game, int argc, char **ar
     if (start_paused) {
       debug_server_start_paused();
 #if SNESRECOMP_TRACE
-      fprintf(stderr, "[main] Started paused â€” send 'step N' or 'continue' via TCP\n");
+      fprintf(stderr, "[main] Started paused — send 'step N' or 'continue' via TCP\n");
 #endif
     }
   }
@@ -4759,7 +4759,7 @@ error_reading:;
     bool open_raster_inspector = false;
 #endif
 
-    /* Inert unless SNESRECOMP_CRASH_TEST is set â€” support drill for the
+    /* Inert unless SNESRECOMP_CRASH_TEST is set — support drill for the
      * whole crash-capture pipeline (minidump + report + crash copy). */
     host_report_crash_test_tick();
 
@@ -5390,7 +5390,7 @@ error_reading:;
   return (g_script_failed || HeadlessCapture_Failed()) ? 3 : g_selftest_pad_failed ? 4 : 0;
 }
 
-/* â”€â”€ Input plumbing â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
+/* ── Input plumbing ───────────────────────────────────────────────────────── */
 
 /* The FPS readout is the framework OSD's (snes_osd.c: grey panel, turbo and
  * save-slot toasts share it), toggled by [KeyMap] DisplayPerf. The host used
@@ -5796,7 +5796,7 @@ static void HandleGamepadAxisInput(GamepadInfo *gi, int axis, Sint16 value) {
   }
 }
 
-/* â”€â”€ config.ini discovery â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
+/* ── config.ini discovery ─────────────────────────────────────────────────── */
 
 // Go some steps up and find config.ini
 static void SwitchDirectory(void) {

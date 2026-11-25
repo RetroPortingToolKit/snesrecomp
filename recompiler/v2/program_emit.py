@@ -44,7 +44,7 @@ from .translation_units import (_TOP_LEVEL_CPU_FN_RE,
 
 CACHE_FORMAT_VERSION = 5
 
-# â”€â”€ Program modules â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+# ── Program modules ──────────────────────────────────────────────────────────
 # One generated tree is one PROGRAM MODULE: a dispatch table, its RAM-routine
 # guards and every AOT body they point at, plus a descriptor naming the ROM
 # image it was generated from. A host may link several modules (stock title +
