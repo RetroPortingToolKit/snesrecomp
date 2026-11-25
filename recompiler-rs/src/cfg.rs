@@ -681,8 +681,7 @@ pub fn parse_bank_cfg(text: &str, path: &str) -> Result<BankCfg, String> {
                     "{path}: mod_operand needs exactly one <site_pc16>, got: {stripped:?}"
                 ));
             }
-            let site_pc16 =
-                parse_hex(tokens[1]).map_err(|e| format!("{path}: mod_operand {e}"))?;
+            let site_pc16 = parse_hex(tokens[1]).map_err(|e| format!("{path}: mod_operand {e}"))?;
             if site_pc16 > 0xFFFF {
                 return Err(format!(
                     "{path}: mod_operand needs a 16-bit PC in this cfg's bank, got {:?}",
