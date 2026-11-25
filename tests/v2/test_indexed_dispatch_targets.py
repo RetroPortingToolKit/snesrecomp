@@ -56,4 +56,4 @@ def test_invalid_or_ambiguous_indexed_target_authority_is_rejected():
 def test_existing_rom_table_declaration_remains_unchanged():
     site = parse('indirect_dispatch 8005 2 idx:Y tables:8100')
     assert site['table_bases'] == (0x8100,)
-    assert not site.get('targets')
+    assert 'targets' not in site

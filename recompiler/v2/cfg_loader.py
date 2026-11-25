@@ -774,7 +774,7 @@ def load_bank_cfg(path: str) -> BankCfg:
                     'count': count,
                     'idx_reg': idx_reg,
                     'table_bases': table_bases,
-                    'targets': targets,
+                    **({'targets': targets} if targets else {}),
                 })
                 continue
 
