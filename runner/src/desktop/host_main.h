@@ -40,6 +40,7 @@
 #include "display_aspect.h"
 #include "local_views.h"
 #include "rom_identity.h"
+#include "hires_present.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -225,6 +226,15 @@ typedef struct SnesDesktopHostGame {
    * Default both stick clicks; the player can capture another chord or clear it.
    * Zero retains the established Select+R behavior for existing consumers. */
   int editable_state_menu_controller;
+  /* Compose 2*frame_w physical dots per row when the completed PPU field
+   * contains hi-res lines. Geometry arguments retain their logical size;
+   * the presenter, capture and OSD share the resulting physical surface.
+   * Return zero to use SnesHiresPresent's centered authentic field. A custom
+   * draw_frame opts in through this hook so its own composition stays under
+   * its ownership; a host without draw_frame gets hi-res automatically. */
+  int (*draw_hires_frame)(uint8_t *dst, size_t pitch,
+                          const SnesHiresField *field,
+                          int frame_w, int frame_h, double alpha);
 } SnesDesktopHostGame;
 
 /* The whole program. Returns the process exit code. */

@@ -20,6 +20,7 @@
 
 #include "snes/ppu.h"
 #include "snes/snes.h"
+#include "desktop/hires_present.h"
 
 Snes *g_snes;
 
@@ -264,6 +265,43 @@ int main(void) {
         snprintf(msg, sizeof msg, "mixed frame (%s): 512-dot lines split into blue main and red sub", renderer);
         failures += check(row_is(main_px + 2 * kPitch, 0, 256, kBlue) && row_is(sub_px + 2 * kPitch, 0, 256, kRed) &&
                           row_is(main_px + 3 * kPitch, 0, 256, kBlue) && row_is(sub_px + 3 * kPitch, 0, 256, kRed), msg);
+        {
+            enum { kOutputWidth = 272, kOutputPitch = kOutputWidth * 8 + 16 };
+            static uint32_t presented_words[kLines * kOutputPitch / 4];
+            uint8_t *presented = (uint8_t *)presented_words;
+            static uint32_t preview[kOutputWidth * kLines];
+            SnesHiresField field = {main_px, sub_px, ppu->hiresLines,
+                                    kPitch, kPitch, 256, kLines};
+            memset(presented, kSentinel, sizeof presented_words);
+            failures += check(SnesHiresPresent(presented, kOutputPitch, &field, kOutputWidth),
+                              "presenter accepts a padded mixed-resolution field");
+            for (int y = 0; y < kLines; ++y) {
+                const uint8_t *row = presented + y * kOutputPitch;
+                failures += check(row_is(row, 0, 16, 0) && row_is(row, 528, 16, 0),
+                                  "presenter centers the authentic field in both margins");
+                failures += check(row_untouched(row + kOutputWidth * 8, 16),
+                                  "presenter respects destination pitch canaries");
+                for (int x = 0; x < 256; ++x) {
+                    failures += check(!memcmp(row + 16 * 4 + x * 8 + 4,
+                                              main_px + y * kPitch + x * 4, 4),
+                                      "odd physical dot preserves the original main screen");
+                    if (y < 2)
+                        failures += check(!memcmp(row + 16 * 4 + x * 8,
+                                                  main_px + y * kPitch + x * 4, 4),
+                                          "ordinary rows double each main column");
+                    else
+                        failures += check(pixel_is(row, 16 + x * 2, kRed) &&
+                                          pixel_is(row, 17 + x * 2, kBlue),
+                                          "hi-res rows preserve distinct red/blue physical dots");
+                }
+                SnesHiresPreview(preview + y * kOutputWidth,
+                                 (const uint32_t *)row, kOutputWidth);
+            }
+            failures += check(preview[2 * kOutputWidth + 8] == 0x007f007f,
+                              "logical-aspect preview averages both screens");
+            failures += check(!SnesHiresPresent(presented, 256 * 8 - 1, &field, 256),
+                              "short output pitches are rejected");
+        }
         /* The next frame clears the marks once its line 1 is drawn, also for
          * a frame-model host that never passes line 0. */
         ppu->bgmode = 1;
@@ -345,6 +383,7 @@ int main(void) {
      * the captured-raster entry, which does not call the live line-1 reset. */
     {
         static uint32_t tall_main[240 * 256], tall_sub[240 * 256];
+        static uint32_t tall_present[240 * 512];
         for (int mode7 = 0; mode7 < 2; ++mode7) {
             if (mode7) setup_mode7_pseudo_hires(ppu);
             else setup_true_hires(ppu, 5);
@@ -360,6 +399,15 @@ int main(void) {
             failures += check(row_is((uint8_t *)(tall_main + 239 * 256), 0, 256, kBlue) &&
                               row_is((uint8_t *)(tall_sub + 239 * 256), 0, 256, kRed),
                               "native Mode5/Mode7 final row exports both colors");
+            SnesHiresField field = {(const uint8_t *)tall_main, (const uint8_t *)tall_sub,
+                                    ppu->hiresLines, kPitch, kPitch, 256, 240};
+            failures += check(SnesHiresPresent((uint8_t *)tall_present, 512 * 4, &field, 256),
+                              "presenter accepts the full overscan field");
+            for (int x = 0; x < 256; ++x) {
+                const uint8_t *row = (const uint8_t *)(tall_present + 239 * 512);
+                failures += check(pixel_is(row, x * 2, kRed) && pixel_is(row, x * 2 + 1, kBlue),
+                                  "overscan last row preserves sub-even/main-odd phase");
+            }
             PpuBeginDrawing(ppu, (uint8_t *)tall_main, kPitch, kPpuRenderFlags_NewRenderer);
             ppu->bgmode = 1; ppu->setini = 0;
             ppu_renderRasterLine(ppu, 1);
