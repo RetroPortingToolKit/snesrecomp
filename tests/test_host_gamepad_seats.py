@@ -134,7 +134,6 @@ def test_live_physical_selection_without_source_kind_change(tmp_path):
 #define kMaxWindowScale 8
 static uint32 g_win_flags;
 static void *g_window;
-static bool g_cursor;
 static int g_current_window_scale, reassigned;
 static const char *g_program_path=".";
 static struct { void (*Reconfigure)(void); } g_renderer_funcs;
@@ -143,7 +142,7 @@ static TestGame game;
 static const TestGame *g_game=&game;
 static int IntMin(int a,int b) { return a<b?a:b; }
 static void SDL_SetWindowFullscreen(void *window,uint32 flags) {}
-static void snesrecomp_sdl_show_cursor(bool visible) {}
+static void RefreshGameCursor(bool force) {}
 static void ChangeWindowScale(int scale) {}
 static void FrameBlendConfigure(void) {}
 static void snes_runahead_set_frames(int frames) {}
