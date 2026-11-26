@@ -72,7 +72,7 @@ int debug_server_consume_loadstate(void);
 int debug_server_consume_savestate(void);
 /* Desktop player/QA controls, applied by the host at a completed frame.
  * These never open a launcher or stop inside a guest basic block.
- * 0 none, 1 pause, 2 resume, 3 clean quit. */
+ * 0 none, 1 pause, 2 resume, 3 clean quit, 4 one-frame scene refresh. */
 int debug_server_consume_runtime_control(void);
 void debug_server_publish_runtime_paused(int paused);
 

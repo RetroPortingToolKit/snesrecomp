@@ -1355,6 +1355,13 @@ function(snesrecomp_guard_header_shadowing target)
 endfunction()
 
 function(snesrecomp_target_desktop_host target)
+    # The shared desktop host owns portable shortcut bindings. A title with
+    # its own host can retain its existing input model without an unused link.
+    if(NOT TARGET recomp_input_core)
+        add_subdirectory("${RECOMP_SHARED_CORE_ROOT}/recomp-input-core"
+            "${CMAKE_BINARY_DIR}/shared-cores/recomp-input-core" EXCLUDE_FROM_ALL)
+    endif()
+    target_link_libraries(${target} PRIVATE recomp-input::core)
     set(options TIER2)
     cmake_parse_arguments(DH "${options}" "" "" ${ARGN})
     target_sources(${target} PRIVATE

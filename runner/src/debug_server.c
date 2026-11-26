@@ -2334,6 +2334,7 @@ static void request_runtime_control(int control) {
 static void cmd_runtime_pause(const char *args) { (void)args; request_runtime_control(1); }
 static void cmd_runtime_resume(const char *args) { (void)args; request_runtime_control(2); }
 static void cmd_runtime_quit(const char *args) { (void)args; request_runtime_control(3); }
+static void cmd_runtime_refresh(const char *args) { (void)args; request_runtime_control(4); }
 static void cmd_runtime_status(const char *args) {
     (void)args;
     lock_mutex(); int paused=s_runtime_paused, pending=s_runtime_control; unlock_mutex();
@@ -9055,6 +9056,7 @@ static const CmdEntry s_commands[] = {
     {"runtime_pause", cmd_runtime_pause},
     {"runtime_resume",cmd_runtime_resume},
     {"runtime_quit",  cmd_runtime_quit},
+    {"runtime_refresh",cmd_runtime_refresh},
     {"runtime_status",cmd_runtime_status},
     {"continue",      cmd_continue},
     {"step",          cmd_step},

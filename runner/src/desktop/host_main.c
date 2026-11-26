@@ -4917,11 +4917,13 @@ error_reading:;
   host_report_breadcrumb("entering main loop");
   RefreshGameCursor(true);
 
+  int review_refresh = 0;
   while (running && !HeadlessCapture_Failed()) {
     if (!g_netplay_session) {
       int control = debug_server_consume_runtime_control();
       if (control == 3) { exit_reason = "runtime quit request"; break; }
-      if (control == 1 || control == 2) g_paused = control == 1;
+      if (control == 1 || control == 2) { g_paused = control == 1; review_refresh = 0; }
+      if (control == 4) { g_paused = false; review_refresh = 1; }
       debug_server_publish_runtime_paused(g_paused);
     }
     g_profile_frame = frameCtr + 1;
@@ -5461,6 +5463,7 @@ error_reading:;
       ++presentations;
       snes_host_clock_presentation_done(&video_clock, presented_at);
     }
+    if (review_refresh) { review_refresh = 0; g_paused = true; }
     if (run_frames && frameCtr >= run_frames) {
       running = false;
       exit_reason = "RUN_FRAMES reached";
