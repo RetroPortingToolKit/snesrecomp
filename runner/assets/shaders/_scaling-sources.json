@@ -1,0 +1,50 @@
+[
+  {
+    "path": "_passes/xbrz-freescale.glsl",
+    "upstreamPath": "xbrz/shaders/xbrz-freescale.glsl",
+    "commit": "a35069864b4bf30f8c8e740d57206543fb7e745e",
+    "gitBlob": "3cc9eddec27238e73cb99e8e2aaf50c1d4233911",
+    "sha256": "4af7e0af2d65f6f93e622ec86fb6e46e66f23ba6e4c400421ff4d62c2c3835e5",
+    "url": "https://github.com/libretro/glsl-shaders/blob/a35069864b4bf30f8c8e740d57206543fb7e745e/xbrz/shaders/xbrz-freescale.glsl"
+  },
+  {
+    "path": "_passes/hqx-pass1.glsl",
+    "upstreamPath": "hqx/shader-files/hqx-pass1.glsl",
+    "commit": "a35069864b4bf30f8c8e740d57206543fb7e745e",
+    "gitBlob": "401ac1d252478831b9f27c02ccd41b429d059ca8",
+    "sha256": "bdf154ef38130b6b4ab033fe141a4e5761f0c7cb4cd6c80f1e9c35d387db8138",
+    "url": "https://github.com/libretro/glsl-shaders/blob/a35069864b4bf30f8c8e740d57206543fb7e745e/hqx/shader-files/hqx-pass1.glsl"
+  },
+  {
+    "path": "_passes/hqx-pass2.glsl",
+    "upstreamPath": "hqx/shader-files/hqx-pass2.glsl",
+    "commit": "a35069864b4bf30f8c8e740d57206543fb7e745e",
+    "gitBlob": "86de421a8feb8c07c7b004f4f67c9acf8e1cceaa",
+    "sha256": "58177cfdfe57a230e26bfe3fd9729003ef91cb1a969796e8bfb7f4b2de13a571",
+    "url": "https://github.com/libretro/glsl-shaders/blob/a35069864b4bf30f8c8e740d57206543fb7e745e/hqx/shader-files/hqx-pass2.glsl"
+  },
+  {
+    "path": "_lut/hq2x.png",
+    "upstreamPath": "hqx/resources/hq2x.png",
+    "commit": "a35069864b4bf30f8c8e740d57206543fb7e745e",
+    "gitBlob": "a49c0f484acac6dd1e1a7bcf5b82f27b19655645",
+    "sha256": "27470641a8ab900b8ae889f22bc8bffeda587d7243e14de47730d9f9abcfa4ac",
+    "url": "https://github.com/libretro/glsl-shaders/blob/a35069864b4bf30f8c8e740d57206543fb7e745e/hqx/resources/hq2x.png"
+  },
+  {
+    "path": "_lut/hq3x.png",
+    "upstreamPath": "hqx/resources/hq3x.png",
+    "commit": "a35069864b4bf30f8c8e740d57206543fb7e745e",
+    "gitBlob": "6f5eb59c3f919354e5c8c421934f2b215eeb8f4b",
+    "sha256": "d83f491caf19255426749e1b7b91be3fe4910bada78c541523835602085d948d",
+    "url": "https://github.com/libretro/glsl-shaders/blob/a35069864b4bf30f8c8e740d57206543fb7e745e/hqx/resources/hq3x.png"
+  },
+  {
+    "path": "_lut/hq4x.png",
+    "upstreamPath": "hqx/resources/hq4x.png",
+    "commit": "a35069864b4bf30f8c8e740d57206543fb7e745e",
+    "gitBlob": "18abeb31023c5cddb9a17aae23fe60d39b87b2c3",
+    "sha256": "f61d7396aa22b8b06cd5cd563771da7ea819fb6c6d9e2e420f965f4b2a1bef1d",
+    "url": "https://github.com/libretro/glsl-shaders/blob/a35069864b4bf30f8c8e740d57206543fb7e745e/hqx/resources/hq4x.png"
+  }
+]

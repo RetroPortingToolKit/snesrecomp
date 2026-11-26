@@ -1111,7 +1111,7 @@ function(snesrecomp_target_program_module target gen_dir)
     message(STATUS "${target}: program module ${_pm_n} translation unit(s) from ${gen_dir}")
 endfunction()
 
-# Opt-in, shared CC0 shader catalog for hosts exposing shader_supported.
+# Opt-in shared shader catalog; each source retains its own license/notice.
 # Keep user-added presets in place; updating built-ins must not delete them.
 function(snesrecomp_target_shader_presets target)
     set(_presets "${SNESRECOMP_RUNNER_ROOT}/assets/shaders")
