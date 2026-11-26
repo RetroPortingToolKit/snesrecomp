@@ -235,6 +235,11 @@ typedef struct SnesDesktopHostGame {
   int (*draw_hires_frame)(uint8_t *dst, size_t pitch,
                           const SnesHiresField *field,
                           int frame_w, int frame_h, double alpha);
+  /* Optional Player 1 title actions, initially unbound. At most three; the
+   * canonical word carries them beside both SNES pads (runner_input.h).
+   * The title consumes them after recording, before guest controller reads. */
+  const char *const *input_action_labels;
+  int input_action_count;
 } SnesDesktopHostGame;
 
 /* The whole program. Returns the process exit code. */

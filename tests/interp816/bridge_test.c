@@ -525,6 +525,18 @@ static void redirect_b(CpuState *cpu,uint32_t pc) {
     interp_bridge_pre_opcode_redirect(0x008010);
 }
 static void forbidden_c(CpuState *cpu,uint32_t pc) {(void)cpu;(void)pc;++hook_c;}
+static unsigned mutable_order;
+static void mutable_late(CpuState *cpu,uint32_t pc) {
+    (void)cpu;(void)pc;mutable_order=mutable_order*10+3;
+}
+static void mutable_add_late(CpuState *cpu,uint32_t pc) {
+    (void)cpu;mutable_order=mutable_order*10+2;
+    interp_bridge_add_pre_opcode_hook(pc,mutable_late);
+}
+static void mutable_remove_self(CpuState *cpu,uint32_t pc) {
+    (void)cpu;mutable_order=mutable_order*10+1;
+    interp_bridge_remove_pre_opcode_hook(pc,mutable_remove_self);
+}
 /* S17: a "device" that answers on the 10th time the loop head is reached. */
 static unsigned g_poll_visits;
 static uint32_t g_poll_answer_addr;
@@ -1658,6 +1670,30 @@ int main(int argc, char **argv) {
       int rc=interp_bridge_run(&g_c,0x008000);
       CHECK(rc==1 && g_c.S==0x01ff,"combined-mod routine returns balanced");
       CHECK(hook_dest==208,"every observer executes, including the late sites");
+      interp_bridge_set_pre_opcode_hook(0,NULL);
+    }
+    /* Removable mod hooks share the native boundary with existing owners.
+     * Mutations affect the next invocation, not the current callback order. */
+    { init_cpu();mutable_order=0;uint32_t redirect=0;bool invoked=false;
+      interp_bridge_set_pre_opcode_hook(0,NULL);
+      CHECK(interp_bridge_add_pre_opcode_hook(0x008000,mutable_remove_self),"native self-remover registered");
+      CHECK(interp_bridge_add_pre_opcode_hook(0x008000,mutable_add_late),"native later owner registered");
+      CHECK(!interp_bridge_run_native_pre_opcode_hooks(&g_c,0x008000,&redirect,&invoked,NULL) && invoked,
+            "native mutation invocation retains callback effects");
+      CHECK(mutable_order==12,"self-removal must not skip later owner or run a newly added owner: %u",mutable_order);
+      mutable_order=0;
+      interp_bridge_run_native_pre_opcode_hooks(&g_c,0x008000,&redirect,&invoked,NULL);
+      CHECK(mutable_order==23,"next invocation sees the updated ordered registry: %u",mutable_order);
+      CHECK(interp_bridge_add_pre_opcode_hook(0x018000,mutable_late),"same-PC16 other bank registered");
+      CHECK(interp_bridge_remove_pre_opcode_hook(0x008000,mutable_add_late),"remove exact first owner");
+      CHECK(interp_bridge_remove_pre_opcode_hook(0x008000,mutable_late),"remove exact later owner");
+      CHECK(interp_bridge_native_hooks_armed(0x008000),"other bank retains PC16 filter");
+      invoked=true;
+      CHECK(!interp_bridge_run_native_pre_opcode_hooks(&g_c,0x008000,&redirect,&invoked,NULL) && !invoked,
+            "filter collision invokes no callback at the wrong full key");
+      CHECK(interp_bridge_remove_pre_opcode_hook(0x018000,mutable_late),"remove final PC16 owner");
+      CHECK(!interp_bridge_native_hooks_armed(0x008000),"last removal restores the unarmed native fast path");
+      CHECK(!interp_bridge_remove_pre_opcode_hook(0x018000,mutable_late),"duplicate removal has no effect");
       interp_bridge_set_pre_opcode_hook(0,NULL);
     }
     /* S16: the always-on observability rings. One run of

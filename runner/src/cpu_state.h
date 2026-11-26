@@ -410,6 +410,15 @@ static inline void cpu_mirrors_to_p(CpuState *cpu) {
  * ship just the raw byte/word read/write primitives.
  */
 
+/* cfg `mod_operand` (docs/MOD_OPERAND.md): the immediate of a declared site
+ * as compiled code sees it. `stock` is the ROM's operand, folded in by the
+ * emitter; mod_operand.c holds the values mods have given. */
+extern unsigned g_snes_mod_operand_active;
+uint16 snes_mod_operand_lookup(uint32 pc24, uint16 stock);
+static inline uint16 snes_mod_operand(uint32 pc24, uint16 stock) {
+    return g_snes_mod_operand_active ? snes_mod_operand_lookup(pc24, stock) : stock;
+}
+
 uint8  cpu_read8 (CpuState *cpu, uint8 bank, uint16 addr);
 uint16 cpu_read16(CpuState *cpu, uint8 bank, uint16 addr);
 void   cpu_write8 (CpuState *cpu, uint8 bank, uint16 addr, uint8  v);

@@ -46,6 +46,7 @@
 #ifdef __ANDROID__
 #include "android_host.h"
 #endif
+#include "runner_input.h"
 
 #include "snes/ppu.h"
 #include "snes/hd_jobs.h"
@@ -91,6 +92,7 @@
 
 #if SNESRECOMP_ENABLE_MODS
 #include "mod_runtime.h"
+#include "mod_provider_compose.h"
 #endif
 
 #if defined(RECOMP_LAUNCHER)
@@ -158,6 +160,8 @@ typedef struct GamepadInfo {
   uint8 axis_buttons;
   uint16 last_cmd[kGamepadBtn_Count];
   Sint16 last_axis_x, last_axis_y;
+  /* Read by mod input transforms only (SnesModInputContext). */
+  Sint16 right_axis_x, right_axis_y, left_trigger, right_trigger;
 } GamepadInfo;
 
 #if SNESRECOMP_SDL3
@@ -187,6 +191,7 @@ static void HandleGamepadInput(GamepadInfo *gi, int button, bool pressed);
 static void HandleInput(int keyCode, int keyMod, bool pressed);
 static void HandleCommand(uint32 j, bool pressed);
 static void PollLocalControls(const uint8_t *keys);
+static uint16_t PollTitleActions(void);
 static void RequestScreenshot(void);
 #if !defined(__ANDROID__) && !SNESRECOMP_SDL_GLES2_ONLY
 void OpenGLRenderer_Create(struct RendererFuncs *funcs);
@@ -2113,6 +2118,58 @@ static bool PadGesturePressed(PadGesture *g) {
   return pressed;
 }
 
+static uint16_t PollTitleActions(void) {
+  if (!g_game->input_action_labels || g_game->input_action_count <= 0 ||
+      !(SDL_GetWindowFlags(g_window) & SDL_WINDOW_INPUT_FOCUS) ||
+      snes_savestate_menu_is_open() || snes_rewind_is_open()) return 0;
+  GamepadInfo *seat = &g_gamepad[0];
+  uint32_t buttons = 0;
+  int16_t axes[6] = {0};
+  const bool assigned = ConfigHasPlayerSource(0)
+      ? g_config.player_src[0] == 2 : g_config.enable_gamepad[0];
+  if (assigned && seat->joystick_id != (SDL_JoystickID)-1) {
+    if (seat->raw_joystick && seat->joystick) {
+      buttons = seat->modifiers & 0x7fffu;
+#if SNESRECOMP_SDL3
+      const int count = SDL_GetNumJoystickAxes(seat->joystick);
+      for (int a = 0; a < count && a < 6; ++a)
+        axes[a] = SDL_GetJoystickAxis(seat->joystick, a);
+#else
+      const int count = SDL_JoystickNumAxes(seat->joystick);
+      for (int a = 0; a < count && a < 6; ++a)
+        axes[a] = SDL_JoystickGetAxis(seat->joystick, a);
+#endif
+    } else {
+      /* Query the opened device directly. A missing/disconnected handle is
+       * neutral, and the host does not need a second cached axis layout. */
+#if SNESRECOMP_SDL3
+      SDL_Gamepad *pad = SDL_GetGamepadFromID(seat->joystick_id);
+      if (pad) {
+        for (int b = 0; b < SDL_GAMEPAD_BUTTON_COUNT && b < 32; ++b)
+          if (SDL_GetGamepadButton(pad, (SDL_GamepadButton)b)) buttons |= 1u << b;
+        for (int a = 0; a < 6; ++a) axes[a] = SDL_GetGamepadAxis(pad, (SDL_GamepadAxis)a);
+      }
+#else
+      SDL_GameController *pad = SDL_GameControllerFromInstanceID(seat->joystick_id);
+      if (pad) {
+        for (int b = 0; b < SDL_CONTROLLER_BUTTON_MAX && b < 32; ++b)
+          if (SDL_GameControllerGetButton(pad, (SDL_GameControllerButton)b)) buttons |= 1u << b;
+        for (int a = 0; a < 6; ++a) axes[a] = SDL_GameControllerGetAxis(pad, (SDL_GameControllerAxis)a);
+      }
+#endif
+    }
+  }
+  const uint8_t *keys = snesrecomp_sdl_get_keyboard_state();
+  uint16_t actions = 0;
+  for (int i = 0; i < g_game->input_action_count && i < SNES_INPUT_ACTION_COUNT; ++i) {
+    const bool key = g_config.player_src[0] == 1 && keybinds_binding_down(
+        keys, g_mouse_buttons, g_config.input_action_key[i]);
+    if (key || SnesHostPadBindingDown(g_config.input_action_pad[i], buttons, axes))
+      actions |= (uint16_t)(1u << (12 + i));
+  }
+  return actions;
+}
+
 /* One controller shortcut owner. KeyMap remains the keyboard owner; this
  * binding is captured and cleared in the launcher's existing Controls page. */
 static void StateMenuPadPoll(void) {
@@ -3057,6 +3114,24 @@ static void post_mortem_atexit(void) {
 
 #if SNESRECOMP_ENABLE_MODS
 static int g_mods_ready;
+
+/* Mod input transforms (mod_runtime.h) on one local seat's button word,
+ * before netplay, replay recording, run-ahead or the guest see it. */
+static uint16 ModTransformSeat(uint16 buttons, int player) {
+  const GamepadInfo *pad = &g_gamepad[player & 1];
+  SnesModInputContext ctx = {
+    .player = player, .wram = g_ram,
+    .right_x = pad->right_axis_x, .right_y = pad->right_axis_y,
+    .left_trigger = pad->left_trigger, .right_trigger = pad->right_trigger,
+  };
+  return snes_mod_runtime_transform_input_c(buttons & 0x0fff, &ctx);
+}
+static uint32 ModTransformInputs(uint32 inputs) {
+  if (!g_mods_ready) return inputs;
+  uint32 p1 = ModTransformSeat((uint16)(inputs & 0x0fff), 0);
+  uint32 p2 = ModTransformSeat((uint16)((inputs >> 12) & 0x0fff), 1);
+  return (inputs & ~0xffffffu) | p1 | p2 << 12;
+}
 #endif
 
 #if defined(SNES_HAS_LOBBY_CLIENT)
@@ -3185,9 +3260,15 @@ static uint16_t netplay_capture_pad(void *ctx) {
   (void)ctx;
   PollLocalControls(snesrecomp_sdl_get_keyboard_state());
   const unsigned player = snes_netplay_input_player() == 1 ? 1 : 0;
-  return (uint16_t)snes_savestate_menu_filter_guest_input(
+  uint16_t pad = (uint16_t)snes_savestate_menu_filter_guest_input(
       (((g_input_state | g_pad_buttons) >> (player * 12)) |
        g_gamepad[player].axis_buttons) & 0x0fffu);
+#if SNESRECOMP_ENABLE_MODS
+  if (g_mods_ready) pad = ModTransformSeat(pad, (int)player);
+#endif
+  /* Local title actions follow the assigned local netplay seat. */
+  pad |= PollTitleActions();
+  return pad;
 }
 
 static void netplay_poll_events(void *ctx, int *want_soft_exit) {
@@ -3328,6 +3409,16 @@ static struct {
 } g_relaunch;
 
 /* Every gamepad SDL knows about, seated by OpenOneGamepad's rules. */
+bool snesrecomp_request_launcher(void) {
+  if (!snesrecomp_host_frame_is_live() || g_netplay_session || !g_rom_path[0])
+    return false;
+  g_relaunch.pending = g_relaunch.launcher = true;
+  g_relaunch.with_state = false;
+  snprintf(g_relaunch.rom, sizeof(g_relaunch.rom), "%s", g_rom_path);
+  snesrecomp_request_exit();
+  return true;
+}
+
 static void OpenAllGamepads(void) {
 #if SNESRECOMP_SDL3
   int njs = 0;
@@ -3537,8 +3628,8 @@ static void LauncherSeed(RecompLauncherCSettings *ls, RecompLauncherCGameInfo *g
   if (game->mods_provider)
     gi->mods = (const RecompLauncherCModProvider *)game->mods_provider();
 #if SNESRECOMP_ENABLE_MODS
-  if (!gi->mods && g_mods_ready)
-    gi->mods = snes_mod_runtime_launcher_provider_c();
+  if (g_mods_ready)
+    gi->mods = snes_mod_provider_compose(gi->mods, snes_mod_runtime_launcher_provider_c());
 #endif
   gi->in_session = in_session;
   gi->mods = HdHostProvider(gi->mods);
@@ -3560,6 +3651,27 @@ static void LauncherSeed(RecompLauncherCSettings *ls, RecompLauncherCGameInfo *g
     gi->assist_default_key_bind = keys;
     gi->assist_default_pad_bind = pads;
     ls->assist_pad_bind[0] = g_config.state_menu_pad_binding;
+  }
+#endif
+#if defined(RECOMP_LAUNCHER_HAS_ASSIST_KEY_MASK)
+  if (game->input_action_labels && game->input_action_count > 0 && game->input_action_count <= SNES_INPUT_ACTION_COUNT) {
+    static const char *labels[RECOMP_LAUNCHER_MAX_ASSIST_BINDINGS];
+    static int keys[RECOMP_LAUNCHER_MAX_ASSIST_BINDINGS], pads[RECOMP_LAUNCHER_MAX_ASSIST_BINDINGS];
+    const int first = game->editable_state_menu_controller ? 1 : 0;
+    memset(keys, 0, sizeof(keys)); memset(pads, 0, sizeof(pads));
+    if (first) { labels[0] = "Save states"; pads[0] = SNES_HOST_STATE_MENU_PAD_DEFAULT; }
+    for (int i = 0; i < game->input_action_count; ++i) {
+      labels[first+i] = game->input_action_labels[i];
+      ls->assist_key_bind[first+i] = g_config.input_action_key[i];
+      ls->assist_pad_bind[first+i] = g_config.input_action_pad[i];
+    }
+    gi->assist_binding_labels = labels;
+    gi->assist_binding_count = first + game->input_action_count;
+    gi->assist_pad_only = 0;
+    gi->assist_key_disabled_mask = first ? 1u : 0u;
+    gi->assist_direct_pad_bind_action = first + 1;
+    gi->assist_tools_note = "Game actions use Player 1's assigned input device. Save-state keyboard shortcuts are in Hotkeys.";
+    gi->assist_default_key_bind = keys; gi->assist_default_pad_bind = pads;
   }
 #endif
 #if defined(SNES_HAS_LOBBY_CLIENT)
@@ -3646,6 +3758,12 @@ static void LauncherCommit(const RecompLauncherCSettings *ls, const char *config
       g_state_menu_pad_was_held = false;
     }
 #endif
+  }
+  for (int i = 0; i < g_game->input_action_count && i < SNES_INPUT_ACTION_COUNT; ++i) {
+    const int row = (g_game->editable_state_menu_controller ? 1 : 0) + i;
+    g_config.input_action_key[i] = ls->assist_key_bind[row];
+    int pad = ls->assist_pad_bind[row];
+    if (SnesHostPadBindingValid(pad)) g_config.input_action_pad[i] = pad > 0 ? pad : 0;
   }
   WriteConfigFile(config_file);
   /* The launcher's Hotkeys and controller editors write [KeyMap] and
@@ -3867,6 +3985,7 @@ int snesrecomp_desktop_main(const SnesDesktopHostGame *game, int argc, char **ar
     return 2;
   }
   g_game = game;
+  ConfigEnableInputActions(game->input_action_count);
   if (game->window_title && game->window_title[0])
     snprintf(g_window_title, sizeof(g_window_title), "%s", game->window_title);
   else
@@ -5151,6 +5270,7 @@ error_reading:;
      * without running a frame. Ticked above the overlay checks, an
      * iteration that opened a panel consumed a script frame the guest never
      * saw, and every later scripted press landed a frame early. */
+    inputs |= SnesInputPackSeat(PollTitleActions(), 0);
     inputs |= TickScript();
     inputs |= HeadlessCapture_InputWord(frameCtr + 1);
     if (g_script_quit) {
@@ -5159,6 +5279,9 @@ error_reading:;
       break;
     }
     inputs |= debug_server_get_controller_inputs();
+#if SNESRECOMP_ENABLE_MODS
+    inputs = ModTransformInputs(inputs);
+#endif
     double profile_start = ProfileStart();
     double guest_start = MonotonicSeconds();
     PushExtraSeats(frameCtr + 1);
@@ -5777,7 +5900,13 @@ static void HandleGamepadAxisInput(GamepadInfo *gi, int axis, Sint16 value) {
       buttons = kSegmentToButtons[(uint8)(angle + 16 + 64) >> 5];
     }
     gi->axis_buttons = buttons;
+  } else if (axis == SDL_CONTROLLER_AXIS_RIGHTX) {
+    gi->right_axis_x = value;
+  } else if (axis == SDL_CONTROLLER_AXIS_RIGHTY) {
+    gi->right_axis_y = value;
   } else if ((axis == SDL_CONTROLLER_AXIS_TRIGGERLEFT || axis == SDL_CONTROLLER_AXIS_TRIGGERRIGHT)) {
+    *(axis == SDL_CONTROLLER_AXIS_TRIGGERLEFT ? &gi->left_trigger : &gi->right_trigger) =
+        value > 0 ? value : 0;
     if (value < 12000 || value >= 16000)  // hysteresis
       HandleGamepadInput(gi, axis == SDL_CONTROLLER_AXIS_TRIGGERLEFT ? kGamepadBtn_L2 : kGamepadBtn_R2, value >= 12000);
   }

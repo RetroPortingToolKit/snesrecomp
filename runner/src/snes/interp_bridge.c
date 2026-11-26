@@ -563,6 +563,15 @@ static int s_pre_opcode_redirect_valid;
 static uint32_t s_pre_opcode_redirect_pc24;
 static int s_pre_opcode_redirect_is_return;
 
+static int snapshot_pre_opcode_hooks(uint32_t key, InterpPreOpcodeHook *matched,
+                                     InterpPreOpcodeHook skip) {
+    int count = 0;
+    for (int i = 0; i < s_pre_opcode_hook_count; ++i)
+        if (s_pre_opcode_hooks[i].pc24 == key && s_pre_opcode_hooks[i].hook != skip)
+            matched[count++] = s_pre_opcode_hooks[i].hook;
+    return count;
+}
+
 bool interp_bridge_add_pre_opcode_hook(uint32_t pc24, InterpPreOpcodeHook hook) {
     if (!hook) return false;
     const uint32_t key=pc24 & 0x7FFFFFu;
@@ -575,6 +584,28 @@ bool interp_bridge_add_pre_opcode_hook(uint32_t pc24, InterpPreOpcodeHook hook) 
     ++s_pre_opcode_hook_count;
     s_pre_opcode_hook_bits[(key & 0xFFFFu) >> 3] |= (uint8_t)(1u << (key & 7));
     return true;
+}
+
+bool interp_bridge_remove_pre_opcode_hook(uint32_t pc24, InterpPreOpcodeHook hook) {
+    const uint32_t key = pc24 & 0x7FFFFFu;
+    for (int i = 0; i < s_pre_opcode_hook_count; ++i) {
+        if (s_pre_opcode_hooks[i].pc24 == key && s_pre_opcode_hooks[i].hook == hook) {
+            for (int j = i + 1; j < s_pre_opcode_hook_count; ++j)
+                s_pre_opcode_hooks[j - 1] = s_pre_opcode_hooks[j];
+            --s_pre_opcode_hook_count;
+            const uint32_t pc16 = key & 0xFFFFu;
+            bool still_armed = false;
+            for (int j = 0; j < s_pre_opcode_hook_count; ++j)
+                if ((s_pre_opcode_hooks[j].pc24 & 0xFFFFu) == pc16) {
+                    still_armed = true;
+                    break;
+                }
+            if (!still_armed)
+                s_pre_opcode_hook_bits[pc16 >> 3] &= (uint8_t)~(1u << (pc16 & 7));
+            return true;
+        }
+    }
+    return false;
 }
 
 void interp_bridge_set_pre_opcode_hook(uint32_t pc24,
@@ -633,14 +664,14 @@ bool interp_bridge_run_native_pre_opcode_hooks(CpuState *cpu, uint32_t pc24,
     const uint32_t saved_pc = s_pre_opcode_redirect_pc24;
     const int saved_is_return = s_pre_opcode_redirect_is_return;
     bool redirected = false;
-    for (int i = 0; i < s_pre_opcode_hook_count; ++i) {
-        if (s_pre_opcode_hooks[i].pc24 != key) continue;
-        if (s_pre_opcode_hooks[i].hook == native_owned) continue;
+    InterpPreOpcodeHook matched[kInterpPreOpcodeHookSlots];
+    const int matched_count = snapshot_pre_opcode_hooks(key, matched, native_owned);
+    for (int i = 0; i < matched_count; ++i) {
         if (invoked) *invoked = true;
         cpu_mirrors_to_p(cpu);
         s_pre_opcode_redirect_valid = 0;
         s_pre_opcode_redirect_is_return = 0;
-        s_pre_opcode_hooks[i].hook(cpu, pc24);
+        matched[i](cpu, pc24);
         if (s_pre_opcode_redirect_valid) {
             *redirect_pc24 = s_pre_opcode_redirect_pc24;
             redirected = true;
@@ -2630,12 +2661,17 @@ static int _interp_run_core(CpuState *cpu, uint32_t entry_pc24,
         if (s_pre_opcode_hook_count > 0) {
             const uint32_t key = pc_before & 0x7FFFFFu;
             bool redirected = false;
-            for (int hi = 0; hi < s_pre_opcode_hook_count; hi++) {
-                if (s_pre_opcode_hooks[hi].pc24 == key) {
+            /* Snapshot this PC's callbacks first: one may add or remove
+             * registrations (a mod_hook disarming itself), which reorders the
+             * table under a live index. */
+            InterpPreOpcodeHook matched[kInterpPreOpcodeHookSlots];
+            const int matched_count = snapshot_pre_opcode_hooks(key, matched, NULL);
+            for (int hi = 0; hi < matched_count; hi++) {
+                {
                     sync_interp_to_cpu(&in, cpu);
                     s_pre_opcode_redirect_valid = 0;
                     s_pre_opcode_redirect_is_return = 0;
-                    s_pre_opcode_hooks[hi].hook(cpu, pc_before);
+                    matched[hi](cpu, pc_before);
                     sync_cpu_to_interp(cpu, &in);
                     if (s_pre_opcode_redirect_valid) {
                         in.k = (uint8_t)((s_pre_opcode_redirect_pc24 >> 16) & 0xFF);

@@ -77,6 +77,8 @@ pub fn expand(cfgs: Vec<BankCfg>) -> Vec<BankCfg> {
             inherit_map!(authority_insns);
             inherit_map!(hle_func);
             inherit_map!(hle_dispatch);
+            inherit_map!(mod_hook);
+            inherit_map!(mod_hook_target);
             macro_rules! inherit_set {
                 ($field:ident) => {
                     dst.$field
@@ -86,6 +88,7 @@ pub fn expand(cfgs: Vec<BankCfg>) -> Vec<BankCfg> {
             inherit_set!(terminal_jsr);
             inherit_set!(noreturn_jsr);
             inherit_set!(live_operand);
+            inherit_set!(mod_operand);
             inherit_set!(brk_rti);
             inherit_set!(inline_dispatch_loops);
             for &pc in &src.hle_spc_upload {

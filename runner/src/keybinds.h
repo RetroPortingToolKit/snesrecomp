@@ -84,6 +84,8 @@ uint16_t keybinds_read_player_runner(const uint8_t *keys, int player);
  * button bits and comes only from events for the active game window. */
 uint16_t keybinds_read_player_desktop(const uint8_t *keys, uint32_t mouse_buttons,
                                      int player);
+/* Shared physical desktop binding reader, including Mouse1..Mouse5. */
+int keybinds_binding_down(const uint8_t *keys, uint32_t mouse_buttons, int binding);
 uint32_t keybinds_mouse_event(uint32_t buttons, uint32_t window_id,
                               const SDL_Event *event);
 

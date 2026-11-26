@@ -263,7 +263,8 @@ def build_cfg(graph: FunctionDecodeGraph, *, instruction_blocks=False,
     (m, x) is two distinct blocks.
 
     `extra_leader_pcs`: 16-bit PCs that must start a block wherever they are
-    decoded, even mid-run (an `entry_hook` site reached by fall-through).
+    decoded, even mid-run (an `entry_hook` or `mod_hook` site, or a
+    `mod_hook_target`, reached by fall-through).
     Splitting a block changes no semantics; it only places a block boundary.
     """
     # Reverse-edge map: for each key, which keys cite it as a successor?

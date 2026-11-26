@@ -203,6 +203,15 @@ the operand from the emitted body's program bank, independently of DB.
 For an observational callback at the same instruction, see
 [`entry_hook`](ENTRY_HOOK.md#observers-alongside-live-rom-patches).
 
+## Run-time hooks (`mod_hook`)
+
+A [`mod_hook`](MOD_HOOK.md#analysis) PC, and each of its redirect targets, is a
+value barrier in both decoders: the constant-Z fold, guarded pointer and
+stride-runway recovery, the TSC/TCS entry-stack restore and the inline-argument
+and dispatch-helper idioms derive nothing across it. Widths and stack depth
+remain facts, enforced on the callback at run time. The decode cache key
+includes the hook and target sets.
+
 ## Acceptance
 
 - Deterministic full and partial generated manifests.
