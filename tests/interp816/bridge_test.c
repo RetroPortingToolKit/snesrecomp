@@ -78,7 +78,7 @@ static int      g_nested_chain_direct;
 #define FAKE_AOT 0x008100u
 #define FAKE_AOT_2 0x008200u
 
-/* â”€â”€ fakes the bridge links against (cpu_state.c provides these in prod) â”€â”€ */
+/* ── fakes the bridge links against (cpu_state.c provides these in prod) ── */
 /* The Phase-2 manifest recorder stamps the live frame counter on each
  * discovery; the bridge references it as extern. */
 int snes_frame_counter = 0;

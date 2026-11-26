@@ -1,7 +1,7 @@
 #pragma once
 
 /*
- * host_main.h â€” the framework's desktop host, as a linkable unit.
+ * host_main.h — the framework's desktop host, as a linkable unit.
  *
  * A game repo's main.c is a thin shim: it fills in a SnesDesktopHostGame
  * (identity, and the hooks this particular title needs) and calls
@@ -62,10 +62,10 @@ typedef struct SnesDesktopHostFrameStats {
 } SnesDesktopHostFrameStats;
 
 typedef struct SnesDesktopHostGame {
-  /* â”€â”€ Identity â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
+  /* ── Identity ─────────────────────────────────────────────────────────── */
   const char *display_name;      /* "Super Metroid" (report header, launcher) */
   const char *window_title;      /* NULL: "<display_name> (Recompiled)" */
-  const char *launcher_title;    /* NULL: "<display_name> â€” Launcher" */
+  const char *launcher_title;    /* NULL: "<display_name> — Launcher" */
   const char *region;            /* "JPN" (launcher subtitle); NULL: none */
   const char *rom_file;          /* SNESRECOMP_ROM_FILE: a copy beside the exe
                                     is picked up without a prompt; NULL: skip */
@@ -96,7 +96,7 @@ typedef struct SnesDesktopHostGame {
   int display_aspect_supported; /* expose the three SNES pixel-aspect choices */
   int shader_supported;        /* expose GLSL presets (OpenGL presenter) */
 
-  /* â”€â”€ Hooks. Every one is optional. â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
+  /* ── Hooks. Every one is optional. ────────────────────────────────────── */
 
   /* Build the title's SPC player (audio upload interception); NULL leaves
    * g_spc_player NULL and the guest's own APU upload path untouched. */
@@ -128,7 +128,7 @@ typedef struct SnesDesktopHostGame {
    * pacing clock should PRESERVE (see host_clock.h). Default: never. */
   int (*keep_pacing_debt)(void);
 
-  /* â”€â”€ Presenter. All optional; the defaults present the PPU field as is. â”€â”€ */
+  /* ── Presenter. All optional; the defaults present the PPU field as is. ── */
 
   /* Decide this frame's dimensions from the window's drawable size. */
   void (*prepare_frame)(int drawable_w, int drawable_h, int *frame_w, int *frame_h);
@@ -157,8 +157,8 @@ typedef struct SnesDesktopHostGame {
   void (*compute_viewport)(int frame_w, int frame_h, int drawable_w, int drawable_h,
                            SnesDisplayViewport *viewport);
 
-  /* â”€â”€ Appended additively. Every field below is optional and zero means
-   *    "exactly what this host did before the field existed". â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
+  /* ── Appended additively. Every field below is optional and zero means
+   *    "exactly what this host did before the field existed". ──────────── */
 
   /* The launcher's aspect row, when this title's choices are not the three
    * SNES pixel aspects. A port that rasterizes its own field (F-Zero's
