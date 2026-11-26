@@ -57,6 +57,9 @@ def test_interp816_and_bridge_contract():
                 subprocess.run(flags + sources + ['-lm', '-o', str(exe)],
                                cwd=REPO, check=True)
                 subprocess.run([str(exe)], cwd=directory, check=True)
+                if index:
+                    subprocess.run([str(exe), '--native-yield-budget'],
+                                   cwd=directory, check=True)
         return
     for tool in ('bash', 'gcc'):
         if shutil.which(tool) is None:

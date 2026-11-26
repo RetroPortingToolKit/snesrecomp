@@ -1194,6 +1194,9 @@ static int s_aot_resume_n;
 /* One instruction handed back by this guest call chain, or all ones. */
 static uint32_t s_aot_resume_skip = 0xFFFFFFFFu;
 
+/* Live host progress, never part of a suspended guest's call-control state. */
+static uint64_t s_native_host_resume_epoch;
+
 void interp_bridge_with_host_context(CpuState *cpu, void (*host)(void *), void *argument) {
     /* Pending guest time is shared with the host/NMI/other tasks, unlike the
      * suspended fiber's call-control metadata. Settle it, never snapshot it. */
@@ -1234,6 +1237,7 @@ void interp_bridge_with_host_context(CpuState *cpu, void (*host)(void *), void *
     g_interp_apu_driving=apu_driving; g_interp_wlog_pc24=wlog_pc;
     s_pre_opcode_redirect_pc24=redirect_pc; s_pre_opcode_redirect_valid=redirect_valid;
     s_pre_opcode_redirect_is_return=redirect_return;
+    ++s_native_host_resume_epoch;
 }
 
 static int lle_yield_bounce_enabled(void);
@@ -1604,7 +1608,9 @@ static int lle_bounce_target_excluded(uint32_t target_pc24) {
  * $0FE8B7 / JMP ($0012)=$FFFF investigation showed). Default 2M is well clear
  * of any real routine while keeping a bail's freeze short; tunable via
  * SNESRECOMP_INTERP_STEP_CAP. (A proper fix detects the tight repeating-PC
- * loop and bails early — future work.) */
+ * loop and bails early — future work.) Native host suspension ends an
+ * uninterrupted run: a resumed task receives a fresh budget, so this guard
+ * cannot limit a correctly yielding coroutine's lifetime. */
 static long interp_step_cap(void) {
     static long v = 0;
     if (v == 0) {
@@ -2096,6 +2102,7 @@ static int _interp_run_core(CpuState *cpu, uint32_t entry_pc24,
 
     const long step_cap = interp_step_cap();
     long steps = 0;
+    uint64_t cap_host_resume_epoch = s_native_host_resume_epoch;
     uint64_t progress_write_epoch=g_interp_bridge_write_epoch;
     uint64_t progress_dynamic_epoch=s_interp_dynamic_progress_epoch;
     /* The pre-opcode poll-shape recognition below reads instruction bytes
@@ -2115,7 +2122,15 @@ static int _interp_run_core(CpuState *cpu, uint32_t entry_pc24,
         const char *_e = getenv("SNESRECOMP_NO_POLLGATE");
         s_poll_gate = (_e && _e[0] && _e[0] != '0') ? 0 : 1;
     }
-    for (; steps < step_cap; steps++) {
+    for (;; steps++) {
+        /* A native scheduler can suspend this very C stack across frames.
+         * Check resume progress before testing the limit, including a yield
+         * on its last permitted opcode. Other tasks do not inherit its budget. */
+        if (cap_host_resume_epoch != s_native_host_resume_epoch) {
+            cap_host_resume_epoch = s_native_host_resume_epoch;
+            steps = 0;
+        }
+        if (steps >= step_cap) break;
         RtlGuestScopeCheckpoint();
         const uint32_t pc_before = ((uint32_t)in.k << 16) | in.pc;
         /* Settle the DRAM refresh tax owed by clocks generated code charged
