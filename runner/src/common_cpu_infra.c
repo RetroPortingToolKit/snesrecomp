@@ -913,6 +913,56 @@ void RecompStackPopYield(void) {
   g_recomp_yield_popped_top = g_recomp_stack_top;
 }
 
+void cpu_with_host_context(CpuState *cpu, void (*host)(void *), void *argument) {
+  /* This local belongs to the suspended fiber's C stack. Another fiber may
+   * use every global slot while this invocation is waiting to return. */
+  struct {
+    const char *names[RECOMP_STACK_DEPTH], *last;
+    uint16_t entry_s[RECOMP_STACK_DEPTH];
+    uint8_t valid[RECOMP_STACK_DEPTH], frames[RECOMP_STACK_DEPTH];
+    uint8_t tail[RECOMP_STACK_DEPTH], hrv[RECOMP_STACK_DEPTH];
+    int top, yield_top, wlog_slot;
+    uint8_t tail_valid, tail_hrv, resume_hrv, host_return;
+    uint16_t tail_s, resume_s;
+    uint32_t resume_pc;
+    unsigned interrupt_depth;
+  } saved;
+  saved.top=g_recomp_stack_top; saved.last=g_last_recomp_func;
+  saved.yield_top=g_recomp_yield_popped_top; saved.wlog_slot=g_wlog_aot_slot;
+  memcpy(saved.names,g_recomp_stack,sizeof saved.names);
+  memcpy(saved.entry_s,g_cpu_entry_s,sizeof saved.entry_s);
+  memcpy(saved.valid,g_cpu_entry_s_valid,sizeof saved.valid);
+  memcpy(saved.frames,g_cpu_entry_return_frame,sizeof saved.frames);
+  memcpy(saved.tail,g_cpu_entry_tailcall,sizeof saved.tail);
+  memcpy(saved.hrv,g_cpu_entry_hrv,sizeof saved.hrv);
+  saved.tail_valid=g_tailcall_context_valid; saved.tail_s=g_tailcall_entry_s;
+  saved.tail_hrv=g_tailcall_hrv; saved.interrupt_depth=g_interrupt_context_depth;
+  saved.resume_pc=g_aot_resume_pc; saved.resume_s=g_aot_resume_entry_s;
+  saved.resume_hrv=g_aot_resume_hrv; saved.host_return=cpu->host_return_valid;
+  g_recomp_stack_top=0; g_last_recomp_func="(host)";
+  g_recomp_yield_popped_top=-1; g_wlog_aot_slot=-1;
+  g_tailcall_context_valid=0; g_interrupt_context_depth=0; g_aot_resume_pc=0;
+  cpu->host_return_valid=0;
+  host(argument);
+  if (g_recomp_stack_top || g_interrupt_context_depth ||
+      g_tailcall_context_valid || g_aot_resume_pc) {
+    fprintf(stderr,"[cpu] host context returned with an unfinished guest call\n");
+    abort();
+  }
+  memcpy(g_recomp_stack,saved.names,sizeof saved.names);
+  memcpy(g_cpu_entry_s,saved.entry_s,sizeof saved.entry_s);
+  memcpy(g_cpu_entry_s_valid,saved.valid,sizeof saved.valid);
+  memcpy(g_cpu_entry_return_frame,saved.frames,sizeof saved.frames);
+  memcpy(g_cpu_entry_tailcall,saved.tail,sizeof saved.tail);
+  memcpy(g_cpu_entry_hrv,saved.hrv,sizeof saved.hrv);
+  g_recomp_stack_top=saved.top; g_last_recomp_func=saved.last;
+  g_recomp_yield_popped_top=saved.yield_top; g_wlog_aot_slot=saved.wlog_slot;
+  g_tailcall_context_valid=saved.tail_valid; g_tailcall_entry_s=saved.tail_s;
+  g_tailcall_hrv=saved.tail_hrv; g_interrupt_context_depth=saved.interrupt_depth;
+  g_aot_resume_pc=saved.resume_pc; g_aot_resume_entry_s=saved.resume_s;
+  g_aot_resume_hrv=saved.resume_hrv; cpu->host_return_valid=saved.host_return;
+}
+
 // Frame watchdog: detect infinite loops in generated code.
 // Set before calling run_frame, checked by generated code periodically.
 static clock_t g_frame_start_clock;

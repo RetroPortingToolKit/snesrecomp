@@ -100,6 +100,14 @@ void RtlApuLock(void) {}
 void RtlApuUnlock(void) {}
 /* This focused bridge harness does not enter isolated guest scopes. */
 void RtlGuestScopeCheckpoint(void) {}
+/* These bridge/interrupt fixtures never switch native host tasks. Exercise
+ * that production CPU provider in test_host_call_context.py instead; a future
+ * accidental call here must fail rather than fake successful isolation. */
+void cpu_with_host_context(CpuState *cpu, void (*host)(void *), void *argument) {
+    (void)cpu; (void)host; (void)argument;
+    fprintf(stderr, "unexpected native coroutine switch in bridge fixture\n");
+    abort();
+}
 
 /* Per-frame NMI/IRQ tally (ppu_dma_trace.c in the real runner). */
 void ppudma_note_interrupt(int is_nmi) { (void)is_nmi; }

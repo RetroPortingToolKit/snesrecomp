@@ -21,6 +21,7 @@
 #include <signal.h>
 
 #include "debug_server.h"
+#include "lua_bridge.h"
 #include "desktop/sdl_compat.h"
 #ifdef _WIN32
 #include <windows.h>
@@ -52,6 +53,7 @@
 #include "snes/apu.h"
 #include "snes/dsp.h"
 #include "snes/snes.h"
+#include "snes/cart.h"
 #include "snes/ws_shadow.h"
 #include "audio_trace.h"
 
@@ -4646,6 +4648,23 @@ error_reading:;
     }
   }
 
+  const char *lua_port_text = HostGetenv("LUA_PORT");
+  if (lua_port_text && lua_port_text[0]) {
+#if SNESRECOMP_ENABLE_LUA
+    char *end;
+    long port = strtol(lua_port_text, &end, 10);
+    if (*end || port < 1 || port > 65535 || g_netplay_session ||
+        lua_bridge_init(g_ram, 0x20000, g_snes->cart->rom,
+                        g_snes->cart->romImageSize, (int)port) != 0) {
+      fprintf(stderr,"[lua] Could not start requested local scripting control\n");
+      return 1;
+    }
+#else
+    fprintf(stderr,"[lua] This build does not include local scripting control\n");
+    return 1;
+#endif
+  }
+
   if (script_file)
     LoadScript(script_file);
 
@@ -4816,9 +4835,17 @@ error_reading:;
     if(!running) { exit_reason="Android return to launcher"; break; }
 #endif
     ProfileEnd(kProfileEvents, event_profile_start);
-    if (g_paused != audiopaused) {
-      audiopaused = g_paused;
+    lua_bridge_poll();
+    const bool pause_audio = g_paused || lua_bridge_paused();
+    if (pause_audio != audiopaused) {
+      audiopaused = pause_audio;
       SetAudioPaused(audiopaused);
+    }
+
+    if (lua_bridge_paused()) {
+      snes_host_clock_reset(&video_clock, MonotonicSeconds(), g_simulation_hz, presentation_hz);
+      SDL_Delay(16);
+      continue;
     }
 
     StateMenuPadPoll();
@@ -5145,12 +5172,13 @@ error_reading:;
      * being skipped costs work for a picture nobody is reading. */
     bool runahead_captured = false;
     {
-      const uint32 word = inputs | GetActiveControllers() | debug_server_get_controller_active_mask();
+      const uint32 word = lua_bridge_frame_start(inputs | GetActiveControllers() | debug_server_get_controller_active_mask());
       if (g_turbo || !snes_runahead_run_frame(word))
         RtlRunFrame(word);
       else
         runahead_captured = true;   /* it rasterised the speculated frame */
     }
+    lua_bridge_frame_end();
     ApplyScriptForcePokes();
     snes_osd_note_frame();
     ProfileEnd(kProfileGuest, profile_start);
@@ -5256,6 +5284,7 @@ error_reading:;
     free(g_frame_timings);
     g_frame_timings = NULL;
   }
+  lua_bridge_shutdown();
   HeadlessCapture_Finish();
   host_report_breadcrumb("exit: %s after %u frames", exit_reason, frameCtr);
   host_report_breadcrumb("video totals: simulations=%u presentations=%llu seconds=%.3f",
