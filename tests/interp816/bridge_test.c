@@ -21,6 +21,12 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#ifdef _WIN32
+#define WIN32_LEAN_AND_MEAN
+#include <windows.h>
+#else
+#include <ucontext.h>
+#endif
 #include "interp_bridge.h"   /* -> cpu_state.h (types, inline frame helpers) */
 #include "cpu_plain_rom_read.h"
 #ifndef SNESRECOMP_INTERP_FUSED_ROM_READ
@@ -100,13 +106,21 @@ void RtlApuLock(void) {}
 void RtlApuUnlock(void) {}
 /* This focused bridge harness does not enter isolated guest scopes. */
 void RtlGuestScopeCheckpoint(void) {}
-/* These bridge/interrupt fixtures never switch native host tasks. Exercise
- * that production CPU provider in test_host_call_context.py instead; a future
- * accidental call here must fail rather than fake successful isolation. */
+/* CPU call-control isolation has its own production test. This bridge fixture
+ * permits only the explicit native-fiber scenario below to cross that seam. */
+static int g_allow_native_suspend;
 void cpu_with_host_context(CpuState *cpu, void (*host)(void *), void *argument) {
-    (void)cpu; (void)host; (void)argument;
-    fprintf(stderr, "unexpected native coroutine switch in bridge fixture\n");
-    abort();
+    if (!g_allow_native_suspend) {
+        fprintf(stderr, "unexpected native coroutine switch in bridge fixture\n");
+        abort();
+    }
+    const int top = g_recomp_stack_top;
+    const uint8_t hrv = cpu->host_return_valid;
+    g_recomp_stack_top = 0;
+    cpu->host_return_valid = 0;
+    host(argument);
+    g_recomp_stack_top = top;
+    cpu->host_return_valid = hrv;
 }
 
 /* Per-frame NMI/IRQ tally (ppu_dma_trace.c in the real runner). */
@@ -675,7 +689,91 @@ static void paired_continuation_bank_cases(void) {
     g_test_cart.type=CART_LOROM;
 }
 
-int main(void) {
+static int g_budget_finished, g_budget_result, g_budget_yields;
+#ifdef _WIN32
+static void *g_budget_host, *g_budget_guest;
+#else
+static ucontext_t g_budget_host, g_budget_guest;
+#endif
+static void budget_yield_to_host(void *argument) {
+    (void)argument;
+    ++g_budget_yields;
+#ifdef _WIN32
+    SwitchToFiber(g_budget_host);
+#else
+    if (swapcontext(&g_budget_guest, &g_budget_host)) abort();
+#endif
+}
+static void budget_yield_hook(CpuState *cpu, uint32_t pc) {
+    (void)pc;
+    interp_bridge_with_host_context(cpu, budget_yield_to_host, NULL);
+}
+#ifdef _WIN32
+static VOID WINAPI budget_guest_entry(void *argument) {
+    (void)argument;
+#else
+static void budget_guest_entry(void) {
+#endif
+    g_budget_result = interp_bridge_run(&g_c, 0x008000);
+    g_budget_finished = 1;
+#ifdef _WIN32
+    SwitchToFiber(g_budget_host);
+#else
+    if (swapcontext(&g_budget_guest, &g_budget_host)) abort();
+#endif
+    abort();
+}
+static int native_yield_budget_test(void) {
+    /* Each slice executes about 500 actual guest opcodes, below the 1000-step
+     * limit. Ten real stack suspensions exceed it in aggregate. No AOT bounce,
+     * guest-clock advancement or modeled interpreter loop resets the budget. */
+    const uint8_t code[] = {0xa0,10,0xa2,250,0xca,0xd0,0xfd,0xea,0x88,0xd0,0xf7,0x60};
+    memset(RAM, 0, MEMSZ); init_cpu(); load(0x8000, code, sizeof code);
+    cpu_push_jsr_return_frame(&g_c);
+    interp_bridge_set_pre_opcode_hook(0x008007, budget_yield_hook);
+    g_allow_native_suspend = 1;
+#ifdef _WIN32
+    g_budget_host = ConvertThreadToFiber(NULL);
+    CHECK(g_budget_host != NULL, "convert test thread to fiber");
+    g_budget_guest = CreateFiber(256 * 1024, budget_guest_entry, NULL);
+    CHECK(g_budget_guest != NULL, "create native guest fiber");
+#else
+    void *stack = malloc(256 * 1024);
+    if (!stack || getcontext(&g_budget_guest)) abort();
+    g_budget_guest.uc_stack.ss_sp = stack;
+    g_budget_guest.uc_stack.ss_size = 256 * 1024;
+    g_budget_guest.uc_link = &g_budget_host;
+    makecontext(&g_budget_guest, budget_guest_entry, 0);
+#endif
+    while (!g_budget_finished) {
+#ifdef _WIN32
+        SwitchToFiber(g_budget_guest);
+#else
+        if (swapcontext(&g_budget_host, &g_budget_guest)) abort();
+#endif
+        CHECK(interp_bridge_guest_scope_idle(), "suspended guest owns no host bridge");
+    }
+    CHECK(g_budget_result == 1 && g_budget_yields == 10,
+          "yielding routine completes: result=%d yields=%d", g_budget_result, g_budget_yields);
+    CHECK(g_c.S == 0x01ff && g_c.Y == 0, "guest return/register state preserved");
+#ifdef _WIN32
+    DeleteFiber(g_budget_guest);
+    CHECK(ConvertFiberToThread(), "restore test thread");
+#else
+    free(stack);
+#endif
+    g_allow_native_suspend = 0;
+    interp_bridge_set_pre_opcode_hook(0, NULL);
+    /* An uninterrupted loop must still fail closed under the same limit. */
+    memset(RAM, 0, MEMSZ); init_cpu();
+    const uint8_t runaway[] = {0x4c,0x00,0x80};
+    load(0x8000, runaway, sizeof runaway); cpu_push_jsr_return_frame(&g_c);
+    CHECK(interp_bridge_run(&g_c, 0x008000) == 0, "uninterrupted runaway retains step cap");
+    printf("native yield budget: %d/%d checks passed\n", g_check-g_fail, g_check);
+    return g_fail ? 1 : 0;
+}
+
+int main(int argc, char **argv) {
     const char *journal = "tier2_bridge_test.jsonl";
     remove(journal);
 #ifdef _WIN32
@@ -686,6 +784,14 @@ int main(void) {
     RAM = malloc(MEMSZ);
     g_test_cart.type = CART_LOROM;
     g_test_snes.cart = &g_test_cart;
+    if (argc == 2 && !strcmp(argv[1], "--native-yield-budget")) {
+#ifdef _WIN32
+        _putenv_s("SNESRECOMP_INTERP_STEP_CAP", "1000");
+#else
+        setenv("SNESRECOMP_INTERP_STEP_CAP", "1000", 1);
+#endif
+        return native_yield_budget_test();
+    }
 
     paired_continuation_bank_cases();
 
