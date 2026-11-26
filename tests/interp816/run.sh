@@ -26,4 +26,5 @@ for fused in 0 1; do
         runner/src/snes/tier2_capture.c runner/src/sha256.c \
         runner/src/snes/cx4.c -lm -o build/bridge_test_$fused
     ./build/bridge_test_$fused
+    ./build/bridge_test_$fused --native-yield-budget
 done
