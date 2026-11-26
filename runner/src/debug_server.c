@@ -2342,7 +2342,13 @@ static void cmd_runtime_status(const char *args) {
              paused ? "true" : "false", pending, snes_frame_counter);
 }
 int debug_server_consume_runtime_control(void) {
-    lock_mutex(); int result=s_runtime_control; s_runtime_control=0; unlock_mutex();
+    lock_mutex();
+    int result=s_runtime_control;
+    /* Never expose the old parked state after a refresh has been consumed.
+     * The host publishes parked again only after the complete frame. */
+    if (result == 2 || result == 4) s_runtime_paused=0;
+    s_runtime_control=0;
+    unlock_mutex();
     return result;
 }
 void debug_server_publish_runtime_paused(int paused) {
