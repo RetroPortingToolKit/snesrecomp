@@ -17,6 +17,13 @@ case "$(uname -s)" in
     MINGW*|MSYS*) LAUNCHER_LIBS="-lcomdlg32"; NET_LIBS="-lws2_32 -liphlpapi -lbcrypt" ;;
 esac
 
+echo "=== bounded audio report windows ==="
+"$CC" -std=c11 -Wall -Wextra -Werror -O1 \
+    -I "$ROOT/runner/src" -I "$ROOT/runner/src/snes" \
+    "$ROOT/tests/audio/audio_report_test.c" "$ROOT/runner/src/audio_report.c" \
+    -lm -o "$OUT/audio_report_test"
+"$OUT/audio_report_test"
+
 echo "=== launcher ==="
 "$CC" -std=c11 -Wall -Wextra -Werror -O1 \
     -D_POSIX_C_SOURCE=200809L -I "$ROOT/runner/src" \

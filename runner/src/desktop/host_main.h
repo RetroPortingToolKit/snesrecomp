@@ -60,6 +60,13 @@ typedef struct SnesDesktopHostFrameStats {
   int audio_output_rate;     /* device rate, 0 when audio is disabled */
 } SnesDesktopHostFrameStats;
 
+/* Optional normal-report audio observations. Pass the exact visible Diagnostics
+ * recording predicate on the simulation thread after real frames, and once with NULL/final=1 from
+ * on_shutdown, before audio/video teardown. Off performs no queries or output. */
+void snesrecomp_desktop_audio_diagnostics(int enabled,
+    const SnesDesktopHostFrameStats *frame, int final_snapshot);
+#define SNESRECOMP_HAS_AUDIO_REPORT_DIAGNOSTICS 1
+
 typedef struct SnesDesktopHostGame {
   /* ── Identity ─────────────────────────────────────────────────────────── */
   const char *display_name;      /* "Super Metroid" (report header, launcher) */
