@@ -57,6 +57,7 @@
 #include "snes/cart.h"
 #include "snes/ws_shadow.h"
 #include "audio_trace.h"
+#include "audio_report.h"
 
 #include "types.h"
 #include "common_rtl.h"
@@ -2888,6 +2889,33 @@ static SDL_Texture *g_texture;
 static SDL_Rect g_sdl_renderer_rect;
 static SDL_Rect g_sdl_present_rect;
 
+void snesrecomp_desktop_audio_diagnostics(int enabled,
+    const SnesDesktopHostFrameStats *frame, int final_snapshot) {
+  if (!enabled || !g_audio_mutex) { snes_audio_report_note(0, NULL, 0, 0); return; }
+  unsigned flags = snes_audio_report_note(enabled, frame, RtlStateGeneration(), final_snapshot);
+  if (!(flags & SNES_AUDIO_REPORT_SAMPLE)) return;
+  AudioTraceStats audio;
+  audio_trace_get_stats(&audio); /* The existing getter takes its own APU lock. */
+  SnesAudioReportContext context = {0};
+  if (flags & SNES_AUDIO_REPORT_CONTEXT) {
+    const bool video_live = (SDL_WasInit(SDL_INIT_VIDEO) & SDL_INIT_VIDEO) != 0;
+    const bool audio_live = (SDL_WasInit(SDL_INIT_AUDIO) & SDL_INIT_AUDIO) != 0;
+    context.video_driver = video_live ? SDL_GetCurrentVideoDriver() : NULL;
+    context.audio_driver = audio_live ? SDL_GetCurrentAudioDriver() : NULL;
+    context.requested_renderer = g_config.renderer[0] ? g_config.renderer : "auto";
+    context.renderer = video_live && g_renderer ? snesrecomp_sdl_renderer_name(g_renderer) :
+        video_live && g_config.output_method == kOutputMethod_OpenGL ? "OpenGL" : "unavailable";
+#if SNESRECOMP_SDL3
+    context.device = audio_live && g_audio_device ? SDL_GetAudioDeviceName(g_audio_device) : "not open";
+#else
+    /* This host opens NULL, the default device. SDL2 does not identify the
+     * physical endpoint behind an opened playback ID. Do not guess index 0. */
+    context.device = audio_live && g_audio_device ? "System default output (SDL2)" : "not open";
+#endif
+  }
+  snes_audio_report_emit(&audio, (flags & SNES_AUDIO_REPORT_CONTEXT) ? &context : NULL);
+}
+
 static bool SdlRenderer_Init(SDL_Window *window) {
   (void)window;
   if (g_config.shader)
@@ -5473,6 +5501,7 @@ error_reading:;
   SDL_CloseAudioDevice(g_audio_device);
 #endif
   SDL_DestroyMutex(g_audio_mutex);
+  g_audio_mutex = NULL;
   free(g_audiobuffer);
 
   g_renderer_funcs.Destroy();
