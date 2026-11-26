@@ -18,6 +18,9 @@
  *
  * Build/run: tests/interp816/run.sh (WSL gcc). Validation only.
  */
+#if defined(__APPLE__) && !defined(_XOPEN_SOURCE)
+#define _XOPEN_SOURCE 700
+#endif
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
