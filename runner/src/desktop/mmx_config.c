@@ -439,6 +439,21 @@ static bool ParsePlayerSource(int player, const char *value) {
   return true;
 }
 
+bool ConfigSetPlayerGuid(int player, const char *value) {
+  if ((unsigned)player >= kSnesHostPadSeats || !value) return false;
+  while (*value == ' ' || *value == '\t') ++value;
+  size_t length = strspn(value, "0123456789abcdefABCDEF");
+  if (length != 0 && length != 32) return false;
+  const char *tail = value + length;
+  while (*tail == ' ' || *tail == '\t') ++tail;
+  if (*tail && *tail != '#' && *tail != ';') return false;
+  for (size_t i = 0; i < length; ++i)
+    g_config.player_guid[player][i] = value[i] >= 'A' && value[i] <= 'F'
+        ? value[i] + ('a' - 'A') : value[i];
+  g_config.player_guid[player][length] = '\0';
+  return true;
+}
+
 static bool HandleIniConfig(int section, const char *key, char *value) {
   if (section == 11) {
     bool enabled;
@@ -518,8 +533,11 @@ static bool HandleIniConfig(int section, const char *key, char *value) {
     } else if (StringStartsWithNoCase(key, "SourceP") && key[7] >= '1' &&
                key[7] < '1' + kSnesHostPadSeats && !key[8]) {
       return ParsePlayerSource(key[7] - '1', value);
+    } else if (StringStartsWithNoCase(key, "GuidP") && key[5] >= '1' &&
+               key[5] < '1' + kSnesHostPadSeats && !key[6]) {
+      return ConfigSetPlayerGuid(key[5] - '1', value);
     }
-    /* GuidPn / DeadzonePn are the launcher's business; accepted silently so
+    /* DeadzonePn is launcher-owned; accepted silently so
      * the runner does not report the launcher's own keys as unknown. */
     return true;
   } else if (section == 8) {
@@ -729,6 +747,7 @@ void ParseConfigFile(const char *filename) {
     g_config.player_src[i] = 0;
   }
   for (int i = 0; i < kSnesHostPadSeats; ++i) s_player_src_seen[i] = false;
+  memset(g_config.player_guid, 0, sizeof(g_config.player_guid));
   g_config.gamepad_deadzone = SNES_CONFIG_DEFAULT_DEADZONE;
   g_config.display_aspect = kSnesDisplayAspect_Crt4x3;
   g_config.skip_launcher = false;
@@ -953,6 +972,10 @@ void WriteConfigFile(const char *filename) {
     { "Controller", "Action2Key" }, { "Controller", "Action2Pad" },
     { "Controller", "Action3Key" }, { "Controller", "Action3Pad" },
     { "Controller", "SourceP2" },
+    { "Controller", "GuidP1" }, { "Controller", "GuidP2" },
+    { "Controller", "GuidP3" }, { "Controller", "GuidP4" },
+    { "Controller", "GuidP5" }, { "Controller", "GuidP6" },
+    { "Controller", "GuidP7" }, { "Controller", "GuidP8" },
     { "GamepadMap", "EnableGamepad3" }, { "Controller", "SourceP3" },
     { "GamepadMap", "EnableGamepad4" }, { "Controller", "SourceP4" },
     { "GamepadMap", "EnableGamepad5" }, { "Controller", "SourceP5" },
@@ -1014,6 +1037,14 @@ void WriteConfigFile(const char *filename) {
     CfgSkip(kvs, N, "Controller", "SaveStateMenuPad");
   CfgSet(kvs, N, "Controller", "SourceP1", "%d", g_config.player_src[0]);
   CfgSet(kvs, N, "Controller", "SourceP2", "%d", g_config.player_src[1]);
+  for (int seat = 0; seat < kSnesHostPadSeats; ++seat) {
+    char guid[16];
+    snprintf(guid, sizeof(guid), "GuidP%d", seat + 1);
+    if (seat < s_pad_seats)
+      CfgSet(kvs, N, "Controller", guid, "%s", g_config.player_guid[seat]);
+    else
+      CfgSkip(kvs, N, "Controller", guid);
+  }
   for (int seat = 2; seat < kSnesHostPadSeats; ++seat) {
     char gp[24], src[16];
     snprintf(gp, sizeof(gp), "EnableGamepad%d", seat + 1);

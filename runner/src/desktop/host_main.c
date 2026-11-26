@@ -176,6 +176,7 @@ static void SwitchDirectory(void);
 static void EnsureConfigIniNextToExe(const char *exe_path);
 static void OpenOneGamepad(int i);
 static void OpenOneJoystick(int i);
+static bool SeatHeldForOtherPad(int seat, uint32 joystick_id);
 static uint32 GetActiveControllers(void);
 static void HandleVolumeAdjustment(int volume_adjustment);
 static void ApplyVolume(void);
@@ -3565,6 +3566,11 @@ static void LauncherSeed(RecompLauncherCSettings *ls, RecompLauncherCGameInfo *g
   for (int seat = 2; seat < kSnesHostPadSeats && seat < RECOMP_LAUNCHER_MAX_PLAYERS; ++seat)
     ls->player_src[seat] = ConfigHasPlayerSource(seat) ? g_config.player_src[seat]
                                                        : (g_config.enable_gamepad[seat] ? 2 : 0);
+#if defined(RECOMP_LAUNCHER_HAS_PLAYER_GAMEPAD_GUID)
+  for (int seat = 0; seat < kSnesHostPadSeats && seat < RECOMP_LAUNCHER_MAX_PLAYERS; ++seat)
+    snprintf(ls->player_gamepad_guid[seat], sizeof(ls->player_gamepad_guid[seat]),
+             "%s", g_config.player_guid[seat]);
+#endif
   /* Config stores deadzone as a raw stick radius; the launcher edits a
    * 0-100%. Convert in both directions, ROUNDING each way: truncating
    * both made the round trip lossy -- 10% saved as 32767/10 = 3276 read
@@ -3748,6 +3754,9 @@ static void LauncherCommit(const RecompLauncherCSettings *ls, const char *config
     if (seat >= 2 && seat >= HostConfiguredSeats()) break;
     g_config.player_src[seat]     = ls->player_src[seat];
     g_config.enable_gamepad[seat] = ls->player_src[seat] == 2;
+#if defined(RECOMP_LAUNCHER_HAS_PLAYER_GAMEPAD_GUID)
+    ConfigSetPlayerGuid(seat, ls->player_gamepad_guid[seat]);
+#endif
 #if defined(RECOMP_LAUNCHER_HAS_PLAYER_GAMEPAD_INSTANCE) && SNESRECOMP_SDL3
     g_seat_instance[seat] = ls->player_src[seat] == 2 ? ls->player_gamepad_instance[seat] : 0;
 #endif
@@ -3849,7 +3858,11 @@ static void ApplyLiveSettings(const Config *before) {
   bool seats_changed = false;
   for (int seat = 0; seat < kSnesHostPadSeats; ++seat)
     seats_changed |= g_config.player_src[seat] != before->player_src[seat] ||
-                     g_config.enable_gamepad[seat] != before->enable_gamepad[seat];
+                     g_config.enable_gamepad[seat] != before->enable_gamepad[seat] ||
+                     (g_config.enable_gamepad[seat] &&
+                      strcmp(g_config.player_guid[seat], before->player_guid[seat]) != 0) ||
+                     (g_config.enable_gamepad[seat] &&
+                      SeatHeldForOtherPad(seat, (uint32)g_gamepad[seat].joystick_id));
   if (seats_changed)
     ReassignGamepads();
 }
@@ -5724,6 +5737,17 @@ static bool SeatHeldForOtherPad(int j, uint32 joystick_id) {
 #endif
 }
 
+static bool SeatGuidMatches(int seat, SDL_Joystick *joystick) {
+  if (!g_config.player_guid[seat][0]) return true;
+  char guid[33];
+#if SNESRECOMP_SDL3
+  SDL_GUIDToString(SDL_GetJoystickGUID(joystick), guid, sizeof(guid));
+#else
+  SDL_JoystickGetGUIDString(SDL_JoystickGetGUID(joystick), guid, sizeof(guid));
+#endif
+  return strcmp(guid, g_config.player_guid[seat]) == 0;
+}
+
 static void OpenOneGamepad(int i) {
   if (!SDL_IsGameController(i)) {
     OpenOneJoystick(i);
@@ -5764,7 +5788,8 @@ static void OpenOneGamepad(int i) {
   for (int k = 0; found_idx < 0 && k < 1 + kSnesHostPadSeats; k++) {
     uint8 j = scan_order[k];
     if (j < seats && g_config.enable_gamepad[j] && g_gamepad[j].joystick_id == -1 &&
-        !SeatHeldForOtherPad(j, joystick_id)) {
+        !SeatHeldForOtherPad(j, joystick_id) &&
+        SeatGuidMatches(j, SDL_GameControllerGetJoystick(controller))) {
       found_idx = j;
       break;
     }
@@ -5776,6 +5801,8 @@ static void OpenOneGamepad(int i) {
     memset(gi, 0, sizeof(GamepadInfo));
     gi->index = found_idx;
     gi->joystick_id = joystick_id;
+  } else {
+    SDL_GameControllerClose(controller);
   }
 }
 
@@ -5791,7 +5818,7 @@ static void OpenOneJoystick(int i) {
   int slot = -1;
   for (int j = 0; j < HostConfiguredSeats(); ++j) {
     if (g_config.enable_gamepad[j] && g_gamepad[j].joystick_id == -1 &&
-        !SeatHeldForOtherPad(j, (uint32)id)) {
+        !SeatHeldForOtherPad(j, (uint32)id) && SeatGuidMatches(j, joystick)) {
       slot = j; break;
     }
   }
