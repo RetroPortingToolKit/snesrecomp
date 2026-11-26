@@ -546,6 +546,8 @@ if [ -n "$KB_SDL_LIBS" ]; then
     "$CC" -std=c11 -Wall -Wextra -O1 -DSDL_MAIN_HANDLED $KB_SDL_DEF $KB_SDL_CFLAGS \
         -I "$ROOT/runner/src" -I "$ROOT/runner/src/desktop" \
         "$ROOT/tests/host/config_roundtrip_test.c" \
+        -I "$ROOT/external/shared-cores/recomp-input-core/include" \
+        "$ROOT/external/shared-cores/recomp-input-core/src/recomp_input.c" \
         "$ROOT/runner/src/desktop/mmx_config.c" \
         "$ROOT/runner/src/util.c" \
         $KB_SDL_LIBS -o "$OUT/config_roundtrip_test"
@@ -576,6 +578,10 @@ echo "=== mod runtime: presentation_only is not compared by netplay ==="
     -I "$ROOT/runner/src" \
     -x c++ "$ROOT/tests/netplay/mod_presentation_only_test.c" \
     "$ROOT/runner/src/mod_runtime.cpp" \
+    -I "$ROOT/external/shared-cores/recomp-mod-core/include" \
+    "$ROOT/external/shared-cores/recomp-mod-core/src/runtime.cpp" \
+    "$ROOT/external/shared-cores/recomp-mod-core/src/rmod_crc32.c" \
+    "$ROOT/external/shared-cores/recomp-mod-core/src/rmod_sha256.c" \
     "$ROOT/runner/src/sha256.c" "$ROOT/runner/src/snes/tier2_capture.c" \
     "$ROOT/runner/src/crc32.c" \
     "$ROOT/runner/src/rom_identity.c" "$ROOT/runner/src/sha1.c" \
@@ -595,6 +601,10 @@ echo "=== mod runtime: exceptions stay inside the C boundary ==="
     -I "$ROOT/runner/src" \
     "$ROOT/tests/mod_resources/c_boundary_test.cpp" \
     -x c++ "$ROOT/runner/src/mod_runtime.cpp" \
+    -I "$ROOT/external/shared-cores/recomp-mod-core/include" \
+    "$ROOT/external/shared-cores/recomp-mod-core/src/runtime.cpp" \
+    "$ROOT/external/shared-cores/recomp-mod-core/src/rmod_crc32.c" \
+    "$ROOT/external/shared-cores/recomp-mod-core/src/rmod_sha256.c" \
     "$ROOT/runner/src/sha256.c" "$ROOT/runner/src/snes/tier2_capture.c" \
     "$ROOT/runner/src/crc32.c" \
     "$ROOT/runner/src/rom_identity.c" "$ROOT/runner/src/sha1.c" \
@@ -617,6 +627,10 @@ echo "=== mod runtime: long and UTF-8 catalog paths ==="
     -I "$ROOT/runner/src" \
     "$ROOT/tests/mod_resources/long_path_test.cpp" \
     -x c++ "$ROOT/runner/src/mod_runtime.cpp" \
+    -I "$ROOT/external/shared-cores/recomp-mod-core/include" \
+    "$ROOT/external/shared-cores/recomp-mod-core/src/runtime.cpp" \
+    "$ROOT/external/shared-cores/recomp-mod-core/src/rmod_crc32.c" \
+    "$ROOT/external/shared-cores/recomp-mod-core/src/rmod_sha256.c" \
     "$ROOT/runner/src/sha256.c" "$ROOT/runner/src/snes/tier2_capture.c" \
     "$ROOT/runner/src/crc32.c" \
     "$ROOT/runner/src/rom_identity.c" "$ROOT/runner/src/sha1.c" \
@@ -632,6 +646,10 @@ if [ -f "$RECOMP_UI_SRC/recomp_launcher.h" ]; then
         -I "$ROOT/runner/src" -I "$RECOMP_UI_SRC" \
         "$ROOT/tests/mod_resources/feature_requires_test.cpp" \
         -x c++ "$ROOT/runner/src/mod_runtime.cpp" \
+    -I "$ROOT/external/shared-cores/recomp-mod-core/include" \
+    "$ROOT/external/shared-cores/recomp-mod-core/src/runtime.cpp" \
+    "$ROOT/external/shared-cores/recomp-mod-core/src/rmod_crc32.c" \
+    "$ROOT/external/shared-cores/recomp-mod-core/src/rmod_sha256.c" \
         "$ROOT/runner/src/sha256.c" "$ROOT/runner/src/snes/tier2_capture.c" \
         "$ROOT/runner/src/crc32.c" \
         "$ROOT/runner/src/rom_identity.c" "$ROOT/runner/src/sha1.c" \
@@ -641,6 +659,10 @@ if [ -f "$RECOMP_UI_SRC/recomp_launcher.h" ]; then
         -I "$ROOT/runner/src" -I "$RECOMP_UI_SRC" \
         "$ROOT/tests/mod_resources/exclusive_plugin_test.cpp" \
         -x c++ "$ROOT/runner/src/mod_runtime.cpp" \
+    -I "$ROOT/external/shared-cores/recomp-mod-core/include" \
+    "$ROOT/external/shared-cores/recomp-mod-core/src/runtime.cpp" \
+    "$ROOT/external/shared-cores/recomp-mod-core/src/rmod_crc32.c" \
+    "$ROOT/external/shared-cores/recomp-mod-core/src/rmod_sha256.c" \
         "$ROOT/runner/src/sha256.c" "$ROOT/runner/src/snes/tier2_capture.c" \
         "$ROOT/runner/src/crc32.c" \
         "$ROOT/runner/src/rom_identity.c" "$ROOT/runner/src/sha1.c" \
@@ -650,6 +672,10 @@ if [ -f "$RECOMP_UI_SRC/recomp_launcher.h" ]; then
         -I "$ROOT/runner/src" -I "$RECOMP_UI_SRC" \
         "$ROOT/tests/mod_resources/msu_file_selection_test.cpp" \
         -x c++ "$ROOT/runner/src/mod_runtime.cpp" \
+    -I "$ROOT/external/shared-cores/recomp-mod-core/include" \
+    "$ROOT/external/shared-cores/recomp-mod-core/src/runtime.cpp" \
+    "$ROOT/external/shared-cores/recomp-mod-core/src/rmod_crc32.c" \
+    "$ROOT/external/shared-cores/recomp-mod-core/src/rmod_sha256.c" \
         "$ROOT/runner/src/sha256.c" "$ROOT/runner/src/snes/tier2_capture.c" \
         "$ROOT/runner/src/crc32.c" \
         "$ROOT/runner/src/rom_identity.c" "$ROOT/runner/src/sha1.c" \
@@ -767,7 +793,7 @@ echo "=== Super FX PC hooks ==="
 # -Dmain=SDL_main that sdl2.pc carries on Windows (no SDL2main is linked here
 # to call SDL_main); SDL_MAIN_HANDLED keeps SDL_main.h from renaming main()
 # again.
-RTL_UNIT_FLAGS="$(pkg-config --cflags sdl2) -Umain -DSDL_MAIN_HANDLED -std=c11 -O2 -flto -fwhole-program -ffunction-sections -fdata-sections -DSNESRECOMP_TRACE=0 -D_POSIX_C_SOURCE=200809L -I $ROOT/runner/src/desktop -I $ROOT/runner/src"
+RTL_UNIT_FLAGS="$(pkg-config --cflags sdl2) -Umain -DSDL_MAIN_HANDLED -std=c11 -O2 -flto -fwhole-program -ffunction-sections -fdata-sections -DSNESRECOMP_TRACE=0 -D_POSIX_C_SOURCE=200809L -I $ROOT/runner/src/desktop -I $ROOT/runner/src -I $ROOT/external/shared-cores/recomp-persistence-core/include"
 
 echo "=== audio delivery + console reset ==="
 "$CC" $RTL_UNIT_FLAGS "$ROOT/tests/audio_delivery_test.c" \

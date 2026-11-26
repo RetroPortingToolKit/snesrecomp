@@ -491,6 +491,7 @@ else()
 endif()
 
 set(SNESRECOMP_RUNNER_LIBRARIES)
+include(${CMAKE_CURRENT_LIST_DIR}/shared_runtime.cmake)
 include(${CMAKE_CURRENT_LIST_DIR}/lua.cmake)
 include(${CMAKE_CURRENT_LIST_DIR}/data_packs.cmake)
 if(NOT WIN32)
@@ -715,6 +716,10 @@ unset(_SNESRECOMP_AUDIO_HISTORY_VALUE)
 set(SNESRECOMP_RUNNER_INCLUDE_DIRS
     ${SNESRECOMP_RUNNER_ROOT}/src
     ${SNESRECOMP_RUNNER_ROOT}/src/snes
+    ${RECOMP_SHARED_CORE_ROOT}/recomp-mod-core/include
+    ${RECOMP_SHARED_CORE_ROOT}/recomp-persistence-core/include
+    ${RECOMP_SHARED_CORE_ROOT}/recomp-input-core/include
+    ${RECOMP_SHARED_CORE_ROOT}/recomp-diagnostics-core/include
 )
 
 # â”€â”€ Directories the game loads relative to its executable â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€

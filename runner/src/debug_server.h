@@ -70,6 +70,11 @@ int debug_server_consume_loadstate(void);
 
 // Same handoff for a TCP-requested savestate (savestate <slot> command).
 int debug_server_consume_savestate(void);
+/* Desktop player/QA controls, applied by the host at a completed frame.
+ * These never open a launcher or stop inside a guest basic block.
+ * 0 none, 1 pause, 2 resume, 3 clean quit. */
+int debug_server_consume_runtime_control(void);
+void debug_server_publish_runtime_paused(int paused);
 
 // TCP controller override. The returned input mask uses the runner's
 // controller layout: player 1 in bits 0..11, player 2 in bits 12..23.
@@ -165,6 +170,8 @@ static inline void debug_server_wait_if_paused(void) { }
 static inline void debug_server_on_trace_block(void *cpu, uint32_t pc24) { (void)cpu; (void)pc24; }
 static inline int debug_server_consume_loadstate(void) { return -1; }
 static inline int debug_server_consume_savestate(void) { return -1; }
+static inline int debug_server_consume_runtime_control(void) { return 0; }
+static inline void debug_server_publish_runtime_paused(int paused) { (void)paused; }
 static inline uint32_t debug_server_get_controller_inputs(void) { return 0; }
 static inline uint32_t debug_server_get_controller_active_mask(void) { return 0; }
 static inline void debug_server_record_frame(int frame) { (void)frame; }

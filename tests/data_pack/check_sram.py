@@ -5,7 +5,8 @@ import sys
 import tempfile
 
 root=Path(__file__).resolve().parents[2]
-source=(root/'runner/src/common_rtl.c').read_text()
+source=(root/'runner/src/common_rtl.c').read_text(encoding='utf-8')
+core=root/'external/shared-cores/recomp-persistence-core'
 names=('void RtlSetSaveRoot(', 'const char *RtlSaveRoot(', 'static void ensure_save_root(',
        'void RtlEnsureSaveDir(',
        'void RtlSramFilePath(', 'int RtlWriteSramImage(', 'int RtlTryWriteSram(', 'int RtlWriteSram(')
@@ -15,11 +16,12 @@ for name in names:
     opening=source.index('{',start)
     end=source.index('}',opening)+1 if name in (names[1], names[-1]) else source.index('\n}',opening)+2
     parts.append(source[start:end])
-prefix = '#include "common_rtl.h"\n#ifdef _WIN32\n#include <io.h>\n#include <direct.h>\n#else\n#include <unistd.h>\n#include <sys/stat.h>\n#endif\nuint8 *g_sram; int g_sram_size; static char s_save_root[96]="saves"; static char s_quick_save_root[96];\n'
+prefix = '#include "common_rtl.h"\n#include <recomp_persistence/atomic_file.h>\n#ifdef _WIN32\n#include <io.h>\n#include <direct.h>\n#else\n#include <unistd.h>\n#include <sys/stat.h>\n#endif\nuint8 *g_sram; int g_sram_size; static char s_save_root[96]="saves"; static char s_quick_save_root[96];\n'
 with tempfile.TemporaryDirectory(prefix='sram-check-') as temp:
     temp=Path(temp)
     (temp/'sram.c').write_text(prefix+'\n'.join(parts))
     exe=temp/'check.exe'
     subprocess.run([sys.argv[1],'-std=c11','-D_POSIX_C_SOURCE=200809L','-I'+str(root/'runner/src'),
+                    '-I'+str(core/'include'),str(core/'src/atomic_file.c'),
                     str(root/'tests/data_pack/sram_test.c'),str(temp/'sram.c'),'-o',str(exe)],check=True)
     subprocess.run([str(exe)],cwd=temp,check=True)

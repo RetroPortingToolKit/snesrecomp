@@ -2,6 +2,8 @@
 #define SNES_HOST_PAD_BINDING_H
 #include <stdbool.h>
 #include <stdint.h>
+#include <string.h>
+#include <recomp_input.h>
 
 /* recomp-ui's portable controller encoding uses standard SDL button/axis
  * indices. Zero is an unspecified default; -1 is an explicitly cleared row.
@@ -18,12 +20,9 @@ static inline bool SnesHostPadBindingValid(int binding) {
 static inline bool SnesHostPadBindingDown(int binding, uint32_t buttons,
                                         const int16_t axes[6]) {
   if (!SnesHostPadBindingValid(binding) || binding <= 0) return false;
-  if (binding < 100) return (buttons & (UINT32_C(1) << (binding - 1))) != 0;
-  if (binding < 1000) {
-    const int code = (binding - 100) / 2;
-    return ((binding - 100) & 1) ? axes[code] > 16384 : axes[code] < -16384;
-  }
-  const uint32_t mask = (uint32_t)(binding - 1000);
-  return (buttons & mask) == mask;
+  ri_device device = {0};
+  device.buttons = buttons;
+  if (axes) memcpy(device.axes, axes, sizeof(device.axes));
+  return ri_binding_held(&device, (uint32_t)binding, 16384) != 0;
 }
 #endif

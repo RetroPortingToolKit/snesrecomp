@@ -4,6 +4,7 @@
 #include <unistd.h>
 #endif
 #include "common_rtl.h"
+#include <recomp_persistence/atomic_file.h>
 #include "save_state_slots.h"
 #include "apu_frame_clock.h"
 #include "audio_capture_cursor.h"
@@ -3027,23 +3028,10 @@ int RtlWriteSramImage(const char *path, const uint8 *bytes, size_t size) {
   char *tmp = bak + length + 5;
   memcpy(bak, path, length); memcpy(bak + length, ".bak", 5);
   memcpy(tmp, path, length); memcpy(tmp + length, ".tmp", 5);
-  FILE *f = fopen(tmp, "wb");
-  if (!f) {
+  /* The shared backend owns unique temporary creation, durable writes and
+   * staging publication. SNES keeps its one-revision backup/rollback policy. */
+  if (!recomp_atomic_file_store(tmp, bytes, size)) {
     fprintf(stderr, "Unable to write %s\n", tmp);
-    free(bak);
-    return 0;
-  }
-  int ok = !size || fwrite(bytes, 1, size, f) == size;
-  ok = ok && fflush(f) == 0;
-#ifdef _WIN32
-  ok = ok && _commit(_fileno(f)) == 0;
-#else
-  ok = ok && fsync(fileno(f)) == 0;
-#endif
-  ok = fclose(f) == 0 && ok;
-  if (!ok) {
-    fprintf(stderr, "Unable to write %s\n", tmp);
-    remove(tmp);
     free(bak);
     return 0;
   }
