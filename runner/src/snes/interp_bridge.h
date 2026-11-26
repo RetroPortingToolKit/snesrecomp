@@ -146,8 +146,14 @@ void interp_bridge_set_pre_opcode_hook(uint32_t pc24,
                                        InterpPreOpcodeHook hook);
 /* Compose without replacing an existing owner's callback. Duplicate pairs are
  * idempotent. Returns false on invalid input/capacity exhaustion. Callbacks run
- * in registration order; a redirect completes handling for that original PC. */
+ * in registration order; a redirect completes handling for that original PC.
+ * Each boundary snapshots its callbacks before invocation, so registry edits
+ * made by a callback affect the next boundary, in either execution tier. */
 bool interp_bridge_add_pre_opcode_hook(uint32_t pc24, InterpPreOpcodeHook hook);
+/* Remove exactly the (pc24, hook) registration added above; every other
+ * owner's callback at that PC, and the order of the rest, is unchanged.
+ * Returns false when that pair is not registered. */
+bool interp_bridge_remove_pre_opcode_hook(uint32_t pc24, InterpPreOpcodeHook hook);
 void interp_bridge_pre_opcode_redirect(uint32_t pc24);
 /* After a native primitive consumes its guest RTS/RTL frame, redirect to the
  * popped continuation and honor the active interpreter's return watermark.

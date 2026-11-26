@@ -19,8 +19,10 @@ static void package(const fs::path& root,const char *id,const char *name,const c
   fs::path dir=root/"packages"/id/"1.0.0";fs::create_directories(dir);
   std::ofstream f(dir/"manifest.toml");
   f<<"format_version = 1\nid = \""<<id<<"\"\nversion = \"1.0.0\"\nname = \""<<name<<"\"\n"
-     "resolver = \"declarative\"\n[[target]]\ngame_id = \"test\"\nrom_sha256 = \""<<kDigest<<"\"\n"
+     "author = \"Package author\"\nsource_name = \"Package source\"\nsource_url = \"https://example.invalid/package\"\nresolver = \"declarative\"\n[[target]]\ngame_id = \"test\"\nrom_sha256 = \""<<kDigest<<"\"\n"
      "[[feature]]\nid = \""<<feature<<"\"\nname = \""<<feature<<"\"\ndescription = \"Test.\"\ndefault_enabled = false\n";
+  if(!std::strcmp(id,"test.coop"))
+    f<<"author = \"Feature author\"\nsource_name = \"Feature source\"\nsource_url = \"https://example.invalid/feature\"\n";
   if(requires_list) f<<"requires = \""<<requires_list<<"\"\n";
   for(const char *plugin:plugins) f<<"[[plugin]]\nfeature = \""<<feature<<"\"\nid = \""<<plugin<<"\"\n";
 }
@@ -52,6 +54,18 @@ int main(int argc,char **argv) {
   p=snes_mod_runtime_launcher_provider_c();assert(p);
   RecompLauncherCModFeature f{};
   assert(get("test.learner",&f) && std::strstr(f.description,"Test. Requires Co-op."));
+  assert(!std::strcmp(f.author,"Package author") && !std::strcmp(f.source_name,"Package source") &&
+         !std::strcmp(f.source_url,"https://example.invalid/package"));
+  assert(get("test.coop",&f) && !std::strcmp(f.author,"Feature author") &&
+         !std::strcmp(f.source_name,"Feature source") && !std::strcmp(f.source_url,"https://example.invalid/feature"));
+  RecompLauncherCModPackage row{};
+  bool credited_package=false;
+  for(int i=0;i<p->package_count(p->ctx);++i)if(p->package_get(p->ctx,i,&row) && !std::strcmp(row.id,"test.zero")) {
+    assert(!std::strcmp(row.author,"Package author") && !std::strcmp(row.source_name,"Package source") &&
+           !std::strcmp(row.source_url,"https://example.invalid/package"));credited_package=true;
+  }
+  assert(credited_package);
+
 
   assert(p->feature_enable(p->ctx,"test.learner","learner",1));
   assert(enabled("test.learner") && enabled("test.coop") && !needs_attention("test.learner"));
@@ -84,6 +98,24 @@ int main(int argc,char **argv) {
   assert(SNESRecomp::mod_runtime_initialize(root,"test",kDigest));
   p=snes_mod_runtime_launcher_provider_c();assert(p);
   assert(enabled("test.learner") && !enabled("test.coop") && needs_attention("test.learner"));
+  // Credits are typed metadata, not an escape hatch for arbitrary fields.
+  const auto zero=root/"packages/test.zero/1.0.0/manifest.toml";
+  auto read=[](const fs::path& path){std::ifstream in(path);return std::string(std::istreambuf_iterator<char>(in),{});};
+  auto write=[](const fs::path& path,const std::string& text){std::ofstream(path)<<text;};
+  const std::string original=read(zero);
+  std::string bad=original;auto at=bad.find("source_name = \"Package source\"");assert(at!=std::string::npos);
+  bad.replace(at,std::strlen("source_name = \"Package source\""),"source_name = 17");write(zero,bad);
+  assert(!SNESRecomp::mod_runtime_initialize(root,"test",kDigest));
+  write(zero,original);
+  bad=original;at=bad.find("[[target]]");bad.insert(at,"unknown_credit_field = \"no\"\n");write(zero,bad);
+  assert(!SNESRecomp::mod_runtime_initialize(root,"test",kDigest));write(zero,original);
+  assert(SNESRecomp::mod_runtime_initialize(root,"test",kDigest));
+  char before[4096],after[4096];snes_mod_runtime_effective_set_c(before,sizeof before);
+  std::string renamed=original;at=renamed.find("Package source");assert(at!=std::string::npos);
+  renamed.replace(at,std::strlen("Package source"),"Different credit label");write(zero,renamed);
+  assert(SNESRecomp::mod_runtime_initialize(root,"test",kDigest));
+  snes_mod_runtime_effective_set_c(after,sizeof after);assert(!std::strcmp(before,after));
+  write(zero,original);
   package(root,"test.bad","Bad","bad","no-slash",{}); // Malformed entries reject the catalog.
   assert(!SNESRecomp::mod_runtime_initialize(root,"test",kDigest));
   puts("feature requires checks passed");

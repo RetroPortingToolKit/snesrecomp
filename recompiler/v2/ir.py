@@ -146,6 +146,16 @@ class ConstI(IROp):
     out: Value
 
 
+# cfg `mod_operand`: the immediate of a declared site, as the mod runtime
+# gives it (runner/src/mod_operand.c); `stock` is the ROM's operand.
+@dataclass(frozen=True)
+class ModOperand(IROp):
+    pc24: int
+    stock: int
+    width: int                 # 1 or 2
+    out: Value
+
+
 # ALU
 class AluOp(Enum):
     ADD = 'add'   # with carry

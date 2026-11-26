@@ -82,6 +82,9 @@ struct Option {
 struct Feature {
     std::string id;
     std::string name;
+    std::string author;
+    std::string source_name;
+    std::string source_url;
     std::string description;
     std::string group = "General";
     bool default_enabled = false;
@@ -177,6 +180,8 @@ struct Package {
     std::string version;
     std::string name;
     std::string author;
+    std::string source_name;
+    std::string source_url;
     std::string description;
     std::string license;
     fs::path root;
@@ -257,6 +262,11 @@ std::vector<SNESModFrameCallback>& frame_callbacks() {
 
 std::vector<SNESModApuWriteCallback>& apu_write_callbacks() {
     static std::vector<SNESModApuWriteCallback> value;
+    return value;
+}
+
+std::vector<SNESModInputTransform>& input_transforms() {
+    static std::vector<SNESModInputTransform> value;
     return value;
 }
 
@@ -692,6 +702,8 @@ bool read_manifest(const fs::path& path, Package& out, std::string* error) {
                 else if (key == "version") parsed = string_field(out.version);
                 else if (key == "name") parsed = string_field(out.name);
                 else if (key == "author") parsed = string_field(out.author);
+                else if (key == "source_name") parsed = string_field(out.source_name);
+                else if (key == "source_url") parsed = string_field(out.source_url);
                 else if (key == "description") parsed = string_field(out.description);
                 else if (key == "license") parsed = string_field(out.license);
                 else if (key == "resolver") {
@@ -712,6 +724,9 @@ bool read_manifest(const fs::path& path, Package& out, std::string* error) {
                 if (!feature) parsed = false;
                 else if (key == "id") parsed = string_field(feature->id);
                 else if (key == "name") parsed = string_field(feature->name);
+                else if (key == "author") parsed = string_field(feature->author);
+                else if (key == "source_name") parsed = string_field(feature->source_name);
+                else if (key == "source_url") parsed = string_field(feature->source_url);
                 else if (key == "description") parsed = string_field(feature->description);
                 else if (key == "group") parsed = string_field(feature->group);
                 else if (key == "default_enabled") {
@@ -2614,6 +2629,8 @@ int provider_package_get(void*, int index,
     copy_text(out->version, package.version);
     copy_text(out->name, package.name);
     copy_text(out->author, package.author);
+    copy_text(out->source_name, package.source_name);
+    copy_text(out->source_url, package.source_url);
     copy_text(out->description, package.description);
     copy_text(out->license, package.license);
     out->removable = !package.builtin_diagnostic;
@@ -2823,7 +2840,9 @@ int provider_feature_get(void*, int index,
     copy_text(out->package_version, package.version);
     copy_text(out->package_name, package.name);
     copy_text(out->name, feature.name);
-    copy_text(out->author, package.author);
+    copy_text(out->author, feature.author.empty() ? package.author : feature.author);
+    copy_text(out->source_name, feature.source_name.empty() ? package.source_name : feature.source_name);
+    copy_text(out->source_url, feature.source_url.empty() ? package.source_url : feature.source_url);
     std::string description = feature.description;
     for (const std::string& requirement : feature.requirements)
         description += (description.empty() ? "Requires " : " Requires ") +
@@ -3240,6 +3259,7 @@ void mod_runtime_activate_plugins() {
     if (!runtime.initialized) return;
     frame_callbacks().clear();
     apu_write_callbacks().clear();
+    input_transforms().clear();
     synthetic_sram_size() = 0;
     for (SNESModActivationCallback callback : reset_callbacks())
         if (callback) callback();
@@ -3314,6 +3334,27 @@ extern "C" int snes_mod_register_apu_write_callback(
         callbacks.push_back(callback);
     return 1;
     SNES_MOD_C_END(0)
+}
+
+extern "C" int snes_mod_register_input_transform(
+    SNESModInputTransform transform) {
+    SNES_MOD_C_BEGIN
+    if (!transform) return 0;
+    auto& transforms = SNESRecomp::input_transforms();
+    if (std::find(transforms.begin(), transforms.end(), transform) ==
+        transforms.end())
+        transforms.push_back(transform);
+    return 1;
+    SNES_MOD_C_END(0)
+}
+
+extern "C" uint16_t snes_mod_runtime_transform_input_c(
+    uint16_t buttons, const SnesModInputContext* ctx) {
+    SNES_MOD_C_BEGIN
+    for (SNESModInputTransform transform : SNESRecomp::input_transforms())
+        if (transform) buttons = (uint16_t)(transform(buttons, ctx) & 0x0fffu);
+    return buttons;
+    SNES_MOD_C_END(buttons)
 }
 
 extern "C" void snes_mod_runtime_frame_tick_c(void) {

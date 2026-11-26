@@ -359,6 +359,19 @@ static void test_state_menu_binding(void) {
 }
 
 int main(void) {
+  ConfigEnableInputActions(1);
+  write_file("[Controller]\nAction1Key=513\nAction1Pad=111\n");
+  ParseConfigFile(kPath);
+  CHECK(g_config.input_action_key[0]==513 && g_config.input_action_pad[0]==111,
+        "title keyboard/mouse/controller actions not parsed");
+  g_config.input_action_key[0]=33;g_config.input_action_pad[0]=9;
+  WriteConfigFile(kPath);ParseConfigFile(kPath);
+  CHECK(g_config.input_action_key[0]==33 && g_config.input_action_pad[0]==9,
+        "title actions did not survive restart");
+  g_config.input_action_key[0]=g_config.input_action_pad[0]=0;
+  WriteConfigFile(kPath);ParseConfigFile(kPath);
+  CHECK(!g_config.input_action_key[0] && !g_config.input_action_pad[0],
+        "cleared title action did not survive restart");
   test_fullscreen_roundtrip();
   test_player_sources_roundtrip();
   test_vsync_tristate();

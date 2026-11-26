@@ -7,9 +7,12 @@
 extern "C" {
 #endif
 
-/* Optional once-per-session execution-profile barrier, backed by recomp-net.
+/* Once-per-session execution-profile barrier, backed by recomp-net.
  * Call before start; actual CPU/backend capabilities, never OS heuristics.
- * The callback runs once before rollback boot capture or any guest frame. */
+ * The callback runs once before rollback boot capture or any guest frame.
+ * The canonical input schema is always required, even without this call.
+ * A supplied qualification is namespaced by that schema; zero selects the
+ * default portable profile namespace, and cannot disable the barrier. */
 void snes_netplay_set_profile_caps(uint32_t qualification,uint32_t cpu_features,
     uint32_t backends,uint32_t profiles,uint32_t architecture,
     void (*settled)(uint32_t profile,uint32_t transcript));
@@ -32,7 +35,8 @@ void snes_netplay_set_profile_caps(uint32_t qualification,uint32_t cpu_features,
  *   - While active, publish is the sole source of pads for RtlRunFrame.
  *
  * Pad blob (4 bytes per slot):
- *   [0..1] LE uint16 — 12 SNES controller bits (RtlRunFrame low 12 / 12..23)
+ *   [0..1] LE uint16 — 12 SNES controller bits plus 3 title actions (12..14),
+ *          packed with runner_input.h after receipt; never sent to guest pads.
  *   [2..3] optional game-defined deterministic sync bytes. Slot 0 is
  *          authoritative and its bytes are applied before each admitted frame.
  *

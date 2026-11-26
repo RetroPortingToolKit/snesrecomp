@@ -46,11 +46,12 @@ def expand_hirom_cfgs(parsed):
                     if value not in getattr(dst, name):
                         getattr(dst, name).append(value)
             for name in ('authority_insns', 'hle_spc_upload', 'hle_func',
-                         'hle_dispatch', 'entry_hook'):
+                         'hle_dispatch', 'entry_hook', 'mod_hook',
+                         'mod_hook_target'):
                 for pc, value in getattr(cfg, name).items():
                     if aliases(pc):
                         getattr(dst, name).setdefault(pc, deepcopy(value))
-            for name in ('terminal_jsr', 'noreturn_jsr', 'live_operand', 'brk_rti'):
+            for name in ('terminal_jsr', 'noreturn_jsr', 'live_operand', 'mod_operand', 'brk_rti'):
                 getattr(dst, name).update(pc for pc in getattr(cfg, name) if aliases(pc))
             for name in ('exclude_ranges', 'authority_data'):
                 for start, end in getattr(cfg, name):

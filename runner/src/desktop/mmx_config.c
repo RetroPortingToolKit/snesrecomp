@@ -43,6 +43,8 @@ static bool s_rewind_keys;
 void ConfigEnableRewindKeys(void) { s_rewind_keys = true; }
 static bool s_state_menu_pad_binding;
 void ConfigEnableStateMenuPadBinding(void) { s_state_menu_pad_binding = true; }
+static int s_input_actions;
+void ConfigEnableInputActions(int count) { s_input_actions = count >= 0 && count <= 3 ? count : 0; }
 bool ConfigHasPlayerSource(int player) {
   return (unsigned)player < kSnesHostPadSeats && s_player_src_seen[player];
 }
@@ -484,6 +486,19 @@ static bool HandleIniConfig(int section, const char *key, char *value) {
       }
     }
   } else if (section == 7) {
+    if (StringStartsWithNoCase(key, "Action") && key[6] >= '1' && key[6] <= '3' &&
+        (StringEqualsNoCase(key + 7, "Key") || StringEqualsNoCase(key + 7, "Pad"))) {
+      char *end; errno = 0;
+      long value_number = strtol(value, &end, 10);
+      while (*end == ' ' || *end == '\t') ++end;
+      bool pad = StringEqualsNoCase(key + 7, "Pad");
+      if (errno == ERANGE || end == value || (*end && *end != '#' && *end != ';') ||
+          value_number < 0 || value_number > INT_MAX ||
+          (!pad && (value_number > 517 || value_number == 512)) ||
+          (pad && !SnesHostPadBindingValid((int)value_number))) return false;
+      (pad ? g_config.input_action_pad : g_config.input_action_key)[key[6]-'1'] = (int)value_number;
+      return true;
+    }
     if (StringEqualsNoCase(key, "SaveStateMenuPad")) {
       char *end;
       errno = 0;
@@ -718,6 +733,8 @@ void ParseConfigFile(const char *filename) {
   g_config.display_aspect = kSnesDisplayAspect_Crt4x3;
   g_config.skip_launcher = false;
   g_config.state_menu_pad_binding = 0;
+  memset(g_config.input_action_key, 0, sizeof(g_config.input_action_key));
+  memset(g_config.input_action_pad, 0, sizeof(g_config.input_action_pad));
   /* Rewind's built-in ring, matching snes_rewind.c's own defaults so a host
    * that opts into the launcher rows starts from what it already had. */
   g_config.rewind_enabled = true;
@@ -932,6 +949,9 @@ void WriteConfigFile(const char *filename) {
     { "Sound",      "Volume" },
     { "Controller", "SourceP1" },
     { "Controller", "SaveStateMenuPad" },
+    { "Controller", "Action1Key" }, { "Controller", "Action1Pad" },
+    { "Controller", "Action2Key" }, { "Controller", "Action2Pad" },
+    { "Controller", "Action3Key" }, { "Controller", "Action3Pad" },
     { "Controller", "SourceP2" },
     { "GamepadMap", "EnableGamepad3" }, { "Controller", "SourceP3" },
     { "GamepadMap", "EnableGamepad4" }, { "Controller", "SourceP4" },
@@ -979,6 +999,15 @@ void WriteConfigFile(const char *filename) {
          g_config.renderer[0] ? g_config.renderer : "auto");
   CfgSet(kvs, N, "General", "RunAhead", "%d", g_config.run_ahead);
   CfgSet(kvs, N, "Sound", "Volume", "%d", g_config.volume);
+  for (int i = 0; i < 3; ++i) {
+    char key[24];
+    snprintf(key, sizeof(key), "Action%dKey", i + 1);
+    if (i < s_input_actions) CfgSet(kvs, N, "Controller", key, "%d", g_config.input_action_key[i]);
+    else CfgSkip(kvs, N, "Controller", key);
+    snprintf(key, sizeof(key), "Action%dPad", i + 1);
+    if (i < s_input_actions) CfgSet(kvs, N, "Controller", key, "%d", g_config.input_action_pad[i]);
+    else CfgSkip(kvs, N, "Controller", key);
+  }
   if (s_state_menu_pad_binding)
     CfgSet(kvs, N, "Controller", "SaveStateMenuPad", "%d", g_config.state_menu_pad_binding);
   else

@@ -1,3 +1,4 @@
+#include "runner_input.h"
 #include "snes_netplay.h"
 
 static struct {
@@ -6,12 +7,12 @@ static struct {
     int pending;
     const char *refusal;
     uint32_t started_ms;
-} g_profiles;
+} g_profiles={.qualification=SNES_INPUT_SCHEMA_ID,.profiles=1u};
 void snes_netplay_set_profile_caps(uint32_t qualification,uint32_t cpu_features,
     uint32_t backends,uint32_t profiles,uint32_t architecture,
     void (*settled)(uint32_t,uint32_t))
 {
-    g_profiles.qualification=qualification;g_profiles.cpu=cpu_features;
+    g_profiles.qualification=SnesInputQualification(qualification);g_profiles.cpu=cpu_features;
     g_profiles.backends=backends;g_profiles.profiles=profiles;
     g_profiles.architecture=architecture;g_profiles.settled=settled;
 }
@@ -339,7 +340,7 @@ static void np_apply_published(const uint16_t *buttons, int slots)
     if (slots > SNES_NETPLAY_MAX_SLOTS)
         slots = SNES_NETPLAY_MAX_SLOTS;
     for (i = 0; i < slots; ++i) {
-        g_np.published[i] = buttons[i] & 0x0FFFu;
+        g_np.published[i] = buttons[i] & SNES_INPUT_SEAT_MASK;
         if (i >= 2)
             RtlSetPadState(i, g_np.published[i]);
     }
@@ -575,7 +576,7 @@ static void host_publish(rnet_u32 tick, const RNetInputSample *by_slot, int slot
     }
     if (n > SNES_NETPLAY_MAX_SLOTS) n = SNES_NETPLAY_MAX_SLOTS;
     for (i = 0; i < n; ++i)
-        buttons[i] = decode_pad(&by_slot[i]) & 0x0FFFu;
+        buttons[i] = decode_pad(&by_slot[i]) & SNES_INPUT_SEAT_MASK;
     np_apply_published(buttons, n);
     /* Slot 0 carries the authoritative game-defined sync bytes. */
     if (by_slot[0].valid && by_slot[0].size >= 4) {
@@ -767,7 +768,7 @@ uint32_t snes_netplay_frames_finished(void)
 
 void snes_netplay_stage_local(uint16_t buttons)
 {
-    buttons &= 0x0FFFu;
+    buttons &= SNES_INPUT_SEAT_MASK;
     /* While the synchronized menu is up -- including the few ticks every
      * peer still runs to reach the pause tick -- menu navigation must not
      * become game input. */
@@ -822,7 +823,7 @@ int snes_netplay_peer_disconnected(uint32_t timeout_ms)
 
 uint32_t snes_netplay_published_inputs(void)
 {
-    return (uint32_t)g_np.published[0] | ((uint32_t)g_np.published[1] << 12);
+    return SnesInputPackSeat(g_np.published[0], 0) | SnesInputPackSeat(g_np.published[1], 1);
 }
 
 int snes_netplay_slot_count(void)

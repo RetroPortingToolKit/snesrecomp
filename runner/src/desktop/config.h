@@ -136,6 +136,7 @@ typedef struct Config {
   char launcher_gesture[64];
   /* Portable launcher pad binding; 0 uses the host default, -1 disables. */
   int state_menu_pad_binding;
+  int input_action_key[3], input_action_pad[3];
 
   /* Presentation and emulation options the desktop host offers through the
    * launcher's Display page, persisted by WriteConfigFile:
@@ -285,6 +286,7 @@ static inline int ConfigSeatForControl(int cmd) {
 void ConfigEnableRewindKeys(void);
 /* Permit the opted-in host to persist its editable controller shortcut. */
 void ConfigEnableStateMenuPadBinding(void);
+void ConfigEnableInputActions(int count);
 
 /* Analog stick deadzone, in raw axis units of a 32767 full scale. 10% is the
  * default because it clears a resting stick on the pads players actually own
