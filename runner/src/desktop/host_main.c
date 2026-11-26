@@ -174,6 +174,9 @@ static void SwitchDirectory(void);
 static void EnsureConfigIniNextToExe(const char *exe_path);
 static void OpenOneGamepad(int i);
 static void OpenOneJoystick(int i);
+static bool SeatHeldForOtherPad(int seat, uint32 joystick_id);
+static void RefreshGameCursor(bool force);
+static void SetOverlayModal(bool modal);
 static uint32 GetActiveControllers(void);
 static void HandleVolumeAdjustment(int volume_adjustment);
 static void ApplyVolume(void);
@@ -554,8 +557,7 @@ void snesrecomp_set_fullscreen(int mode)
     const uint32_t fs_mask = SNESRECOMP_SDL_WINDOW_FULLSCREEN_DESKTOP | SDL_WINDOW_FULLSCREEN;
     g_win_flags = (g_win_flags & ~fs_mask) | want;
     SDL_SetWindowFullscreen(g_window, want);
-    g_cursor = (want == 0);
-    snesrecomp_sdl_show_cursor(g_cursor);
+    RefreshGameCursor(true);
 }
 
 int snesrecomp_get_fullscreen(void)
@@ -1813,8 +1815,10 @@ static uint32 OverlayNavInputs(void) {
  * below the event layer, so it never saw it either. Returns true when the
  * event was one of ours. */
 static bool HandleDeviceEvent(const SDL_Event *event) {
-  if (g_window)
+  if (g_window) {
     g_mouse_buttons = keybinds_mouse_event(g_mouse_buttons, SDL_GetWindowID(g_window), event);
+    RefreshGameCursor(false);
+  }
   GamepadInfo *gi;
   switch (event->type) {
   case SDL_CONTROLLERDEVICEADDED:
@@ -1892,6 +1896,26 @@ static bool HandleDeviceEvent(const SDL_Event *event) {
  * bug as F1 through HandleInput. Controller bits still flow, so the panel
  * can be navigated. */
 static bool g_overlay_modal;
+
+/* The desktop pointer belongs to interactive UI, not the game image. SDL
+ * focus keeps it usable outside the game and over other application windows;
+ * no capture, relative motion or mouse-button routing changes are needed. */
+static void RefreshGameCursor(bool force) {
+  if (!g_window) return;
+  const bool visible = g_overlay_modal ||
+      SDL_GetKeyboardFocus() != g_window || SDL_GetMouseFocus() != g_window;
+  if (force || visible != g_cursor) {
+    snesrecomp_sdl_show_cursor(visible);
+    g_cursor = visible;
+  }
+}
+
+static void SetOverlayModal(bool modal) {
+  g_overlay_modal = modal;
+  /* The launcher may have changed SDL's cursor while it owned its window. */
+  RefreshGameCursor(true);
+}
+
 static void SetAudioPaused(bool paused);
 static void ResetAudioTimeline(void);
 
@@ -2478,7 +2502,7 @@ static void RunRasterInspector(bool *running, bool selftest) {
   }
   const uint8 was_paused = g_paused;
   g_raster_inspector = panel;
-  g_overlay_modal = true;
+  SetOverlayModal(true);
   g_paused = true;
   SetAudioPaused(true);
   unsigned presentation = 0;
@@ -2506,7 +2530,7 @@ static void RunRasterInspector(bool *running, bool selftest) {
   g_raster_inspector_dump = NULL;
   g_raster_inspector = NULL;
   free(panel);
-  g_overlay_modal = false;
+  SetOverlayModal(false);
   g_paused = was_paused;
   SetAudioPaused(g_paused);
   OverlayNoteClosed();
@@ -2526,7 +2550,7 @@ static void RunSavestateMenuLoop(bool *running) {
   unsigned frames = 0;
   host_report_breadcrumb("save-state browser OPEN - guest frozen until it "
                          "closes (pad B, or Escape/Backspace on the keyboard)");
-  g_overlay_modal = true;
+  SetOverlayModal(true);
   SetAudioPaused(true);
   while (snes_savestate_menu_is_open() && *running) {
     /* Key presses go straight to the overlay, NOT through HandleInput: the
@@ -2547,7 +2571,7 @@ static void RunSavestateMenuLoop(bool *running) {
     SDL_Delay(8);
     frames++;
   }
-  g_overlay_modal = false;
+  SetOverlayModal(false);
   ResetAudioTimeline();
   SetAudioPaused(g_paused);
   OverlayNoteClosed();
@@ -2585,7 +2609,7 @@ static void RunRewindLoop(bool *running) {
   unsigned frames = 0;
   host_report_breadcrumb("rewind filmstrip OPEN - guest frozen until it closes "
                          "(pad B, or Escape; Left/Right scrub, A or Enter commits)");
-  g_overlay_modal = true;
+  SetOverlayModal(true);
   SetAudioPaused(true);
   while (snes_rewind_is_open() && *running) {
     PumpOverlayEvents(running, &RewindKeyDown);
@@ -2622,7 +2646,7 @@ static void RunRewindLoop(bool *running) {
     SDL_Delay(8);
     frames++;
   }
-  g_overlay_modal = false;
+  SetOverlayModal(false);
   ResetAudioTimeline();
   SetAudioPaused(g_paused);
   g_state_generation = RtlStateGeneration(); /* keep the trimmed rewind history */
@@ -3488,6 +3512,11 @@ static void LauncherSeed(RecompLauncherCSettings *ls, RecompLauncherCGameInfo *g
   for (int seat = 2; seat < kSnesHostPadSeats && seat < RECOMP_LAUNCHER_MAX_PLAYERS; ++seat)
     ls->player_src[seat] = ConfigHasPlayerSource(seat) ? g_config.player_src[seat]
                                                        : (g_config.enable_gamepad[seat] ? 2 : 0);
+#if defined(RECOMP_LAUNCHER_HAS_PLAYER_GAMEPAD_GUID)
+  for (int seat = 0; seat < kSnesHostPadSeats && seat < RECOMP_LAUNCHER_MAX_PLAYERS; ++seat)
+    snprintf(ls->player_gamepad_guid[seat], sizeof(ls->player_gamepad_guid[seat]),
+             "%s", g_config.player_guid[seat]);
+#endif
   /* Config stores deadzone as a raw stick radius; the launcher edits a
    * 0-100%. Convert in both directions, ROUNDING each way: truncating
    * both made the round trip lossy -- 10% saved as 32767/10 = 3276 read
@@ -3671,6 +3700,9 @@ static void LauncherCommit(const RecompLauncherCSettings *ls, const char *config
     if (seat >= 2 && seat >= HostConfiguredSeats()) break;
     g_config.player_src[seat]     = ls->player_src[seat];
     g_config.enable_gamepad[seat] = ls->player_src[seat] == 2;
+#if defined(RECOMP_LAUNCHER_HAS_PLAYER_GAMEPAD_GUID)
+    ConfigSetPlayerGuid(seat, ls->player_gamepad_guid[seat]);
+#endif
 #if defined(RECOMP_LAUNCHER_HAS_PLAYER_GAMEPAD_INSTANCE) && SNESRECOMP_SDL3
     g_seat_instance[seat] = ls->player_src[seat] == 2 ? ls->player_gamepad_instance[seat] : 0;
 #endif
@@ -3735,8 +3767,7 @@ static void ApplyLiveSettings(const Config *before) {
                 : g_config.fullscreen      ? SNESRECOMP_SDL_WINDOW_FULLSCREEN_DESKTOP : 0;
     g_win_flags = (g_win_flags & ~fs_mask) | want;
     SDL_SetWindowFullscreen(g_window, want);
-    g_cursor = want == 0;
-    snesrecomp_sdl_show_cursor(g_cursor);
+    RefreshGameCursor(true);
   }
   /* The window follows the scale and, through WindowBaseWidth, the pixel
    * aspect -- but only a window that is a window, and only one the player
@@ -3772,7 +3803,11 @@ static void ApplyLiveSettings(const Config *before) {
   bool seats_changed = false;
   for (int seat = 0; seat < kSnesHostPadSeats; ++seat)
     seats_changed |= g_config.player_src[seat] != before->player_src[seat] ||
-                     g_config.enable_gamepad[seat] != before->enable_gamepad[seat];
+                     g_config.enable_gamepad[seat] != before->enable_gamepad[seat] ||
+                     (g_config.enable_gamepad[seat] &&
+                      strcmp(g_config.player_guid[seat], before->player_guid[seat]) != 0) ||
+                     (g_config.enable_gamepad[seat] &&
+                      SeatHeldForOtherPad(seat, (uint32)g_gamepad[seat].joystick_id));
   if (seats_changed)
     ReassignGamepads();
 }
@@ -3832,7 +3867,7 @@ static void RunInGameLauncher(bool *running, const char **exit_reason) {
   size_t mods_before_len = 0;
   uint8 *mods_before = g_mod_state_path[0]
       ? ReadWholeFile(g_mod_state_path, &mods_before_len) : NULL;
-  g_overlay_modal = true;
+  SetOverlayModal(true);
   SetAudioPaused(true);
   SDL_HideWindow(g_window);
   /* This process keeps running after the launcher's window closes. */
@@ -3856,7 +3891,7 @@ static void RunInGameLauncher(bool *running, const char **exit_reason) {
    * was the last visible one). That close meant "back to the game". */
   SDL_FlushEvent(SDL_QUIT);
   /* The launcher's ImGui backend shows the cursor every frame. */
-  snesrecomp_sdl_show_cursor(g_cursor);
+  RefreshGameCursor(true);
   if (g_renderer_funcs.Reconfigure) g_renderer_funcs.Reconfigure();
 
   if (act == RECOMP_LAUNCHER_RESULT_QUIT) {
@@ -3922,7 +3957,7 @@ static void RunInGameLauncher(bool *running, const char **exit_reason) {
     }
   }
   free(mods_before);
-  g_overlay_modal = false;
+  SetOverlayModal(false);
   ResetAudioTimeline();
   SetAudioPaused(g_paused);
   OverlayNoteClosed();
@@ -4778,6 +4813,7 @@ error_reading:;
 
   snes_savestate_menu_set_compose(ComposeStateThumbnail);
   host_report_breadcrumb("entering main loop");
+  RefreshGameCursor(true);
 
   while (running && !HeadlessCapture_Failed()) {
     g_profile_frame = frameCtr + 1;
@@ -4943,11 +4979,11 @@ error_reading:;
       }
       g_state_menu_pad_hotkey = false;
       if (snes_netplay_menu_paused() && !g_overlay_modal) {
-        g_overlay_modal = true;
+        SetOverlayModal(true);
         SetAudioPaused(true);
         snes_osd_push("Host is managing savestates", 3000);
       } else if (!snes_netplay_menu_paused() && g_overlay_modal) {
-        g_overlay_modal = false;
+        SetOverlayModal(false);
         GameReset();
         ResetAudioTimeline();
         SetAudioPaused(false);
@@ -5402,6 +5438,8 @@ error_reading:;
   SnesHdCaptureDestroy(g_hd_capture); g_hd_capture = NULL;
   free(g_hd_osd); g_hd_osd = NULL; g_hd_osd_capacity = 0;
 
+  snesrecomp_sdl_show_cursor(true);
+  g_cursor = true;
   SDL_DestroyWindow(window);
   SDL_Quit();
   /* After everything is released -- the audio device, the window, the SRAM
@@ -5509,8 +5547,7 @@ static void HandleCommand(uint32 j, bool pressed) {
     case kKeys_Fullscreen:
       g_win_flags ^= SNESRECOMP_SDL_WINDOW_FULLSCREEN_DESKTOP;
       SDL_SetWindowFullscreen(g_window, g_win_flags & SNESRECOMP_SDL_WINDOW_FULLSCREEN_DESKTOP);
-      g_cursor = !g_cursor;
-      snesrecomp_sdl_show_cursor(g_cursor);
+      RefreshGameCursor(true);
       /* Keep the config in step with the window: the launcher reads
        * g_config.fullscreen to seed its Display row, and the shutdown write
        * persists it. Without this, toggling fullscreen in-game and quitting
@@ -5618,6 +5655,17 @@ static bool SeatHeldForOtherPad(int j, uint32 joystick_id) {
 #endif
 }
 
+static bool SeatGuidMatches(int seat, SDL_Joystick *joystick) {
+  if (!g_config.player_guid[seat][0]) return true;
+  char guid[33];
+#if SNESRECOMP_SDL3
+  SDL_GUIDToString(SDL_GetJoystickGUID(joystick), guid, sizeof(guid));
+#else
+  SDL_JoystickGetGUIDString(SDL_JoystickGetGUID(joystick), guid, sizeof(guid));
+#endif
+  return strcmp(guid, g_config.player_guid[seat]) == 0;
+}
+
 static void OpenOneGamepad(int i) {
   if (!SDL_IsGameController(i)) {
     OpenOneJoystick(i);
@@ -5658,7 +5706,8 @@ static void OpenOneGamepad(int i) {
   for (int k = 0; found_idx < 0 && k < 1 + kSnesHostPadSeats; k++) {
     uint8 j = scan_order[k];
     if (j < seats && g_config.enable_gamepad[j] && g_gamepad[j].joystick_id == -1 &&
-        !SeatHeldForOtherPad(j, joystick_id)) {
+        !SeatHeldForOtherPad(j, joystick_id) &&
+        SeatGuidMatches(j, SDL_GameControllerGetJoystick(controller))) {
       found_idx = j;
       break;
     }
@@ -5670,6 +5719,8 @@ static void OpenOneGamepad(int i) {
     memset(gi, 0, sizeof(GamepadInfo));
     gi->index = found_idx;
     gi->joystick_id = joystick_id;
+  } else {
+    SDL_GameControllerClose(controller);
   }
 }
 
@@ -5685,7 +5736,7 @@ static void OpenOneJoystick(int i) {
   int slot = -1;
   for (int j = 0; j < HostConfiguredSeats(); ++j) {
     if (g_config.enable_gamepad[j] && g_gamepad[j].joystick_id == -1 &&
-        !SeatHeldForOtherPad(j, (uint32)id)) {
+        !SeatHeldForOtherPad(j, (uint32)id) && SeatGuidMatches(j, joystick)) {
       slot = j; break;
     }
   }
