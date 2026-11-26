@@ -194,6 +194,9 @@ typedef struct Config {
 
   // Which players have keyboard controls
   uint8 has_keyboard_controls;
+  /* Saved SDL model preference. Live instance reservations distinguish
+   * identical controllers; an empty GUID preserves legacy automatic seating. */
+  char player_guid[kSnesHostPadSeats][33];
 } Config;
 
 enum {
@@ -257,6 +260,9 @@ bool ConfigDeadzoneMigrated(void);
  * device, and the caller falls back to the older EnableGamepadN spelling
  * rather than to the seeded default. player is 0 or 1. */
 bool ConfigHasPlayerSource(int player);
+/* Accept an empty preference or a 32-digit SDL GUID, canonicalized to lowercase.
+ * Invalid input leaves the previous preference untouched. */
+bool ConfigSetPlayerGuid(int player, const char *value);
 
 /* Seats the host routes (2 without a multitap, up to kSnesHostPadSeats).
  * WriteConfigFile persists EnableGamepadN / SourcePN only for these, so a

@@ -358,7 +358,34 @@ static void test_state_menu_binding(void) {
   CHECK(g_config.state_menu_pad_binding == 0, "overflowing shortcut was accepted");
 }
 
+static void test_guid_preference_roundtrip(void) {
+  const char *lower = "aabbccddeeff00112233445566778899";
+  const char *second = "11223344556677889900aabbccddeeff";
+  ConfigSetPadSeats(2);
+  write_file("[Controller]\n"
+             "GuidP1=AABBCCDDEEFF00112233445566778899\n"
+             "GuidP2=\n"
+             "GuidP3=03000000000000000000000000000003\n"
+             "[Controller.11223344556677889900aabbccddeeff]\nControls=A,B,X,Y\n");
+  ParseConfigFile(kPath);
+  CHECK(!strcmp(g_config.player_guid[0], lower), "GUID must canonicalize");
+  CHECK(!g_config.player_guid[1][0], "empty GUID preserves automatic choice");
+  CHECK(ConfigSetPlayerGuid(1, second), "valid second GUID");
+  CHECK(!ConfigSetPlayerGuid(1, "bad"), "reject short GUID");
+  CHECK(!ConfigSetPlayerGuid(1, "11223344556677889900aabbccddeeffx"), "reject trailing junk");
+  CHECK(!ConfigSetPlayerGuid(kSnesHostPadSeats, second), "reject invalid seat");
+  CHECK(!strcmp(g_config.player_guid[1], second), "invalid input preserves preference");
+  WriteConfigFile(kPath);
+  char *text = read_file();
+  CHECK(strstr(text, "GuidP3=03000000000000000000000000000003"), "unrouted seat remains intact");
+  CHECK(strstr(text, "Controls=A,B,X,Y"), "saved profile remains intact");
+  ParseConfigFile(kPath);
+  CHECK(!strcmp(g_config.player_guid[0], lower), "first preference survives restart");
+  CHECK(!strcmp(g_config.player_guid[1], second), "second preference survives restart");
+}
+
 int main(void) {
+  test_guid_preference_roundtrip();
   test_fullscreen_roundtrip();
   test_player_sources_roundtrip();
   test_vsync_tristate();
