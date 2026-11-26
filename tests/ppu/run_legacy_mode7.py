@@ -31,7 +31,8 @@ def main():
                         '-c', str(source), '-o', str(build/'native.o')], check=True)
         executable = build/('contract.exe' if os.name == 'nt' else 'contract')
         subprocess.run([args.cc, *flags, str(root/'tests/ppu/ppu_legacy_mode7_test.c'),
-                        str(build/'reference.o'), str(build/'native.o'), '-lm',
+                        str(build/'reference.o'), str(build/'native.o'),
+                        str(root/'runner/src/snes/hd_jobs.c'), '-lm',
                         '-o', str(executable)], check=True)
         subprocess.run([str(executable)], check=True)
 

@@ -75,9 +75,17 @@ static inline bool ppu_mode7_window_test(unsigned mode, bool inside) {
 static void ppu_draw_mode7_line_native(Ppu *p, int line) {
   const int left = -p->extraLeftCur, right = 256 + p->extraRightCur;
   uint8_t *dst = p->renderBuffer + (line - 1) * p->renderPitch +
-      (p->extraLeftRight + left) * 4;
+      (p->extraFrameLeft + left) * 4;
+  uint8_t *sub_dst = NULL;
+  if (p->hiresBuffer && line > 0 && line <= 240 && PPU_pseudoHires(p)) {
+    p->hiresLines[line == 240 ? 0 : line] = 1;
+    p->hiresAny = true;
+    sub_dst = p->hiresBuffer + (line - 1) * p->hiresPitch +
+        (p->extraFrameLeft + left) * 4;
+  }
   if (PPU_forcedBlank(p)) {
     memset(dst, 0, (right - left) * 4);
+    if (sub_dst) memset(sub_dst, 0, (right - left) * 4);
     return;
   }
   const bool ext = PPU_m7extBg(p), direct = PPU_directColor(p);
@@ -129,10 +137,15 @@ static void ppu_draw_mode7_line_native(Ppu *p, int line) {
       unsigned layer = (top >> 8) & 15;
       unsigned color = clip ? 0 : ppu_mode7_color(p, top, x, direct);
       bool enabled = layer < 6 && (math & (1u << layer));
+      uint16_t second = (sub_dst || (enabled && (add || pseudo))) ?
+          ppu_mode7_top(sub, bg0, bg1, object, ext) : 0x0500;
+      bool backdrop = ((second >> 8) & 15) == 5;
+      /* Publish the resolved sub dot before main-screen clip/math. It uses
+       * the same layer windows and master brightness as the legacy path. */
+      unsigned sub_color = (sub_dst || (enabled && add && !backdrop)) ?
+          ppu_mode7_color(p, second, x, direct) : 0;
       if (enabled) {
-        uint16_t second = (add || pseudo) ? ppu_mode7_top(sub, bg0, bg1, object, ext) : 0x0500;
-        bool backdrop = ((second >> 8) & 15) == 5;
-        unsigned other = add && !backdrop ? ppu_mode7_color(p, second, x, direct) : fixed;
+        unsigned other = add && !backdrop ? sub_color : fixed;
         unsigned result = 0;
         for (unsigned component = 0; component < 3; ++component) {
           int a = (color >> (component * 5)) & 31;
@@ -152,6 +165,13 @@ static void ppu_draw_mode7_line_native(Ppu *p, int line) {
       dst[2] = brightness[color & 31];
       dst[3] = 0;
       dst += 4;
+      if (sub_dst) {
+        sub_dst[0] = brightness[(sub_color >> 10) & 31];
+        sub_dst[1] = brightness[(sub_color >> 5) & 31];
+        sub_dst[2] = brightness[sub_color & 31];
+        sub_dst[3] = 0;
+        sub_dst += 4;
+      }
     }
   }
 }

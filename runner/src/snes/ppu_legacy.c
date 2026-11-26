@@ -84,6 +84,11 @@ void ppu_draw_whole_line_legacy(Ppu *ppu, int line) {
 #endif
   int left = -ppu->extraLeftCur;
   int right = 256 + ppu->extraRightCur;
+  if (ppu->hiresBuffer && line > 0 && line <= 240 &&
+      (PPU_pseudoHires(ppu) || PPU_mode(ppu) == 5 || PPU_mode(ppu) == 6)) {
+    ppu->hiresLines[line == 240 ? 0 : line] = 1;
+    ppu->hiresAny = true;
+  }
   for (int x = left; x < right; x++) {
     ppu_render_pixel(ppu, x, line);
   }
@@ -147,6 +152,15 @@ static void ppu_render_pixel(Ppu *ppu, int x, int y) {
   pixelBuffer[1] = ppu_brightness_level((unsigned)g, PPU_brightness(ppu));
   pixelBuffer[2] = ppu_brightness_level((unsigned)r, PPU_brightness(ppu));
   pixelBuffer[3] = 0;
+  /* Hi-res: the even column is the sub-screen pixel (r2/g2/b2 above), at the
+   * same frame column as the main one. */
+  if (ppu->hiresBuffer && ppu->hiresLines[y < 240 ? y : 0]) {
+    uint8 *sub = &ppu->hiresBuffer[row * ppu->hiresPitch + (x + ppu->extraFrameLeft) * 4];
+    sub[0] = ppu_brightness_level((unsigned)b2, PPU_brightness(ppu));
+    sub[1] = ppu_brightness_level((unsigned)g2, PPU_brightness(ppu));
+    sub[2] = ppu_brightness_level((unsigned)r2, PPU_brightness(ppu));
+    sub[3] = 0;
+  }
 }
 
 static int ppu_resolve_pixel(Ppu *ppu, int x, int y, bool sub,

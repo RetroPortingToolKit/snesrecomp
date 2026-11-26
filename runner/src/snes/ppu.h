@@ -353,6 +353,13 @@ struct Ppu {
   uint8_t *renderBuffer;
   SnesHdFrame *hdFrame; /* Optional presentation builder; never serialized. */
   SnesHdCapture *hdCapture; /* Optional host-owned lazy publisher. */
+  /* Optional hi-res surface (PpuBindHiresSurface): host memory, never guest
+   * state. hiresLines[y % 240] marks beam lines 1..240. Beginning a new
+   * drawing field clears these marks. Prefer PpuHiresLine to raw indexing. */
+  uint8_t *hiresBuffer;
+  uint32_t hiresPitch;
+  uint8_t hiresLines[240];
+  bool hiresAny;
   /* Optional host picture memory. Drawing only: CPU ports and save states
    * always use vram. The caller owns 32768 words until unbound. */
   const uint16_t *renderVram;
@@ -773,6 +780,34 @@ void PpuSetWidescreenLineEnhancer(Ppu *ppu,
 void PpuClearOverlayBindings(Ppu *ppu);
 bool PpuBindOverlaySurface(Ppu *ppu, PpuOverlaySource source,
                            uint8_t *pixels, size_t pitch);
+
+// HI-RES SURFACE. In BG modes 5/6 and with pseudo hi-res ($2133 bit 3) each
+// column holds two dots: the sub screen in the even one, the main screen in
+// the odd one. renderBuffer always receives the main screen. A host that
+// binds this surface (passing renderBuffer's pitch; same layout, BGRX) also
+// receives the sub-screen dot of every hi-res line, and can interleave the two
+// into 512 columns. Lines that are not hi-res are not written;
+// PpuHiresLine/PpuHiresFrame say which rows were. renderBuffer is unchanged
+// for a host that binds nothing; with a surface bound, pseudo hi-res lines in
+// modes 0-3 are drawn by the compatibility renderer, which computes both
+// dots. NULL unbinds; reset preserves the binding, like renderBuffer.
+// Emulated state is unchanged.
+//
+// What the sub-screen dot holds: the sub-screen colour as resolved by the
+// compatibility renderer (layers, sub-screen windows, mosaic; an empty sub
+// screen shows the backdrop CGRAM[0], as hardware does in hi-res), at the
+// master brightness. The colour window's clip-to-black and colour math are
+// NOT applied to it. The main dot keeps both; where CGWSEL selects the sub
+// screen as operand, it uses this colour, or the fixed colour where the sub
+// dot is the backdrop. Mesen2 and bsnes also clip and blend the sub dot, but
+// gate it on different columns' window state; that is left for a later
+// change.
+bool PpuBindHiresSurface(Ppu *ppu, uint8_t *pixels, size_t pitch);
+// Row y (1..239) of the current frame was drawn in hi-res into the surface.
+bool PpuHiresLine(const Ppu *ppu, int y);
+// Any row of the current frame was. The marks are cleared when line 1 of the
+// next frame is drawn (a frame-model host never passes line 0).
+bool PpuHiresFrame(const Ppu *ppu);
 
 // Clear per-frame capture policy, then configure an arbitrary screen-space
 // rectangle from BG1-BG4 or OBJ. With RemoveFromGame, pixels inside the rect
