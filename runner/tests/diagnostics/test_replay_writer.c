@@ -5,12 +5,6 @@
 #include <stdlib.h>
 #include <string.h>
 
-static SDL_atomic_t gated,entered,released;
-void SnesReplayWriterTestGate(void) {
-  if(!SDL_AtomicGet(&gated))return;
-  SDL_AtomicSet(&entered,1);
-  while(!SDL_AtomicGet(&released))SDL_Delay(1);
-}
 static uint32_t hash(const void *p,size_t n) {
   const unsigned char *b=p;uint32_t h=2166136261u;
   while(n--)h=(h^*b++)*16777619u;return h;
@@ -68,22 +62,17 @@ int main(void) {
     }
   }
   assert(fgetc(trace)==EOF);fclose(trace);
-  SDL_AtomicSet(&gated,1);w=SnesReplayWriterCreate();assert(w);
-  uint32_t start=(uint32_t)SDL_GetTicks();
-  while(!SDL_AtomicGet(&entered) && (uint32_t)SDL_GetTicks()-start<3000)SDL_Delay(1);
-  assert(SDL_AtomicGet(&entered));
-  assert(SnesReplayWriterBegin(w,"stalled.replay","header\n","config.ini","absent.toml","mods\n"));
-  start=(uint32_t)SDL_GetTicks();unsigned accepted=0;
-  while(SnesReplayWriterSnapshot(w,snapshot,SIZE))++accepted;
-  assert(accepted>0 && accepted<100 && (uint32_t)SDL_GetTicks()-start<1000);
-  assert(strstr(SnesReplayWriterError(w),"queue full"));
-  SDL_AtomicSet(&released,1);assert(strstr(SnesReplayWriterDestroy(w),"queue full"));
-  state=fopen("stalled.replay.sav","rb");assert(state);assert(!fseek(state,0,SEEK_END));
-  assert(ftell(state)==(long)(accepted*SIZE));fclose(state);
-  SDL_AtomicSet(&gated,0);w=SnesReplayWriterCreate();assert(w);
+  /* Queue saturation belongs to the actual provider tests (replay_bounds).
+   * This adapter rejects an oversized request before reading its payload. */
+  w=SnesReplayWriterCreate();assert(w);
+  assert(!SnesReplayWriterSnapshot(w,snapshot,16u*1024u*1024u));
+  assert(strstr(SnesReplayWriterError(w),"oversized"));
+  assert(!SnesReplayWriterLine(w,"after failure\n"));
+  assert(strstr(SnesReplayWriterDestroy(w),"oversized"));
+  w=SnesReplayWriterCreate();assert(w);
   assert(SnesReplayWriterBegin(w,"missing/capture.replay","header\n","config.ini","absent.toml","mods\n"));
   assert(strstr(SnesReplayWriterDestroy(w),"write failed"));
   free(snapshot);SDL_Quit();
-  puts("PASS replay ordered writes, binary wrap, owned frame hashes, blocked sink, I/O failure");
+  puts("PASS replay ordered writes, binary wrap, owned frame hashes, adapter bounds, I/O failure");
   return 0;
 }

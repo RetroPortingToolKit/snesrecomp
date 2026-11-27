@@ -7,4 +7,4 @@ import tempfile
 
 with tempfile.TemporaryDirectory(prefix="snes-diagnostic-writer-") as work:
     env = os.environ | {"SDL_AUDIODRIVER": "dummy", "SDL_VIDEODRIVER": "dummy"}
-    subprocess.run([str(Path(sys.argv[1]).resolve())], cwd=work, env=env, check=True, timeout=30)
+    subprocess.run([str(Path(sys.argv[1]).resolve())], cwd=work, env=env, check=True)

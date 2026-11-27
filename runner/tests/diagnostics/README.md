@@ -10,7 +10,7 @@ and FNV-1a hashes of **owned copies** of the four caller-selected frame regions.
 The caller still serializes a machine checkpoint at a safe simulation boundary.
 The backend never reads live emulated memory from another thread.
 
-Both queues use SDL acquire/release atomics and work with SDL2 or SDL3. A full
+Both adapters use the shared diagnostics provider and work with SDL2 or SDL3. A full
 queue or failed disk operation stops that trace with an explicit error; neither
 producer waits for the filesystem, grows a backlog, or silently drops a row and
 continues claiming a complete recording. A full queue drains the accepted
