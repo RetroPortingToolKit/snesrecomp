@@ -44,6 +44,7 @@ from snes_cycles import (  # noqa: E402
 )
 from snes65816 import (  # noqa: E402
     ABS_X as _MODE_ABS_X, ABS_Y as _MODE_ABS_Y, IMM as _MODE_IMM,
+    INDIR_Y as _MODE_INDIR_Y,
     get_rom_mapping, ROM_MAP_SA1, rom_offset,
 )
 from v2.ir import (  # noqa: E402
@@ -250,7 +251,8 @@ def _block_speed(bank: int, pc: int):
     return runtime_code_speed(((bank & 0xFF) << 16) | (pc & 0xFFFF))
 
 
-def _dynamic_charge_lines(insn, speed_expr: str = "8") -> List[str]:
+def _dynamic_charge_lines(insn, speed_expr: str = "8",
+                          region_paced: bool = False) -> List[str]:
     """Runtime-only per-instruction cycle charges (Axis-2 step C dynamics),
     emitted as conditional `cpu->cycles += 1;` statements just before the
     instruction's effect. Branch-taken is charged at the terminator instead.
@@ -259,9 +261,12 @@ def _dynamic_charge_lines(insn, speed_expr: str = "8") -> List[str]:
     the master-clock accumulator stays region-weighted-consistent with `cycles`.
 
     Covered: D.l != 0 (any DP mode); index page-cross for abs,X / abs,Y READS
-    (the base is the static operand; the index is the live register). NOT yet
-    covered (documented residual, measured against bsnes): (dp),Y page-cross
-    (runtime pointer) and MVN/MVP per-byte (the static charge counts one byte).
+    (the base is the static operand; the index is the live register); (dp),Y
+    READ page-cross when the pointer lies in low WRAM (previewed without a bus
+    read; the region-paced recipe charges it from its own pointer read). NOT
+    yet covered (documented residual, measured against bsnes): (dp),Y with the
+    pointer outside low WRAM. MVN/MVP charge each further byte in their own
+    loop (codegen._emit_blockmove).
     """
     op = getattr(insn, 'opcode', None)
     if op is None:
@@ -285,8 +290,18 @@ def _dynamic_charge_lines(insn, speed_expr: str = "8") -> List[str]:
                 f"if ((0x{base:04X} & 0xFF00) != ((0x{base:04X} + cpu->Y) & 0xFF00))"
                 f" {{ cpu->cycles += 1; cpu->master_cycles += {speed_expr}; }}"
                 f"  /* abs,Y read page-cross */")
-        # INDIR_Y (dp),Y: effective pointer is loaded at runtime from DP — not
-        # reconstructable from the static operand; left as a measured residual.
+        elif mode == _MODE_INDIR_Y and not region_paced:
+            # (dp),Y: the pointer is only known at run time. Preview it from
+            # low WRAM like the region-paced recipe does (no bus read, open
+            # bus and clocks untouched); a pointer elsewhere stays a residual.
+            dp = getattr(insn, 'operand', 0) & 0xFF
+            out.append(
+                f"{{ uint16 _dpy_at = (uint16)(cpu->D + 0x{dp:02X}u); "
+                f"if (_dpy_at < 0x1FFFu) {{ "
+                f"uint16 _dpy_ptr = (uint16)(cpu->ram[_dpy_at] | (cpu->ram[_dpy_at + 1u] << 8)); "
+                f"if ((_dpy_ptr & 0xFF00) != ((uint16)(_dpy_ptr + cpu->Y) & 0xFF00))"
+                f" {{ cpu->cycles += 1; cpu->master_cycles += {speed_expr}; }} }} }}"
+                f"  /* (dp),Y read page-cross */")
     return out
 
 
@@ -1728,8 +1743,9 @@ def emit_function(rom: bytes, bank: int, start: int,
                     )
                 continue
             # Axis-2 step C dynamics: charge runtime-only modifiers (D.l != 0,
-            # abs,X/Y read page-cross) for this instruction before its effect.
-            for _ln in _dynamic_charge_lines(di_insn, _blk_spd_expr):
+            # abs,X/Y and (dp),Y read page-cross) for this instruction before
+            # its effect.
+            for _ln in _dynamic_charge_lines(di_insn, _blk_spd_expr, region_paced):
                 lines.append(_ln)
             for op in ir_ops:
                 if isinstance(op, CondBranch):
