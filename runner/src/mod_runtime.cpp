@@ -118,6 +118,9 @@ struct Feature {
     /* requires = "package/feature[, ...]": features this one cannot run
      * without. Enabling it enables them; losing one disables it. */
     std::vector<std::string> requirements;
+    /* Choice options assigning exclusive positions/resources within this
+     * feature. Conflicts use the ordinary pre-Play diagnostics. */
+    std::vector<std::string> distinct_options;
 };
 
 struct Target {
@@ -506,6 +509,21 @@ bool parse_requirements(const std::string& text, std::vector<std::string>& out) 
     return !out.empty();
 }
 
+bool parse_option_ids(const std::string& text, std::vector<std::string>& out) {
+    out.clear();
+    std::set<std::string> seen;
+    size_t start = 0;
+    while (start <= text.size()) {
+        size_t end = text.find(',', start);
+        if (end == std::string::npos) end = text.size();
+        std::string id = trim(text.substr(start, end - start));
+        if (!valid_id(id) || !seen.insert(id).second) return false;
+        out.push_back(id);
+        start = end + 1;
+    }
+    return out.size() >= 2;
+}
+
 bool parse_hex_u32(const std::string& text, uint32_t& out) {
     std::string t = trim(text);
     if (t.size() >= 2 && (t[0] == '"' || t[0] == '\'')) {
@@ -739,6 +757,9 @@ bool read_manifest(const fs::path& path, Package& out, std::string* error) {
                 } else if (key == "requires") {
                     parsed = parse_string(value, string_value) &&
                              parse_requirements(string_value, feature->requirements);
+                } else if (key == "distinct_options") {
+                    parsed = parse_string(value, string_value) &&
+                             parse_option_ids(string_value, feature->distinct_options);
                 } else if (key == "experimental") {
                     parsed = parse_bool(value, bool_value);
                     if (parsed) feature->experimental = bool_value;
@@ -900,6 +921,15 @@ bool read_manifest(const fs::path& path, Package& out, std::string* error) {
                          }))) {
             set_error(error, "choice option has no valid choices");
             return false;
+        }
+    }
+    for (const Feature& item : out.features) {
+        for (const std::string& id : item.distinct_options) {
+            const Option* option = find_option(out, item.id, id);
+            if (!option || option->type != OptionType::Choice) {
+                set_error(error, "distinct_options must name choice options in the same feature: " + id);
+                return false;
+            }
         }
     }
     std::set<std::pair<std::string, std::string>> resource_ids;
@@ -1564,6 +1594,22 @@ Validation validate(Runtime& runtime) {
                               ", which is turned off."
                         : "Requires " + requirement + ", which is not installed."
                 });
+            }
+            std::map<std::string, const Option*> assignments;
+            for (const std::string& id : feature.distinct_options) {
+                const Option* option = find_option(*package, feature.id, id);
+                if (!option) continue; /* declarations were checked while loading */
+                const std::string value = option_value(runtime, *package, feature, *option);
+                const auto inserted = assignments.emplace(value, option);
+                if (!inserted.second) {
+                    result.ok = false;
+                    result.diagnostics.push_back({
+                        package->id, feature.id, {}, {},
+                        "distinct-options:" + id,
+                        inserted.first->second->label + " and " + option->label +
+                            " use the same choice. Select a different position or assignment."
+                    });
+                }
             }
             for (const Resource& resource : package->resources) {
                 if (resource.feature_id != feature.id) continue;

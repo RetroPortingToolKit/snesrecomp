@@ -190,6 +190,13 @@ An optional `experimental = true` in a `[[feature]]` marks it with the
 launcher's Experimental channel badge. Omitted or false remains Stable;
 this metadata does not change activation, defaults or network identity.
 
+A feature may declare `distinct_options = "first-position,second-position"`
+to require distinct values for two or more of its choice options. The IDs must
+refer to choice options in that same feature. Enabled features with duplicate
+assignments show a diagnostic using the option labels and cannot commit a plan
+until corrected. Disabled features do not block Play. This supports exclusive
+control positions and similar assignments without a separate settings system.
+
 Features that claim the same plugin ID are alternatives. Enabling one, by
 feature or by package, deselects every other enabled feature claiming any of
 its plugins, so a package can declare mutual exclusion by also claiming its
@@ -197,10 +204,14 @@ rival's plugin. A saved state that still has two claimants enabled is reported
 as a conflict on Play. `tests/mod_resources/exclusive_plugin_test.cpp` covers
 this through the real launcher provider.
 
-The initial operation vocabulary is intentionally narrow: trusted activation
-plugins only. Future guarded ROM writes, asset overlays, or interpreter hooks
-must retain the same pre-boot validation and no-arbitrary-code model rather than
-turning package order into an implicit patch priority.
+Trusted runtime mods support guest-RAM writes, guarded writes to the loaded
+game image/cartridge, hooks and content overlays/imports. Keep the original
+on-disk image read-only and use it as the recompilation input; loaded-image
+writes are a separate runtime contract. Preserve target identity, expected-byte
+guards, conflict checking, plan fingerprints and transactional rollback.
+Those checks validate operations and must never become a blanket prohibition
+on guest-RAM or in-memory image writes. Package order is not an implicit patch
+priority, and runtime capabilities do not authorize arbitrary downloaded code.
 
 ## Temporary session selections
 
