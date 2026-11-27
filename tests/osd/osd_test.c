@@ -21,7 +21,9 @@ static void check(int ok, const char *what) {
     if (!ok) failures++;
 }
 
-int main(void) {
+int main(int argc, char **argv) {
+    (void)argc;
+    (void)argv;
     /* The clocks work without a video device on both SDL backends. */
     if (!snesrecomp_sdl_init(0)) {
         printf("SDL_Init failed: %s\n", SDL_GetError());
@@ -70,8 +72,42 @@ int main(void) {
     printf("  ..  measured %.1f fps over 70 frames at ~10ms\n", (double)fps);
     check(fps > 40.0f && fps < 200.0f, "rolling average is in a sane band");
 
+    char expected[64];
+    snprintf(expected, sizeof(expected), "%d FPS", (int)(fps + 0.5f));
+    check(!strcmp(snes_osd_status_text(), expected),
+          "hosts without presentation samples retain the single-rate text");
+
+    snes_osd_reset_fps();
+    for (int i = 0; i < 90; ++i) {
+        if (i % 3 == 0) snes_osd_note_frame();
+        snes_osd_note_presentation();
+        SDL_Delay(5);
+    }
+    const float sim = snes_osd_fps(), interp = snes_osd_interpolated_fps();
+    check(sim > 0 && interp > sim * 2 && interp < sim * 4,
+          "independent counters measure three presentations per simulation tick");
+    snprintf(expected, sizeof(expected), "%d FPS (%d interp)",
+             (int)(sim + 0.5f), (int)(interp + 0.5f));
+    check(!strcmp(snes_osd_status_text(), expected),
+          "dual-rate status uses the requested parenthesized format");
+    check(snes_osd_image(&px, &w, &h) &&
+          w == (int)(4 + strlen(expected) * 8) * 2,
+          "the rendered image includes the complete interpolated rate");
+    snes_osd_set_turbo(1);
+    strncat(expected, "  TURBO", sizeof(expected) - strlen(expected) - 1);
+    check(!strcmp(snes_osd_status_text(), expected), "dual rates retain the turbo indicator");
+    snes_osd_set_turbo(0);
+    snes_osd_reset_fps();
+    check(snes_osd_fps() == 0 && snes_osd_interpolated_fps() == 0 &&
+          !strcmp(snes_osd_status_text(), "0 FPS (0 interp)"),
+          "pause/reset drops both stale measurement windows");
+
     snes_osd_toggle_fps();
     check(!snes_osd_fps_visible(), "toggle hides it again");
+    snes_osd_toggle_fps();
+    check(!strcmp(snes_osd_status_text(), "0 FPS (0 interp)"),
+          "showing the readout starts both rates from fresh samples");
+    snes_osd_toggle_fps();
 
     /* Turbo alone still shows a status line — a port with turbo but no FPS
      * readout must still get the indicator. */

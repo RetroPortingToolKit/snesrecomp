@@ -33,8 +33,10 @@ extern "C" {
  *       snes_osd_toggle_fps();
  *   when turbo changes:
  *       snes_osd_set_turbo(on);
- *   once per presented frame, after the PPU has composited:
+ *   once per simulated frame:
  *       snes_osd_note_frame();
+ *   optionally, after each completed interpolated presentation:
+ *       snes_osd_note_presentation();
  *   at present time:
  *       snes_osd_draw_sdl(renderer);        (SDL_Renderer path)
  *     or snes_osd_image(&px,&w,&h) + snes_osd_present_done()  (blit it yourself)
@@ -58,7 +60,7 @@ void snes_osd_set_fps_visible(int on);
  * game. Counting guest frames makes the readout mean "how fast is this
  * emulating", which is what a player pressing turbo is asking.
  *
- * The OSD times the interval itself and keeps a 64-frame rolling average, so
+ * The OSD times the interval itself and keeps a 64-frame rolling rate, so
  * every port reports FPS the same way instead of inventing its own smoothing.
  *
  * Still not a headroom measurement: at 1x the frame limiter pins it to 60 and
@@ -69,6 +71,20 @@ void snes_osd_note_frame(void);
 
 /* Last computed rolling average, or 0 before enough frames have elapsed. */
 float snes_osd_fps(void);
+
+/* Optional second measured rate: "60 FPS (144 interp)". Call after each
+ * completed gameplay presentation, including original and interpolated images,
+ * never once per guest tick or with the configured FPS target. Hosts that do
+ * not call this retain their existing single-rate readout. */
+void snes_osd_note_presentation(void);
+float snes_osd_interpolated_fps(void);
+
+/* Clear both measurement windows after a pause, load or pacing change.
+ * Visibility and the optional presentation field are retained. */
+void snes_osd_reset_fps(void);
+
+/* Current status line, also used by host diagnostics. Valid until next call. */
+const char *snes_osd_status_text(void);
 
 /* ---- turbo indicator ---------------------------------------------------- */
 
