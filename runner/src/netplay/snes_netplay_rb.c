@@ -12,6 +12,8 @@
 #include "snes/snes.h"
 #include "snes/apu.h"
 #include "snes/dsp.h"
+#include "recomp_net/local_rollback.h"
+#include "desktop/sdl_compat.h"
 
 extern Snes *g_snes;
 
@@ -40,6 +42,11 @@ extern Snes *g_snes;
 static struct {
     SnesNetplayRbBindings b;
     RNetRbDriver *drv;           /* created once; survives matches */
+    RNetLocalDriver *local;
+    const char *local_error;
+    uint32_t local_loads,local_hold;
+    uint64_t local_replays;
+    int local_held,local_hold_pending,local_pending;
     RbeSnapRing  *snaps;
     uint32_t      snap_depth;
     /* Snapshot staging (one reusable buffer; the ring owns its own copies). */
@@ -82,6 +89,9 @@ static int rb_env_int(const char *name, const char *generic, int def, int lo, in
  * is folded into cfg->rollback before start() calls here. NETPLAY.md §4 is
  * satisfied by the settlement being room-wide, not per-process. */
 static int s_rb_default;
+static int s_local_default;
+void snes_netplay_rb_set_local_default(int on) {s_local_default=on!=0;}
+int snes_netplay_rb_local_selected(void) {return s_local_default;}
 static void (*s_replay_frame)(uint32_t inputs, uint32_t tick);
 
 void snes_netplay_rb_set_replay_frame(void (*run)(uint32_t, uint32_t)) {
@@ -421,13 +431,17 @@ static void rb_install_quiesce_signal(void)
 #endif
 }
 
+#include "snes_netplay_local.inc"
+
 int snes_netplay_rb_draining(void)
 {
+    if(g_rb.local)return 0;
     return rnet_rb_driver_quiesce_state(g_rb.drv) == RNET_RB_QUIESCE_DRAINING;
 }
 
 int snes_netplay_rb_quiesced(void)
 {
+    if(g_rb.local)return 0;
     RNetRbQuiesce q = rnet_rb_driver_quiesce_state(g_rb.drv);
     return q == RNET_RB_QUIESCE_DRAINED || q == RNET_RB_QUIESCE_TIMED_OUT;
 }
@@ -485,11 +499,13 @@ int snes_netplay_rb_start(void)
          * accepted -- an out-of-range value falls back to the DEFAULT rather
          * than clamping to the bound, so a request for 8 now yields 40, which
          * the startup banner states outright. */
-        (g_rb.snap_depth = (uint32_t)rb_env_int(
+        (g_rb.snap_depth = s_local_default ? 10u : (uint32_t)rb_env_int(
              "SNES_RB_SNAP_DEPTH", "RNET_RB_SNAP_DEPTH",
              (int)RBE_SNAP_RING_DEFAULT_DEPTH, 16, 240)));
     if (!g_rb.snaps)
         return 0;
+
+    if(s_local_default)return local_start();
 
     memset(&cfg, 0, sizeof(cfg));
     cfg.session = g_rb.b.session;
@@ -538,6 +554,7 @@ int snes_netplay_rb_start(void)
 
 void snes_netplay_rb_shutdown(void)
 {
+    if(g_rb.local) {local_report();rnet_local_destroy(g_rb.local);g_rb.local=NULL;}
     if (g_rb.drv)
         rnet_rb_driver_shutdown(g_rb.drv);
     if (g_rb.snaps) {
@@ -559,6 +576,11 @@ void snes_netplay_rb_stage_local(uint16_t buttons)
 
 int snes_netplay_rb_poll_admit(void)
 {
+    if(g_rb.local) {
+        int admitted=rnet_local_poll(g_rb.local);
+        if(admitted!=0 && admitted!=1) {g_rb.local_error="unexpected incremental replay";return 0;}
+        g_rb.local_pending=admitted!=0;return admitted;
+    }
     if (s_quiesce_signalled &&
         rnet_rb_driver_quiesce_state(g_rb.drv) == RNET_RB_QUIESCE_NONE) {
         fprintf(stderr, "snes_netplay: SIGUSR1 — draining rollback, then exiting\n");
@@ -571,20 +593,36 @@ int snes_netplay_rb_poll_admit(void)
 
 void snes_netplay_rb_finish_frame(void)
 {
+    if(g_rb.local) {
+        if(!rnet_local_finish(g_rb.local))g_rb.local_error=rnet_local_refusal(g_rb.local);
+        g_rb.local_pending=0;
+        if(g_rb.local_hold_pending) {
+            g_rb.local_hold_pending=0;
+            if(!rnet_local_set_hold(g_rb.local,g_rb.local_hold))g_rb.local_error="invalid local hold";
+        }
+        return;
+    }
     rnet_rb_driver_finish_frame(g_rb.drv);
 }
 
 /* ── diagnostics ─────────────────────────────────────────────────────── */
 
-uint32_t snes_netplay_rb_sim_tick(void) { return rnet_rb_driver_sim_tick(g_rb.drv); }
-void snes_netplay_rb_set_hold(uint32_t tick) { rnet_rb_driver_set_hold(g_rb.drv, tick); }
-void snes_netplay_rb_clear_hold(void) { rnet_rb_driver_clear_hold(g_rb.drv); }
-int snes_netplay_rb_hold_settled(void) { return rnet_rb_driver_hold_settled(g_rb.drv); }
-uint32_t snes_netplay_rb_episode_count(void) { return rnet_rb_driver_episode_count(g_rb.drv); }
+uint32_t snes_netplay_rb_sim_tick(void) { return g_rb.local?rnet_local_tick(g_rb.local):rnet_rb_driver_sim_tick(g_rb.drv); }
+void snes_netplay_rb_set_hold(uint32_t tick) {
+    if(g_rb.local) {
+        uint32_t first=rnet_local_tick(g_rb.local)+(g_rb.local_pending?1u:0u);
+        g_rb.local_hold=tick>first?tick:first;g_rb.local_held=1;
+        g_rb.local_hold_pending=g_rb.local_pending;
+        if(!g_rb.local_pending && !rnet_local_set_hold(g_rb.local,g_rb.local_hold))g_rb.local_error="invalid local hold";
+    } else rnet_rb_driver_set_hold(g_rb.drv,tick);
+}
+void snes_netplay_rb_clear_hold(void) { if(g_rb.local) {g_rb.local_held=g_rb.local_hold_pending=0;rnet_local_clear_hold(g_rb.local);} else rnet_rb_driver_clear_hold(g_rb.drv); }
+int snes_netplay_rb_hold_settled(void) { return g_rb.local ? g_rb.local_held && rnet_local_tick(g_rb.local)>=g_rb.local_hold && rnet_local_verified(g_rb.local)>=g_rb.local_hold : rnet_rb_driver_hold_settled(g_rb.drv); }
+uint32_t snes_netplay_rb_episode_count(void) { return g_rb.local?g_rb.local_loads:rnet_rb_driver_episode_count(g_rb.drv); }
 uint32_t snes_netplay_rb_invent_count(void) { return rnet_rb_driver_invent_count(g_rb.drv); }
 uint32_t snes_netplay_rb_promote_count(void) { return rnet_rb_driver_promote_count(g_rb.drv); }
-uint64_t snes_netplay_rb_resim_ticks(void) { return rnet_rb_driver_resim_ticks(g_rb.drv); }
-uint32_t snes_netplay_rb_desync_count(void) { return rnet_rb_driver_desync_count(g_rb.drv); }
+uint64_t snes_netplay_rb_resim_ticks(void) { return g_rb.local?g_rb.local_replays:rnet_rb_driver_resim_ticks(g_rb.drv); }
+uint32_t snes_netplay_rb_desync_count(void) { if(g_rb.local) {const char *why=rnet_local_refusal(g_rb.local);return why && strstr(why,"desync")!=NULL;} return rnet_rb_driver_desync_count(g_rb.drv); }
 
 void snes_netplay_rb_set_modset(const char *text,
                                 SnesNetplayModSetCheckFn check,
@@ -600,40 +638,48 @@ void snes_netplay_rb_set_identity(uint32_t build_fp, uint32_t content_fp)
 
 uint32_t snes_netplay_rb_rtt_estimate_ms(void)
 {
+    if(g_rb.local)return 0; /* No episode handshake; path RTT is in the local report. */
     return rnet_rb_driver_rtt_estimate_ms(g_rb.drv);
 }
 
 uint32_t snes_netplay_rb_confirmed_through(void)
 {
+    if(g_rb.local)return rnet_local_confirmed(g_rb.local);
     return rnet_rb_driver_confirmed_through(g_rb.drv);
 }
 
 uint32_t snes_netplay_rb_confirmed_remaining(void)
 {
+    if(g_rb.local)return rnet_local_tick(g_rb.local)-rnet_local_confirmed(g_rb.local);
     return rnet_rb_driver_confirmed_remaining(g_rb.drv);
 }
 
 int snes_netplay_rb_episode_active(void)
 {
+    if(g_rb.local)return 0; /* Inline correction finishes before admission returns. */
     return rnet_rb_driver_episode_active(g_rb.drv);
 }
 
 const char *snes_netplay_rb_stall_tag(void)
 {
+    if(g_rb.local)return snes_netplay_rb_refusal()?"local-refused":"local";
     return rnet_rb_driver_stall_tag(g_rb.drv);
 }
 
 const char *snes_netplay_rb_refusal(void)
 {
+    if(g_rb.local)return g_rb.local_error?g_rb.local_error:rnet_local_refusal(g_rb.local);
     return rnet_rb_driver_refusal(g_rb.drv);
 }
 
 int snes_netplay_rb_last_fork(uint32_t *tick, const char **partition)
 {
+    if(g_rb.local) {(void)tick;(void)partition;return 0;}
     return rnet_rb_driver_last_fork(g_rb.drv, tick, partition);
 }
 
 int snes_netplay_rb_fork_digests(uint32_t *mine, uint32_t *theirs)
 {
+    if(g_rb.local) {(void)mine;(void)theirs;return 0;}
     return rnet_rb_driver_fork_digests(g_rb.drv, mine, theirs);
 }
