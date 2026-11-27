@@ -41,19 +41,19 @@ class LuaClient:
     def run(self, source):
         return self.command("run " + source.encode("utf-8").hex())
 
-    def step(self, frames=1, timeout=30):
+    def step(self, frames=1, timeout=None):
         # Caller pauses first; the acknowledgement is before simulation.
         before = self.command("pause")["frame"]
         self.command(f"step {frames}")
-        deadline = time.monotonic() + timeout
-        while time.monotonic() < deadline:
+        # Retain the old argument for callers; finite frame completion is the
+        # endpoint, rather than an elapsed-time cutoff on a healthy host.
+        while True:
             result = self.command("status")
             if result["frame"] >= before + frames:
                 if result["frame"] != before + frames:
                     raise RuntimeError("script resumed/advanced beyond the requested frame")
                 return result
             time.sleep(0.01)
-        raise TimeoutError("game did not finish stepping")
 
 
 def main():

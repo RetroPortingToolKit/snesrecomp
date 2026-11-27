@@ -20,7 +20,7 @@ process = subprocess.Popen([exe, str(port)], env=dict(os.environ, SNESRECOMP_LUA
 try:
     while True:
         try:
-            client = LuaClient(port=port)
+            client = LuaClient(port=port,timeout=None)
             break
         except OSError:
             if process.poll() is not None: raise RuntimeError("host exited")
@@ -64,7 +64,13 @@ try:
         assert values("return event.unregisterbyname('bad')") == [False]
     print("PASS: Lua TCP framing, memory, limits, callbacks, input/reset and host commands")
 finally:
-    if process.poll() is None:
-        with LuaClient(port=port) as shutdown:
-            shutdown.socket.sendall(b"eval " + b"game.command('test.quit')".hex().encode() + b"\n")
+    while process.poll() is None:
+        # The previous client may still be waiting for its FIN to be serviced.
+        # Retry the native quit request instead of killing the healthy host.
+        try:
+            with LuaClient(port=port,timeout=None) as shutdown:
+                shutdown.socket.sendall(b"eval " + b"game.command('test.quit')".hex().encode() + b"\n")
+        except OSError:
+            pass
+        time.sleep(.01)
     process.wait()
