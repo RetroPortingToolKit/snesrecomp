@@ -265,8 +265,8 @@ def _dynamic_charge_lines(insn, speed_expr: str = "8",
     READ page-cross when the pointer lies in low WRAM (previewed without a bus
     read; the region-paced recipe charges it from its own pointer read). NOT
     yet covered (documented residual, measured against bsnes): (dp),Y with the
-    pointer outside low WRAM, and MVN/MVP per-byte (the static charge counts
-    one byte).
+    pointer outside low WRAM. MVN/MVP charge each further byte in their own
+    loop (codegen._emit_blockmove).
     """
     op = getattr(insn, 'opcode', None)
     if op is None:
