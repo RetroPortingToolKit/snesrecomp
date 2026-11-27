@@ -2325,6 +2325,36 @@ static void cmd_continue(const char *args) {
     send_fmt("{\"ok\":true,\"paused\":false}");
 }
 
+/* Host playback control is separate from instruction/debugger stopping. */
+static int s_runtime_control, s_runtime_paused;
+static void request_runtime_control(int control) {
+    lock_mutex(); s_runtime_control = control; unlock_mutex();
+    send_fmt("{\"ok\":true,\"queued\":true}");
+}
+static void cmd_runtime_pause(const char *args) { (void)args; request_runtime_control(1); }
+static void cmd_runtime_resume(const char *args) { (void)args; request_runtime_control(2); }
+static void cmd_runtime_quit(const char *args) { (void)args; request_runtime_control(3); }
+static void cmd_runtime_refresh(const char *args) { (void)args; request_runtime_control(4); }
+static void cmd_runtime_status(const char *args) {
+    (void)args;
+    lock_mutex(); int paused=s_runtime_paused, pending=s_runtime_control; unlock_mutex();
+    send_fmt("{\"ok\":true,\"paused\":%s,\"pending\":%d,\"frame\":%d}",
+             paused ? "true" : "false", pending, snes_frame_counter);
+}
+int debug_server_consume_runtime_control(void) {
+    lock_mutex();
+    int result=s_runtime_control;
+    /* Never expose the old parked state after a refresh has been consumed.
+     * The host publishes parked again only after the complete frame. */
+    if (result == 2 || result == 4) s_runtime_paused=0;
+    s_runtime_control=0;
+    unlock_mutex();
+    return result;
+}
+void debug_server_publish_runtime_paused(int paused) {
+    lock_mutex(); s_runtime_paused=paused; unlock_mutex();
+}
+
 #if !SNESRECOMP_REVERSE_DEBUG
 static void cmd_break_add(const char *args) {
     uint32_t pc = 0;
@@ -9029,6 +9059,11 @@ static const CmdEntry s_commands[] = {
     {"watch",         cmd_watch},
     {"unwatch",       cmd_unwatch},
     {"pause",         cmd_pause},
+    {"runtime_pause", cmd_runtime_pause},
+    {"runtime_resume",cmd_runtime_resume},
+    {"runtime_quit",  cmd_runtime_quit},
+    {"runtime_refresh",cmd_runtime_refresh},
+    {"runtime_status",cmd_runtime_status},
     {"continue",      cmd_continue},
     {"step",          cmd_step},
     {"set_controller",   cmd_set_controller},

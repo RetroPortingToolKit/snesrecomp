@@ -4481,9 +4481,10 @@ int snesrecomp_desktop_main(const SnesDesktopHostGame *game, int argc, char **ar
       fprintf(stderr, "[main] Debug server failed to bind port %d\n", debug_port);
     }
     if (start_paused) {
-      debug_server_start_paused();
+      g_paused = true;
+      debug_server_publish_runtime_paused(true);
 #if SNESRECOMP_TRACE
-      fprintf(stderr, "[main] Started paused — send 'step N' or 'continue' via TCP\n");
+      fprintf(stderr, "[main] Started paused; runtime_resume continues playback\n");
 #endif
     }
   }
@@ -4501,6 +4502,13 @@ int snesrecomp_desktop_main(const SnesDesktopHostGame *game, int argc, char **ar
     g_win_flags ^= SNESRECOMP_SDL_WINDOW_FULLSCREEN_DESKTOP;
   else if (g_config.fullscreen == 2)
     g_win_flags ^= SDL_WINDOW_FULLSCREEN;
+  /* Unattended native checks retain the normal video/audio/controller path. */
+  const char *hidden_window = HostGetenv("WINDOW_HIDDEN");
+  if (!capture_mode && hidden_window && atoi(hidden_window)) {
+    g_config.fullscreen = 0;
+    g_win_flags &= ~(SNESRECOMP_SDL_WINDOW_FULLSCREEN_DESKTOP | SDL_WINDOW_FULLSCREEN);
+    g_win_flags |= SDL_WINDOW_HIDDEN;
+  }
 
   // Window scale (1=100%, 2=200%, 3=300%, etc.)
   g_current_window_scale = (g_config.window_scale == 0) ? 2 : IntMin(g_config.window_scale, kMaxWindowScale);
@@ -4909,7 +4917,15 @@ error_reading:;
   host_report_breadcrumb("entering main loop");
   RefreshGameCursor(true);
 
+  int review_refresh = 0;
   while (running && !HeadlessCapture_Failed()) {
+    if (!g_netplay_session) {
+      int control = debug_server_consume_runtime_control();
+      if (control == 3) { exit_reason = "runtime quit request"; break; }
+      if (control == 1 || control == 2) { g_paused = control == 1; review_refresh = 0; }
+      if (control == 4) { g_paused = false; review_refresh = 1; }
+      debug_server_publish_runtime_paused(g_paused);
+    }
     g_profile_frame = frameCtr + 1;
     if (profile_requested && !g_profile && g_profile_frame >= profile_first) {
       g_profile = true;
@@ -5019,6 +5035,17 @@ error_reading:;
 #endif
     ProfileEnd(kProfileEvents, event_profile_start);
     lua_bridge_poll();
+    /* Save/load requests remain usable while host playback is paused. */
+    {
+      int ls = debug_server_consume_loadstate();
+      if (ls >= 0 && !g_netplay_session) {
+        RtlSaveLoad(kSaveLoad_Load, ls);
+        GameReset();
+      }
+      int ss = debug_server_consume_savestate();
+      if (ss >= 0 && !g_netplay_session)
+        snes_savestate_menu_write_slot(ss);
+    }
     const bool pause_audio = g_paused || lua_bridge_paused();
     if (pause_audio != audiopaused) {
       audiopaused = pause_audio;
@@ -5034,6 +5061,8 @@ error_reading:;
     StateMenuPadPoll();
     if (g_paused && !g_savestate_menu_hotkey && !g_state_menu_pad_hotkey && !g_rewind_hotkey &&
         !g_open_launcher_hotkey) {
+      g_present_alpha = 1;
+      DrawPpuFrameWithPerf();
       snes_host_clock_reset(&video_clock, MonotonicSeconds(), g_simulation_hz, presentation_hz);
       SDL_Delay(16);
       continue;
@@ -5044,16 +5073,6 @@ error_reading:;
       g_gamepad[0].axis_buttons = 0;
     if (g_input_state & 0xf0000)
       g_gamepad[1].axis_buttons = 0;
-    {
-      int ls = debug_server_consume_loadstate();
-      if (ls >= 0 && !g_netplay_session) {
-        RtlSaveLoad(kSaveLoad_Load, ls);
-        GameReset();
-      }
-      int ss = debug_server_consume_savestate();
-      if (ss >= 0 && !g_netplay_session)
-        snes_savestate_menu_write_slot(ss);
-    }
     double before_debug_wait = MonotonicSeconds();
     if (!g_netplay_session) debug_server_wait_if_paused();
     if (MonotonicSeconds() - before_debug_wait > 0.05)
@@ -5444,6 +5463,7 @@ error_reading:;
       ++presentations;
       snes_host_clock_presentation_done(&video_clock, presented_at);
     }
+    if (review_refresh) { review_refresh = 0; g_paused = true; }
     if (run_frames && frameCtr >= run_frames) {
       running = false;
       exit_reason = "RUN_FRAMES reached";

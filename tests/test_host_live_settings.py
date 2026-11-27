@@ -43,7 +43,8 @@ typedef uint8_t uint8;
 typedef uint16_t uint16;
 typedef uint32_t uint32;
 typedef struct { int x,y,w,h; } SDL_Rect;
-static void *g_window;
+static void *g_window = (void *)1;
+static bool focused = true, g_overlay_modal;
 static uint32 g_win_flags = 16;
 static uint8 g_cursor = 1, g_current_window_scale = 2;
 static int g_snes_width = 256, actual_flags, window_w, window_h, bounds_on;
@@ -57,6 +58,8 @@ static struct { uint8 fullscreen, window_scale; } g_config;
 #define kMaxWindowScale 10
 static int SDL_SetWindowFullscreen(void *w, uint32 flags) { actual_flags = flags; return 0; }
 static void snesrecomp_sdl_show_cursor(int c) { (void)c; }
+static void *SDL_GetKeyboardFocus(void) { return focused ? g_window : (void *)0; }
+static void *SDL_GetMouseFocus(void) { return focused ? g_window : (void *)0; }
 static uint32 SDL_GetWindowFlags(void *w) { return actual_flags; }
 static int snesrecomp_sdl_get_display_usable_bounds(void *w, SDL_Rect *r) {
   *r = (SDL_Rect){0,0,800,600}; return bounds_on;
@@ -75,7 +78,7 @@ static void snesrecomp_sdl_get_global_mouse_state(int *x, int *y) { *x = *y = 0;
 def test_live_scale_and_fullscreen_agree_with_existing_host_paths(tmp_path):
     source = (DESKTOP / 'host_main.c').read_text(encoding='utf-8')
     generated = '\n'.join(_function(source, name) for name in (
-        'ChangeWindowScale', 'snesrecomp_set_fullscreen', 'snesrecomp_get_fullscreen',
+        'RefreshGameCursor', 'ChangeWindowScale', 'snesrecomp_set_fullscreen', 'snesrecomp_get_fullscreen',
         'snesrecomp_set_window_scale', 'snesrecomp_get_window_scale'))
     hotkey = re.search(r'    case kKeys_Fullscreen:\n([\s\S]*?)      break;', source).group(1)
     _run(tmp_path, STUBS + generated + '\nstatic void hotkey(void) {\n' + hotkey + r'''
@@ -87,12 +90,24 @@ int main(void) {
   snesrecomp_set_fullscreen(1);
   assert(snesrecomp_get_fullscreen() == 1 && !g_cursor && (g_win_flags & 16));
   hotkey();
-  assert(!actual_flags && !snesrecomp_get_fullscreen() && g_cursor);
+  assert(!actual_flags && !snesrecomp_get_fullscreen() && !g_cursor);
   hotkey();
   snesrecomp_set_fullscreen(0);
   assert(!actual_flags && !(g_win_flags & 1));
   hotkey();
   assert(actual_flags && snesrecomp_get_fullscreen() && !g_cursor);
+  /* Windowed gameplay keeps the cursor hidden; loss of focus and modal
+   * controls restore the desktop pointer independently of fullscreen. */
+  focused = false;
+  snesrecomp_set_fullscreen(0);
+  assert(g_cursor);
+  focused = true; g_overlay_modal = true;
+  snesrecomp_set_fullscreen(0);
+  assert(g_cursor);
+  g_overlay_modal = false;
+  snesrecomp_set_fullscreen(0);
+  assert(!g_cursor);
+  snesrecomp_set_fullscreen(1);
   g_config_dirty = false;
   snesrecomp_set_window_scale(3);
   assert(snesrecomp_get_window_scale() == 5 && !g_config_dirty);
