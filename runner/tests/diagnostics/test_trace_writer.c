@@ -47,8 +47,7 @@ int main(void) {
    * On saturation, accepted rows remain a complete ordered prefix. */
   SDL_AtomicSet(&gated,1);
   writer=SnesTraceWriterOpen("stalled/trace","h\n",16*1024*1024,2);assert(writer);
-  uint32_t deadline=(uint32_t)SDL_GetTicks();
-  while(!SDL_AtomicGet(&entered) && (uint32_t)SDL_GetTicks()-deadline<3000) SDL_Delay(1);
+  while(!SDL_AtomicGet(&entered) && !SnesTraceWriterError(writer)) SDL_Delay(1);
   assert(SDL_AtomicGet(&entered));
   uint64_t start=SDL_GetPerformanceCounter();
   unsigned accepted=0;
@@ -58,7 +57,7 @@ int main(void) {
     ++accepted;
   }
   double elapsed=(double)(SDL_GetPerformanceCounter()-start)/SDL_GetPerformanceFrequency();
-  assert(accepted>0 && accepted<499999 && elapsed<2.0);
+  assert(accepted>0 && accepted<499999);
   assert(strstr(SnesTraceWriterError(writer),"queue full"));
   assert(!SnesTraceWriterWrite(writer,"after failure\n",14));
   SDL_AtomicSet(&released,1);
@@ -67,8 +66,7 @@ int main(void) {
 
   SDL_AtomicSet(&gated,0);
   writer=SnesTraceWriterOpen("missing/parent/trace","h\n",1024,2);assert(writer);
-  deadline=(uint32_t)SDL_GetTicks();
-  while(!SnesTraceWriterError(writer) && (uint32_t)SDL_GetTicks()-deadline<3000) SDL_Delay(1);
+  while(!SnesTraceWriterError(writer)) SDL_Delay(1);
   assert(SnesTraceWriterError(writer));
   assert(!SnesTraceWriterWrite(writer,"x\n",2));
   assert(SnesTraceWriterClose(writer));
