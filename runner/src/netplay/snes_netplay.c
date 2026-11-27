@@ -198,6 +198,7 @@ int  snes_netplay_peer_disconnected(uint32_t timeout_ms)
 }
 int  snes_netplay_poll_admit(void) { return 1; }
 void snes_netplay_pump(void) {}
+void snes_netplay_pump_transport(void) {}
 void snes_netplay_apply_host_sync(void) {}
 void snes_netplay_finish_frame(void) {}
 int  snes_netplay_remote_lead(void) { return 0; }
@@ -2765,6 +2766,13 @@ void snes_netplay_pump(void)
         return;
     np_pump_session();
     snes_netplay_diag_tick();
+}
+
+void snes_netplay_pump_transport(void)
+{
+    if (!snes_netplay_active() || !g_np.session) return;
+    drain_lobby_signals();
+    rnet_session_pump(g_np.session);
 }
 
 int snes_netplay_poll_admit(void)

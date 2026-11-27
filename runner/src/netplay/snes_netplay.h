@@ -181,6 +181,9 @@ int  snes_netplay_peer_disconnected(uint32_t timeout_ms);
  * starvation latch while waiting for remote runway to refill.
  */
 void snes_netplay_pump(void);
+/* Service transport/liveness during owned native work. Does not sample pads,
+ * admit a frame, or apply queued game snapshots/menu actions. */
+void snes_netplay_pump_transport(void);
 
 /*
  * Pump + try_admit. On success, published pads are ready via

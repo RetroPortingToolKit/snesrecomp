@@ -584,6 +584,10 @@ int snes_netplay_rb_poll_admit(void)
 {
     if(g_rb.local) {
         if(g_rb.local_error) {snes_netplay_request_return_to_lobby();return 0;}
+        /* The host barrier may poll once to refresh a stale peer-liveness
+         * result, then ask for admission again. Preserve that granted live
+         * frame until its matching finish instead of polling twice. */
+        if(g_rb.local_pending)return 1;
         int admitted=rnet_local_poll(g_rb.local);
         if(rnet_local_refusal(g_rb.local)) {
             g_rb.local_error=rnet_local_refusal(g_rb.local);
