@@ -2309,13 +2309,12 @@ static void cmd_unwatch(const char *args) {
 }
 
 static void cmd_pause(const char *args) {
-    // No-op by design. Pausing the simulation to "freeze the ring for query"
-    // is the same anti-pattern as arm-then-capture: it synchronizes the
-    // observer with the system instead of querying the always-on ring for
-    // the window of interest. Rings are sized to cover realistic query
-    // latency; if they aren't large enough, enlarge the ring, do not pause.
+    /* Explicit playback control is independent of diagnostic ring queries. */
     (void)args;
-    send_fmt("{\"ok\":false,\"error\":\"pause is disabled by policy; query the always-on rings for the window of interest. If the ring is too small, enlarge it.\",\"frame\":%d}", snes_frame_counter);
+    s_run_to_frame_target = -1;
+    s_step_remaining = 0;
+    s_paused = 1;
+    send_fmt("{\"ok\":true,\"paused\":true,\"frame\":%d}", snes_frame_counter);
 }
 
 static void cmd_continue(const char *args) {
