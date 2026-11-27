@@ -77,6 +77,10 @@ typedef struct SnesNetplayRbBindings {
 int  snes_netplay_rb_enabled(void);
 /* Title default when SNES_NET_MODE is unset (env overrides both ways). */
 void snes_netplay_rb_set_default(int on);
+/* Selected once from the launch config. Legacy episode rollback remains
+ * available to other consumers and to matched comparison builds. */
+void snes_netplay_rb_set_local_default(int on);
+int snes_netplay_rb_local_selected(void);
 /* A desktop host's complete simulation tick, including raster IRQ/HDMA work
  * it normally performs after RtlRunFrame. Never present/sleep/sample here.
  * NULL retains the legacy RtlRunFrame-only replay. Register before start. */

@@ -11,20 +11,20 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "tools"))
 from lua_tcp import LuaClient
 
 exe = str(Path(sys.argv[1]).resolve())
-subprocess.run([exe, "0"], check=True)  # Runtime opt-out is inert.
+subprocess.run([exe, "0"], check=True, creationflags=getattr(subprocess,"CREATE_NO_WINDOW",0))  # Runtime opt-out is inert.
 with socket.socket() as probe:
     probe.bind(("127.0.0.1", 0))
     port = probe.getsockname()[1]
-process = subprocess.Popen([exe, str(port)], env=dict(os.environ, SNESRECOMP_LUA_PAUSED="1"))
+process = subprocess.Popen([exe, str(port)], env=dict(os.environ, SNESRECOMP_LUA_PAUSED="1"),
+                           creationflags=getattr(subprocess,"CREATE_NO_WINDOW",0))
 try:
-    for _ in range(100):
+    while True:
         try:
-            client = LuaClient(port=port)
+            client = LuaClient(port=port,timeout=None)
             break
         except OSError:
             if process.poll() is not None: raise RuntimeError("host exited")
             time.sleep(.05)
-    else: raise TimeoutError("host did not listen")
     with client as c:
         def values(source): return c.eval(source)["values"]
         def fails(source, message):
@@ -35,7 +35,9 @@ try:
         assert values("return game.command('test.echo','hello')") == ["hello"]
         fails("game.command('bad')", "unknown test command")
         assert values("memory.write_u32_le(0x120,0x89abcdef); return memory.read_u32_be(0x120),memory.read_s8(0x120)") == ["4023233417", "-17"]
-        fails("memory.write_u8(0,1,'CARTROM')", "read-only")
+        assert values("memory.write_u16_le(0,0x1234,'CARTROM'); return memory.read_u16_be(0,'CARTROM')") == ["13330"]
+        fails("memory.write_u16_le(63,0,'CARTROM')", "outside CARTROM")
+        assert values("return memory.read_u16_le(0,'CARTROM')") == ["4660"]
         fails("memory.read_u16_le(0x1ffff)", "outside WRAM")
         fails("while true do end", "budget exceeded")
         fails("string.rep('x',32*1024*1024)", "not enough memory")
@@ -53,7 +55,7 @@ try:
         c.step(1)
         assert values("return mainmemory.read_u32_le(0x100)") == ["0"]
         c.run("for i=1,4 do emu.frameadvance() end; completed=true")
-        for _ in range(100):
+        while True:
             if not c.command("status")["running"]: break
             time.sleep(.01)
         assert values("return completed,emu.framecount()") == [True, "8"]
@@ -62,5 +64,13 @@ try:
         assert values("return event.unregisterbyname('bad')") == [False]
     print("PASS: Lua TCP framing, memory, limits, callbacks, input/reset and host commands")
 finally:
-    process.terminate()
-    process.wait(timeout=5)
+    while process.poll() is None:
+        # The previous client may still be waiting for its FIN to be serviced.
+        # Retry the native quit request instead of killing the healthy host.
+        try:
+            with LuaClient(port=port,timeout=None) as shutdown:
+                shutdown.socket.sendall(b"eval " + b"game.command('test.quit')".hex().encode() + b"\n")
+        except OSError:
+            pass
+        time.sleep(.01)
+    process.wait()

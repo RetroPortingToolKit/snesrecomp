@@ -9,12 +9,14 @@
 #include <time.h>
 #endif
 static uint8_t ram[0x20000], rom[64];
+static int running=1;
 #if SNESRECOMP_ENABLE_LUA
 static unsigned resets;
 static int command(const char *name, const char *args, char *out, size_t size) {
     if (!strcmp(name, "__reset")) { ++resets; return 1; }
     if (!strcmp(name, "test.echo")) { snprintf(out, size, "%s", args); return 1; }
     if (!strcmp(name, "test.resets")) { snprintf(out, size, "%u", resets); return 1; }
+    if (!strcmp(name, "test.quit")) { running=0; return 1; }
     snprintf(out, size, "unknown test command"); return 0;
 }
 #endif
@@ -27,7 +29,7 @@ int main(int argc, char **argv) {
 #else
     return 0;
 #endif
-    for (;;) {
+    while (running) {
         lua_bridge_poll();
         if (!lua_bridge_paused()) {
             uint32_t inputs = lua_bridge_frame_start(0);
@@ -40,4 +42,5 @@ int main(int argc, char **argv) {
         struct timespec delay = {0, 1000000}; nanosleep(&delay, NULL);
 #endif
     }
+    lua_bridge_shutdown();return 0;
 }

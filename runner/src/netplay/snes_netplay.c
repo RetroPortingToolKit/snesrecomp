@@ -28,7 +28,9 @@ void snes_netplay_set_profile_caps(uint32_t qualification,uint32_t cpu_features,
 #if defined(SNESRECOMP_NET)
 #include "recomp_net/recomp_net.h"
 #include "recomp_net/startup_profiles.h"
+#include "recomp_net/local_rollback.h"
 #include "snes_netplay_diagnostic_state.h"
+#include "sha256.h"
 /*
  * Rollback is an optional build (snesrecomp_enable_rollback). A game that
  * links netplay without it must still compile, so everything the rollback
@@ -38,11 +40,13 @@ void snes_netplay_set_profile_caps(uint32_t qualification,uint32_t cpu_features,
  */
 #if defined(SNESRECOMP_NET_ROLLBACK)
 #include "snes_netplay_rb.h"
+#include "snes_state_digest.h"
 #else
 #include <stdint.h>
 struct SnesNetplayRbBindings;
 static inline int  snes_netplay_rb_enabled(void) { return 0; }
 static inline void snes_netplay_rb_set_default(int on) { (void)on; }
+static inline void snes_netplay_rb_set_local_default(int on) { (void)on; }
 static inline void snes_netplay_rb_bind(const struct SnesNetplayRbBindings *b) { (void)b; }
 static inline int  snes_netplay_rb_start(void) { return 0; }
 static inline void snes_netplay_rb_shutdown(void) {}
@@ -126,10 +130,10 @@ void snes_netplay_apply_env(SnesNetplayConfig *cfg)
     if (v && v[0]) cfg->input_prediction = (int)strtol(v, NULL, 10);
     v = getenv("SNES_NET_MODE");
     if (v && v[0]) {
-        /* Operator override, both directions: "rollback"/"rb" force
-         * rollback, anything else ("delay", ...) forces delay-sync. */
-        cfg->rollback =
-            (strcmp(v, "rollback") == 0 || strcmp(v, "rb") == 0) ? 1 : 0;
+        /* The experimental local policy is explicit; legacy rollback/rb
+         * and delay retain their existing meanings. */
+        cfg->local_rollback = strcmp(v,"local")==0;
+        cfg->rollback = cfg->local_rollback || strcmp(v,"rollback")==0 || strcmp(v,"rb")==0;
     }
     v = getenv("SNES_NET_TRANSPORT");
     if (v && v[0]) {
@@ -194,6 +198,7 @@ int  snes_netplay_peer_disconnected(uint32_t timeout_ms)
 }
 int  snes_netplay_poll_admit(void) { return 1; }
 void snes_netplay_pump(void) {}
+void snes_netplay_pump_transport(void) {}
 void snes_netplay_apply_host_sync(void) {}
 void snes_netplay_finish_frame(void) {}
 int  snes_netplay_remote_lead(void) { return 0; }
@@ -485,6 +490,10 @@ static void np_rollback_try_start(void)
     if (snes_netplay_rb_start()) {
         g_np_rollback = 1;
     } else {
+        if(snes_netplay_rb_local_selected()) {
+            g_profiles.refusal="local_rollback_start_failed";
+            snes_netplay_request_return_to_lobby();return;
+        }
         fprintf(stderr,
                 "snes_netplay: rollback host failed to start — "
                 "falling back to delay-sync for this session\n");
@@ -848,6 +857,16 @@ int snes_netplay_start(const SnesNetplayConfig *cfg)
     /* Settled session mode (config default rollback; lobby launch and
      * SNES_NET_MODE already folded in by the callers/apply_env). */
     snes_netplay_rb_set_default(cfg->rollback);
+    snes_netplay_rb_set_local_default(cfg->local_rollback);
+    if(cfg->local_rollback && (!cfg->rollback || cfg->spectator || !g_profiles.qualification))return -1;
+    if(cfg->local_rollback) {
+        unsigned supplied=0;
+        for(unsigned i=0;i<sizeof(cfg->compatibility_identity);++i)supplied|=cfg->compatibility_identity[i];
+        if(!supplied)return -1;
+    }
+#if !defined(SNESRECOMP_NET_ROLLBACK)
+    if(cfg->local_rollback)return -1;
+#endif
 
     rnet_config_init_defaults(&rcfg);
     {
@@ -944,7 +963,20 @@ int snes_netplay_start(const SnesNetplayConfig *cfg)
     g_profiles.started_ms=(uint32_t)np_diagnostic_clock_ms();
     if(g_profiles.pending) {
         RNetProfileCaps caps={g_profiles.cpu,g_profiles.backends,g_profiles.profiles,g_profiles.architecture};
-        if(rnet_session_profiles_begin(g_np.session,g_profiles.qualification,&caps)!=0) {
+        uint8_t full_identity[32]={0};
+        if(cfg->local_rollback) {
+#if defined(SNESRECOMP_NET_ROLLBACK)
+            uint8_t initial[36];uint32_t boot=snes_state_digest(SNES_DIGEST_PART_MASTER);
+            memcpy(initial,cfg->compatibility_identity,32);
+            for(unsigned i=0;i<4;++i)initial[32+i]=(uint8_t)(boot>>(8u*i));
+            sha256_compute(initial,sizeof(initial),full_identity);
+#endif
+        }
+        int started=cfg->local_rollback
+            ? rnet_experiment_profiles_begin_full(g_np.session,g_profiles.qualification,&caps,
+                  RNET_SYNC_LOCAL_V4,full_identity)
+            : rnet_session_profiles_begin(g_np.session,g_profiles.qualification,&caps);
+        if(started!=0) {
             rnet_session_destroy(g_np.session);g_np.session=NULL;return -2;
         }
     }
@@ -2734,6 +2766,13 @@ void snes_netplay_pump(void)
         return;
     np_pump_session();
     snes_netplay_diag_tick();
+}
+
+void snes_netplay_pump_transport(void)
+{
+    if (!snes_netplay_active() || !g_np.session) return;
+    drain_lobby_signals();
+    rnet_session_pump(g_np.session);
 }
 
 int snes_netplay_poll_admit(void)

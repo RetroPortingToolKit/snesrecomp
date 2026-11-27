@@ -54,6 +54,11 @@ void cart_reset(Cart* cart) {
 
 void cart_saveload(Cart *cart, SaveLoadInfo *sli) {
   sli->func(sli, cart->ram, cart->ramSize);
+  /* The loaded cartridge is writable runtime state. Capture it even when a
+   * mod writes through a mapped pointer, so a restore discards future edits.
+   * Native SRAM persistence remains separate from this execution snapshot. */
+  if (snes_saveload_get_version() >= 11)
+    sli->func(sli, cart->rom, (size_t)cart->romSize);
   if (cart->superfx && snes_saveload_get_version() >= 9)
     superfx_saveload(cart->superfx, sli);
   /* Cx4 games have no battery RAM, so the block above streams nothing; the

@@ -35,7 +35,7 @@ static Socket listener = BAD_SOCKET, peer = BAD_SOCKET;
 static lua_State *vm, *script;
 static int script_ref = LUA_NOREF, paused, steps;
 static uint8_t *ram;
-static const uint8_t *rom;
+static uint8_t *rom;
 static uint32_t rom_size;
 static uint32_t ram_size, input_mask, input_values, current_inputs;
 static unsigned long long frame;
@@ -115,12 +115,11 @@ static int mem_access(lua_State *L) {
     unsigned n = flags & 7;
     int writing = flags & 8, big = flags & 16, sign = flags & 32;
     int bus = domain(L, writing ? 3 : 2, flags & 64);
-    if (writing && bus == 2) return luaL_error(L, "CARTROM is read-only");
     uint32_t a = address(L, luaL_checkinteger(L, 1), n, bus), value = 0;
     if (writing) value = (uint32_t)luaL_checkinteger(L, 2);
     for (unsigned i = 0; i < n; ++i) {
         unsigned shift = 8 * (big ? n - 1 - i : i);
-        if (writing) ram[a + i] = (uint8_t)(value >> shift);
+        if (writing) (bus == 2 ? rom : ram)[a + i] = (uint8_t)(value >> shift);
         else value |= (uint32_t)(bus == 2 ? rom[a + i] : ram[a + i]) << shift;
     }
     if (writing) return 0;
@@ -432,7 +431,7 @@ static void disconnect(void) {
     if (peer != BAD_SOCKET) close_socket(peer);
     peer = BAD_SOCKET; rx_len = tx_len = tx_sent = 0;
 }
-int lua_bridge_init(uint8_t *wram, uint32_t size, const uint8_t *cart, uint32_t cart_size, int port) {
+int lua_bridge_init(uint8_t *wram, uint32_t size, uint8_t *cart, uint32_t cart_size, int port) {
     if (!port) return 0;
     if (port < 1 || port > 65535 || !wram || !size || vm) return -1;
 #ifdef _WIN32

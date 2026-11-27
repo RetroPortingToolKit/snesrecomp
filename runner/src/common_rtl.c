@@ -342,11 +342,10 @@ static uint64_t fp_fnv1a(const uint8_t *p, size_t n) {
  * v8: multitap chunk (seats, IOBit lines, per-bank shift counters, latched
  *     automatic-read words). Older files load with no multitap configured,
  *     which is the pre-multitap two-pad machine exactly. */
-#define RTL_SAV_VERSION 10u /* RDNMI pending latch; v9 added Super FX state. */
-/* 4 and 5 described a Snes tail layout this struct no longer has; see
- * snes_saveload(). Loading one would mis-map the interrupt fields, so
- * they are rejected by the header check instead. */
-#define RTL_SAV_VERSION_MIN 6u
+#define RTL_SAV_VERSION 11u /* Loaded cartridge bytes; v10 added RDNMI latch. */
+/* Old snapshots omitted mutable cartridge data and cannot restore the whole
+ * execution state. Snapshots are build-specific; native saves are separate. */
+#define RTL_SAV_VERSION_MIN 11u
 /* Independent of sizes supplied by an untrusted snapshot or title payload. */
 #define RTL_SAV_MAX_SIZE (16u * 1024u * 1024u)
 
@@ -1251,7 +1250,11 @@ size_t RtlRollbackSnapshotBound(void) {
   if (g_rtl_game_info && g_rtl_game_info->exec_state_bound)
     exec = g_rtl_game_info->exec_state_bound();
   size_t extra=s_state_extra_bound?s_state_extra_bound():0;
+  size_t cart_bytes=g_snes && g_snes->cart && g_snes->cart->romSize>0?
+      (size_t)g_snes->cart->romSize:0;
   size_t base=(1u << 20)+sizeof(uint32)+sizeof(RtlRollbackResidue);
+  if(cart_bytes>SIZE_MAX-base)return SIZE_MAX;
+  base+=cart_bytes;
   if(exec>SIZE_MAX-base||extra>SIZE_MAX-base-exec)return SIZE_MAX;
   return base+exec+extra;
 }

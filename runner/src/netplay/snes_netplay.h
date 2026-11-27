@@ -75,6 +75,11 @@ typedef struct SnesNetplayConfig {
      * the rollback host ignore it and run delay-sync. SNES_NET_MODE
      * overrides both ways ("rollback"/"rb" or "delay"). */
     int         rollback;
+    /* Experimental local correction, settled before transport startup.
+     * Requires rollback plus a qualified profile and exact 256-bit identity.
+     * The existing hub/ICE/TURN transport is unchanged. */
+    int         local_rollback;
+    uint8_t     compatibility_identity[32];
     uint32_t    session_id;
     char        bind_hostport[64];
     char        peer_hostport[64];
@@ -176,6 +181,9 @@ int  snes_netplay_peer_disconnected(uint32_t timeout_ms);
  * starvation latch while waiting for remote runway to refill.
  */
 void snes_netplay_pump(void);
+/* Service transport/liveness during owned native work. Does not sample pads,
+ * admit a frame, or apply queued game snapshots/menu actions. */
+void snes_netplay_pump_transport(void);
 
 /*
  * Pump + try_admit. On success, published pads are ready via

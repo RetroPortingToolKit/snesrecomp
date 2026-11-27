@@ -42,7 +42,7 @@ extern "C" {
 #define SNES_DIGEST_PART_APU    3u  /* SPC + APU regs + DSP minus output ring */
 #define SNES_DIGEST_PART_PPU    4u  /* PPU regs + VRAM/CGRAM/OAM */
 #define SNES_DIGEST_PART_DMA    5u
-#define SNES_DIGEST_PART_CART   6u  /* SRAM + SA-1 / Cx4 / DSP-1 */
+#define SNES_DIGEST_PART_CART   6u  /* Loaded cartridge, SRAM + coprocessors */
 #define SNES_DIGEST_PART_COUNT  7u
 
 typedef struct SnesStateDigestParts {
