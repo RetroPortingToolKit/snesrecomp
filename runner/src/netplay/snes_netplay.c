@@ -130,8 +130,8 @@ void snes_netplay_apply_env(SnesNetplayConfig *cfg)
     if (v && v[0]) cfg->input_prediction = (int)strtol(v, NULL, 10);
     v = getenv("SNES_NET_MODE");
     if (v && v[0]) {
-        /* Operator override, both directions: "rollback"/"rb" force
-         * rollback, anything else ("delay", ...) forces delay-sync. */
+        /* The experimental local policy is explicit; legacy rollback/rb
+         * and delay retain their existing meanings. */
         cfg->local_rollback = strcmp(v,"local")==0;
         cfg->rollback = cfg->local_rollback || strcmp(v,"rollback")==0 || strcmp(v,"rb")==0;
     }
@@ -858,6 +858,11 @@ int snes_netplay_start(const SnesNetplayConfig *cfg)
     snes_netplay_rb_set_default(cfg->rollback);
     snes_netplay_rb_set_local_default(cfg->local_rollback);
     if(cfg->local_rollback && (!cfg->rollback || cfg->spectator || !g_profiles.qualification))return -1;
+    if(cfg->local_rollback) {
+        unsigned supplied=0;
+        for(unsigned i=0;i<sizeof(cfg->compatibility_identity);++i)supplied|=cfg->compatibility_identity[i];
+        if(!supplied)return -1;
+    }
 #if !defined(SNESRECOMP_NET_ROLLBACK)
     if(cfg->local_rollback)return -1;
 #endif
@@ -957,7 +962,7 @@ int snes_netplay_start(const SnesNetplayConfig *cfg)
     g_profiles.started_ms=(uint32_t)np_diagnostic_clock_ms();
     if(g_profiles.pending) {
         RNetProfileCaps caps={g_profiles.cpu,g_profiles.backends,g_profiles.profiles,g_profiles.architecture};
-        uint8_t full_identity[32];
+        uint8_t full_identity[32]={0};
         if(cfg->local_rollback) {
 #if defined(SNESRECOMP_NET_ROLLBACK)
             uint8_t initial[36];uint32_t boot=snes_state_digest(SNES_DIGEST_PART_MASTER);

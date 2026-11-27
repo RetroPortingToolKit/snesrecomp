@@ -577,6 +577,7 @@ void snes_netplay_rb_stage_local(uint16_t buttons)
 int snes_netplay_rb_poll_admit(void)
 {
     if(g_rb.local) {
+        if(g_rb.local_error)return 0;
         int admitted=rnet_local_poll(g_rb.local);
         if(admitted!=0 && admitted!=1) {g_rb.local_error="unexpected incremental replay";return 0;}
         g_rb.local_pending=admitted!=0;return admitted;
@@ -619,8 +620,8 @@ void snes_netplay_rb_set_hold(uint32_t tick) {
 void snes_netplay_rb_clear_hold(void) { if(g_rb.local) {g_rb.local_held=g_rb.local_hold_pending=0;rnet_local_clear_hold(g_rb.local);} else rnet_rb_driver_clear_hold(g_rb.drv); }
 int snes_netplay_rb_hold_settled(void) { return g_rb.local ? g_rb.local_held && rnet_local_tick(g_rb.local)>=g_rb.local_hold && rnet_local_verified(g_rb.local)>=g_rb.local_hold : rnet_rb_driver_hold_settled(g_rb.drv); }
 uint32_t snes_netplay_rb_episode_count(void) { return g_rb.local?g_rb.local_loads:rnet_rb_driver_episode_count(g_rb.drv); }
-uint32_t snes_netplay_rb_invent_count(void) { return rnet_rb_driver_invent_count(g_rb.drv); }
-uint32_t snes_netplay_rb_promote_count(void) { return rnet_rb_driver_promote_count(g_rb.drv); }
+uint32_t snes_netplay_rb_invent_count(void) { return g_rb.local?0:rnet_rb_driver_invent_count(g_rb.drv); }
+uint32_t snes_netplay_rb_promote_count(void) { return g_rb.local?0:rnet_rb_driver_promote_count(g_rb.drv); }
 uint64_t snes_netplay_rb_resim_ticks(void) { return g_rb.local?g_rb.local_replays:rnet_rb_driver_resim_ticks(g_rb.drv); }
 uint32_t snes_netplay_rb_desync_count(void) { if(g_rb.local) {const char *why=rnet_local_refusal(g_rb.local);return why && strstr(why,"desync")!=NULL;} return rnet_rb_driver_desync_count(g_rb.drv); }
 

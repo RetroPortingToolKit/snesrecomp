@@ -44,6 +44,9 @@ static int local_start(void) {
     return 1;
 }
 static void local_report(void) {
+    fprintf(stderr,"[snes-local-prefix] tick=%u confirmed=%u verified=%u corrections=%u replay=%llu\n",
+        rnet_local_tick(g_rb.local),rnet_local_confirmed(g_rb.local),rnet_local_verified(g_rb.local),
+        g_rb.local_loads,(unsigned long long)g_rb.local_replays);
     size_t size=rnet_local_report(g_rb.local,NULL,0);char *report=size?malloc(size):NULL;
     if(!report || rnet_local_report(g_rb.local,report,size)!=size) {free(report);return;}
     fprintf(stderr,"[snes-local-report] %s\n",report);
