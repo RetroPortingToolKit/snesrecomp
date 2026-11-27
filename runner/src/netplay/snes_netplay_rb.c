@@ -555,6 +555,12 @@ int snes_netplay_rb_start(void)
 void snes_netplay_rb_shutdown(void)
 {
     if(g_rb.local) {local_report();rnet_local_destroy(g_rb.local);g_rb.local=NULL;}
+    else if(g_rb.drv) {
+        size_t size=rnet_rb_driver_report(g_rb.drv,NULL,0);char *report=size?malloc(size):NULL;
+        if(report && rnet_rb_driver_report(g_rb.drv,report,size)==size)
+            fprintf(stderr,"[snes-episode-report] %s\n",report);
+        free(report);
+    }
     if (g_rb.drv)
         rnet_rb_driver_shutdown(g_rb.drv);
     if (g_rb.snaps) {

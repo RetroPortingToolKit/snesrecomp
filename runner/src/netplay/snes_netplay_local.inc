@@ -51,6 +51,10 @@ static void local_report(void) {
     if(!report || rnet_local_report(g_rb.local,report,size)!=size) {free(report);return;}
     fprintf(stderr,"[snes-local-report] %s\n",report);
     const char *path=getenv("SNES_RB_LOCAL_REPORT");
-    if(path && *path) {FILE *file=fopen(path,"wbx");if(file) {fputs(report,file);fputc('\n',file);fclose(file);}}
+    if(path && *path) {
+        FILE *file=fopen(path,"wb");
+        if(file) {fputs(report,file);fputc('\n',file);fclose(file);}
+        else fprintf(stderr,"snes_netplay: unable to write requested local report\n");
+    }
     free(report);
 }
