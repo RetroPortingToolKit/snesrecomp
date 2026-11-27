@@ -169,6 +169,8 @@ LOOP_STUBS = r'''
 static void *g_selftest_pad;
 static int g_selftest_rewind_opens;
 static bool g_overlay_modal, g_paused;
+static unsigned cursor_refreshes;
+static void RefreshGameCursor(bool force) { assert(force); ++cursor_refreshes; }
 static uint64_t g_state_generation;
 static unsigned current_pump;
 static uint32 SDL_GetTicks(void) { return current_pump * 8u; }
@@ -205,6 +207,7 @@ int main(void) {
   printf("closes=%d commits=%d at pump %u\n", closes, commits, current_pump);
   assert(closes == 1 && commits == 0);
   assert(current_pump == 5 && "B held at open closed the strip at once");
+  assert(!g_overlay_modal && cursor_refreshes == 2);
   puts("ok");
   return 0;
 }
@@ -245,5 +248,5 @@ def test_overlay_keys_follow_keybinds(tmp_path):
 def test_rewind_ignores_a_button_held_at_open(tmp_path):
     cc = _compiler()
     functions = _functions('PollLocalControls', 'KeyIsPadControl', 'PumpOverlayEvents',
-                           'RewindKeyDown', 'RunRewindLoop')
+                           'RewindKeyDown', 'SetOverlayModal', 'RunRewindLoop')
     _build_and_run(tmp_path, cc, 'rewind_held', STUBS + LOOP_STUBS + functions + LOOP_MAIN)
