@@ -3593,6 +3593,7 @@ static void LauncherSeed(RecompLauncherCSettings *ls, RecompLauncherCGameInfo *g
   ls->fullscreen    = g_config.fullscreen;
   ls->ignore_aspect = g_config.ignore_aspect_ratio;
   ls->linear_filter = g_config.linear_filtering;
+  ls->widescreen    = g_config.widescreen ? 1 : 0;
   ls->aspect_index = SnesDisplayAspect_Clamp(g_config.display_aspect);
   if (g_config.shader)
     snprintf(ls->shader_path, sizeof(ls->shader_path), "%s", g_config.shader);
@@ -3787,6 +3788,8 @@ static void LauncherCommit(const RecompLauncherCSettings *ls, const char *config
   g_config.fullscreen          = (uint8)ls->fullscreen;
   g_config.ignore_aspect_ratio = ls->ignore_aspect != 0;
   g_config.linear_filtering    = ls->linear_filter != 0;
+  if (game->widescreen_supported)
+    g_config.widescreen = ls->widescreen != 0;
   if (game->display_aspect_supported)
     g_config.display_aspect = (uint8)SnesDisplayAspect_Clamp(ls->aspect_index);
   if (game->shader_supported) {
@@ -4211,6 +4214,8 @@ int snesrecomp_desktop_main(const SnesDesktopHostGame *game, int argc, char **ar
     g_config.state_menu_pad_binding = SNES_HOST_STATE_MENU_PAD_DEFAULT;
   /* Before after_config, so a port that wants to inspect the parsed rewind
    * settings sees the same opt-in the writer will honour. */
+  if (game->native_widescreen && !ConfigHasWidescreen())
+    g_config.widescreen = true;
   if (game->rewind_settings) ConfigEnableRewindKeys();
   if (game->after_config) game->after_config();
   ApplyVolume();
@@ -6167,12 +6172,25 @@ static const char kDefaultConfigIniContent[] =
 
 static const char *DefaultConfigIni(void) {
   if (g_game->default_config_ini) return g_game->default_config_ini;
+  if (!g_game->state_menu_hotkeys && !g_game->native_widescreen)
+    return kDefaultConfigIniContent;
+  static char menu_config[sizeof(kDefaultConfigIniContent) + 192];
+  static char ws_buf[sizeof(kDefaultConfigIniContent) + 64];
+  const char *src = kDefaultConfigIniContent;
+  if (g_game->native_widescreen) {
+    const char *anchor = strstr(src, "NoSpriteLimits = 1\n");
+    if (anchor) {
+      size_t split = (size_t)(anchor - src) + strlen("NoSpriteLimits = 1\n");
+      snprintf(ws_buf, sizeof(ws_buf), "%.*sWidescreen = 1\n%s",
+               (int)split, src, src + split);
+      src = ws_buf;
+    }
+  }
   if (g_game->state_menu_hotkeys) {
-    static char menu_config[sizeof(kDefaultConfigIniContent) + 128];
-    const char *keys = strstr(kDefaultConfigIniContent, "SaveStateMenu = F11\n");
+    const char *keys = strstr(src, "SaveStateMenu = F11\n");
     const char *after_load = strchr(strstr(keys, "Load ="), '\n') + 1;
     snprintf(menu_config, sizeof(menu_config), "%.*s%s%s",
-        (int)(keys - kDefaultConfigIniContent), kDefaultConfigIniContent,
+        (int)(keys - src), src,
         "SaveStateMenu = F7\nRewind = F8\n"
 #if !defined(__ANDROID__) && !SNESRECOMP_SDL_GLES2_ONLY
         "Screenshot = PrintScreen\n"
@@ -6180,7 +6198,7 @@ static const char *DefaultConfigIni(void) {
         "Load = F1,F2,F3,F4,F5,F6,F11,F12,F9,F10\n", after_load);
     return menu_config;
   }
-  return kDefaultConfigIniContent;
+  return src;
 }
 
 /* Write the default config.ini next to the executable and chdir there. Silent

@@ -261,6 +261,7 @@ bool ConfigDeadzoneMigrated(void);
  * device, and the caller falls back to the older EnableGamepadN spelling
  * rather than to the seeded default. player is 0 or 1. */
 bool ConfigHasPlayerSource(int player);
+bool ConfigHasWidescreen(void);
 /* Accept an empty preference or a 32-digit SDL GUID, canonicalized to lowercase.
  * Invalid input leaves the previous preference untouched. */
 bool ConfigSetPlayerGuid(int player, const char *value);
