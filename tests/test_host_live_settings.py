@@ -43,7 +43,13 @@ typedef uint8_t uint8;
 typedef uint16_t uint16;
 typedef uint32_t uint32;
 typedef struct { int x,y,w,h; } SDL_Rect;
-static void *g_window;
+static int g_window_handle;
+static void *g_window = &g_window_handle;
+/* RefreshGameCursor: the cursor shows over an overlay or without focus. */
+static bool g_overlay_modal;
+static void *g_keyboard_focus = &g_window_handle, *g_mouse_focus = &g_window_handle;
+static void *SDL_GetKeyboardFocus(void) { return g_keyboard_focus; }
+static void *SDL_GetMouseFocus(void) { return g_mouse_focus; }
 static uint32 g_win_flags = 16;
 static uint8 g_cursor = 1, g_current_window_scale = 2;
 static int g_snes_width = 256, actual_flags, window_w, window_h, bounds_on;
@@ -75,7 +81,7 @@ static void snesrecomp_sdl_get_global_mouse_state(int *x, int *y) { *x = *y = 0;
 def test_live_scale_and_fullscreen_agree_with_existing_host_paths(tmp_path):
     source = (DESKTOP / 'host_main.c').read_text(encoding='utf-8')
     generated = '\n'.join(_function(source, name) for name in (
-        'ChangeWindowScale', 'snesrecomp_set_fullscreen', 'snesrecomp_get_fullscreen',
+        'RefreshGameCursor', 'ChangeWindowScale', 'snesrecomp_set_fullscreen', 'snesrecomp_get_fullscreen',
         'snesrecomp_set_window_scale', 'snesrecomp_get_window_scale'))
     hotkey = re.search(r'    case kKeys_Fullscreen:\n([\s\S]*?)      break;', source).group(1)
     _run(tmp_path, STUBS + generated + '\nstatic void hotkey(void) {\n' + hotkey + r'''
@@ -87,7 +93,8 @@ int main(void) {
   snesrecomp_set_fullscreen(1);
   assert(snesrecomp_get_fullscreen() == 1 && !g_cursor && (g_win_flags & 16));
   hotkey();
-  assert(!actual_flags && !snesrecomp_get_fullscreen() && g_cursor);
+  /* The cursor follows focus and overlays, not the window mode (#322). */
+  assert(!actual_flags && !snesrecomp_get_fullscreen() && !g_cursor);
   hotkey();
   snesrecomp_set_fullscreen(0);
   assert(!actual_flags && !(g_win_flags & 1));
@@ -100,6 +107,17 @@ int main(void) {
   bounds_on = 1;
   snesrecomp_set_window_scale(5);
   assert(window_w == 512 && window_h == 448 && snesrecomp_get_window_scale() == 2);
+  g_mouse_focus = 0;
+  snesrecomp_set_fullscreen(1);
+  assert(g_cursor);
+  g_mouse_focus = g_window;
+  g_overlay_modal = true;
+  hotkey();
+  assert(g_cursor);
+  g_overlay_modal = false;
+  g_keyboard_focus = 0;
+  hotkey();
+  assert(g_cursor);
   return 0;
 }
 ''')

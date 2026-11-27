@@ -175,6 +175,8 @@ static uint32 SDL_GetTicks(void) { return current_pump * 8u; }
 static void SDL_Delay(uint32 ms) { (void)ms; }
 static void host_report_breadcrumb(const char *fmt, ...) { (void)fmt; }
 static void SetAudioPaused(bool paused) { (void)paused; }
+/* The host also refreshes the cursor here; the loop only needs the flag. */
+static void SetOverlayModal(bool modal) { g_overlay_modal = modal; }
 static void ResetAudioTimeline(void) {}
 static uint64_t RtlStateGeneration(void) { return 0; }
 static void OverlayNoteClosed(void) {}
