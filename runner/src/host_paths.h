@@ -28,6 +28,9 @@ int snesrecomp_exe_dir_path(const char *leaf, char *out, size_t max_len);
  * platform has no way to ask.
  */
 int snesrecomp_exe_path(char *out, size_t max_len);
+/* Actual loaded native executable, rather than the outer AppImage used for
+ * relaunch. Suitable for artifact identity; unavailable platforms return 0. */
+int snesrecomp_loaded_exe_path(char *out, size_t max_len);
 
 /*
  * Basename of the running executable, without directory and without a

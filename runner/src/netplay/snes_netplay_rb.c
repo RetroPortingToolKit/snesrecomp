@@ -583,9 +583,16 @@ void snes_netplay_rb_stage_local(uint16_t buttons)
 int snes_netplay_rb_poll_admit(void)
 {
     if(g_rb.local) {
-        if(g_rb.local_error)return 0;
+        if(g_rb.local_error) {snes_netplay_request_return_to_lobby();return 0;}
         int admitted=rnet_local_poll(g_rb.local);
-        if(admitted!=0 && admitted!=1) {g_rb.local_error="unexpected incremental replay";return 0;}
+        if(rnet_local_refusal(g_rb.local)) {
+            g_rb.local_error=rnet_local_refusal(g_rb.local);
+            snes_netplay_request_return_to_lobby();return 0;
+        }
+        if(admitted!=0 && admitted!=1) {
+            g_rb.local_error="unexpected incremental replay";
+            snes_netplay_request_return_to_lobby();return 0;
+        }
         g_rb.local_pending=admitted!=0;return admitted;
     }
     if (s_quiesce_signalled &&
@@ -601,7 +608,10 @@ int snes_netplay_rb_poll_admit(void)
 void snes_netplay_rb_finish_frame(void)
 {
     if(g_rb.local) {
-        if(!rnet_local_finish(g_rb.local))g_rb.local_error=rnet_local_refusal(g_rb.local);
+        if(!rnet_local_finish(g_rb.local)) {
+            g_rb.local_error=rnet_local_refusal(g_rb.local);
+            snes_netplay_request_return_to_lobby();
+        }
         g_rb.local_pending=0;
         if(g_rb.local_hold_pending) {
             g_rb.local_hold_pending=0;

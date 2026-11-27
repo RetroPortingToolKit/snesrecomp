@@ -111,6 +111,23 @@ int snesrecomp_exe_path(char *out, size_t max_len) {
     return get_exe_path(out, max_len);
 }
 
+int snesrecomp_loaded_exe_path(char *out, size_t max_len) {
+    if(!out || !max_len)return 0;
+    out[0]='\0';
+#if defined(__ANDROID__)
+    /* The Android process executable is the VM, not the loaded game library.
+     * Do not substitute that unrelated artifact for the game's identity. */
+    return 0;
+#elif defined(__linux__)
+    if(max_len<2)return 0;
+    ssize_t n=readlink("/proc/self/exe",out,max_len-1);
+    if(n<=0 || (size_t)n>=max_len-1)return 0;
+    out[n]='\0';return 1;
+#else
+    return get_exe_path(out,max_len);
+#endif
+}
+
 int snesrecomp_exe_basename(char *out, size_t max_len) {
     char exe_path[1024];
     if (!out || max_len == 0) return 0;
