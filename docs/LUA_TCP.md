@@ -41,11 +41,13 @@ Use `--port N` before the subcommand to select another port. `LuaClient` in
 | `client` | `pause`, `unpause`, `ispaused` |
 | `console` | `log`; global `print` also captures output |
 
-`WRAM` offsets span 0..0x1ffff. `CARTROM` is the host-provided, read-only ROM
-image, indexed by file offset. `System Bus` supports only banks $7E/$7F and
+`WRAM` offsets span 0..0x1ffff. `CARTROM` is the writable loaded cartridge
+image, indexed by byte offset. Writes change memory only; the original image
+file is never written. Execution snapshots retain these cartridge changes.
+`System Bus` supports only banks $7E/$7F and
 their low-bank WRAM mirrors. Other bus addresses, unknown domains and ranges
-crossing a domain/mirror boundary raise errors. No MMIO side effects, ROM
-patching, SRAM, VRAM, CPU-register or instruction-hook API is implemented.
+crossing a domain/mirror boundary raise errors. No MMIO side effects, SRAM,
+VRAM, CPU-register or instruction-hook API is implemented.
 `readbyterange` is zero-indexed; `read_bytes_as_array` is one-indexed. Reads
 are capped at 4096 bytes per range call.
 
