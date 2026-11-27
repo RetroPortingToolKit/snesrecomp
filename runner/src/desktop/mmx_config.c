@@ -959,6 +959,7 @@ void WriteConfigFile(const char *filename) {
     { "GamepadMap", "EnableGamepad1" },
     { "GamepadMap", "EnableGamepad2" },
     { "General",    "SkipLauncher" },
+    { "General",    "DisplayPerfInTitle" },
     { "GamepadMap", "GamepadDeadzone" },
     { "Netplay",    "PlayerName" },
     { "Graphics",   "FrameBlend" },
@@ -1012,6 +1013,7 @@ void WriteConfigFile(const char *filename) {
   CfgSet(kvs, N, "GamepadMap", "EnableGamepad2", "%s",
          g_config.enable_gamepad[1] ? "true" : "false");
   CfgSet(kvs, N, "General", "SkipLauncher", "%d", g_config.skip_launcher ? 1 : 0);
+  CfgSet(kvs, N, "General", "DisplayPerfInTitle", "%d", g_config.display_perf_title ? 1 : 0);
   CfgSet(kvs, N, "GamepadMap", "GamepadDeadzone", "%d", g_config.gamepad_deadzone);
   CfgSet(kvs, N, "Netplay", "PlayerName", "%s", g_config.netplay_player_name);
   CfgSet(kvs, N, "Graphics", "FrameBlend", "%d", g_config.frame_blend ? 1 : 0);

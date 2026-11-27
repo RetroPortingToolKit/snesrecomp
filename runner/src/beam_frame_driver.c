@@ -510,7 +510,8 @@ void snes_beam_frame_driver_draw_ppu_frame_observed(
     /* A split is written in H-blank after its line is drawn, so the previous
      * line's entries take effect on this one. */
     ppu_rasterApplyLine(g_ppu, line - 1);
-    ppu_renderRasterLine(g_ppu, line);
+    if (!g_snes->disableRender || observer)
+      ppu_renderRasterLine(g_ppu, line);
     if (observer)
       observer(g_ppu, (unsigned)line, context);
   }
