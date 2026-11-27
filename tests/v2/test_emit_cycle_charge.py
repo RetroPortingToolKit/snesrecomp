@@ -89,6 +89,55 @@ def test_store_abs_x_has_no_page_cross_charge():
     assert "page-cross" not in src, src
 
 
+def _dp_indirect_y_charges(src):
+    return [ln for ln in src.splitlines() if "/* (dp),Y read page-cross */" in ln]
+
+
+def test_dp_indirect_y_read_page_cross_dynamic_charge_emitted():
+    # LDA ($00),Y (read, X=1) ; RTS — interp816_adrIdy adds a cycle when the
+    # live pointer plus Y crosses a page. The pointer is previewed from low
+    # WRAM (no bus read, open bus untouched), like the region-paced recipe.
+    rom = make_lorom_bank0({0x8000: bytes([0xB1, 0x00, 0x60])})
+    src = emit_function(rom, bank=0, start=0x8000, entry_m=1, entry_x=1)
+    lines = _dp_indirect_y_charges(src)
+    assert len(lines) == 1, src
+    line = lines[0]
+    assert "cpu->ram[" in line and "cpu->Y" in line, line
+    assert "cpu_read" not in line, line
+    assert "< 0x1FFFu" in line, line
+    assert "cpu->master_cycles += ((g_memsel && (cpu->PB & 0x80)) ? 6 : 8);" in line, line
+
+
+def test_dp_indirect_y_store_has_no_page_cross_charge():
+    # STA ($00),Y (store) — the indexing cycle is in the base cost.
+    rom = make_lorom_bank0({0x8000: bytes([0x91, 0x00, 0x60])})
+    src = emit_function(rom, bank=0, start=0x8000, entry_m=1, entry_x=1)
+    assert not _dp_indirect_y_charges(src), src
+
+
+def test_dp_indirect_y_wide_index_has_no_dynamic_page_cross():
+    # X=0: the read penalty is unconditional and already in the static cost.
+    rom = make_lorom_bank0({0x8000: bytes([0xB1, 0x00, 0x60])})
+    src = emit_function(rom, bank=0, start=0x8000, entry_m=1, entry_x=0)
+    assert not _dp_indirect_y_charges(src), src
+
+
+def test_dp_indirect_y_region_paced_charges_page_cross_once():
+    # The region-paced pointer recipe charges the crossing itself from its
+    # paced pointer read; the dynamic charge must not add a second one.
+    from snes65816 import get_rom_mapping, set_rom_mapping, ROM_MAP_LOROM
+    old = get_rom_mapping()
+    try:
+        set_rom_mapping(ROM_MAP_LOROM)
+        rom = make_lorom_bank0({0x8000: bytes([0xB1, 0x00, 0x60])})
+        src = emit_function(rom, 0, 0x8000, 1, 1, func_name="Case",
+                            instruction_blocks=True, region_paced=True)
+    finally:
+        set_rom_mapping(old)
+    assert not _dp_indirect_y_charges(src), src
+    assert len(re.findall(r"_pointer >> 8\) != \(\(_rp_\w+_pointer \+ cpu->Y\) >> 8\)", src)) == 1, src
+
+
 def test_every_block_with_insns_is_charged():
     # BCS fork -> three blocks (entry, fall-through, taken), each non-empty,
     # so each must carry a cpu->cycles charge.
