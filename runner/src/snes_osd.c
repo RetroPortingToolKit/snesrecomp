@@ -143,11 +143,13 @@ static int      s_msg_active;
 static int      s_fps_visible;
 static int      s_turbo;
 
-static float    s_fps_history[OSD_FPS_HISTORY];
-static float    s_fps_average;
-static int      s_fps_pos;
-static int      s_fps_filled;
-static Uint64   s_fps_last_tick;
+typedef struct {
+    Uint64 intervals[OSD_FPS_HISTORY];
+    Uint64 total, last_tick;
+    unsigned pos, count;
+} FpsWindow;
+static FpsWindow s_simulation, s_presentation;
+static int s_show_presentation;
 
 /* Composed status line ("60 FPS", "60 FPS  TURBO"), rebuilt only when one of
  * its inputs actually changes — a per-frame snprintf into the toast path
@@ -182,22 +184,19 @@ static int msg_visible(void) {
     return 1;
 }
 
-/* Defined below; the status line must use the WINDOW-CORRECTED average, not
- * the raw accumulator. The raw one is diluted by the still-zeroed history
- * slots for the first 64 frames, which is why the readout used to climb from
- * 0 to 60 over its first second instead of simply being right. */
-float snes_osd_fps(void);
-
 /* Rebuild the status line from fps + turbo. Marks the image dirty only when
  * the text actually changed, so a steady 60 fps rasterizes once. */
 static void status_refresh(void) {
     char next[OSD_MAX_CHARS];
     if (!s_fps_visible && !s_turbo) {
         next[0] = '\0';
-    } else if (s_fps_visible && s_turbo) {
-        snprintf(next, sizeof(next), "%d FPS  TURBO", (int)(snes_osd_fps() + 0.5f));
     } else if (s_fps_visible) {
-        snprintf(next, sizeof(next), "%d FPS", (int)(snes_osd_fps() + 0.5f));
+        const int fps = (int)(snes_osd_fps() + 0.5f);
+        if (s_show_presentation)
+            snprintf(next, sizeof(next), "%d FPS (%d interp)%s", fps,
+                     (int)(snes_osd_interpolated_fps() + 0.5f), s_turbo ? "  TURBO" : "");
+        else
+            snprintf(next, sizeof(next), "%d FPS%s", fps, s_turbo ? "  TURBO" : "");
     } else {
         snprintf(next, sizeof(next), "TURBO");
     }
@@ -224,45 +223,50 @@ void snes_osd_set_fps_visible(int on) {
         /* Start from a clean window. Showing an average built partly from
          * before the readout was opened reports a number for frames the
          * player never saw. */
-        s_fps_pos = 0;
-        s_fps_filled = 0;
-        s_fps_average = 0.0f;
-        s_fps_last_tick = 0;
-        memset(s_fps_history, 0, sizeof(s_fps_history));
+        snes_osd_reset_fps();
     }
     status_refresh();
 }
 
-void snes_osd_note_frame(void) {
-    const Uint64 now = SDL_GetPerformanceCounter();
-    const Uint64 freq = SDL_GetPerformanceFrequency();
-    if (s_fps_last_tick && freq) {
-        const Uint64 delta = now - s_fps_last_tick;
-        if (delta > 0) {
-            const float inst = (float)((double)freq / (double)delta);
-            /* Rolling mean over the window. Subtracting the slot being
-             * overwritten keeps this O(1) rather than re-summing 64 floats
-             * every frame. */
-            s_fps_average += (inst - s_fps_history[s_fps_pos]) /
-                             (float)OSD_FPS_HISTORY;
-            s_fps_history[s_fps_pos] = inst;
-            s_fps_pos = (s_fps_pos + 1) % OSD_FPS_HISTORY;
-            if (s_fps_pos == 0) s_fps_filled = 1;
-            if (s_fps_visible) status_refresh();
-        }
-    }
-    s_fps_last_tick = now;
+void snes_osd_reset_fps(void) {
+    memset(&s_simulation, 0, sizeof(s_simulation));
+    memset(&s_presentation, 0, sizeof(s_presentation));
+    status_refresh();
 }
 
-float snes_osd_fps(void) {
-    /* Before the window has filled once the mean is diluted by the zeroed
-     * slots, so scale it up rather than under-report during the first second. */
-    if (!s_fps_filled) {
-        if (s_fps_pos == 0) return 0.0f;
-        return s_fps_average * (float)OSD_FPS_HISTORY / (float)s_fps_pos;
+static void note_frame(FpsWindow *window) {
+    const Uint64 now = SDL_GetPerformanceCounter();
+    const Uint64 freq = SDL_GetPerformanceFrequency();
+    if (window->last_tick && freq && now > window->last_tick) {
+        const Uint64 delta = now - window->last_tick;
+        /* Count / elapsed time stays accurate when simulation catches up in
+         * a batch or presentation intervals jitter. Averaging instantaneous
+         * reciprocal intervals would overstate the actual throughput. */
+        window->total -= window->intervals[window->pos];
+        window->total += delta;
+        window->intervals[window->pos] = delta;
+        window->pos = (window->pos + 1) % OSD_FPS_HISTORY;
+        if (window->count < OSD_FPS_HISTORY) ++window->count;
     }
-    return s_fps_average;
+    window->last_tick = now;
+    if (s_fps_visible) status_refresh();
 }
+
+void snes_osd_note_frame(void) { note_frame(&s_simulation); }
+
+void snes_osd_note_presentation(void) {
+    s_show_presentation = 1;
+    note_frame(&s_presentation);
+}
+
+static float window_fps(const FpsWindow *window) {
+    return window->total ? (float)((double)window->count *
+        (double)SDL_GetPerformanceFrequency() / (double)window->total) : 0.0f;
+}
+
+float snes_osd_fps(void) { return window_fps(&s_simulation); }
+float snes_osd_interpolated_fps(void) { return window_fps(&s_presentation); }
+const char *snes_osd_status_text(void) { return s_status; }
 
 /* ---- turbo -------------------------------------------------------------- */
 
