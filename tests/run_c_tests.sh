@@ -616,6 +616,10 @@ echo "=== mod runtime: input transforms ==="
     -I "$ROOT/runner/src" \
     "$ROOT/tests/mod_resources/input_transform_test.cpp" \
     -x c++ "$ROOT/runner/src/mod_runtime.cpp" \
+    -I "$ROOT/external/shared-cores/recomp-mod-core/include" \
+    "$ROOT/external/shared-cores/recomp-mod-core/src/runtime.cpp" \
+    "$ROOT/external/shared-cores/recomp-mod-core/src/rmod_crc32.c" \
+    "$ROOT/external/shared-cores/recomp-mod-core/src/rmod_sha256.c" \
     "$ROOT/runner/src/sha256.c" "$ROOT/runner/src/snes/tier2_capture.c" \
     "$ROOT/runner/src/crc32.c" \
     "$ROOT/runner/src/rom_identity.c" "$ROOT/runner/src/sha1.c" \
