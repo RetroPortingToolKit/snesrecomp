@@ -8,8 +8,14 @@ if(NOT TARGET recomp_diagnostics_core)
         get_filename_component(RECOMP_SHARED_CORE_ROOT
             "${CMAKE_CURRENT_LIST_DIR}/../../../external/shared-cores" ABSOLUTE)
     endif()
-    add_subdirectory("${RECOMP_SHARED_CORE_ROOT}/recomp-diagnostics-core"
-        "${CMAKE_CURRENT_BINARY_DIR}/shared-diagnostics" EXCLUDE_FROM_ALL)
+    function(_snes_writer_provider)
+        # These tests build the adapter. Provider tests have their own build;
+        # registering excluded executables here breaks the standalone CTest run.
+        set(BUILD_TESTING OFF)
+        add_subdirectory("${RECOMP_SHARED_CORE_ROOT}/recomp-diagnostics-core"
+            "${CMAKE_CURRENT_BINARY_DIR}/shared-diagnostics" EXCLUDE_FROM_ALL)
+    endfunction()
+    _snes_writer_provider()
 endif()
 find_package(Python3 COMPONENTS Interpreter REQUIRED)
 set(SNESRECOMP_SDL_BACKEND SDL3 CACHE STRING "SDL3 or SDL2")
