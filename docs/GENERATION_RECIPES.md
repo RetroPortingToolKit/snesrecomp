@@ -5,7 +5,8 @@ The setup launcher's Generate & Rebuild uses that same SDK entry point.
 Game-specific source transformations stay in the game repository; the SDK
 owns identity checking, analysis, hook execution, header synchronization and
 publication. `tools/regen_project.sh --project-root <game> --no-tests` is the
-portable developer wrapper. Add `--strict-idempotent` to compare two complete
+portable developer wrapper. Generation does not run the engine suite unless
+`--tests` is supplied. Add `--strict-idempotent` to compare two complete
 generated trees, including postprocessing.
 
 ```toml
@@ -44,3 +45,25 @@ generation identity; this alone does not establish netplay compatibility.
 Identity values supplied by a launcher must agree with the identity file.
 Recipe paths stay within the project, and missing profiles or scripts fail
 before generation. Projects without a recipe retain the existing SDK behavior.
+
+For regional configurations, `project_root` is relative to the recipe's CFG
+directory; `identity_file`, `out_dir`, `source_roots` and hook paths are relative
+to that project root. The wrapper accepts `--cfg-dir`, `--out-dir`, and repeated
+`--profile` paths. `--no-default-profiles` replaces recipe captures with the
+explicit captures. `generation_cfg_dir` lets a prepare hook assemble a separate
+CFG tree without overwriting the project's source overlays.
+
+An `[emitter]` table can set `max_insns`, `max_nodes`,
+`bank_shard_threshold_kib`, `bank_shard_pc_span` and `no_hle` (which controls
+automatic emitted aliases, independently of the host-native runtime profile).
+The numeric settings also have developer-wrapper flags.
+
+`[[image_overlays]]` tables contain a project-relative IPS `file` and its exact
+`sha256`. They require an original-image SHA-256 in the identity file. The SDK
+checks the original image, patch fingerprint, record framing, bounds and
+conflicting writes before prepare hooks. The compiler applies the overlay only
+to loaded bytes and sends that view to the native analyzer over binary stdin;
+the original image remains the `--rom` input and is never rewritten.
+`.snesrecomp-image-view.json` records the original digest, loaded-image digest,
+ordered overlay fingerprints and plan digest. The generated module still names
+the loaded image it implements; generation does not enable a runtime mod.
