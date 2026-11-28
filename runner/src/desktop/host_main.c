@@ -481,7 +481,7 @@ static bool PresentationDecoupled(void) { return WantedPresentationHz(0) > 0; }
  * A decoupled presentation or an explicitly disabled frame delay paces
  * elsewhere and must not also wait on the driver. */
 static int VSyncInterval(void) {
-  if (PresentationDecoupled() || g_config.disable_frame_delay) return 0;
+  if (PresentationDecoupled() || g_config.disable_frame_delay || g_turbo) return 0;
   switch (g_config.vsync) {
     case kSnesVSync_Off:      return 0;
     case kSnesVSync_Adaptive: return -1;
@@ -598,6 +598,22 @@ void snesrecomp_set_vsync(int mode)
 int snesrecomp_get_vsync(void)
 {
     return (int)g_config.vsync;
+}
+
+/* Unlock VSync while turbo fast-forward is held so frequent visual updates do not
+ * stall simulation on VBlank, then restore the configured swap interval on release. */
+static void SyncTurboVSync(bool *last_turbo, double *last_turbo_present)
+{
+    bool cur = g_turbo != 0;
+    if (cur == *last_turbo)
+        return;
+    *last_turbo = cur;
+    *last_turbo_present = 0.0;
+#if !defined(__ANDROID__) && !SNESRECOMP_SDL_GLES2_ONLY
+    snesrecomp_opengl_set_vsync(VSyncInterval());
+#endif
+    if (g_renderer_funcs.Reconfigure)
+        g_renderer_funcs.Reconfigure();
 }
 
 void snesrecomp_set_frame_blend(int enabled)
@@ -1504,7 +1520,7 @@ static int ComposeStateThumbnail(uint32_t *dst, size_t cap, int *w, int *h) {
 
 /* Snapshots and their thumbnails share the same completed raster boundary. */
 static void NoteStateFrame(void) {
-  if (g_ppu && g_ppu->renderBuffer) {
+  if (!g_snes->disableRender && g_ppu && g_ppu->renderBuffer) {
     int width = g_game->native_widescreen ? g_snes_width : 256;
     const uint32_t *frame = (const uint32_t *)g_ppu->renderBuffer;
     if (HasHiresField() && ReserveHiresPreview()) {
@@ -3570,6 +3586,7 @@ static void LauncherSeed(RecompLauncherCSettings *ls, RecompLauncherCGameInfo *g
   ls->fullscreen    = g_config.fullscreen;
   ls->ignore_aspect = g_config.ignore_aspect_ratio;
   ls->linear_filter = g_config.linear_filtering;
+  ls->widescreen    = g_config.widescreen ? 1 : 0;
   ls->aspect_index = SnesDisplayAspect_Clamp(g_config.display_aspect);
   if (g_config.shader)
     snprintf(ls->shader_path, sizeof(ls->shader_path), "%s", g_config.shader);
@@ -3602,6 +3619,8 @@ static void LauncherSeed(RecompLauncherCSettings *ls, RecompLauncherCGameInfo *g
   for (int seat = 0; seat < RECOMP_LAUNCHER_MAX_PLAYERS; ++seat)
     ls->deadzone[seat] = (g_config.gamepad_deadzone * 100 + 32767 / 2) / 32767;
   ls->skip_launcher = g_config.skip_launcher;
+  ls->show_fps      = (in_session ? snes_osd_fps_visible()
+                                  : g_config.display_perf_title) ? 1 : 0;
   ls->msu1_enabled  = 0;
   /* Display rows the framework host wires (see FrameBlendConfigure,
    * RendererApply, the vsync flags at presenter creation, and
@@ -3676,6 +3695,7 @@ static void LauncherSeed(RecompLauncherCSettings *ls, RecompLauncherCGameInfo *g
   gi->has_rewind_depth = game->rewind_settings ? 1 : 0;
   gi->has_run_ahead    = 1;   /* the runtime snapshots a machine in a frame */
   gi->has_vsync        = 1;
+  gi->has_show_fps     = 1;
   gi->has_renderer     = 1;
   RendererEnumerate();
   gi->renderer_labels  = g_renderer_label_ptr;
@@ -3761,6 +3781,8 @@ static void LauncherCommit(const RecompLauncherCSettings *ls, const char *config
   g_config.fullscreen          = (uint8)ls->fullscreen;
   g_config.ignore_aspect_ratio = ls->ignore_aspect != 0;
   g_config.linear_filtering    = ls->linear_filter != 0;
+  if (game->widescreen_supported)
+    g_config.widescreen = ls->widescreen != 0;
   if (game->display_aspect_supported)
     g_config.display_aspect = (uint8)SnesDisplayAspect_Clamp(ls->aspect_index);
   if (game->shader_supported) {
@@ -3786,6 +3808,7 @@ static void LauncherCommit(const RecompLauncherCSettings *ls, const char *config
   }
   g_config.gamepad_deadzone    = (ls->deadzone[0] * 32767 + 50) / 100;
   g_config.skip_launcher       = ls->skip_launcher != 0;
+  g_config.display_perf_title  = ls->show_fps != 0;
   g_config.frame_blend         = ls->frame_blend != 0;
   g_config.run_ahead           = ls->run_ahead;
   if (game->rewind_settings) {
@@ -3864,6 +3887,8 @@ static void ApplyLiveSettings(const Config *before) {
   if (g_renderer_funcs.Reconfigure) g_renderer_funcs.Reconfigure();
   if (g_config.frame_blend != before->frame_blend)
     FrameBlendConfigure();
+  if (g_config.display_perf_title != before->display_perf_title)
+    snes_osd_set_fps_visible(g_config.display_perf_title ? 1 : 0);
   if (g_config.run_ahead != before->run_ahead)
     snes_runahead_set_frames(g_config.run_ahead);
   if (g_game->rewind_settings &&
@@ -3949,12 +3974,14 @@ static void RunInGameLauncher(bool *running, const char **exit_reason) {
   SDL_HideWindow(g_window);
   /* This process keeps running after the launcher's window closes. */
   recomp_launcher_set_preserve_sdl(1);
+  if (g_game && g_game->build_version)
+    recomp_launcher_set_game_version(g_game->build_version);
   RecompLauncherCSettings ls;
   RecompLauncherCGameInfo gi;
   LauncherSeed(&ls, &gi, g_active_config_file, 1);
   char rom[1024];
   rom[0] = '\0';
-  int act = recomp_launcher_run_window(g_launcher_title, &ls, &gi, ".",
+  int act = recomp_launcher_run_window(g_launcher_title, &ls, &gi, "assets",
                                        g_rom_path[0] ? g_rom_path : NULL,
                                        rom, sizeof(rom));
   recomp_launcher_set_preserve_sdl(0);
@@ -4180,6 +4207,8 @@ int snesrecomp_desktop_main(const SnesDesktopHostGame *game, int argc, char **ar
     g_config.state_menu_pad_binding = SNES_HOST_STATE_MENU_PAD_DEFAULT;
   /* Before after_config, so a port that wants to inspect the parsed rewind
    * settings sees the same opt-in the writer will honour. */
+  if (game->native_widescreen && !ConfigHasWidescreen())
+    g_config.widescreen = true;
   if (game->rewind_settings) ConfigEnableRewindKeys();
   if (game->after_config) game->after_config();
   ApplyVolume();
@@ -4333,10 +4362,11 @@ int snesrecomp_desktop_main(const SnesDesktopHostGame *game, int argc, char **ar
         if (!init_rom[0] && !snesrecomp_rom_cache_read(init_rom, sizeof(init_rom)))
           init_rom[0] = '\0';
 
-        /* cwd is anchored to the exe dir and recomp_ui.cmake stages assets to
-         * <exe>/assets, so "." resolves assets correctly. */
+        /* cwd is anchored to the exe dir and assets live under <exe>/assets. */
+        if (g_game && g_game->build_version)
+          recomp_launcher_set_game_version(g_game->build_version);
         int act = recomp_launcher_run_window(
-            g_launcher_title, &ls, &gi, ".", init_rom[0] ? init_rom : NULL,
+            g_launcher_title, &ls, &gi, "assets", init_rom[0] ? init_rom : NULL,
             rom_path_buf, sizeof(rom_path_buf));
         host_report_breadcrumb("launcher: action=%d rom=%s", act,
                                rom_path_buf[0] ? rom_path_buf : "(none)");
@@ -4901,6 +4931,8 @@ error_reading:;
   if (presentation_hz <= 0) presentation_hz = g_simulation_hz;
   snes_host_clock_reset(&video_clock, MonotonicSeconds(), g_simulation_hz, presentation_hz);
   double next_display_check = 0;
+  bool last_turbo = false;
+  double last_turbo_present = 0.0;
 
   /* Rewind ring: reads the env overrides and reserves slot headers; the
    * buffer itself is allocated lazily on the first capture. */
@@ -5051,6 +5083,7 @@ error_reading:;
       audiopaused = pause_audio;
       SetAudioPaused(audiopaused);
     }
+    SyncTurboVSync(&last_turbo, &last_turbo_present);
 
     if (lua_bridge_paused()) {
       snes_host_clock_reset(&video_clock, MonotonicSeconds(), g_simulation_hz, presentation_hz);
@@ -5356,6 +5389,7 @@ error_reading:;
     inputs |= SnesInputPackSeat(PollTitleActions(), 0);
     inputs |= TickScript();
     inputs |= HeadlessCapture_InputWord(frameCtr + 1);
+    SyncTurboVSync(&last_turbo, &last_turbo_present);
     if (g_script_quit) {
       running = false;
       exit_reason = g_script_failed ? "script until timed out" : "script quit";
@@ -5426,7 +5460,17 @@ error_reading:;
       host_report_breadcrumb("first frame simulated");
     else if (frameCtr % 3600 == 0)   /* ~once a minute at 60 fps */
       host_report_breadcrumb("heartbeat: frame=%u", frameCtr);
-    g_snes->disableRender = g_turbo && (frameCtr & 0xf) != 0;
+    if (g_turbo) {
+      double now = MonotonicSeconds();
+      if (last_turbo_present <= 0.0 || (now - last_turbo_present) >= (1.0 / 50.0)) {
+        last_turbo_present = now;
+        g_snes->disableRender = false;
+      } else {
+        g_snes->disableRender = true;
+      }
+    } else {
+      g_snes->disableRender = false;
+    }
     snes_osd_set_turbo(g_turbo);
 
     profile_start = ProfileStart();
@@ -5701,7 +5745,10 @@ static void HandleCommand(uint32 j, bool pressed) {
       break;
     case kKeys_WindowBigger: ChangeWindowScale(1); break;
     case kKeys_WindowSmaller: ChangeWindowScale(-1); break;
-    case kKeys_DisplayPerf: snes_osd_toggle_fps(); break;
+    case kKeys_DisplayPerf:
+      snes_osd_toggle_fps();
+      g_config.display_perf_title = snes_osd_fps_visible() != 0;
+      break;
     case kKeys_SaveStateMenu: g_savestate_menu_hotkey = 1; break;
     case kKeys_Rewind: g_rewind_hotkey = 1; break;
     case kKeys_Screenshot: RequestScreenshot(); break;
@@ -6118,12 +6165,25 @@ static const char kDefaultConfigIniContent[] =
 
 static const char *DefaultConfigIni(void) {
   if (g_game->default_config_ini) return g_game->default_config_ini;
+  if (!g_game->state_menu_hotkeys && !g_game->native_widescreen)
+    return kDefaultConfigIniContent;
+  static char menu_config[sizeof(kDefaultConfigIniContent) + 192];
+  static char ws_buf[sizeof(kDefaultConfigIniContent) + 64];
+  const char *src = kDefaultConfigIniContent;
+  if (g_game->native_widescreen) {
+    const char *anchor = strstr(src, "NoSpriteLimits = 1\n");
+    if (anchor) {
+      size_t split = (size_t)(anchor - src) + strlen("NoSpriteLimits = 1\n");
+      snprintf(ws_buf, sizeof(ws_buf), "%.*sWidescreen = 1\n%s",
+               (int)split, src, src + split);
+      src = ws_buf;
+    }
+  }
   if (g_game->state_menu_hotkeys) {
-    static char menu_config[sizeof(kDefaultConfigIniContent) + 128];
-    const char *keys = strstr(kDefaultConfigIniContent, "SaveStateMenu = F11\n");
+    const char *keys = strstr(src, "SaveStateMenu = F11\n");
     const char *after_load = strchr(strstr(keys, "Load ="), '\n') + 1;
     snprintf(menu_config, sizeof(menu_config), "%.*s%s%s",
-        (int)(keys - kDefaultConfigIniContent), kDefaultConfigIniContent,
+        (int)(keys - src), src,
         "SaveStateMenu = F7\nRewind = F8\n"
 #if !defined(__ANDROID__) && !SNESRECOMP_SDL_GLES2_ONLY
         "Screenshot = PrintScreen\n"
@@ -6131,7 +6191,7 @@ static const char *DefaultConfigIni(void) {
         "Load = F1,F2,F3,F4,F5,F6,F11,F12,F9,F10\n", after_load);
     return menu_config;
   }
-  return kDefaultConfigIniContent;
+  return src;
 }
 
 /* Write the default config.ini next to the executable and chdir there. Silent

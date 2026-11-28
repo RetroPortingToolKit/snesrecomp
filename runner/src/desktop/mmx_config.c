@@ -48,6 +48,8 @@ void ConfigEnableInputActions(int count) { s_input_actions = count >= 0 && count
 bool ConfigHasPlayerSource(int player) {
   return (unsigned)player < kSnesHostPadSeats && s_player_src_seen[player];
 }
+static bool s_widescreen_seen;
+bool ConfigHasWidescreen(void) { return s_widescreen_seen; }
 
 #define REMAP_SDL_KEYCODE(key) ((key) & SDLK_SCANCODE_MASK ? kKeyMod_ScanCode : 0) | (key) & (kKeyMod_ScanCode - 1)
 #define _(x) REMAP_SDL_KEYCODE(x)
@@ -625,6 +627,7 @@ static bool HandleIniConfig(int section, const char *key, char *value) {
     } else if (StringEqualsNoCase(key, "NoSpriteLimits")) {
       return ParseBool(value, &g_config.no_sprite_limits);
     } else if (StringEqualsNoCase(key, "Widescreen")) {
+      s_widescreen_seen = true;
       return ParseBool(value, &g_config.widescreen);
     } else if (StringEqualsNoCase(key, "Shader")) {
       g_config.shader = *value ? value : NULL;
@@ -747,6 +750,7 @@ void ParseConfigFile(const char *filename) {
     g_config.player_src[i] = 0;
   }
   for (int i = 0; i < kSnesHostPadSeats; ++i) s_player_src_seen[i] = false;
+  s_widescreen_seen = false;
   memset(g_config.player_guid, 0, sizeof(g_config.player_guid));
   g_config.gamepad_deadzone = SNES_CONFIG_DEFAULT_DEADZONE;
   g_config.display_aspect = kSnesDisplayAspect_Crt4x3;
@@ -959,6 +963,7 @@ void WriteConfigFile(const char *filename) {
     { "GamepadMap", "EnableGamepad1" },
     { "GamepadMap", "EnableGamepad2" },
     { "General",    "SkipLauncher" },
+    { "General",    "DisplayPerfInTitle" },
     { "GamepadMap", "GamepadDeadzone" },
     { "Netplay",    "PlayerName" },
     { "Graphics",   "FrameBlend" },
@@ -1012,6 +1017,7 @@ void WriteConfigFile(const char *filename) {
   CfgSet(kvs, N, "GamepadMap", "EnableGamepad2", "%s",
          g_config.enable_gamepad[1] ? "true" : "false");
   CfgSet(kvs, N, "General", "SkipLauncher", "%d", g_config.skip_launcher ? 1 : 0);
+  CfgSet(kvs, N, "General", "DisplayPerfInTitle", "%d", g_config.display_perf_title ? 1 : 0);
   CfgSet(kvs, N, "GamepadMap", "GamepadDeadzone", "%d", g_config.gamepad_deadzone);
   CfgSet(kvs, N, "Netplay", "PlayerName", "%s", g_config.netplay_player_name);
   CfgSet(kvs, N, "Graphics", "FrameBlend", "%d", g_config.frame_blend ? 1 : 0);

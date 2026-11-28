@@ -1789,7 +1789,7 @@ static void PpuDrawBackground_4bpp_opt(Ppu *ppu, uint y, bool sub, uint layer,
   const unsigned hscroll = ppu->hScroll[layer];
   const unsigned vscroll = ppu->vScroll[layer];
   const unsigned opt_hscroll = ppu->hScroll[2];
-  const unsigned opt_vscroll = ppu->vScroll[2] - 1u;
+  const unsigned opt_vscroll = ppu->vScroll[2];
   const int opt_hrow = (opt_vscroll & opt_coord_mask) >> opt_shift;
   const int opt_vrow = ((opt_vscroll + 8) & opt_coord_mask) >> opt_shift;
   const uint16 enable = (uint16)(0x2000u << layer);
@@ -1814,8 +1814,10 @@ static void PpuDrawBackground_4bpp_opt(Ppu *ppu, uint y, bool sub, uint layer,
       if (source_screen_x < 8 - (int)(hscroll & 7)) {
         /* The SNES cannot apply OPT to the leftmost source-tile column. */
       } else {
+        const unsigned opt_sx =
+            (source_screen_x >= 256) ? 255u : (unsigned)source_screen_x;
         const unsigned opt_pos =
-            (opt_hscroll + (unsigned)source_screen_x - 1) & opt_coord_mask;
+            (opt_hscroll + opt_sx - 1u) & opt_coord_mask;
         const int opt_x = opt_pos >> opt_shift;
         const uint16 hcell = PpuReadTilemapEntry(ppu, 2, opt_x, opt_hrow);
         const uint16 vcell = PpuReadTilemapEntry(ppu, 2, opt_x, opt_vrow);

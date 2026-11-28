@@ -38,7 +38,7 @@ typedef struct { SDL_Joystick *joystick; bool raw_joystick; int index,joystick_i
 typedef struct {
   int enable_gamepad[2], player_src[2];
   int fullscreen, window_width, window_height, window_scale, display_aspect;
-  int frame_blend, run_ahead, rewind_enabled, rewind_depth, rewind_interval;
+  int frame_blend, display_perf_title, run_ahead, rewind_enabled, rewind_depth, rewind_interval;
   char player_guid[2][33];
 } Config;
 static Config g_config;
@@ -145,6 +145,7 @@ static void SDL_SetWindowFullscreen(void *window,uint32 flags) {}
 static void RefreshGameCursor(bool force) {}
 static void ChangeWindowScale(int scale) {}
 static void FrameBlendConfigure(void) {}
+static void snes_osd_set_fps_visible(int visible) { (void)visible; }
 static void snes_runahead_set_frames(int frames) {}
 static void snes_rewind_set_defaults(int enabled,int depth,int interval) {}
 static void snes_rewind_shutdown(void) {}
