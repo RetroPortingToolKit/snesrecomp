@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import argparse
 import contextlib
+import hashlib
 import io
 import os
 import pathlib
@@ -67,6 +68,11 @@ def _generate(
     legacy_profile_rom_sha256: Optional[str] = None,
     generation_recipe_digest: Optional[str] = None,
     analysis_backend: str = "native",
+    instruction_blocks: bool = False,
+    region_paced: bool = False,
+    aot_resume: bool = False,
+    emitter_options: Optional[dict] = None,
+    image_overlays: Optional[Sequence[pathlib.Path]] = None,
     expected_crc32: Optional[str] = None,
     expected_sha256: Optional[str] = None,
     progress: Optional[ProgressReporter] = None,
@@ -85,6 +91,10 @@ def _generate(
     from tools import v2_emit, v2_sync_funcs_h
 
     reporter = progress or ProgressReporter()
+    if region_paced and not instruction_blocks:
+        raise ValueError("region-paced emission requires instruction-blocks")
+    if aot_resume and not region_paced:
+        raise ValueError("compiled resume requires region-paced emission")
     rom = pathlib.Path(rom).resolve()
     cfg_dir = pathlib.Path(cfg_dir).resolve()
     out_dir = pathlib.Path(out_dir).resolve()
@@ -120,8 +130,23 @@ def _generate(
     ]
     if cfg_roots:
         emit_args.append("--cfg-roots")
+    if instruction_blocks:
+        emit_args.append("--instruction-blocks")
+    if region_paced:
+        emit_args.append("--region-paced")
+    if aot_resume:
+        emit_args.append("--aot-resume")
     if no_host_root_scan:
         emit_args.append("--no-host-root-scan")
+    for overlay in image_overlays or ():
+        emit_args.extend(["--image-overlay", str(overlay)])
+    for key, value in (emitter_options or {}).items():
+        flag = "--" + key.replace("_", "-")
+        if type(value) is bool:
+            if value:
+                emit_args.append(flag)
+        else:
+            emit_args.extend([flag, str(value)])
     for root in source_roots or ():
         emit_args.extend(["--source-root", str(pathlib.Path(root).resolve())])
     # Tier-2 coverage profile (the burn-down loop's promote step). Influences
@@ -209,6 +234,9 @@ def _generate(
         "funcs_count": funcs_count,
         "cfg_roots": bool(cfg_roots),
         "analysis_backend": analysis_backend,
+        "instruction_blocks": bool(instruction_blocks),
+        "region_paced": bool(region_paced),
+        "aot_resume": bool(aot_resume),
     }
     if _report_result:
         reporter.phase("done", pct=1.0, message="Generate complete")
@@ -227,10 +255,12 @@ def generate(**kwargs) -> dict:
     cfg_dir = pathlib.Path(kwargs["cfg_dir"]).resolve()
     recipe = load_recipe(cfg_dir)
     if recipe is None:
+        kwargs.pop("use_default_profiles", None)
         return _generate(**kwargs)
     ensure_tool_paths(pathlib.Path(__file__).resolve().parents[1])
     from v2.atomic_output import AtomicOutputDir
     options = dict(kwargs)
+    use_default_profiles = options.pop("use_default_profiles", True)
     reporter = options.get("progress") or ProgressReporter()
     options["progress"] = reporter
     identity = recipe.identity()
@@ -249,15 +279,31 @@ def generate(**kwargs) -> dict:
         if supplied and supplied.lower() != verified["sha256"].lower():
             raise ValueError("legacy profile binding differs from verified recipe ROM")
         options["legacy_profile_rom_sha256"] = verified["sha256"]
-    for key in ("cfg_roots", "no_host_root_scan"):
+    for key in ("cfg_roots", "no_host_root_scan", "instruction_blocks", "region_paced", "aot_resume"):
         options[key] = bool(options.get(key) or recipe.data.get(key))
+    options["emitter_options"] = dict(recipe.data.get("emitter", {}), **options.get("emitter_options", {}))
+    options["image_overlays"] = [recipe.local(p["file"]) for p in recipe.data.get("image_overlays", [])]
+    options["source_roots"] = list(dict.fromkeys(
+        [*[recipe.local(p) for p in recipe.data.get("source_roots", [])],
+         *(options.get("source_roots") or [])]))
+    if options["region_paced"] and not options["instruction_blocks"]:
+        raise ValueError("region-paced emission requires instruction-blocks")
+    if options["aot_resume"] and not options["region_paced"]:
+        raise ValueError("compiled resume requires region-paced emission")
     for key, recipe_key in (("profile_manifests", "profiles"),
                             ("historical_profile_manifests", "historical_profiles")):
         options[key] = list(dict.fromkeys(
-            [*recipe.profiles(recipe_key), *(options.get(key) or [])]))
-    options["generation_recipe_digest"] = recipe.digest()
+            [*(recipe.profiles(recipe_key) if use_default_profiles else []), *(options.get(key) or [])]))
+    options["generation_recipe_digest"] = hashlib.sha256(
+        (recipe.digest() + "\0instruction_blocks=" + str(int(options["instruction_blocks"])) +
+         "\0region_paced=" + str(int(options["region_paced"])) +
+         # Only when on, so recipes without it keep their digest.
+         ("\0aot_resume=1" if options["aot_resume"] else "")).encode("ascii")).hexdigest()
     target = pathlib.Path(options["out_dir"]).resolve()
     header = pathlib.Path(options["funcs_h"]).resolve() if options.get("funcs_h") else None
+    if "generation_cfg_dir" in recipe.data:
+        cfg_dir = recipe.local(recipe.data["generation_cfg_dir"])
+        options["cfg_dir"] = cfg_dir
     recipe.run("prepare", rom=rom, cfg_dir=cfg_dir, out_dir=target, reporter=reporter)
     transaction = AtomicOutputDir(target, seed_existing=False)
     try:
@@ -342,6 +388,9 @@ def generate_command(args: argparse.Namespace, progress: ProgressReporter) -> in
             ],
             legacy_profile_rom_sha256=getattr(args, "legacy_profile_rom_sha256", None),
             analysis_backend=args.analysis_backend,
+            instruction_blocks=bool(getattr(args, "instruction_blocks", False)),
+            region_paced=bool(getattr(args, "region_paced", False)),
+            aot_resume=bool(getattr(args, "aot_resume", False)),
             expected_crc32=args.expected_crc32,
             expected_sha256=args.expected_sha256,
             progress=progress,
@@ -427,6 +476,13 @@ def add_generate_parser(subparsers) -> None:
              "one (auto means native; python is an error)",
     )
     add_identity_args(generate_parser)
+    generate_parser.add_argument("--region-paced", action="store_true",
+                                 help="opt in to conservative per-access region timing (requires --instruction-blocks)")
+    generate_parser.add_argument("--aot-resume", action="store_true",
+                                 help="every compiled instruction is also an entry, so code a deadline stopped in "
+                                      "goes on compiled (requires --region-paced)")
+    generate_parser.add_argument("--instruction-blocks", action="store_true",
+                                 help="check host deadlines at every guest instruction boundary")
     generate_parser.add_argument(
         "--json-progress",
         action="store_true",
