@@ -49,7 +49,7 @@ def main(argv=None):
             lines = (project / "rom.cfg").read_text(encoding="utf-8").splitlines()
             rom = lines[0].strip() if lines else None
     if not rom:
-        parser.error("no ROM configured; pass --rom or set SNESRECOMP_ROM")
+        parser.error("no ROM configured; pass --rom, set SNESRECOMP_ROM, or record its original path in rom.cfg")
     rom = Path(rom).expanduser()
     if not rom.is_absolute():
         rom = project / rom
