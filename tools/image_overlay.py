@@ -1,5 +1,6 @@
 """Apply verified project IPS overlays to an in-memory compiler image."""
 from pathlib import Path
+import hashlib
 
 MAX_IMAGE_SIZE = 16 * 1024 * 1024
 
@@ -58,3 +59,17 @@ def overlay_image(image: bytes, paths) -> bytes:
     for path in paths:
         image = apply_ips(image, Path(path).read_bytes(), writes=writes)
     return image
+
+
+def verified_overlay_image(image: bytes, overlays):
+    """Apply exactly the bytes whose fingerprints were declared by the plan."""
+    writes = {}
+    fingerprints = []
+    for path, expected in overlays:
+        patch = Path(path).read_bytes()
+        actual = hashlib.sha256(patch).hexdigest()
+        if actual != expected.lower():
+            raise ValueError(f'image overlay identity mismatch: {path}')
+        image = apply_ips(image, patch, writes=writes)
+        fingerprints.append(actual)
+    return image, fingerprints
