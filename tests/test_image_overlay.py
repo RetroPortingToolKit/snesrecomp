@@ -76,3 +76,31 @@ def test_recipe_overlay_provenance_and_rejection_before_output(tmp_path):
     assert result.returncode != 0
     assert (tmp_path / 'src/gen/dispatch_v2.c').read_bytes() == published
     assert hashlib.sha256(rom.read_bytes()).hexdigest() == before
+    # A prepare hook runs after recipe loading. Its changed patch must fail
+    # the independent apply-boundary guard and leave published output intact.
+    (tmp_path / 'overlay.ips').write_bytes(patch)
+    (tmp_path / 'change_patch.py').write_text(
+        'from pathlib import Path\nPath("overlay.ips").write_bytes(b"changed after verification")\n')
+    (cfg / 'generate.toml').write_text(recipe +
+        '[[prepare]]\nscript = "change_patch.py"\n')
+    result = subprocess.run(command, capture_output=True, text=True)
+    assert result.returncode != 0
+    assert 'image overlay identity mismatch' in result.stdout + result.stderr
+    assert (tmp_path / 'src/gen/dispatch_v2.c').read_bytes() == published
+    assert hashlib.sha256(rom.read_bytes()).hexdigest() == before
+
+
+def test_direct_emitter_rejects_unguarded_overlay_before_output(tmp_path):
+    rom = tmp_path / 'fixture.sfc'
+    write_fixture_rom(rom)
+    cfg = tmp_path / 'cfg'; cfg.mkdir()
+    (cfg / 'bank00.cfg').write_text('bank = 0\nauto_vectors\n')
+    patch = tmp_path / 'overlay.ips'; patch.write_bytes(b'PATCHEOF')
+    output = tmp_path / 'unpublished'
+    result = subprocess.run([sys.executable, str(ROOT / 'tools/v2_emit.py'),
+                             '--rom', str(rom), '--cfg-dir', str(cfg),
+                             '--out-dir', str(output), '--image-overlay', str(patch)],
+                            capture_output=True, text=True)
+    assert result.returncode != 0
+    assert 'SHA-256 guards' in result.stdout + result.stderr
+    assert not output.exists()
