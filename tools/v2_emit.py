@@ -20,9 +20,11 @@ sys.path.insert(0, str(REPO / "tools"))
 
 from snes65816 import (  # noqa: E402
     clear_reloc_regions,
+    detect_rom_mapping,
     load_rom,
     register_reloc_region,
     set_rom_image_size,
+    set_rom_mapping,
 )
 from v2.link_closure import assert_closed  # noqa: E402
 from v2.program_analysis import VariantKey  # noqa: E402
@@ -232,6 +234,10 @@ def main() -> int:
                         help="probe all M/X modes at byte-authoritative declared entries; "
                              "contradictory paths remain LLE (requires gameplay qualification)")
     parser.add_argument("--no-hle", action="store_true")
+    parser.add_argument("--image-overlay", action="append", default=[],
+                        help="apply a project IPS overlay to loaded bytes; never writes the original image")
+    parser.add_argument("--image-overlay-sha256", action="append", default=[])
+    parser.add_argument("--image-original-sha256")
     parser.add_argument("--max-insns", type=int, default=4096)
     parser.add_argument("--max-nodes", type=int, default=100_000)
     parser.add_argument(
@@ -277,7 +283,26 @@ def _generate(args, parser, cfg_dir, *, symbol_roots=()):
 
     started = time.perf_counter()
     out_dir = pathlib.Path(args.out_dir).resolve()
-    rom = load_rom(args.rom)
+    overlay_fingerprints = []
+    if args.image_overlay:
+        if (len(args.image_overlay) != len(args.image_overlay_sha256)
+                or not re.fullmatch(r'[0-9a-fA-F]{64}', args.image_original_sha256 or '')
+                or any(not re.fullmatch(r'[0-9a-fA-F]{64}', p) for p in args.image_overlay_sha256)):
+            raise ValueError('image overlays require original and per-overlay SHA-256 guards')
+        original = pathlib.Path(args.rom).read_bytes()
+        original_sha256 = hashlib.sha256(original).hexdigest()
+        if original_sha256 != args.image_original_sha256.lower():
+            raise ValueError('original image identity mismatch at overlay apply boundary')
+        rom = original[512:] if len(original) % 1024 == 512 else original
+        from image_overlay import verified_overlay_image
+        rom, overlay_fingerprints = verified_overlay_image(
+            rom, zip(args.image_overlay, args.image_overlay_sha256))
+        set_rom_mapping(detect_rom_mapping(rom))
+    else:
+        if args.image_overlay_sha256 or args.image_original_sha256:
+            raise ValueError('image identity guards require an overlay')
+        rom = load_rom(args.rom)
+    analysis_image = rom if args.image_overlay else None
     try:
         validate_module_identity(args.module_id, args.module_prefix)
     except ValueError as exc:
@@ -346,6 +371,7 @@ def _generate(args, parser, cfg_dir, *, symbol_roots=()):
             REPO / "recompiler" / "v2", pathlib.Path(__file__).resolve(),
             REPO / "recompiler" / "snes65816.py",
             REPO / "tools" / "v2_analyze.py",
+            REPO / "tools" / "image_overlay.py",
             REPO / "tools" / "disassembly_layout.py",
             REPO / "tools" / "sync_symbols.py",
             REPO / "tools" / "ingest_disassembly_authority.py",
@@ -400,7 +426,7 @@ def _generate(args, parser, cfg_dir, *, symbol_roots=()):
     _seed_auto_vectors(parsed, rom)
     try:
         manifest, helpers, inline_args, native_output = build_manifest_native(
-            rom_path=args.rom, cfg_dir=cfg_dir,
+            rom_path=args.rom, cfg_dir=cfg_dir, rom_data=analysis_image,
             all_cfg_roots=args.cfg_roots,
             additional_roots=additional_roots,
             force_lle=profile_force_lle,
@@ -440,6 +466,14 @@ def _generate(args, parser, cfg_dir, *, symbol_roots=()):
         rom_size=rom_image_size,
         host_alias_header=host_alias_header,
     )
+    if args.image_overlay:
+        inputs = dict(original_sha256=original_sha256,
+                      loaded_image_sha256=rom_sha256_hex,
+                      overlays=overlay_fingerprints)
+        inputs['plan_sha256'] = hashlib.sha256(
+            json.dumps(inputs, sort_keys=True, separators=(',', ':')).encode()).hexdigest()
+        (out_dir / '.snesrecomp-image-view.json').write_text(
+            json.dumps(inputs, sort_keys=True, indent=2) + '\n', encoding='utf-8')
     elapsed = time.perf_counter() - started
     print(
         f"v2_emit: {len(manifest.roots)} roots, {result.emitted_variants} "

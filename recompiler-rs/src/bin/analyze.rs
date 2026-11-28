@@ -8,7 +8,7 @@
 
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::fs;
-use std::io::Write;
+use std::io::{Read, Write};
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -1836,7 +1836,16 @@ fn main() {
         .map(|value| value.parse::<usize>().expect("invalid --max-nodes"))
         .unwrap_or(100_000);
     let started = Instant::now();
-    let mut rom = load_rom(&rom_path).expect("load rom");
+    // The caller keeps --rom as the original input identity. A verified
+    // project overlay can supply its loaded view without a patched disk file.
+    let mut rom = if has_arg(&args, "--rom-stdin") {
+        let mut image = Vec::new();
+        std::io::stdin().take(16 * 1024 * 1024 + 1).read_to_end(&mut image).expect("read image view");
+        assert!((32768..=16 * 1024 * 1024).contains(&image.len()), "invalid image view size");
+        image
+    } else {
+        load_rom(&rom_path).expect("load rom")
+    };
     let mapping = detect_rom_mapping(&rom);
     let mut inputs = load_inputs(
         Path::new(&cfg_dir),

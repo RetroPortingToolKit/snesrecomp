@@ -120,7 +120,7 @@ def test_scaffold_writes_the_expected_layout():
         project = _scaffold(pathlib.Path(directory))
         expected = [
             "CMakeLists.txt", "VERSION", ".gitignore", "README.md",
-            "recomp/bank00.cfg", "recomp/symbols.toml", "recomp/README.md",
+            "recomp/bank00.cfg", "recomp/symbols.toml", "recomp/README.md", "recomp/generate.toml",
             "src/main.c", "src/game_rtl.c", "src/game_rtl.h",
             "src/host_contract.c", "src/variables.h", "src/gen_stubs.c",
             "rom_identity.txt", "mods/preloaded/README.md",
@@ -207,6 +207,8 @@ def test_digests_are_not_copied_into_code_or_scripts():
 
         regen = (project / "tools/regen.sh").read_text(encoding="utf-8")
         assert "rom_identity.txt" in regen, "regen.sh does not read the identity"
+        assert "regen_project.sh" in regen
+        assert 'identity_file = "rom_identity.txt"' in (project / "recomp/generate.toml").read_text()
         cmake = (project / "CMakeLists.txt").read_text(encoding="utf-8")
         assert "snesrecomp_rom_identity" in cmake, "build does not generate it"
 
@@ -662,7 +664,7 @@ def test_the_desktop_host_arms_the_header_shadowing_guard():
 
 # Through the same `sh` the scaffold runs under: on Windows a bare `bash`
 # can resolve to WSL, which does not see this environment.
-_REGEN = ["sh", "-c", "exec bash tools/regen.sh"]
+_REGEN = ["sh", "tools/regen.sh"]
 
 
 def test_regen_finds_the_rom_the_wizard_recorded():
