@@ -61,15 +61,27 @@ class DebugClient:
             self._sock = None
             self._buf = b''
 
-    def query_raw(self, cmd):
-        """Send command, return raw response string."""
+    def __enter__(self):
+        self._ensure_connected()
+        return self
+
+    def __exit__(self, exc_type, exc, traceback):
+        self.close()
+
+    def query_raw(self, cmd, *, retry=True):
+        """Send a command, optionally reconnecting and retrying once.
+
+        Use retry=False for mutations such as step, reset or load_state. A
+        lost reply does not prove that the server did not execute the command.
+        """
         try:
             self._ensure_connected()
             self._sock.sendall((cmd + '\n').encode())
             return self._recv_command_reply()
         except (ConnectionError, socket.timeout, OSError):
-            # Connection lost — close and retry once
             self.close()
+            if not retry:
+                raise
             self._ensure_connected()
             self._sock.sendall((cmd + '\n').encode())
             return self._recv_command_reply()
@@ -85,9 +97,9 @@ class DebugClient:
             line = self._recv_line()
         return line
 
-    def query(self, cmd):
+    def query(self, cmd, *, retry=True):
         """Send command, return parsed JSON dict."""
-        raw = self.query_raw(cmd)
+        raw = self.query_raw(cmd, retry=retry)
         if not raw:
             raise ConnectionError(f'{self.name}: empty response to "{cmd}"')
         return json.loads(raw)
@@ -117,6 +129,45 @@ class DebugClient:
     def get_history(self):
         """Get ring buffer bounds."""
         return self.query('history')['history']
+
+
+class GameplayClient(DebugClient):
+    """Shared input and frame waits; game navigation and captures stay local.
+
+    Socket timeouts report transport errors. Frame waits have no elapsed-time
+    failure policy, and commands that may mutate the guest are never replayed.
+    """
+
+    def q(self, command):
+        return self.query_raw(command, retry=False)
+
+    def frame(self):
+        return int(json.loads(self.q('ping'))['frame'])
+
+    def wait_ready(self, timeout=None):
+        while True:
+            if self.frame() > 0 and 'error' not in json.loads(self.q('get_ppu_state')):
+                return
+            time.sleep(.25)
+
+    def wait_frames(self, count, timeout=None):
+        start = self.frame()
+        while self.frame() - start < count:
+            time.sleep(.02)
+
+    def press(self, buttons, hold=8, gap=10):
+        try:
+            self.q(f'set_controller {buttons}')
+            self.wait_frames(hold)
+        finally:
+            self.q('clear_controller')
+        self.wait_frames(gap)
+
+    def clear(self):
+        try:
+            self.q('clear_controller')
+        except (ConnectionError, OSError):
+            pass
 
 
 class DualClient:
