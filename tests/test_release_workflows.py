@@ -50,6 +50,22 @@ def test_transitive_closure_is_complete_without_toolchain_on_path(tmp_path):
     assert {p.name for p in stage.iterdir()} == {'game.exe', 'SDL3.dll', 'transitive.dll'}
 
 
+def test_python_entrypoint_preserves_multiple_search_directories(tmp_path, monkeypatch):
+    monkeypatch.syspath_prepend(str(ROOT / 'tools/release'))
+    monkeypatch.setenv('PATH', str(POWERSHELL.parent))
+    from runtime_dependencies import bundle_windows_runtime
+    stage = tmp_path / 'runtime with spaces'
+    first = tmp_path / 'producer with spaces'
+    second = tmp_path / 'dependency with spaces'
+    for folder in (stage, first, second):
+        folder.mkdir()
+    pe(stage / 'game.exe', ['first.dll'])
+    pe(first / 'first.dll', ['second.dll'])
+    pe(second / 'second.dll')
+    bundle_windows_runtime(stage, [first, second])
+    assert {p.name for p in stage.iterdir()} == {'game.exe', 'first.dll', 'second.dll'}
+
+
 @pytest.mark.parametrize('bad_arch', [False, True])
 def test_missing_or_wrong_architecture_dependency_is_rejected(tmp_path, bad_arch):
     stage = tmp_path / 'runtime'; search = tmp_path / 'toolchain'
