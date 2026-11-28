@@ -3738,6 +3738,7 @@ uint8_t ppu_read(Ppu* ppu, uint8_t adr) {
  * duplicate guest bus callbacks. Hosts restore the field before drawing,
  * apply entries through the preceding line, and finish with RenderEnd. */
 int g_ppu_scanout_latch_bypass = 0;
+int g_ppu_brightness_truncate = 0;
 
 static PpuVramWriteLogHook s_vram_write_log_hook;
 
