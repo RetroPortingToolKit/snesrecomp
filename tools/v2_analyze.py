@@ -102,7 +102,7 @@ def ensure_native_analyzer(executable=None) -> pathlib.Path:
 def build_manifest_native(*, rom_path, cfg_dir, all_cfg_roots=False,
                           additional_roots=(), executable=None,
                           max_insns=4096, max_nodes=100_000,
-                          force_lle=()):
+                          force_lle=(), rom_data=None):
     """Run the compiled analyzer and load its stable manifest contract."""
     executable = ensure_native_analyzer(executable)
     fd, temporary = tempfile.mkstemp(
@@ -129,6 +129,8 @@ def build_manifest_native(*, rom_path, cfg_dir, all_cfg_roots=False,
     ]
     if all_cfg_roots:
         command.append("--all-cfg-roots")
+    if rom_data is not None:
+        command.append("--rom-stdin")
     root_values = [
         f"{key.pc24:06X}:{key.m}:{key.x}"
         for key in sorted(set(additional_roots))
@@ -148,8 +150,9 @@ def build_manifest_native(*, rom_path, cfg_dir, all_cfg_roots=False,
             write_arg_file("snesrecomp-native-force-lle-", force_lle_values),
         ))
     try:
-        completed = subprocess.run(
-            command, text=True, capture_output=True, check=False)
+        completed = subprocess.run(command, input=rom_data, capture_output=True, check=False)
+        completed.stdout = completed.stdout.decode("utf-8", errors="replace")
+        completed.stderr = completed.stderr.decode("utf-8", errors="replace")
         if completed.returncode:
             detail = completed.stderr.strip() or completed.stdout.strip()
             raise RuntimeError(

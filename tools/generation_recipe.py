@@ -102,14 +102,52 @@ def load_recipe(cfg_dir: Path) -> Recipe | None:
                              "(python -m pip install tomli)") from exc
     data = tomllib.loads(path.read_text(encoding="utf-8"))
     allowed = {"schema", "identity_file", "cfg_roots", "no_host_root_scan", "instruction_blocks", "region_paced",
-               "profiles", "historical_profiles", "bind_legacy_profiles",
-               "prepare", "postprocess"}
+               "aot_resume", "profiles", "historical_profiles", "bind_legacy_profiles",
+               "prepare", "postprocess", "out_dir", "emitter", "project_root", "source_roots", "image_overlays", "generation_cfg_dir"}
     if type(data.get("schema")) is not int or data.get("schema") != 1 or data.keys() - allowed:
         raise ValueError(f"unsupported generation recipe: {path}")
-    recipe = Recipe(path, cfg_dir.parent.resolve(), data)
+    if "project_root" in data and not isinstance(data["project_root"], str):
+        raise ValueError("recipe project_root must be a path")
+    recipe = Recipe(path, (cfg_dir / data.get("project_root", "..")).resolve(), data)
+    if "out_dir" in data:
+        if not isinstance(data["out_dir"], str):
+            raise ValueError("recipe out_dir must be a project-relative path")
+        recipe.local(data["out_dir"])
+    if "generation_cfg_dir" in data:
+        if not isinstance(data["generation_cfg_dir"], str):
+            raise ValueError("recipe generation_cfg_dir must be a path")
+        recipe.local(data["generation_cfg_dir"])
+    emitter = data.get("emitter", {})
+    numeric = {"max_insns", "max_nodes", "bank_shard_threshold_kib", "bank_shard_pc_span"}
+    if (not isinstance(emitter, dict) or emitter.keys() - (numeric | {"no_hle"})
+            or any(type(v) is not int or v <= 0 for k, v in emitter.items() if k in numeric)
+            or ("no_hle" in emitter and type(emitter["no_hle"]) is not bool)):
+        raise ValueError("unsupported recipe emitter options")
     if "identity_file" in data and not isinstance(data["identity_file"], str):
         raise ValueError("recipe identity_file must be a path")
-    for key in ("cfg_roots", "no_host_root_scan", "bind_legacy_profiles", "instruction_blocks", "region_paced"):
+    overlays = data.get("image_overlays", [])
+    if not isinstance(overlays, list):
+        raise ValueError("recipe image_overlays must be a list")
+    if overlays and not recipe.identity().get("expected_sha256"):
+        raise ValueError("image overlays require a verified original image identity")
+    for overlay in overlays:
+        if not isinstance(overlay, dict) or set(overlay) != {"file", "sha256"}:
+            raise ValueError("image overlay requires file and sha256")
+        path = recipe.local(overlay["file"])
+        if hashlib.sha256(path.read_bytes()).hexdigest() != overlay["sha256"]:
+            raise ValueError(f"image overlay identity mismatch: {path}")
+    if overlays:
+        from tools.image_overlay import overlay_image
+        # Structural, range and overlap checks precede prepare hooks/output.
+        overlay_image(b'', [recipe.local(p["file"]) for p in overlays])
+    roots = data.get("source_roots", [])
+    if not isinstance(roots, list) or not all(isinstance(v, str) for v in roots):
+        raise ValueError("recipe source_roots must be a list of paths")
+    for root in roots:
+        if not recipe.local(root).exists():
+            raise ValueError(f"missing recipe source root: {root}")
+    for key in ("cfg_roots", "no_host_root_scan", "bind_legacy_profiles", "instruction_blocks", "region_paced",
+                "aot_resume"):
         if key in data and not isinstance(data[key], bool):
             raise ValueError(f"recipe {key} must be a boolean")
     for key in ("profiles", "historical_profiles"):
