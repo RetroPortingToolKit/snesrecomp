@@ -72,7 +72,7 @@ def _generate(
     region_paced: bool = False,
     aot_resume: bool = False,
     emitter_options: Optional[dict] = None,
-    image_overlays: Optional[Sequence[pathlib.Path]] = None,
+    image_overlays: Optional[Sequence[tuple[pathlib.Path, str]]] = None,
     expected_crc32: Optional[str] = None,
     expected_sha256: Optional[str] = None,
     progress: Optional[ProgressReporter] = None,
@@ -138,8 +138,10 @@ def _generate(
         emit_args.append("--aot-resume")
     if no_host_root_scan:
         emit_args.append("--no-host-root-scan")
-    for overlay in image_overlays or ():
-        emit_args.extend(["--image-overlay", str(overlay)])
+    if image_overlays:
+        emit_args.extend(["--image-original-sha256", identity["sha256"]])
+    for overlay, expected in image_overlays or ():
+        emit_args.extend(["--image-overlay", str(overlay), "--image-overlay-sha256", expected])
     for key, value in (emitter_options or {}).items():
         flag = "--" + key.replace("_", "-")
         if type(value) is bool:
@@ -282,7 +284,8 @@ def generate(**kwargs) -> dict:
     for key in ("cfg_roots", "no_host_root_scan", "instruction_blocks", "region_paced", "aot_resume"):
         options[key] = bool(options.get(key) or recipe.data.get(key))
     options["emitter_options"] = dict(recipe.data.get("emitter", {}), **options.get("emitter_options", {}))
-    options["image_overlays"] = [recipe.local(p["file"]) for p in recipe.data.get("image_overlays", [])]
+    options["image_overlays"] = [(recipe.local(p["file"]), p["sha256"])
+                                 for p in recipe.data.get("image_overlays", [])]
     options["source_roots"] = list(dict.fromkeys(
         [*[recipe.local(p) for p in recipe.data.get("source_roots", [])],
          *(options.get("source_roots") or [])]))
