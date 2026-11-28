@@ -446,18 +446,11 @@ static void WaitUntil(double deadline) {
    * iteration unnecessarily overshoots near deadlines. */
   double now = MonotonicSeconds();
   while (now < deadline) {
-    double remaining_ms = (deadline - now) * 1000.0;
-    if (remaining_ms > 1.8) {
-      SDL_Delay((Uint32)(remaining_ms - 1.0));
-    } else {
-#ifdef _WIN32
-      YieldProcessor();
-#elif defined(__x86_64__) || defined(__i386__)
-      __asm__ __volatile__("pause" ::: "memory");
-#else
+    double remaining_ms = (deadline - now) * 1000;
+    if (remaining_ms > 1.5)
+      SDL_Delay((Uint32)(remaining_ms - 0.5));
+    else
       SDL_Delay(0);
-#endif
-    }
     now = MonotonicSeconds();
   }
   ProfileEnd(kProfileWait, profile_start);
