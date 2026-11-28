@@ -65,7 +65,9 @@ if [ -z "$VERSION" ]; then
   VERSION="$(git -C "$REPO" describe --tags --exact-match 2>/dev/null | sed 's/^v//' || true)"
   [ -n "$VERSION" ] || VERSION="dev"
 fi
-FLAGS+=( -DSNESRECOMP_BUILD_VERSION="$VERSION" -DSNESRECOMP_ENABLE_LUA="$ENABLE_LUA" )
+FLAGS+=( -DSNESRECOMP_BUILD_VERSION="$VERSION" -DSNESRECOMP_ENABLE_LUA="$ENABLE_LUA"
+         -DSNESRECOMP_FRAME_IMPL=HLE -DSNESRECOMP_APU_TIME_IMPL=NATIVE
+         -DSNESRECOMP_DSP_MIX_IMPL=NATIVE )
 if declare -F configure_game >/dev/null; then configure_game; fi
 if [ "$VARIANT" != stock ] && ! declare -F configure_game >/dev/null; then
   echo "this title does not support --$VARIANT" >&2; exit 2
