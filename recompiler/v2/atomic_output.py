@@ -17,7 +17,7 @@ class AtomicOutputDir:
     provides that contract. An interrupted swap is recovered on the next run.
     """
 
-    def __init__(self, target: pathlib.Path):
+    def __init__(self, target: pathlib.Path, *, seed_existing: bool = True):
         self.target = target.resolve()
         self.parent = self.target.parent
         self.parent.mkdir(parents=True, exist_ok=True)
@@ -30,7 +30,7 @@ class AtomicOutputDir:
             prefix=f".{self.target.name}.snesrecomp-staging-",
             dir=str(self.parent))
         self.staging = pathlib.Path(raw)
-        if self.target.exists():
+        if seed_existing and self.target.exists():
             self._link_existing_tree(self.target, self.staging)
         atexit.register(self.cleanup)
 
