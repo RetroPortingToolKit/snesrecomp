@@ -19,25 +19,50 @@ from tools.rom_identity import parse
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--project-root", type=Path, default=Path.cwd())
+    parser.add_argument("--cfg-dir", type=Path, default=Path("recomp"))
     parser.add_argument("--rom", type=Path)
+    parser.add_argument("--out-dir", type=Path)
+    parser.add_argument("--analysis-backend", choices=("native", "auto"), default="native")
+    for option in ("max-insns", "max-nodes", "bank-shard-threshold-kib", "bank-shard-pc-span"):
+        aliases = ["--" + option]
+        if option == "max-insns":
+            aliases.append("--max-instructions")
+        parser.add_argument(*aliases, type=lambda value: int(value, 0))
     parser.add_argument("--cfg-roots", action="store_true")
-    parser.add_argument("--profile", type=Path, action="append", default=[])
+    parser.add_argument("--profile", "--profile-manifest", type=Path, action="append", default=[])
+    parser.add_argument("--no-default-profiles", action="store_true")
     parser.add_argument("--strict-idempotent", action="store_true")
     parser.add_argument("--no-tests", action="store_true")
+    parser.add_argument("--tests", action="store_true", help="run the engine test suite after generation")
     args = parser.parse_args(argv)
     project = args.project_root.resolve()
-    cfg = project / "recomp"
+    cfg = args.cfg_dir if args.cfg_dir.is_absolute() else project / args.cfg_dir
     ensure_tool_paths(ROOT)
     recipe = load_recipe(cfg)
     identity = recipe.identity() if recipe else parse(project / "rom_identity.txt")
-    rom = args.rom or os.environ.get("SNESRECOMP_ROM") or identity.get("rom_file")
+    rom = args.rom or os.environ.get("SNESRECOMP_ROM")
     if not rom:
-        parser.error("no ROM configured; pass --rom or set SNESRECOMP_ROM")
+        hint = identity.get("rom_file")
+        if hint and (project / hint).is_file():
+            rom = hint
+        elif (project / "rom.cfg").is_file():
+            lines = (project / "rom.cfg").read_text(encoding="utf-8").splitlines()
+            rom = lines[0].strip() if lines else None
+    if not rom:
+        parser.error("no ROM configured; pass --rom, set SNESRECOMP_ROM, or record its original path in rom.cfg")
     rom = Path(rom).expanduser()
     if not rom.is_absolute():
         rom = project / rom
-    options = dict(rom=rom.resolve(), cfg_dir=cfg, out_dir=project / "src/gen",
+    out_dir = args.out_dir or Path(recipe.data.get("out_dir", "src/gen") if recipe else "src/gen")
+    if not out_dir.is_absolute():
+        out_dir = project / out_dir
+    options = dict(rom=rom.resolve(), cfg_dir=cfg, out_dir=out_dir,
                    funcs_h=cfg / "funcs.h", cfg_roots=args.cfg_roots,
+                   analysis_backend=args.analysis_backend,
+                   emitter_options={key: getattr(args, key) for key in
+                                    ("max_insns", "max_nodes", "bank_shard_threshold_kib", "bank_shard_pc_span")
+                                    if getattr(args, key) is not None},
+                   use_default_profiles=not args.no_default_profiles,
                    profile_manifests=[p if p.is_absolute() else project / p
                                       for p in args.profile],
                    expected_crc32=identity.get("expected_crc32") or None,
@@ -52,7 +77,7 @@ def main(argv=None):
             if differences:
                 raise RuntimeError("regeneration differs:\n" + "\n".join(differences))
             print("Complete generated trees are byte-identical")
-    if not args.no_tests:
+    if args.tests and not args.no_tests:
         subprocess.run([sys.executable, str(ROOT / "tests/run_tests.py")],
                        cwd=ROOT, check=True,
                        # CREATE_NO_WINDOW has no console handles to inherit.
