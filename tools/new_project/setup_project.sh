@@ -726,6 +726,7 @@ render_templates() {
     fill host_contract.c.in  src/host_contract.c
     fill rom_identity.txt.in rom_identity.txt
     fill regen.sh.in         tools/regen.sh
+    fill generate.toml.in    recomp/generate.toml
     fill package_release.sh.in scripts/package_release.sh
     fill symbols_readme.md.in  recomp/README.md
     chmod +x tools/regen.sh scripts/package_release.sh
